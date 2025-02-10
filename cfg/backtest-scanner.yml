@@ -1,0 +1,37 @@
+watch:
+  asset: BTC
+  currency: USDT
+  mode: backtest # backtest | importer | realtime
+  scan: true
+
+storage:
+  type: sqlite
+  database: ./db/gekko.sql
+
+strategy:
+  name: DEMA
+  period: 12
+  thresholds:
+    up: 100
+    down: -150
+
+plugins:
+  - name: TradingAdvisor
+    strategyName: DEMA
+    candleSize: 60
+    historySize: 5
+
+  - name: PaperTrader
+    reportInCurrency: true # report the profit in the currency or the asset?
+    simulationBalance: # start balance, on what the current balance is compared with
+      # these are in the unit types configured in the watcher.
+      asset: 0
+      currency: 1000
+    # how much fee in % does each trade cost?
+    feeMaker: 0.15
+    feeTaker: 0.25
+    feeUsing: maker
+    slippage: 0.05 # how much slippage/spread should Gekko assume per trade?
+
+  - name: PerformanceAnalyzer
+    riskFreeReturn: 5
