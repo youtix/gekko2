@@ -1,0 +1,12 @@
+watch:
+  exchange: binance
+  asset: BTC
+  currency: USDT
+  mode: realtime
+
+storage:
+  type: sqlite
+  database: ./db/gekko.sql
+
+plugins:
+  - name: CandleWriter

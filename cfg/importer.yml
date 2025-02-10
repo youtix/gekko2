@@ -1,0 +1,15 @@
+watch:
+  exchange: binance
+  asset: BTC
+  currency: USDT
+  mode: importer # backtest | importer | realtime
+  daterange:
+    start: '2020-11-01T00:00:00.000Z'
+    end: '2020-11-20T00:00:00.000Z'
+
+storage:
+  type: sqlite
+  database: ./db/gekko.sql
+
+plugins:
+  - name: CandleWriter
