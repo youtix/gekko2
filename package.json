@@ -1,0 +1,47 @@
+{
+  "name": "gekko2",
+  "version": "0.1.0",
+  "description": "",
+  "main": "gekko.js",
+  "type": "module",
+  "scripts": {
+    "build": "bun build ./src/gekko.ts --outdir ./dist --target bun --minify",
+    "dev": "bun ./src/gekko.ts",
+    "start": "bun dist/gekko.js",
+    "lint": "bun eslint ./src --fix",
+    "type:check": "bun tsc --noEmit",
+    "check": "bun run lint && pnpm test && bun run type:check",
+    "test:watch": "vitest",
+    "test": "vitest --watch false"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@eslint/js": "^9.22.0",
+    "@types/big.js": "^6.2.2",
+    "@types/bun": "^1.2.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/lodash-es": "^4.17.12",
+    "@typescript-eslint/parser": "^8.26.0",
+    "eslint": "^9.22.0",
+    "eslint-import-resolver-typescript": "^3.8.3",
+    "eslint-plugin-import": "^2.31.0",
+    "globals": "^16.0.0",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.26.0",
+    "vitest": "^3.0.8"
+  },
+  "dependencies": {
+    "@date-fns/tz": "^1.2.0",
+    "big.js": "^6.2.2",
+    "ccxt": "^4.4.65",
+    "date-fns": "^4.1.0",
+    "inquirer": "^12.4.3",
+    "js-yaml": "^4.1.0",
+    "json5": "^2.2.3",
+    "lodash-es": "^4.17.21",
+    "winston": "^3.17.0",
+    "yup": "^1.6.1"
+  }
+}
