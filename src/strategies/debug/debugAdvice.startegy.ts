@@ -1,0 +1,31 @@
+import { logger } from '@services/logger';
+import { Strategy } from '@strategies/strategy';
+
+export class DebugAdvice extends Strategy<'DebugAdvice'> {
+  private index = 0;
+  protected init(): void {}
+  protected onEachCandle(): void {}
+  protected onCandleAfterWarmup(): void {
+    if (this.strategySettings.wait > this.index) return;
+
+    logger.debug(`[STRATEGY] iteration: ${this.index}`);
+
+    if (this.index % this.strategySettings.each === 0) {
+      logger.debug('[STRATEGY] trigger SHORT');
+      this.advice('short');
+    } else if (this.index % this.strategySettings.each === this.strategySettings.each / 2) {
+      logger.debug('[STRATEGY] trigger LONG');
+      this.advice('long');
+    }
+
+    // if(i % 2 === 0)
+    //   this.advice('long');
+    // else if(i % 2 === 1)
+    //   this.advice('short');
+
+    this.index++;
+  }
+  protected onTradeExecuted(): void {}
+  protected log(): void {}
+  protected end(): void {}
+}

@@ -1,0 +1,7 @@
+node_modules
+dist
+.env.local
+db
+.sql
+.sql-shm
+.sql-wal
