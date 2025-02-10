@@ -1,0 +1,35 @@
+watch:
+  asset: BTC
+  currency: USDT
+  mode: realtime
+
+broker:
+  name: binance
+  key:
+    secret:
+
+plugins:
+  - name: 'tradingAdvisor'
+    method: 'MACD'
+    candleSize: 60
+    historySize: 10
+
+  - name: 'trader'
+
+  - name: 'performanceAnalyzer'
+    riskFreeReturn: 5
+
+# set this to true if you understand that Gekko will
+# invest according to how you configured the indicators.
+# None of the advice in the output is Gekko telling you
+# to take a certain position. Instead it is the result
+# of running the indicators you configured automatically.
+#
+# In other words: Gekko automates your trading strategies
+# it doesnt advice on itself only set to true if you truly
+# understand this.
+#
+# Not sure? Read this first: https://github.com/askmike/gekko/issues/201
+disclaimer:
+  content: I understand that Gekko only automates MY OWN trading strategies
+  isDisclaimerRead: false
