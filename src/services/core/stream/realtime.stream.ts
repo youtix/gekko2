@@ -31,7 +31,7 @@ export class RealtimeStream extends Readable {
   }
 
   async onTick() {
-    const trades = await this.tradeProvider.getTrades();
+    const trades = await this.tradeProvider.fetchTrades();
     const batch = this.tradeBatcher.processTrades(trades);
     if (!batch?.data.length) {
       logger.warn('No Candle');

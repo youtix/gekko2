@@ -40,7 +40,7 @@ export class ImporterStream extends Readable {
   }
 
   async onTick() {
-    const candles = await this.provider.getOHLCV(this.start);
+    const candles = await this.provider.fetchOHLCV(this.start);
     if (!candles?.length) throw new ImporterError('0 candle has been fetched !');
     this.start = last(candles)?.start ?? Number.MAX_SAFE_INTEGER;
     this.start++;

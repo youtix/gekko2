@@ -1,23 +1,24 @@
 import { PluginError } from '@errors/plugin/plugin.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
+import { Portfolio } from '@models/types/portfolio.types';
 import { Plugin } from '@plugins/plugin';
+import {
+  PORTFOLIO_CHANGE_EVENT,
+  PORTFOLIO_VALUE_CHANGE_EVENT,
+  TRADE_INITIATED_EVENT,
+  TRIGGER_ABORTED_EVENT,
+  TRIGGER_FIRED_EVENT,
+} from '@plugins/plugin.const';
+import { ActiveStopTrigger } from '@plugins/plugin.types';
 import { TrailingStop } from '@services/core/order/trailingStop';
 import { logger } from '@services/logger';
 import Big from 'big.js';
 import { addMinutes } from 'date-fns';
 import { filter } from 'lodash-es';
-import {
-  PORTFOLIO_CHANGE_EVENT,
-  PORTFOLIO_VALUE_CHANGE_EVENT,
-  TRADE_COMPLETED_EVENT,
-  TRADE_INITIATED_EVENT,
-  TRIGGER_ABORTED_EVENT,
-  TRIGGER_CREATED_EVENT,
-  TRIGGER_FIRED_EVENT,
-} from './paperTrader.const';
+import { TRADE_COMPLETED_EVENT, TRIGGER_CREATED_EVENT } from './paperTrader.const';
 import { paperTraderSchema } from './paperTrader.schema';
-import { ActiveStopTrigger, PapertraderConfig, Position } from './paperTrader.types';
+import { PapertraderConfig, Position } from './paperTrader.types';
 
 export class PaperTrader extends Plugin {
   private activeStopTrigger?: ActiveStopTrigger;
@@ -25,7 +26,7 @@ export class PaperTrader extends Plugin {
   private candle?: Candle;
   private exposed: boolean;
   private fee: number;
-  private portfolio: { asset: number; currency: number };
+  private portfolio: Portfolio;
   private price: number;
   private propogatedTrades: number;
   private propogatedTriggers: number;

@@ -1,9 +1,10 @@
+import { Action } from './action.types';
 import { Portfolio } from './portfolio.types';
 
 export type TradeCompleted = {
   id: number;
   adviceId: string;
-  action: 'buy' | 'sell';
+  action: Action;
   cost: number;
   amount: number;
   price: number;

@@ -1,11 +1,14 @@
+import { MissingPropertyError } from '@errors/broker/missingProperty.error';
 import { candlesSchema } from '@models/schema/candle.schema';
 import { tradesSchema } from '@models/schema/trade.schema';
+import { Action } from '@models/types/action.types';
 import { BrokerConfig } from '@models/types/configuration.types';
+import { isOrderStatus, Order } from '@models/types/order.types';
 import { logger } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { mapToCandles, mapToTrades } from '@utils/trade/trade.utils';
 import { formatDuration, intervalToDuration } from 'date-fns';
-import { first, last } from 'lodash-es';
+import { first, isNil, last } from 'lodash-es';
 import { Broker } from '../broker';
 
 export class BinanceBroker extends Broker {
@@ -13,11 +16,14 @@ export class BinanceBroker extends Broker {
     super(brokerConfig);
   }
 
-  public async fetchTicker() {
-    return await this.broker.fetchTicker(this.symbol);
+  protected async fetchTickerOnce() {
+    const ticker = await this.broker.fetchTicker(this.symbol);
+    if (isNil(ticker.ask) || isNil(ticker.bid))
+      throw new MissingPropertyError('ask & bid', 'fetchTicker');
+    return { ask: ticker.ask, bid: ticker.bid };
   }
 
-  public async fetchOHLCV(from?: EpochTimeStamp) {
+  protected async fetchOHLCVOnce(from?: EpochTimeStamp) {
     const ohlcvList = await this.broker.fetchOHLCV(
       this.symbol,
       this.broker.timeframes['1m'] as string,
@@ -39,9 +45,49 @@ export class BinanceBroker extends Broker {
     return candles;
   }
 
-  public async fetchTrades() {
+  protected async fetchTradesOnce() {
     const trades = await this.broker.fetchTrades(this.symbol, undefined, 1000);
     tradesSchema.validate(trades);
     return mapToTrades(trades);
+  }
+
+  protected async fetchPortfolioOnce() {
+    const balance = await this.broker.fetchBalance();
+    return {
+      asset: balance[this.asset]?.free ?? 0,
+      currency: balance[this.currency]?.free ?? 0,
+    };
+  }
+
+  protected async fetchOrderOnce(id: string) {
+    const order = await this.broker.fetchOrder(id, this.symbol);
+    if (!isOrderStatus(order.status)) throw new MissingPropertyError('status', 'createLimitOrder');
+    return {
+      id: order.id,
+      status: order.status,
+      filled: order.filled,
+      remaining: order.remaining,
+      price: order.price,
+    };
+  }
+
+  protected async createLimitOrderOnce(side: Action, amount: number) {
+    const orderPrice = await this.calculatePrice(side);
+    const orderAmount = await this.calculateAmount(amount);
+    this.checkCost(orderAmount, orderPrice);
+    const order = await this.broker.createLimitOrder(this.symbol, side, orderAmount, orderPrice);
+    if (!isOrderStatus(order.status)) throw new MissingPropertyError('status', 'createLimitOrder');
+    return {
+      id: order.id,
+      status: order.status,
+      filled: order.filled,
+      remaining: order.remaining,
+      price: order.price,
+    };
+  }
+
+  protected async cancelLimitOrderOnce(id: string) {
+    const order = (await this.broker.cancelOrder(id, this.symbol)) as Order;
+    return { ...order };
   }
 }

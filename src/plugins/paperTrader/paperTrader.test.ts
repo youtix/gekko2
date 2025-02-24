@@ -3,15 +3,14 @@ import { PluginError } from '../../errors/plugin/plugin.error';
 import { TrailingStop } from '../../services/core/order/trailingStop';
 import { logger } from '../../services/logger';
 import { toTimestamp } from '../../utils/date/date.utils';
-import { PaperTrader } from './paperTrader';
 import {
   PORTFOLIO_CHANGE_EVENT,
   PORTFOLIO_VALUE_CHANGE_EVENT,
-  TRADE_COMPLETED_EVENT,
   TRADE_INITIATED_EVENT,
-  TRIGGER_CREATED_EVENT,
   TRIGGER_FIRED_EVENT,
-} from './paperTrader.const';
+} from '../plugin.const';
+import { PaperTrader } from './paperTrader';
+import { TRADE_COMPLETED_EVENT, TRIGGER_CREATED_EVENT } from './paperTrader.const';
 import { PapertraderConfig } from './paperTrader.types';
 
 vi.mock('../../services/logger', () => ({ logger: { warn: vi.fn() } }));
