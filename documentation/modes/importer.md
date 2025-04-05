@@ -17,12 +17,30 @@ watch:
   asset: BTC
   currency: USDT
   mode: importer
+  fillGaps: empty
   daterange:
     start: '2024-01-01T00:00:00.000Z'
     end: '2024-02-01T00:00:00.000Z'
 ```
 
-Then, set the `CONFIG_FILE_PATH` environment variable so Gekko knows which configuration file to use. You can define it either in your environment or in a `.env` file:
+## Filling missing candles
+
+Sometimes, exchanges return incomplete historical data with missing candles. To fill those gaps, Gekko provides a fillGaps option:
+
+```yaml
+watch:
+  fillGaps: empty
+```
+
+Available values:
+- no (default): Do not fill missing candles.
+- empty: Fill gaps by inserting synthetic (empty) candles, duplicating the previous candle with adjusted timestamps.
+
+This option ensures smoother datasets and more reliable backtesting when dealing with incomplete data from the exchange.
+
+## Environment variables
+
+Gekko requires the `CONFIG_FILE_PATH` environment variable to locate and load your configuration file. You can define it either directly in your environment or in a `.env` file:
 
 ```bash
 # .env
@@ -38,6 +56,7 @@ watch:
   asset: BTC
   currency: USDT
   mode: importer
+  fillGaps: empty
   daterange:
     start: '2024-01-01T00:00:00.000Z'
     end: '2024-02-01T00:00:00.000Z'
