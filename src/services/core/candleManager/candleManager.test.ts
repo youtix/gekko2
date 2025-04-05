@@ -1,6 +1,5 @@
 import { setMilliseconds, setSeconds } from 'date-fns';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { generateCandles } from '../../../models/candle.mock';
 import { generateTrade } from '../../../models/trade.mock';
 import { Batch } from '../../../models/types/batch.types';
 import { Trade } from '../../../models/types/trade.types';
@@ -15,7 +14,7 @@ describe('CandleManager', () => {
 
   describe('calculateCandle', () => {
     it('should calculate a correct candle from trades', () => {
-      const trades: Trade[] = [
+      const trades = [
         {
           timestamp: new Date('2024-06-01T00:00:00Z').getTime(),
           price: 100,
@@ -26,7 +25,7 @@ describe('CandleManager', () => {
           price: 102,
           amount: 2,
         },
-      ];
+      ] as Trade[];
 
       const result = candleManager['calculateCandle'](trades);
 
@@ -38,28 +37,6 @@ describe('CandleManager', () => {
         close: 102,
         volume: 3,
       });
-    });
-  });
-
-  describe('addEmptyCandles', () => {
-    it('should fill gaps between candles with empty candles', () => {
-      const candles = generateCandles();
-      const result = candleManager['addEmptyCandles'](candles);
-
-      expect(result).toEqual([
-        candles[0],
-        { ...candles[0], start: new Date('2024-06-01T00:01:00Z').getTime(), volume: 0 },
-        candles[1],
-        { ...candles[1], start: new Date('2024-06-01T00:03:00Z').getTime(), volume: 0 },
-        { ...candles[1], start: new Date('2024-06-01T00:04:00Z').getTime(), volume: 0 },
-        { ...candles[1], start: new Date('2024-06-01T00:05:00Z').getTime(), volume: 0 },
-        candles[2],
-      ]);
-    });
-
-    it('should return empty array when no candles are provided', () => {
-      const result = candleManager['addEmptyCandles']([]);
-      expect(result).toBeUndefined();
     });
   });
 

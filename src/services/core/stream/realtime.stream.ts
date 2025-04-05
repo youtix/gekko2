@@ -1,17 +1,17 @@
+import { Candle } from '@models/types/candle.types';
 import { Broker } from '@services/broker/broker';
-import { inject } from '@services/storage/injecter';
+import { config } from '@services/configuration/configuration';
+import { TradeBatcher } from '@services/core/batcher/tradeBatcher/tradeBatcher';
+import { CandleManager } from '@services/core/candleManager/candleManager';
+import { Heart } from '@services/core/heart/heart';
+import { logger } from '@services/logger';
+import { inject } from '@services/storage/injecter/injecter';
 import { bindAll, each } from 'lodash-es';
 import { Readable } from 'node:stream';
-import { Candle } from '../../../models/types/candle.types';
-import { config } from '../../configuration/configuration';
-import { logger } from '../../logger';
-import { TradeBatcher } from '../batcher/tradeBatcher/tradeBatcher';
-import { CandleManager } from '../candleManager/candleManager';
-import { Heart } from '../heart/heart';
 
 export class RealtimeStream extends Readable {
   heart: Heart;
-  tradeProvider: Broker;
+  broker: Broker;
   candleManager: CandleManager;
   tradeBatcher: TradeBatcher;
 
@@ -19,7 +19,7 @@ export class RealtimeStream extends Readable {
     super({ objectMode: true });
 
     this.heart = new Heart(config.getWatch().tickrate ?? 10);
-    this.tradeProvider = inject.broker();
+    this.broker = inject.broker();
     this.tradeBatcher = new TradeBatcher();
     this.candleManager = new CandleManager();
 
@@ -31,7 +31,7 @@ export class RealtimeStream extends Readable {
   }
 
   async onTick() {
-    const trades = await this.tradeProvider.fetchTrades();
+    const trades = await this.broker.fetchTrades();
     const batch = this.tradeBatcher.processTrades(trades);
     if (!batch?.data.length) {
       logger.warn('No Candle');

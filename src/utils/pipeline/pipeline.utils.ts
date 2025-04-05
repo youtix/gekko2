@@ -7,11 +7,12 @@ import * as pluginList from '@plugins/index';
 import { PluginsNames } from '@plugins/plugin.types';
 import { config } from '@services/configuration/configuration';
 import { BacktestStream } from '@services/core/stream/backtest.stream';
-import { ImporterStream } from '@services/core/stream/importer.stream';
+import { GapFillerStream } from '@services/core/stream/gapFiller/gapFiller.stream';
+import { ImporterStream } from '@services/core/stream/importer/importer.stream';
 import { PluginsStream } from '@services/core/stream/plugins.stream';
 import { RealtimeStream } from '@services/core/stream/realtime.stream';
 import { logger } from '@services/logger';
-import { inject } from '@services/storage/injecter';
+import { inject } from '@services/storage/injecter/injecter';
 import { keepDuplicates } from '@utils/array/array.utils';
 import { toISOString, toTimestamp } from '@utils/date/date.utils';
 import { toCamelCase } from '@utils/string/string.utils';
@@ -23,19 +24,21 @@ export const launchStream = async (context: PipelineContext) => {
   const plugins = compact(map(context, p => p.plugin));
   const watch = config.getWatch();
   switch (watch.mode) {
-  case 'realtime':
-    new RealtimeStream().pipe(new PluginsStream(plugins));
-    break;
-  case 'backtest':
-    new BacktestStream(
-      watch.scan
-        ? await askForDaterange()
-        : { start: toTimestamp(watch.daterange.start), end: toTimestamp(watch.daterange.end) },
-    ).pipe(new PluginsStream(plugins));
-    break;
-  case 'importer':
-    new ImporterStream().pipe(new PluginsStream(plugins));
-    break;
+    case 'realtime':
+      new RealtimeStream().pipe(new GapFillerStream()).pipe(new PluginsStream(plugins));
+      break;
+    case 'backtest':
+      new BacktestStream(
+        watch.scan
+          ? await askForDaterange()
+          : { start: toTimestamp(watch.daterange.start), end: toTimestamp(watch.daterange.end) },
+      )
+        .pipe(new GapFillerStream())
+        .pipe(new PluginsStream(plugins));
+      break;
+    case 'importer':
+      new ImporterStream().pipe(new GapFillerStream()).pipe(new PluginsStream(plugins));
+      break;
   }
   return context;
 };
@@ -76,9 +79,7 @@ export const wirePlugins = async (context: PipelineContext) => {
         if (eventsHandlers?.includes(eventHandler)) {
           // @ts-expect-error TODO fix complex typescript error
           emitter?.on(event, handler[eventHandler].bind(handler));
-          logger.debug(
-            `[INIT] When ${emitterName} emit '${event}', ${handlerName}.${eventHandler} will be executed.`,
-          );
+          logger.debug(`[INIT] When ${emitterName} emit '${event}', ${handlerName}.${eventHandler} will be executed.`);
         }
       });
     });
@@ -96,9 +97,13 @@ export const createPlugins = async (context: PipelineContext) =>
   });
 
 export const preloadMarkets = async (context: PipelineContext) => {
-  if (some(context, pipeline => pipeline.inject?.includes('broker'))) {
-    logger.debug('[INIT] Preloading Markets data');
-    await inject.broker().loadMarkets();
+  const { mode } = config.getWatch();
+  const isPreloadMarketNeeded =
+    ['realtime', 'importer'].includes(mode) || some(context, plugin => plugin.inject?.includes('broker'));
+  if (isPreloadMarketNeeded) {
+    const broker = await inject.broker();
+    logger.debug(`[INIT] Preloading Markets data for ${broker.getBrokerName()}`);
+    await broker.loadMarkets();
   }
   return context;
 };
@@ -106,8 +111,7 @@ export const preloadMarkets = async (context: PipelineContext) => {
 export const checkPluginsDuplicateEvents = async (context: PipelineContext) => {
   const duplicateEvents = keepDuplicates(compact(flatMap(context, p => p.eventsEmitted)));
   const duplicatePlugins = map(filter(context, { eventsEmitted: duplicateEvents }), p => p.name);
-  if (duplicateEvents.length)
-    throw new PluginsEmitSameEventError(duplicatePlugins, duplicateEvents);
+  if (duplicateEvents.length) throw new PluginsEmitSameEventError(duplicatePlugins, duplicateEvents);
   return context;
 };
 

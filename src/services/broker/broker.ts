@@ -10,15 +10,11 @@ import { Ticker } from '@models/types/ticker.types';
 import { Trade } from '@models/types/trade.types';
 import { config } from '@services/configuration/configuration';
 import { logger } from '@services/logger';
+import { getRetryDelay } from '@utils/fetch/fetch.utils';
 import Big from 'big.js';
 import ccxt, { Exchange, NetworkError } from 'ccxt';
 import { each, isNil } from 'lodash-es';
-import {
-  BROKER_MANDATORY_FEATURES,
-  BROKER_MAX_RETRIES_ON_FAILURE,
-  BROKER_MAX_RETRIES_ON_FAILURE_DELAY,
-  INTERVAL_BETWEEN_CALLS_IN_MS,
-} from './broker.const';
+import { BROKER_MANDATORY_FEATURES, BROKER_MAX_RETRIES_ON_FAILURE, INTERVAL_BETWEEN_CALLS_IN_MS } from './broker.const';
 
 export abstract class Broker {
   protected broker: Exchange;
@@ -28,10 +24,10 @@ export abstract class Broker {
   protected symbol: string;
   protected interval: number;
 
-  constructor({ name, interval, key, secret, sandbox }: BrokerConfig) {
+  constructor({ name, interval, key, secret, sandbox, verbose }: BrokerConfig) {
     const { asset, currency } = config.getWatch();
-    this.broker = new ccxt[name]({ apiKey: key, secret });
-    this.broker.setSandboxMode(sandbox);
+    this.broker = new ccxt[name]({ apiKey: key, secret, verbose });
+    this.broker.setSandboxMode(sandbox ?? false);
     each(BROKER_MANDATORY_FEATURES, feature => {
       if (!this.broker.has[feature]) throw new MissingBrokerFeatureError(name, feature);
     });
@@ -84,10 +80,9 @@ export abstract class Broker {
       return await fn();
     } catch (error) {
       const isRetryableError = error instanceof NetworkError;
-      if (error instanceof Error)
-        logger.error(`${this.brokerName} call failed due to ${error.message}`);
+      if (error instanceof Error) logger.error(`${this.brokerName} call failed due to ${error.message}`);
       if (!isRetryableError || currRetry > BROKER_MAX_RETRIES_ON_FAILURE) throw error;
-      await this.broker.sleep(BROKER_MAX_RETRIES_ON_FAILURE_DELAY);
+      await this.broker.sleep(getRetryDelay(currRetry));
       return this.retry(fn, currRetry + 1);
     }
   }
@@ -96,8 +91,7 @@ export abstract class Broker {
   protected async calculatePrice(side: Action) {
     const minimalPrice = this.broker.market(this.symbol).limits.price?.min;
     const maximalPrice = this.broker.market(this.symbol).limits.price?.max;
-    if (isNil(minimalPrice) || isNil(maximalPrice))
-      throw new UndefinedLimitsError('price', minimalPrice, maximalPrice);
+    if (isNil(minimalPrice) || isNil(maximalPrice)) throw new UndefinedLimitsError('price', minimalPrice, maximalPrice);
 
     const ticker = await this.fetchTicker();
     const price = side === 'buy' ? ticker.bid + minimalPrice : ticker.ask - minimalPrice;
@@ -122,8 +116,7 @@ export abstract class Broker {
     const minimalCost = this.broker.market(this.symbol).limits.cost?.min;
     const maximalCost = this.broker.market(this.symbol).limits.cost?.max;
 
-    if (isNil(minimalCost) || isNil(maximalCost))
-      throw new UndefinedLimitsError('cost', minimalCost, maximalCost);
+    if (isNil(minimalCost) || isNil(maximalCost)) throw new UndefinedLimitsError('cost', minimalCost, maximalCost);
 
     const cost = Big(amount).mul(price);
     if (cost.gt(maximalCost) || cost.lt(minimalCost))

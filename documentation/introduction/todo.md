@@ -52,8 +52,11 @@ Features to consider for the roadmap:
 
 ## Services
 
+### Storage
+- ✅ Injecter
+
 ### Broker
-- ⬜ OKX
+- ⬜ Find and implement a new one
 
 ### Logger
 - ⬜ Tag for logging `[TAG] message`

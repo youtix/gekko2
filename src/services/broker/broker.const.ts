@@ -1,5 +1,4 @@
 export const BROKER_MAX_RETRIES_ON_FAILURE = 3;
-export const BROKER_MAX_RETRIES_ON_FAILURE_DELAY = 1500;
 export const INTERVAL_BETWEEN_CALLS_IN_MS = 1500;
 export const BROKER_MANDATORY_FEATURES = [
   'cancelOrder',

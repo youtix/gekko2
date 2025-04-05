@@ -1,7 +1,7 @@
 import { MissingCandlesError } from '@errors/backtest/MissingCandles.error';
 import { config } from '@services/configuration/configuration';
 import { logger } from '@services/logger';
-import { inject } from '@services/storage/injecter';
+import { inject } from '@services/storage/injecter/injecter';
 import { Storage } from '@services/storage/storage';
 import { splitIntervals, toISOString } from '@utils/date/date.utils';
 import { differenceInMinutes, Interval } from 'date-fns';

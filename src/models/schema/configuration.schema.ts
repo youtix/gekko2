@@ -6,6 +6,7 @@ export const watchSchema = object({
   asset: string().required(),
   tickrate: number().optional(),
   mode: string().oneOf(['realtime', 'backtest', 'importer']).defined(),
+  fillGaps: string().oneOf(['no', 'empty']).default('no'),
   daterange: object({
     start: string().datetime().required(),
     end: string().datetime().required(),
@@ -21,9 +22,10 @@ export const watchSchema = object({
 export const brokerSchema = object({
   name: string().oneOf(['binance']).required(),
   interval: number().positive().notRequired(),
-  sandbox: boolean().default(false),
+  sandbox: boolean().notRequired(),
   key: string().notRequired(),
   secret: string().notRequired(),
+  verbose: boolean().notRequired(),
 });
 
 export const storageSchema = object({

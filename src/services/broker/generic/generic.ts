@@ -9,17 +9,16 @@ import { mapToCandles, mapToOrder, mapToTrades } from '@utils/trade/trade.utils'
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { first, isNil, last } from 'lodash-es';
 import { Broker } from '../broker';
-import { BINANCE_LIMIT } from './binance.const';
+import { LIMITS } from './generic.const';
 
-export class BinanceBroker extends Broker {
+export class GenericBroker extends Broker {
   constructor(brokerConfig: BrokerConfig) {
     super(brokerConfig);
   }
 
   protected async fetchTickerOnce() {
     const ticker = await this.broker.fetchTicker(this.symbol);
-    if (isNil(ticker.ask) || isNil(ticker.bid))
-      throw new MissingPropertyError('ask & bid', 'fetchTicker');
+    if (isNil(ticker.ask) || isNil(ticker.bid)) throw new MissingPropertyError('ask & bid', 'fetchTicker');
     return { ask: ticker.ask, bid: ticker.bid };
   }
 
@@ -28,7 +27,7 @@ export class BinanceBroker extends Broker {
       this.symbol,
       this.broker.timeframes['1m'] as string,
       from,
-      BINANCE_LIMIT,
+      LIMITS[this.brokerName],
     );
     const candles = mapToCandles(ohlcvList);
     candlesSchema.validate(candles);
@@ -46,12 +45,12 @@ export class BinanceBroker extends Broker {
   }
 
   protected async fetchTradesOnce() {
-    const trades = await this.broker.fetchTrades(this.symbol, undefined, BINANCE_LIMIT);
+    const trades = await this.broker.fetchTrades(this.symbol, undefined, LIMITS[this.brokerName]);
     return mapToTrades(trades);
   }
 
   protected async fetchMyTradesOnce(from?: EpochTimeStamp) {
-    const trades = await this.broker.fetchMyTrades(this.symbol, from, BINANCE_LIMIT);
+    const trades = await this.broker.fetchMyTrades(this.symbol, from, LIMITS[this.brokerName]);
     return mapToTrades(trades);
   }
 
