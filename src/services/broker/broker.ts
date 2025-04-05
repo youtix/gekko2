@@ -27,10 +27,11 @@ export abstract class Broker {
   constructor({ name, interval, key, secret, sandbox, verbose }: BrokerConfig) {
     const { asset, currency } = config.getWatch();
     this.broker = new ccxt[name]({ apiKey: key, secret, verbose });
-    this.broker.setSandboxMode(sandbox ?? false);
-    each(BROKER_MANDATORY_FEATURES, feature => {
+    const mandatoryFeatures = [...BROKER_MANDATORY_FEATURES, ...(sandbox ? ['sandbox'] : [])];
+    each(mandatoryFeatures, feature => {
       if (!this.broker.has[feature]) throw new MissingBrokerFeatureError(name, feature);
     });
+    this.broker.setSandboxMode(sandbox ?? false);
     this.broker.options['maxRetriesOnFailure'] = 0; // we handle it manualy
     this.brokerName = name;
     this.asset = asset;

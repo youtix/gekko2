@@ -56,7 +56,7 @@ Features to consider for the roadmap:
 - ✅ Injecter
 
 ### Broker
-- ⬜ Find and implement a new one
+- ✅ Bitfinex
 
 ### Logger
 - ⬜ Tag for logging `[TAG] message`

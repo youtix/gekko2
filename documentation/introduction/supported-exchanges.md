@@ -7,14 +7,15 @@ Gekko can interact directly with the APIs of multiple cryptocurrency exchanges. 
 - **Live Trading**: Gekko can execute real orders using live funds, transforming it into a fully automated trading bot.
 - **Importing**: Gekko can download historical market data from the exchange, allowing you to backtest strategies on real past market conditions.
 
-| Exchange     | Monitoring | Sandbox | Live Trading | Importing | Notes                             |
-|--------------|:----------:|:-------:|:------------:|:---------:|-----------------------------------|
-| **Binance**  | 🟩         | 🟩      | 🟩           | 🟩        |                                   |
+| Exchange      | Monitoring | Sandbox | Live Trading | Importing | Notes                                                                   |
+|---------------|:----------:|:-------:|:------------:|:---------:|-------------------------------------------------------------------------|
+| **Binance**   | 🟩         | 🟩      | 🟩           | 🟩        | Up to 1,000 trades per request and high trading volume. Perfect choice |
+| **Bitfinex**  | 🟨         | 🟥      | 🟨           | 🟨        | Up to 10,000 trades per request, but **low trading volume** may limit data usefulness. A high tickrate is recommended. |
 
 ## Legend
 
 - 🟩 Good  
-- 🟨 Too Slow  
+- 🟨 To use with caution  
 - 🟥 Not Supported
 
 > 💡 **Note**:  
