@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { logger } from '../logger';
+import { error } from '../logger';
 import { fetcher } from './fetcher.service';
 
-vi.mock('../../services/logger', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() }));
 vi.useFakeTimers();
 
 describe('fetcher.post', () => {
@@ -97,7 +97,7 @@ describe('fetcher.post', () => {
     vi.spyOn(global, 'fetch').mockResolvedValue(badResponse);
     const promise = fetcher.post({ url: dummyUrl, payload, retries: 1, attempt: 0 });
     vi.advanceTimersByTimeAsync(1000); // first retry delay
-    try{
+    try {
       await expect(promise).toThrowError('HTTP 400 Bad Request: error description');
     } catch {
       // error is expected
@@ -120,6 +120,6 @@ describe('fetcher.post', () => {
     } catch {
       // error is expected
     }
-    expect(logger.error).toHaveBeenCalledWith('HTTP 400 Bad Request: error description');
+    expect(error).toHaveBeenCalledWith('fetcher', 'HTTP 400 Bad Request: error description');
   });
 });

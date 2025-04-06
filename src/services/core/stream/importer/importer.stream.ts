@@ -3,7 +3,7 @@ import { Candle } from '@models/types/candle.types';
 import { Broker } from '@services/broker/broker';
 import { config } from '@services/configuration/configuration';
 import { Heart } from '@services/core/heart/heart';
-import { logger } from '@services/logger';
+import { info } from '@services/logger';
 import { inject } from '@services/storage/injecter/injecter';
 import { toISOString, toTimestamp } from '@utils/date/date.utils';
 import { formatDuration, intervalToDuration, isAfter, isBefore } from 'date-fns';
@@ -29,7 +29,8 @@ export class ImporterStream extends Readable {
 
     bindAll(this, ['pushCandles', 'pushCandle', 'onTick']);
 
-    logger.info(
+    info(
+      'stream',
       [
         `Importing data from ${toISOString(this.start)}`,
         `to ${toISOString(this.end)}`,

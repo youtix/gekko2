@@ -4,7 +4,7 @@ import { config } from '@services/configuration/configuration';
 import { TradeBatcher } from '@services/core/batcher/tradeBatcher/tradeBatcher';
 import { CandleManager } from '@services/core/candleManager/candleManager';
 import { Heart } from '@services/core/heart/heart';
-import { logger } from '@services/logger';
+import { warning } from '@services/logger';
 import { inject } from '@services/storage/injecter/injecter';
 import { bindAll, each } from 'lodash-es';
 import { Readable } from 'node:stream';
@@ -33,10 +33,7 @@ export class RealtimeStream extends Readable {
   async onTick() {
     const trades = await this.broker.fetchTrades();
     const batch = this.tradeBatcher.processTrades(trades);
-    if (!batch?.data.length) {
-      logger.warn('No Candle');
-      return;
-    }
+    if (!batch?.data.length) return warning('stream', 'No Candle');
     const candles = this.candleManager.processBacth(batch);
     this.pushCandles(candles);
   }

@@ -1,10 +1,10 @@
+import { Batch } from '@models/types/batch.types';
+import { Trade } from '@models/types/trade.types';
+import { debug, warning } from '@services/logger';
+import { toISOString } from '@utils/date/date.utils';
+import { filterTradesByTimestamp } from '@utils/trade/trade.utils';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { filter, first, last } from 'lodash-es';
-import { Batch } from '../../../../models/types/batch.types';
-import { Trade } from '../../../../models/types/trade.types';
-import { toISOString } from '../../../../utils/date/date.utils';
-import { filterTradesByTimestamp } from '../../../../utils/trade/trade.utils';
-import { logger } from '../../../logger';
 
 export class TradeBatcher {
   threshold: EpochTimeStamp;
@@ -16,18 +16,16 @@ export class TradeBatcher {
   processTrades(trades: Trade[]) {
     const filteredTrades = filter(filterTradesByTimestamp(trades, this.threshold), 'amount');
     if (filteredTrades.length !== trades.length)
-      logger.debug(`Filtered ${trades.length - filteredTrades.length} trade(s)`);
-    else if (this.threshold) logger.warn('No trade filtred, probably missing trades !');
+      debug('core', `Filtered ${trades.length - filteredTrades.length} trade(s)`);
+    else if (this.threshold) warning('core', 'No trade filtred, probably missing trades !');
 
     const firstTrade = first(filteredTrades);
     const lastTrade = last(filteredTrades);
 
-    if (!firstTrade?.timestamp || !lastTrade?.timestamp) {
-      logger.warn('No new trades !');
-      return;
-    }
+    if (!firstTrade?.timestamp || !lastTrade?.timestamp) return warning('core', 'No new trades !');
 
-    logger.debug(
+    debug(
+      'core',
       [
         `Processing ${filteredTrades.length} new trades.`,
         `From ${toISOString(firstTrade.timestamp)}`,

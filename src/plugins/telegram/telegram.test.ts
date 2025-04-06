@@ -16,7 +16,7 @@ import { Telegram } from './telegram';
 import { TELEGRAM_API_BASE_URL } from './telegram.const';
 import { telegramSchema } from './telegram.schema';
 
-vi.mock('../../services/logger', () => ({ logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } }));
+vi.mock('../../services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() }));
 vi.mock('../../services/configuration/configuration', () => {
   const Configuration = vi.fn();
   Configuration.prototype.getWatch = vi.fn(() => ({ mode: 'realtime' }));
@@ -25,7 +25,7 @@ vi.mock('../../services/configuration/configuration', () => {
 
 describe('Telegram', () => {
   let telegram: Telegram;
-  
+
   beforeEach(() => {
     telegram = new Telegram({ name: 'Telegram', chatId: '123', token: 'abc' });
     telegram['asset'] = 'BTC';
@@ -34,9 +34,9 @@ describe('Telegram', () => {
 
   describe('processCandle', () => {
     it.each`
-      candle                  | expectedPrice
-      ${{ close: 100 }}       | ${100}
-      ${{ close: 150.5 }}     | ${150.5}
+      candle              | expectedPrice
+      ${{ close: 100 }}   | ${100}
+      ${{ close: 150.5 }} | ${150.5}
     `('should set price to candle.close when candle.close is $candleClose', ({ candle, expectedPrice }) => {
       telegram['processCandle'](candle);
       expect(telegram['price']).toBe(expectedPrice);
@@ -224,9 +224,13 @@ describe('Telegram', () => {
       expect(fakeFetcher.post).toHaveBeenCalledWith({ url: expectedUrl, payload: expectedPayload });
       expect(result).toBe('result');
     });
-  
+
     it('should catch errors and return undefined', () => {
-      const fakeFetcher = { post: vi.fn().mockImplementation(() => { throw new Error('fail'); }) };
+      const fakeFetcher = {
+        post: vi.fn().mockImplementation(() => {
+          throw new Error('fail');
+        }),
+      };
       telegram['getFetcher'] = () => fakeFetcher;
       expect(() => telegram['sendMessage']('abc', '123', 'message')).not.toThrow();
       expect(telegram['sendMessage']('abc', '123', 'message')).toBeUndefined();
@@ -259,4 +263,3 @@ describe('Telegram', () => {
     });
   });
 });
-

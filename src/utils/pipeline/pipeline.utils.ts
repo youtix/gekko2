@@ -11,7 +11,7 @@ import { GapFillerStream } from '@services/core/stream/gapFiller/gapFiller.strea
 import { ImporterStream } from '@services/core/stream/importer/importer.stream';
 import { PluginsStream } from '@services/core/stream/plugins.stream';
 import { RealtimeStream } from '@services/core/stream/realtime.stream';
-import { logger } from '@services/logger';
+import { debug } from '@services/logger';
 import { inject } from '@services/storage/injecter/injecter';
 import { keepDuplicates } from '@utils/array/array.utils';
 import { toISOString, toTimestamp } from '@utils/date/date.utils';
@@ -79,7 +79,7 @@ export const wirePlugins = async (context: PipelineContext) => {
         if (eventsHandlers?.includes(eventHandler)) {
           // @ts-expect-error TODO fix complex typescript error
           emitter?.on(event, handler[eventHandler].bind(handler));
-          logger.debug(`[INIT] When ${emitterName} emit '${event}', ${handlerName}.${eventHandler} will be executed.`);
+          debug('init', `When ${emitterName} emit '${event}', ${handlerName}.${eventHandler} will be executed.`);
         }
       });
     });
@@ -92,7 +92,7 @@ export const createPlugins = async (context: PipelineContext) =>
     const PluginClass = pluginList[name as PluginsNames];
     // @ts-expect-error TODO fix complex typescript error
     const plugin = new PluginClass(parameters);
-    logger.debug(`[INIT] ${name} plugin created !`);
+    debug('init', `${name} plugin created !`);
     return { ...pluginCtx, plugin };
   });
 
@@ -102,7 +102,7 @@ export const preloadMarkets = async (context: PipelineContext) => {
     ['realtime', 'importer'].includes(mode) || some(context, plugin => plugin.inject?.includes('broker'));
   if (isPreloadMarketNeeded) {
     const broker = await inject.broker();
-    logger.debug(`[INIT] Preloading Markets data for ${broker.getBrokerName()}`);
+    debug('init', `Preloading Markets data for ${broker.getBrokerName()}`);
     await broker.loadMarkets();
   }
   return context;

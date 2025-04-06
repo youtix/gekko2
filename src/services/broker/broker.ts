@@ -9,7 +9,7 @@ import { Portfolio } from '@models/types/portfolio.types';
 import { Ticker } from '@models/types/ticker.types';
 import { Trade } from '@models/types/trade.types';
 import { config } from '@services/configuration/configuration';
-import { logger } from '@services/logger';
+import { error } from '@services/logger';
 import { getRetryDelay } from '@utils/fetch/fetch.utils';
 import Big from 'big.js';
 import ccxt, { Exchange, NetworkError } from 'ccxt';
@@ -79,10 +79,10 @@ export abstract class Broker {
   private async retry<T>(fn: () => Promise<T>, currRetry = 1): Promise<T> {
     try {
       return await fn();
-    } catch (error) {
-      const isRetryableError = error instanceof NetworkError;
-      if (error instanceof Error) logger.error(`${this.brokerName} call failed due to ${error.message}`);
-      if (!isRetryableError || currRetry > BROKER_MAX_RETRIES_ON_FAILURE) throw error;
+    } catch (err) {
+      const isRetryableError = err instanceof NetworkError;
+      if (err instanceof Error) error('broker', `${this.brokerName} call failed due to ${err.message}`);
+      if (!isRetryableError || currRetry > BROKER_MAX_RETRIES_ON_FAILURE) throw err;
       await this.broker.sleep(getRetryDelay(currRetry));
       return this.retry(fn, currRetry + 1);
     }

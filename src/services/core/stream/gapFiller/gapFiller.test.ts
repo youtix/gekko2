@@ -4,7 +4,7 @@ import * as utils from '../../../../utils/candle/candle.utils';
 import { config } from '../../../configuration/configuration';
 import { GapFillerStream } from './gapFiller.stream';
 
-vi.mock('@services/logger', () => ({ logger: { warn: vi.fn() } }));
+vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({ getWatch: vi.fn() }));
   return { config: new Configuration() };

@@ -1,11 +1,11 @@
+import { Batch } from '@models/types/batch.types';
+import { Candle } from '@models/types/candle.types';
+import { Trade } from '@models/types/trade.types';
+import { debug } from '@services/logger';
+import { resetDateParts, toISOString } from '@utils/date/date.utils';
+import { filterTradesByTimestamp } from '@utils/trade/trade.utils';
 import Big from 'big.js';
 import { dropRight, each, first, groupBy, last, map, max, mergeWith, min, pick, sortBy } from 'lodash-es';
-import { Batch } from '../../../models/types/batch.types';
-import { Candle } from '../../../models/types/candle.types';
-import { Trade } from '../../../models/types/trade.types';
-import { resetDateParts, toISOString } from '../../../utils/date/date.utils';
-import { filterTradesByTimestamp } from '../../../utils/trade/trade.utils';
-import { logger } from '../../logger';
 
 export class CandleManager {
   threshold: EpochTimeStamp;
@@ -32,7 +32,7 @@ export class CandleManager {
     const candles = sortBy(map(buckets, this.calculateCandle), 'start');
     if (!candles?.length) return [];
 
-    if (candles && candles.length - 1) logger.debug(`${candles.length - 1} candle(s) of 1 min created from trade(s)`);
+    if (candles && candles.length - 1) debug('core', `${candles.length - 1} candle(s) of 1 min created from trade(s)`);
 
     this.threshold = last(candles)?.start ?? 0;
     return dropRight(candles);

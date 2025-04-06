@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FailedtoTickOnTimeError } from '../../../errors/failedToTickOnTime.error';
 import { Heart } from './heart';
 
-vi.mock('../../logger', () => ({ logger: { debug: vi.fn() } }));
+vi.mock('@services/logger', () => ({ debug: vi.fn() }));
 vi.mock('./heart.utils', () => ({ getTickRate: vi.fn().mockReturnValue(20) }));
 vi.mock('lodash-es', async () => ({
   ...(await vi.importActual('lodash-es')),

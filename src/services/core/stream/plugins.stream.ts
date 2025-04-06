@@ -1,6 +1,6 @@
 import { Candle } from '@models/types/candle.types';
 import { Plugin } from '@plugins/plugin';
-import { logger } from '@services/logger';
+import { debug } from '@services/logger';
 import { after, bind, each, find } from 'lodash-es';
 import { Writable } from 'node:stream';
 
@@ -18,7 +18,7 @@ export class PluginsStream extends Writable {
 
   public end(_?: unknown, __?: unknown, done?: (error?: Error | null) => void): this {
     each(this.plugins, c => c.processCloseStream(done));
-    logger.debug('Stream ended !');
+    debug('stream', 'Stream ended !');
     return this;
   }
 

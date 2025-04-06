@@ -7,8 +7,11 @@ import {
   ORDER_STATUS_CHANGED_EVENT,
 } from './baseOrder.const';
 
-vi.mock('../../../logger', () => ({
-  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+vi.mock('@services/logger', () => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
 }));
 
 class TestOrder extends BaseOrder {

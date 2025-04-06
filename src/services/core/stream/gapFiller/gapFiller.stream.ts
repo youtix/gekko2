@@ -1,7 +1,7 @@
 import { Candle } from '@models/types/candle.types';
 import { Configuration } from '@models/types/configuration.types';
 import { config } from '@services/configuration/configuration';
-import { logger } from '@services/logger';
+import { warning } from '@services/logger';
 import { fillMissingCandles } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
 import { addMinutes } from 'date-fns';
@@ -29,7 +29,8 @@ export class GapFillerStream extends Transform {
         const hasMissingCandle = expectedTimestamp !== candle.start;
 
         if (hasMissingCandle) {
-          logger.warn(
+          warning(
+            'stream',
             [
               `Gap detected: missing candle(s) between ${toISOString(this.lastCandle.start)}`,
               `and ${toISOString(candle.start)}.`,
@@ -53,18 +54,18 @@ export class GapFillerStream extends Transform {
   }
 
   fillWithEmptyCandles(before: Candle, after: Candle) {
-    logger.warn('Filling gap using synthetic (empty) candles.');
+    warning('stream', 'Filling gap using synthetic (empty) candles.');
     const [, ...emptyCandles] = fillMissingCandles([before, after]) ?? [];
     each(dropRight(emptyCandles), this.pushCandle);
   }
 
   // async fillWithBrokerCandles(before: Candle, after: Candle) {
-  //   logger.warn(`Filling gap using broker data from ${this.broker.getBrokerName()}.`);
+  //   warning('stream', `Filling gap using broker data from ${this.broker.getBrokerName()}.`);
   //   const from = addMinutes(before.start, 1).getTime();
   //   const fetchedCandles = await this.broker.fetchOHLCV(from);
   //   const candles = bridgeCandleGap(fetchedCandles, before, after);
   //   if (!candles.length) {
-  //     logger.warn(
+  //     warning('stream',
   //       'No valid candles returned by broker for the missing gap. Falling back to synthetic (empty) candles.',
   //     );
   //     this.fillWithEmptyCandles(before, after);

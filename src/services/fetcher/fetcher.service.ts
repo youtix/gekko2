@@ -1,4 +1,4 @@
-import { logger } from '../logger';
+import { error } from '@services/logger';
 import { FETCHER_MAX_RETRIES } from './fetcher.const';
 import { Fetcher } from './fetcher.types';
 
@@ -20,13 +20,12 @@ const post: Fetcher['post'] = async ({ payload, url, attempt = 0, retries = FETC
     }
 
     return data;
-  } catch (error) {
-  
+  } catch (err) {
     if (attempt >= retries) {
-      if(error instanceof Error) logger.error(error.message);
-      throw error;
+      if (err instanceof Error) error('fetcher', err.message);
+      throw err;
     }
-    
+
     await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
     return post({ url, payload, retries, attempt: attempt + 1 });
   }

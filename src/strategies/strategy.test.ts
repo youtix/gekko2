@@ -1,9 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Candle } from '../models/types/candle.types';
-import {
-  STRATEGY_NOTIFICATION_EVENT,
-  STRATEGY_UPDATE_EVENT,
-} from '../plugins/tradingAdvisor/tradingAdvisor.const';
+import { STRATEGY_NOTIFICATION_EVENT, STRATEGY_UPDATE_EVENT } from '../plugins/tradingAdvisor/tradingAdvisor.const';
 import { Strategy } from './strategy';
 // strategy.test.ts
 import { IndicatorNotFoundError } from '../errors/indicator/indicatorNotFound.error';
@@ -12,17 +9,18 @@ import * as indicators from '../indicators/index';
 import { Indicator } from '../indicators/indicator';
 import { Advice } from '../models/types/advice.types';
 import { TradeCompleted } from '../models/types/tradeStatus.types';
-import { logger } from '../services/logger';
+import { warning } from '../services/logger';
 import { toTimestamp } from '../utils/date/date.utils';
 
-vi.mock('../services/configuration/configuration', () => {
+vi.mock('@services/logger', () => ({ debug: vi.fn(), warning: vi.fn() }));
+vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getWatch: vi.fn(() => ({ mode: 'backtest' })),
     getStrategy: vi.fn(),
   }));
   return { config: new Configuration() };
 });
-vi.mock('../services/storage/stateManager', () => ({ StateManager: vi.fn() }));
+vi.mock('@services/storage/stateManager', () => ({ StateManager: vi.fn() }));
 
 class DummyStrategy extends Strategy<'Dummy'> {
   ended = false;
@@ -132,16 +130,12 @@ describe('Strategy', () => {
   describe('addIndicator', () => {
     it('should throw an error if the strategy is already initialized', () => {
       strategy['isStartegyInitialized'] = true;
-      expect(() => strategy['addIndicator']('DummyIndicator', {})).toThrow(
-        StrategyAlreadyInitializedError,
-      );
+      expect(() => strategy['addIndicator']('DummyIndicator', {})).toThrow(StrategyAlreadyInitializedError);
     });
 
     it('should throw an error if the indicator is not found', () => {
       strategy['isStartegyInitialized'] = false;
-      expect(() => strategy['addIndicator']('NonExistentIndicator', {})).toThrow(
-        IndicatorNotFoundError,
-      );
+      expect(() => strategy['addIndicator']('NonExistentIndicator', {})).toThrow(IndicatorNotFoundError);
     });
 
     it('should add and return the indicator if valid', () => {
@@ -205,13 +199,11 @@ describe('Strategy', () => {
 
     it('should log a warning if given a direction object with direction "short"', () => {
       strategy['candle'] = dummyCandle;
-      const warnSpy = vi.spyOn(logger, 'warn');
       strategy['advice']({
         direction: 'short',
         trigger: { trailPercentage: 10, trailValue: 1, type: 'trailingStop' },
       });
-      expect(warnSpy).toHaveBeenCalled();
-      warnSpy.mockRestore();
+      expect(warning).toHaveBeenCalled();
     });
 
     it('should clear pendingTriggerAdvice if direction is "short"', () => {

@@ -1,6 +1,6 @@
 import { MissingCandlesError } from '@errors/backtest/MissingCandles.error';
 import { config } from '@services/configuration/configuration';
-import { logger } from '@services/logger';
+import { debug, info, warning } from '@services/logger';
 import { inject } from '@services/storage/injecter/injecter';
 import { Storage } from '@services/storage/storage';
 import { splitIntervals, toISOString } from '@utils/date/date.utils';
@@ -24,15 +24,15 @@ export class BacktestStream extends Readable {
       throw new MissingCandlesError(daterange);
     }
 
-    logger.warn('WARNING: BACKTESTING FEATURE NEEDS PROPER TESTING');
-    logger.warn('WARNING: ACT ON THESE NUMBERS AT YOUR OWN RISK!');
+    warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
 
     const { batchSize, asset, currency } = config.getWatch();
     const { name } = config.getStrategy();
     this.dateranges = splitIntervals(daterange.start, daterange.end, batchSize ?? 1440);
     this.iteration = 0;
 
-    logger.info(
+    info(
+      'stream',
       [
         `Launching backtest on ${asset}/${currency}`,
         `from ${toISOString(daterange.start)} -> to ${toISOString(daterange.end)}`,
@@ -55,7 +55,7 @@ export class BacktestStream extends Readable {
       if (candles.length === expectedCandles) candles.forEach(candle => this.push(candle));
       else throw new MissingCandlesError(daterange);
 
-      logger.debug(`Reading database data from ${toISOString(daterange.start)} -> to ${toISOString(daterange.end)}`);
+      debug('stream', `Reading database data from ${toISOString(daterange.start)} -> to ${toISOString(daterange.end)}`);
     }
 
     this.iteration++;

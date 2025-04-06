@@ -14,9 +14,9 @@
 
 */
 
-import { pipeline } from './services/core/pipeline';
-import { logger } from './services/logger';
-import { logVersion } from './utils/process/process.utils';
+import { pipeline } from '@services/core/pipeline';
+import { error, info } from '@services/logger';
+import { logVersion } from '@utils/process/process.utils';
 
 export const main = async () => {
   // eslint-disable-next-line no-console
@@ -33,10 +33,10 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
 `);
 
   try {
-    logger.info(logVersion());
+    info('init', logVersion());
     pipeline(); // Launch bot
   } catch (e) {
-    logger.error(e instanceof Error ? e.message : e);
+    error('init', e instanceof Error ? e.message : e);
   }
 };
 

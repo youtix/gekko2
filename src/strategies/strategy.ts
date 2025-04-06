@@ -1,23 +1,23 @@
+import { IndicatorNotFoundError } from '@errors/indicator/indicatorNotFound.error';
+import { StrategyAlreadyInitializedError } from '@errors/strategy/strategyAlreadyInitialized.error';
 import * as indicators from '@indicators/index';
+import { Indicator } from '@indicators/indicator';
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
+import { Advice } from '@models/types/advice.types';
+import { Candle } from '@models/types/candle.types';
+import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { config } from '@services/configuration/configuration';
+import { warning } from '@services/logger';
 import { processStartTime } from '@utils/process/process.utils';
 import Big from 'big.js';
 import { isBefore, subMinutes } from 'date-fns';
 import { each, isNil, isObject, isString, map } from 'lodash-es';
 import EventEmitter from 'node:events';
-import { IndicatorNotFoundError } from '../errors/indicator/indicatorNotFound.error';
-import { StrategyAlreadyInitializedError } from '../errors/strategy/strategyAlreadyInitialized.error';
-import { Indicator } from '../indicators/indicator';
-import { Advice } from '../models/types/advice.types';
-import { Candle } from '../models/types/candle.types';
-import { TradeCompleted } from '../models/types/tradeStatus.types';
 import {
   STRATEGY_NOTIFICATION_EVENT,
   STRATEGY_UPDATE_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
 } from '../plugins/tradingAdvisor/tradingAdvisor.const';
-import { logger } from '../services/logger';
 import { Direction, RecommendedAdvice, StrategyNames, StrategyParamaters } from './strategy.types';
 
 export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
@@ -120,7 +120,7 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
 
     if (isObject(direction)) {
       if (newDirection === 'short') {
-        logger.warn('Strategy adviced a stop on not long, this is not supported. As such the stop is ignored');
+        warning('strategy', 'Strategy adviced a stop on not long, this is not supported. As such the stop is ignored');
       }
       if (newDirection === 'long') {
         const { trailPercentage, trailValue } = direction.trigger;

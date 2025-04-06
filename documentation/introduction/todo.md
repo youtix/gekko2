@@ -59,14 +59,14 @@ Features to consider for the roadmap:
 - ✅ Bitfinex
 
 ### Logger
-- ⬜ Tag for logging `[TAG] message`
+- ✅ Tag for logging `{tag: '', message: ''}`
 
 ### Core
 - 🟨 Pipeline
-- 🟥 Importer Stream
-  - ⬜ Fill gaps in imported history from exchange
+- ✅ Importer Stream
 - 🟨 Backtest Stream
 - 🟨 Realtime Stream
+- ✅ Gap Filler Stream
 
 ### configuration
 - ⬜ Disable console log

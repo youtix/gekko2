@@ -1,8 +1,8 @@
+import { FailedtoTickOnTimeError } from '@errors/failedToTickOnTime.error';
+import { debug } from '@services/logger';
 import { getUnixTime, secondsToMilliseconds } from 'date-fns';
 import { bindAll, defer } from 'lodash-es';
 import EventEmitter from 'node:events';
-import { FailedtoTickOnTimeError } from '../../../errors/failedToTickOnTime.error';
-import { logger } from '../../logger';
 
 export class Heart extends EventEmitter {
   private lastTick: number;
@@ -25,13 +25,13 @@ export class Heart extends EventEmitter {
   }
 
   public pump() {
-    logger.debug('Starting heartbeat ticks');
+    debug('core', 'Starting heartbeat ticks');
     this.timeout = setInterval(this.tick, secondsToMilliseconds(this.tickRate));
     defer(this.tick);
   }
 
   public stop() {
-    logger.debug('Stoping heartbeat ticks');
+    debug('core', 'Stoping heartbeat ticks');
     clearInterval(this.timeout);
     this.timeout = undefined;
   }

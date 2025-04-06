@@ -2,11 +2,14 @@ import { InvalidOrder, OrderNotFound } from 'ccxt';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OrderOutOfRangeError } from '../../../../errors/broker/OrderOutRange.error';
 import { OrderError } from '../../../../errors/order/order.error';
-import { logger } from '../../../logger';
+import { warning } from '../../../logger';
 import { StickyOrder } from './stickyOrder';
 
-vi.mock('../../../logger', () => ({
-  logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+vi.mock('@services/logger', () => ({
+  debug: vi.fn(),
+  info: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
 }));
 
 const defaultOrder = {
@@ -150,9 +153,7 @@ describe('StickyOrder', () => {
         stickyOrder['createOrder'] = vi.fn();
         stickyOrder['id'] = 'order-move-test';
         stickyOrder['amount'] = 10;
-        stickyOrder['transactions'] = [
-          { id: 'tx1', filled: filledAmount, timestamp: 1710000000000 },
-        ];
+        stickyOrder['transactions'] = [{ id: 'tx1', filled: filledAmount, timestamp: 1710000000000 }];
         await stickyOrder['move']();
         expect(stickyOrder['createOrder']).toHaveBeenCalledWith('buy', expectedAmount);
       },
@@ -392,7 +393,7 @@ describe('StickyOrder', () => {
         filled: 0,
         price: 100,
       });
-      expect(logger.warn).toHaveBeenCalled();
+      expect(warning).toHaveBeenCalled();
     });
   });
 
@@ -577,19 +578,16 @@ describe('StickyOrder', () => {
       filled
       ${0}
       ${5}
-    `(
-      'should call orderCanceled when status is "canceled" and filled is $filled',
-      async ({ filled }) => {
-        stickyOrder['orderCanceled'] = vi.fn();
-        await stickyOrder['handleFetchOrderSuccess']({
-          id: 'test-id',
-          status: 'canceled',
-          filled,
-          price: 100,
-        });
-        expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(!!filled);
-      },
-    );
+    `('should call orderCanceled when status is "canceled" and filled is $filled', async ({ filled }) => {
+      stickyOrder['orderCanceled'] = vi.fn();
+      await stickyOrder['handleFetchOrderSuccess']({
+        id: 'test-id',
+        status: 'canceled',
+        filled,
+        price: 100,
+      });
+      expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(!!filled);
+    });
 
     it('should call move when status is "open" and ticker price mismatches order price', async () => {
       stickyOrder['move'] = vi.fn();

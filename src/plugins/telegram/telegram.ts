@@ -9,7 +9,7 @@ import {
   TradeInitiated,
 } from '@models/types/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
-import { logger } from '@services/logger';
+import { debug } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import Big from 'big.js';
 import { formatDuration, intervalToDuration } from 'date-fns';
@@ -136,7 +136,7 @@ export class Telegram extends Plugin {
     const url = `${TELEGRAM_API_BASE_URL}${token}/sendMessage`;
     const payload = { chat_id: chatId, text: message };
 
-    logger.debug(`[TELEGRAM] Sending POST HTTP request to ${url} with payload ${JSON.stringify(payload)}`);
+    debug('telegram', `Sending POST HTTP request to ${url} with payload ${JSON.stringify(payload)}`);
 
     try {
       return this.getFetcher().post({ url, payload });

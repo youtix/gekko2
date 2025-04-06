@@ -1,6 +1,6 @@
 import { Candle } from '@models/types/candle.types';
 import { config } from '@services/configuration/configuration';
-import { logger } from '@services/logger';
+import { debug } from '@services/logger';
 import { Database, SQLQueryBindings } from 'bun:sqlite';
 import { Interval } from 'date-fns';
 import { each } from 'lodash-es';
@@ -27,7 +27,7 @@ export class SQLiteStorage extends Storage {
       return candles.length;
     });
     const nbOfCandleInserted = insertCandles(this.buffer);
-    logger.debug(`${nbOfCandleInserted} candle(s) inserted in database`);
+    debug('storage', `${nbOfCandleInserted} candle(s) inserted in database`);
   }
 
   public upsertTable(): void {

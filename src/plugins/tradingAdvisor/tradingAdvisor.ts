@@ -3,14 +3,14 @@ import { StrategyNotFoundError } from '@errors/strategy/strategyNotFound.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { Plugin } from '@plugins/plugin';
 import { CandleBatcher } from '@services/core/batcher/candleBatcher/candleBatcher';
-import { logger } from '@services/logger';
+import { info } from '@services/logger';
+import * as strategies from '@strategies/index';
 import { Strategy } from '@strategies/strategy';
 import { StrategyNames } from '@strategies/strategy.types';
 import { addMinutes } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
-import * as strategies from '../../strategies/index';
-import { Plugin } from '../plugin';
 import {
   ADVICE_EVENT,
   STRATEGY_CANDLE_EVENT,
@@ -35,7 +35,7 @@ export class TradingAdvisor extends Plugin {
 
     this.setUpStrategy(strategyName, candleSize, historySize);
     this.setUpListeners();
-    logger.info(`Using the strategy: ${strategyName}`);
+    info('trading advisor', `Using the strategy: ${strategyName}`);
   }
 
   // --- BEGIN LISTENERS ---

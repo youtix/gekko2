@@ -1,4 +1,4 @@
-import { logger } from '@services/logger';
+import { debug } from '@services/logger';
 import { Strategy } from '@strategies/strategy';
 
 export class DebugAdvice extends Strategy<'DebugAdvice'> {
@@ -8,13 +8,13 @@ export class DebugAdvice extends Strategy<'DebugAdvice'> {
   protected onCandleAfterWarmup(): void {
     if (this.strategySettings.wait > this.index) return;
 
-    logger.debug(`[STRATEGY] iteration: ${this.index}`);
+    debug('strategy', `Iteration: ${this.index}`);
 
     if (this.index % this.strategySettings.each === 0) {
-      logger.debug('[STRATEGY] trigger SHORT');
+      debug('strategy', 'Trigger SHORT');
       this.advice('short');
     } else if (this.index % this.strategySettings.each === this.strategySettings.each / 2) {
-      logger.debug('[STRATEGY] trigger LONG');
+      debug('strategy', 'Trigger LONG');
       this.advice('long');
     }
 

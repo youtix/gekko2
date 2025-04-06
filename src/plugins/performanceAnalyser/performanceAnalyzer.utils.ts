@@ -1,14 +1,15 @@
 import { RoundTrip } from '@models/types/roundtrip.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { debug, info, warning } from '@services/logger';
+import { toISOString } from '@utils/date/date.utils';
 import Big from 'big.js';
 import { formatDuration, intervalToDuration } from 'date-fns';
-import { logger } from '../../services/logger';
-import { toISOString } from '../../utils/date/date.utils';
 import { ROUND } from './performanceAnalyzer.const';
 import { Report } from './performanceAnalyzer.types';
 
 export const logImpossibleToProcessReport = () => {
-  logger.warn(
+  warning(
+    'performance analyzer',
     ['Cannot calculate a profit report without having received portfolio data.', 'Skipping performanceReport..'].join(
       ' ',
     ),
@@ -25,7 +26,7 @@ export const logRoundtrip = (roundTrip: RoundTrip, currency: string) => {
     'P&L': `${formater.format(roundTrip.pnl)} ${currency}`,
     profit: `${+Big(roundTrip.profit).round(2, Big.roundDown)}%`,
   });
-  logger.info(roundTrip);
+  info('performance analyzer', roundTrip);
 };
 
 export const logFinalize = (report: Report, currency: string) => {
@@ -49,14 +50,15 @@ export const logFinalize = (report: Report, currency: string) => {
     expectedDownside: `${+Big(report.downside).round(2, Big.roundDown)}%`,
     ratioRoundtrip: `${+Big(report.ratioRoundTrips).round(2, Big.roundDown)}%`,
   });
-  logger.info(report);
+  info('performance analyzer', report);
 };
 
 export const logTrade = (trade: TradeCompleted, currency: string, asset: string) => {
   if (trade.action !== 'sell' && trade.action !== 'buy') return;
-  logger.debug(
+  debug(
+    'performance analyzer',
     [
-      `[PERFORMANCE ANALYZER] ${trade.action === 'buy' ? 'Bought' : 'Sold'}`,
+      `${trade.action === 'buy' ? 'Bought' : 'Sold'}`,
       `${trade.action === 'buy' ? +Big(trade.portfolio.asset).round(ROUND) : +Big(trade.portfolio.currency).round(ROUND)}`,
       `${trade.action === 'buy' ? asset : currency}`,
       `at ${toISOString(trade.date)}`,

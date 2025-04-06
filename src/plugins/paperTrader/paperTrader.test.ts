@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginError } from '../../errors/plugin/plugin.error';
 import { TrailingStop } from '../../services/core/order/trailingStop';
-import { logger } from '../../services/logger';
+import { warning } from '../../services/logger';
 import { toTimestamp } from '../../utils/date/date.utils';
 import {
   PORTFOLIO_CHANGE_EVENT,
@@ -14,11 +14,11 @@ import {
 import { PaperTrader } from './paperTrader';
 import { PapertraderConfig } from './paperTrader.types';
 
-vi.mock('../../services/logger', () => ({ logger: { warn: vi.fn() } }));
-vi.mock('../../services/core/order/trailingStop', () => ({
+vi.mock('@services/logger', () => ({ warning: vi.fn() }));
+vi.mock('@services/core/order/trailingStop', () => ({
   TrailingStop: vi.fn(() => ({ updatePrice: vi.fn() })),
 }));
-vi.mock('../../services/configuration/configuration', () => {
+vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn();
   Configuration.prototype.getWatch = vi.fn(() => ({ mode: 'realtime' }));
   return { config: new Configuration() };
@@ -366,9 +366,7 @@ describe('PaperTrader', () => {
 
       trader['createTrigger'](advice);
 
-      expect(logger.warn).toHaveBeenCalledWith(
-        '[Papertrader] ignoring trailing stop without trail value',
-      );
+      expect(warning).toHaveBeenCalledWith('paper trader', 'Ignoring trailing stop without trail value');
     });
     it('should log if trigger type is unknown', () => {
       const advice = {
@@ -379,8 +377,9 @@ describe('PaperTrader', () => {
 
       trader['createTrigger'](advice);
 
-      expect(logger.warn).toHaveBeenCalledWith(
-        '[Papertrader] Gekko does not know trigger with type "unknown".. Ignoring stop.',
+      expect(warning).toHaveBeenCalledWith(
+        'paper trader',
+        'Gekko does not know trigger with type "unknown".. Ignoring stop.',
       );
     });
   });
@@ -590,11 +589,7 @@ describe('PaperTrader', () => {
         effectivePrice: 190,
         feePercent: 0.25,
       };
-      expect(trader['deferredEmit']).toHaveBeenNthCalledWith(
-        4,
-        TRADE_COMPLETED_EVENT,
-        expectedPayload,
-      );
+      expect(trader['deferredEmit']).toHaveBeenNthCalledWith(4, TRADE_COMPLETED_EVENT, expectedPayload);
     });
     it('should delete activeStopTrigger after execution', () => {
       trader['candle'] = { start: toTimestamp('2025-01-01T00:00:00Z'), close: 150 };

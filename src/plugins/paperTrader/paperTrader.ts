@@ -15,7 +15,7 @@ import {
 } from '@plugins/plugin.const';
 import { ActiveStopTrigger } from '@plugins/plugin.types';
 import { TrailingStop } from '@services/core/order/trailingStop';
-import { logger } from '@services/logger';
+import { warning } from '@services/logger';
 import Big from 'big.js';
 import { addMinutes } from 'date-fns';
 import { filter } from 'lodash-es';
@@ -86,7 +86,7 @@ export class PaperTrader extends Plugin {
         this.createTrigger(advice);
       }
     } else {
-      logger.warn(`[Papertrader] ignoring unknown advice recommendation: ${advice.recommendation}`);
+      warning('paper trader', `Ignoring unknown advice recommendation: ${advice.recommendation}`);
       return;
     }
 
@@ -165,7 +165,7 @@ export class PaperTrader extends Plugin {
 
     if (trigger && trigger.type === 'trailingStop') {
       if (!trigger.trailValue) {
-        return logger.warn('[Papertrader] ignoring trailing stop without trail value');
+        return warning('paper trader', 'Ignoring trailing stop without trail value');
       }
 
       const triggerId = `trigger-${++this.propogatedTriggers}`;
@@ -190,7 +190,7 @@ export class PaperTrader extends Plugin {
         }),
       };
     } else {
-      logger.warn(`[Papertrader] Gekko does not know trigger with type "${trigger?.type}".. Ignoring stop.`);
+      warning('paper trader', `Gekko does not know trigger with type "${trigger?.type}".. Ignoring stop.`);
     }
   }
 

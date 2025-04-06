@@ -1,7 +1,7 @@
 import { Action } from '@models/types/action.types';
 import { Order } from '@models/types/order.types';
 import { Broker } from '@services/broker/broker';
-import { logger } from '@services/logger';
+import { debug, error, info } from '@services/logger';
 import EventEmitter from 'node:events';
 import {
   ORDER_COMPLETED_EVENT,
@@ -26,7 +26,7 @@ export abstract class BaseOrder extends EventEmitter {
 
   protected async createOrder(action: Action, amount: number) {
     try {
-      logger.debug(`[ORDER] Creating ${action} limit order with amount: ${amount}`);
+      debug('order', `Creating ${action} limit order with amount: ${amount}`);
       const order = await this.broker.createLimitOrder(action, amount);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
@@ -36,7 +36,7 @@ export abstract class BaseOrder extends EventEmitter {
 
   protected async cancelOrder(id: string) {
     try {
-      logger.debug(`[ORDER] Canceling order with ID: ${id}`);
+      debug('order', `Canceling order with ID: ${id}`);
       const order = await this.broker.cancelLimitOrder(id);
       await this.handleCancelOrderSuccess(order);
     } catch (error) {
@@ -46,7 +46,7 @@ export abstract class BaseOrder extends EventEmitter {
 
   protected async fetchOrder(id: string) {
     try {
-      logger.debug(`[ORDER] Fetching order with ID: ${id}`);
+      debug('order', `Fetching order with ID: ${id}`);
       const order = await this.broker.fetchOrder(id);
       await this.handleFetchOrderSuccess(order);
     } catch (error) {
@@ -61,8 +61,8 @@ export abstract class BaseOrder extends EventEmitter {
   protected setStatus(status: OrderStatus, reason?: string) {
     this.status = status;
     this.emit(ORDER_STATUS_CHANGED_EVENT, this.status);
-    if (reason) logger.error(`[ORDER] Sticky order ${status}: ${reason}`);
-    else logger.info(`[ORDER] sticky order ${status}`);
+    if (reason) error('order', `Sticky order ${status}: ${reason}`);
+    else info('order', `Sticky order ${status}`);
   }
 
   protected orderCanceled(partiallyFilled = false) {

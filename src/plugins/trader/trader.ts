@@ -21,7 +21,7 @@ import {
   ORDER_STATUS_CHANGED_EVENT,
 } from '@services/core/order/base/baseOrder.const';
 import { StickyOrder } from '@services/core/order/sticky/stickyOrder';
-import { logger } from '@services/logger';
+import { debug, error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { wait } from '@utils/process/process.utils';
 import Big from 'big.js';
@@ -58,7 +58,7 @@ export class Trader extends Plugin {
 
   private async synchronize() {
     const broker = this.getBroker();
-    logger.debug(`[TRADER] Synchronizing data with ${broker.getBrokerName()}`);
+    debug('trader', `Synchronizing data with ${broker.getBrokerName()}`);
     if (!this.price) {
       const sleepInterval = broker.getInterval();
       const ticker = await broker.fetchTicker();
@@ -67,8 +67,9 @@ export class Trader extends Plugin {
     }
     const oldPortfolio = this.portfolio;
     this.portfolio = await broker.fetchPortfolio();
-    logger.debug(
-      `[TRADER] Current portfolio: ${this.portfolio.asset} ${this.asset} / ${this.portfolio.currency} ${this.currency}`,
+    debug(
+      'trader',
+      `Current portfolio: ${this.portfolio.asset} ${this.asset} / ${this.portfolio.currency} ${this.currency}`,
     );
 
     this.setBalance();
@@ -124,7 +125,7 @@ export class Trader extends Plugin {
 
   public onAdvice(advice: Advice) {
     if (!['long', 'short'].includes(advice.recommendation)) {
-      logger.error('[TRADER] Ignoring advice in unknown direction');
+      error('trader', 'Ignoring advice in unknown direction');
       return;
     }
     const direction = advice.recommendation === 'long' ? 'buy' : 'sell';
@@ -132,18 +133,19 @@ export class Trader extends Plugin {
 
     if (this.order) {
       if (this.order.getSide() === direction) {
-        logger.info(`[TRADER] Ignoring advice: already in the process to ${direction}`);
+        info('trader', `Ignoring advice: already in the process to ${direction}`);
         return;
       }
 
       if (this.cancellingOrder) {
-        logger.info(`[TRADER] Ignoring advice: already cancelling previous ${this.order.getSide()} order`);
+        info('trader', `Ignoring advice: already cancelling previous ${this.order.getSide()} order`);
         return;
       }
 
-      logger.info(
+      info(
+        'trader',
         [
-          `[TRADER] Received advice to ${direction}`,
+          `Received advice to ${direction}`,
           `however Gekko is already in the process to ${this.order.getSide()}.`,
           `Canceling ${this.order.getSide()} order first`,
         ].join(' '),
@@ -155,7 +157,7 @@ export class Trader extends Plugin {
 
     if (direction === 'buy') {
       if (this.exposed) {
-        logger.info('[TRADER] NOT buying, already exposed');
+        info('trader', 'NOT buying, already exposed');
         return this.deferredEmit<TradeAborted>(TRADE_ABORTED_EVENT, {
           id,
           adviceId: advice.id,
@@ -167,12 +169,12 @@ export class Trader extends Plugin {
         });
       }
 
-      logger.info(`[TRADER] Received advice to go long. Buying ${this.asset}`);
+      info('trader', `Received advice to go long. Buying ${this.asset}`);
     }
 
     if (direction === 'sell') {
       if (!this.exposed) {
-        logger.info('[TRADER] NOT selling, already no exposure');
+        info('trader', 'NOT selling, already no exposure');
         return this.deferredEmit<TradeAborted>(TRADE_ABORTED_EVENT, {
           id,
           adviceId: advice.id,
@@ -184,7 +186,7 @@ export class Trader extends Plugin {
         });
       }
 
-      logger.info(`[TRADER] Received advice to go short. Selling ${this.asset}`);
+      info('trader', `Received advice to go short. Selling ${this.asset}`);
     }
 
     const amount = direction === 'buy' ? (this.portfolio.currency / this.price) * 0.95 : this.portfolio.asset;
@@ -213,7 +215,7 @@ export class Trader extends Plugin {
   }
 
   private async createOrder(side: Action, amount: number, advice: Advice, id: string) {
-    logger.info(`[TRADER] Creating order to ${side} ${amount} ${this.asset}`);
+    info('trader', `Creating order to ${side} ${amount} ${this.asset}`);
     this.deferredEmit<TradeInitiated>(TRADE_INITIATED_EVENT, {
       id,
       adviceId: advice.id,
@@ -225,11 +227,11 @@ export class Trader extends Plugin {
     this.order = new StickyOrder(side, amount, this.getBroker());
 
     this.order.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
-      logger.info(`[TRADER] partial ${side} fill, total filled: ${filled}`),
+      info('trader', `Partial ${side} fill, total filled: ${filled}`),
     );
-    this.order.on(ORDER_STATUS_CHANGED_EVENT, status => logger.debug(`[TRADER] status changed: ${status}`));
+    this.order.on(ORDER_STATUS_CHANGED_EVENT, status => debug('trader', `status changed: ${status}`));
     this.order.on(ORDER_ERRORED_EVENT, reason => {
-      logger.error(`[TRADER] Gekko received error: ${reason}`);
+      error('trader', `Gekko received error: ${reason}`);
       this.order = undefined;
       this.cancellingOrder = false;
 
@@ -238,14 +240,14 @@ export class Trader extends Plugin {
     this.order.on(ORDER_COMPLETED_EVENT, async () => {
       try {
         this.handleOrderCompletedEvent(advice, id);
-      } catch (error) {
-        if (error instanceof Error) {
-          logger.error(`[TRADER] ${error.message}`);
+      } catch (err) {
+        if (err instanceof Error) {
+          error('trader', err.message);
           return this.deferredEmit<TradeErrored>(TRADE_ERRORED_EVENT, {
             id,
             adviceId: advice.id,
             date: Date.now(),
-            reason: error.message,
+            reason: err.message,
           });
         }
       }
@@ -258,7 +260,7 @@ export class Trader extends Plugin {
       if (side === 'buy') return { effectivePrice: +Big(price).mul(Big(feePercent).div(100).add(1)), cost };
       else return { effectivePrice: +Big(price).mul(Big(feePercent).div(100).minus(1)), cost };
     }
-    logger.warn('WARNING: exchange did not provide fee information, assuming no fees..');
+    warning('trader', 'Exchange did not provide fee information, assuming no fees..');
     return { effectivePrice: price, cost: +Big(price).mul(amount) };
   }
 
@@ -273,9 +275,10 @@ export class Trader extends Plugin {
     const { amount, price, feePercent, side, date } = summary;
     const { effectivePrice, cost } = this.processCostAndPrice(side, price, amount, feePercent);
 
-    logger.info(
+    info(
+      'trader',
       [
-        `[TRADER] ${side} sticky order summary '${id}':`,
+        `${side} sticky order summary '${id}':`,
         `Completed at: ${date ? toISOString(date) : 'Unknown'},`,
         `Order amount: ${amount},`,
         `Effective price: ${effectivePrice},`,

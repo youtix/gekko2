@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateTrade } from '../../../../models/trade.mock';
 import { Trade } from '../../../../models/types/trade.types';
-import { logger } from '../../../logger';
+import { debug, warning } from '../../../logger';
 import { TradeBatcher } from './tradeBatcher';
 
-vi.mock('../../../logger', () => ({ logger: { debug: vi.fn(), warn: vi.fn() } }));
+vi.mock('@services/logger', () => ({ debug: vi.fn(), warning: vi.fn() }));
 
 describe('TradeBatcher', () => {
   let tradeBatcher: TradeBatcher;
@@ -15,19 +15,19 @@ describe('TradeBatcher', () => {
 
   it('should log and return if batch is empty', () => {
     const result = tradeBatcher.processTrades([]);
-    expect(logger.warn).toHaveBeenCalledWith('No new trades !');
+    expect(warning).toHaveBeenCalledWith('core', 'No new trades !');
     expect(result).toBeUndefined();
   });
 
   it('should return a new batch event with correct data', () => {
-    const batch: Trade[] = [
+    const batch = [
       generateTrade({ amount: 10, timestamp: 1625256000000, price: 1000 }),
       generateTrade({ amount: 15, timestamp: 1625259600000, price: 1000 }),
-    ];
+    ] as Trade[];
 
     const result = tradeBatcher.processTrades(batch);
 
-    expect(logger.debug).toHaveBeenCalledWith(expect.stringContaining('Processing 2 new trades.'));
+    expect(debug).toHaveBeenCalledWith('core', expect.stringContaining('Processing 2 new trades.'));
     expect(result).toEqual({
       amount: 2,
       start: batch[0].timestamp,
@@ -39,10 +39,10 @@ describe('TradeBatcher', () => {
   });
 
   it('should update threshold after processing batch', () => {
-    const batch: Trade[] = [
+    const batch = [
       generateTrade({ amount: 10, timestamp: 1625256000000, price: 1000 }),
       generateTrade({ amount: 15, timestamp: 1625259600000, price: 1000 }),
-    ];
+    ] as Trade[];
 
     tradeBatcher.processTrades(batch);
 
@@ -50,10 +50,10 @@ describe('TradeBatcher', () => {
   });
 
   it('should only emit once when fed the same trades twice', () => {
-    const batch: Trade[] = [
+    const batch = [
       generateTrade({ amount: 10, timestamp: 1625256000000, price: 1000 }),
       generateTrade({ amount: 15, timestamp: 1625259600000, price: 1000 }),
-    ];
+    ] as Trade[];
 
     tradeBatcher.processTrades(batch);
     const result = tradeBatcher.processTrades(batch);
@@ -63,10 +63,10 @@ describe('TradeBatcher', () => {
 
   /** remove trades that have zero amount see @link https://github.com/askmike/gekko/issues/486 */
   it('should filter out empty trades', () => {
-    const batch: Trade[] = [
+    const batch = [
       generateTrade({ amount: 0, timestamp: 1625256000000, price: 1000 }),
       generateTrade({ amount: 15, timestamp: 1625259600000, price: 1000 }),
-    ];
+    ] as Trade[];
 
     const result = tradeBatcher.processTrades(batch);
 
@@ -80,11 +80,11 @@ describe('TradeBatcher', () => {
   });
 
   it('should filter already known trades', () => {
-    const batch1: Trade[] = [generateTrade({ amount: 10, timestamp: 1625256000000, price: 1000 })];
-    const batch2: Trade[] = [
+    const batch1 = [generateTrade({ amount: 10, timestamp: 1625256000000, price: 1000 })] as Trade[];
+    const batch2 = [
       generateTrade({ amount: 10, timestamp: 1625256000000, price: 1000 }),
       generateTrade({ amount: 15, timestamp: 1625259600000, price: 1000 }),
-    ];
+    ] as Trade[];
 
     tradeBatcher.processTrades(batch1);
     const result = tradeBatcher.processTrades(batch2);

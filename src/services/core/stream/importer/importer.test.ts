@@ -16,7 +16,7 @@ function candleFactory(time: string, value: number) {
   };
 }
 
-vi.mock('@services/logger', () => ({ logger: { info: vi.fn() } }));
+vi.mock('@services/logger', () => ({ info: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getWatch: vi.fn(() => ({
