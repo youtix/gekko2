@@ -17,7 +17,7 @@ export default [
       semi: ['error', 'always'],
       indent: 'off',
       quotes: ['error', 'single'],
-      'max-len': ['error', { code: 120, ignoreTemplateLiterals: true, ignoreComments: true }],
+      'max-len': 'off',
       'comma-dangle': ['error', 'always-multiline'],
       'object-curly-spacing': ['error', 'always'],
       'import/no-cycle': 'error',
