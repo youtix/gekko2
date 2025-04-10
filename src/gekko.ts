@@ -14,13 +14,15 @@
 
 */
 
+import { config } from '@services/configuration/configuration';
 import { pipeline } from '@services/core/pipeline';
 import { error, info } from '@services/logger';
 import { logVersion } from '@utils/process/process.utils';
 
 export const main = async () => {
-  // eslint-disable-next-line no-console
-  console.log(`
+  if (config.showLogo()) {
+    // eslint-disable-next-line no-console
+    console.log(`
   ______   ________  __    __  __    __   ______          ______  
  /      \\ /        |/  |  /  |/  |  /  | /      \\        /      \\ 
 /$$$$$$  |$$$$$$$$/ $$ | /$$/ $$ | /$$/ /$$$$$$  |      /$$$$$$  |
@@ -31,6 +33,7 @@ $$ \\__$$ |$$ |_____ $$ |$$  \\ $$ |$$  \\ $$ \\__$$ |      $$ |_____
 $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
  $$$$$$/  $$$$$$$$/ $$/   $$/ $$/   $$/  $$$$$$/        $$$$$$$$/ 
 `);
+  }
 
   try {
     info('init', logVersion());

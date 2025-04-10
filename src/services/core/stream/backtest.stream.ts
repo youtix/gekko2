@@ -1,6 +1,6 @@
 import { MissingCandlesError } from '@errors/backtest/MissingCandles.error';
 import { config } from '@services/configuration/configuration';
-import { debug, info, warning } from '@services/logger';
+import { debug, error, info, warning } from '@services/logger';
 import { inject } from '@services/storage/injecter/injecter';
 import { Storage } from '@services/storage/storage';
 import { splitIntervals, toISOString } from '@utils/date/date.utils';
@@ -19,8 +19,7 @@ export class BacktestStream extends Readable {
     const result = this.storage.checkInterval(daterange);
     if (result?.missingCandleCount) {
       const availableDateranges = this.storage.getCandleDateranges();
-      // eslint-disable-next-line no-console
-      console.table(availableDateranges);
+      error('stream', { availableDateranges });
       throw new MissingCandlesError(daterange);
     }
 

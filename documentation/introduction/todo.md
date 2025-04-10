@@ -69,7 +69,8 @@ Features to consider for the roadmap:
 - ✅ Gap Filler Stream
 
 ### configuration
-- ⬜ Disable console log
+- ✅ Add showLogo property in configuration
+- ⬜ Add showTables property for performance analyzer plugin
 
 ## Documentation
 - ⬜ Getting started

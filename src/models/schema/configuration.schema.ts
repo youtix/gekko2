@@ -45,6 +45,7 @@ const disclaimerSchema = boolean().when(['plugins'], {
 });
 
 export const configurationSchema = object({
+  showLogo: boolean().default(true),
   watch: watchSchema,
   broker: brokerSchema.default(null).notRequired(),
   storage: storageSchema.default(null).notRequired(),

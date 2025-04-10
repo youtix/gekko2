@@ -19,7 +19,12 @@ class Configuration {
     const data = readFileSync(configFilePath, 'utf8');
     if (isJson) this.configuration = JSON5.parse(data);
     else if (isYaml) this.configuration = load(data) as ConfigurationModel;
-    configurationSchema.validateSync(this.configuration);
+    this.configuration = configurationSchema.validateSync(this.configuration);
+  }
+
+  public showLogo() {
+    if (!this.configuration) throw new MalformedConfigurationError('Empty configuration file');
+    return this.configuration.showLogo;
   }
 
   public getPlugins() {
