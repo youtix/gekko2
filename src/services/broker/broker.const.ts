@@ -4,7 +4,6 @@ export const BROKER_MANDATORY_FEATURES = [
   'cancelOrder',
   'createLimitOrder',
   'fetchBalance',
-  'fetchBalance',
   'fetchMyTrades',
   'fetchOHLCV',
   'fetchOrder',
