@@ -4,6 +4,10 @@
 
 Gekko supports multiple exchanges, strategy development, backtesting on historical data, paper trading, and live automated trading with real funds.
 
+## Getting Started
+
+If you're new to Gekko, check out the [Getting Started](./getting-started.md) guide to set up your environment and run your first strategy.
+
 ## Strategies
 
 A [**strategy**](../strategies/introduction.md) in Gekko is a JavaScript class that defines how your bot reacts to market conditions. Strategies process market data (candles and indicators) and can issue **advices**: go `long` (buy) or go `short` (sell).

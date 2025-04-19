@@ -14,6 +14,7 @@ _Use Gekko 2 at your own risk._
 
 - [Introduction](./documentation/introduction/about-gekko.md)
 
+  - [Getting Started](./documentation/introduction/getting-started.md)
   - [Roadmap](./documentation/introduction/roadmap.md)
   - [Supported Exchanges](./documentation/introduction/supported-exchanges.md)
   - [Supporting The Project](./documentation/introduction/supporting-project.md)
