@@ -11,7 +11,7 @@ export class PSAR extends Indicator<'PSAR'> {
   private sar: number;
   private af: number;
   private ep: number;
-  private isLong: boolean = true;
+  private isLong: boolean;
 
   constructor({ acceleration = 0.02, maxAcceleration = 0.2 }: IndicatorRegistry['PSAR']['input'] = {}) {
     super('PSAR', null);
