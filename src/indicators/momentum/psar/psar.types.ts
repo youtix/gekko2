@@ -1,6 +1,6 @@
 declare global {
   interface IndicatorRegistry {
-    PSAR: { input: null; output: null };
+    PSAR: { input: { acceleration?: number; maxAcceleration?: number }; output: number | null };
   }
 }
 
