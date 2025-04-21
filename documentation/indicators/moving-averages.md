@@ -14,6 +14,10 @@ EMA gives more weight to recent prices, making it more responsive to new data th
 
 DEMA is designed to reduce the lag of traditional EMAs. It combines an EMA and another EMA applied to the first EMA, providing a smoother and more responsive trend-following line.
 
+## **TEMA (Triple Exponential Moving Average)**
+
+TEMA further reduces lag compared to EMA and DEMA by combining a single EMA, a double EMA, and a triple EMA into one formula. This results in a moving average that is even more responsive to price changes while maintaining smoothness, making it useful for traders who want to minimize lag in their signals.
+
 ## **WMA (Weighted Moving Average)**
 
 WMA assigns more weight to recent prices by multiplying each price by a weight based on its age. This makes it more sensitive than SMA or EMA to recent price movements.
