@@ -15,6 +15,10 @@ ROC measures the percentage change between the current price and the price a cer
 
 The Parabolic SAR (PSAR) is a momentum indicator used to determine potential reversals in market price direction. It appears as a series of dots placed above or below the price chart. When the dots are below the price, it signals an uptrend; when they are above, it signals a downtrend. PSAR is commonly used to set trailing stop-loss levels and to identify entry and exit points in trending markets.
 
+## **Stochastic Oscillator**
+
+The Stochastic Oscillator is a momentum indicator that compares a particular closing price to a range of its prices over a certain period. It consists of two lines: %K (the main line) and %D (a moving average of %K). Values above 80 typically indicate overbought conditions, while values below 20 suggest oversold conditions. The Stochastic Oscillator is useful for identifying potential reversal points and confirming trend strength.
+
 ---
 
 More momentum indicators will be introduced in future releases.

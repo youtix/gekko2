@@ -1,10 +1,78 @@
+import { DEMA, EMA, SMA, WMA } from '@indicators/movingAverages';
+import { Candle } from '@models/types/candle.types';
+import Big from 'big.js';
 import { Indicator } from '../../indicator';
 
-export class Stochastic extends Indicator {
-  public onNewCandle(/** candle: Candle*/): void {
-    throw new Error('Method not implemented.');
+const MovingAverages = {
+  sma: SMA,
+  ema: EMA,
+  dema: DEMA,
+  wma: WMA,
+};
+
+export class Stochastic extends Indicator<'Stochastic'> {
+  private highs: number[] = [];
+  private lows: number[] = [];
+  private closes: number[] = [];
+  private idxFast = 0;
+  private age: number;
+  private warmingUpPeriod: number;
+
+  private maSlowK: SMA | EMA | DEMA | WMA;
+  private maSlowD: SMA | EMA | DEMA | WMA;
+
+  constructor(
+    { fastKPeriod, slowKPeriod, slowKMaType, slowDPeriod, slowDMaType }: IndicatorRegistry['Stochastic']['input'] = {
+      fastKPeriod: 5,
+      slowKPeriod: 3,
+      slowKMaType: 'sma',
+      slowDPeriod: 3,
+      slowDMaType: 'sma',
+    },
+  ) {
+    super('Stochastic', { k: null, d: null });
+
+    // buffers for raw Fast %K calculation
+    this.highs = [];
+    this.lows = [];
+    this.closes = [];
+    this.idxFast = 0;
+    this.age = 0;
+    this.warmingUpPeriod = fastKPeriod - 1 + slowKPeriod - 1 + slowDPeriod - 1;
+
+    // smoothing engines
+    this.maSlowK = new MovingAverages[slowKMaType]({ period: slowKPeriod });
+    this.maSlowD = new MovingAverages[slowDMaType]({ period: slowDPeriod });
+
+    // store periods on the instance for use below
+    this.fastKPeriod = fastKPeriod;
   }
-  public getResult(): number | null {
-    throw new Error('Method not implemented.');
+
+  private fastKPeriod: number;
+
+  public onNewCandle(candle: Candle) {
+    this.highs[this.idxFast] = candle.high;
+    this.lows[this.idxFast] = candle.low;
+    this.closes[this.idxFast] = candle.close;
+    this.idxFast = +Big(this.idxFast).plus(1).mod(this.fastKPeriod);
+
+    const lowest = Math.min(...this.lows);
+    const highest = Math.max(...this.highs);
+    const range = Big(highest).minus(lowest);
+    const rawK = range.eq(0) ? 0 : +Big(candle.close).minus(lowest).div(range).times(100);
+
+    this.maSlowK.onNewCandle({ close: rawK } as Candle);
+    const slowK = this.maSlowK.getResult();
+
+    this.maSlowD.onNewCandle({ close: slowK ?? 0 } as Candle);
+    const slowD = this.maSlowD.getResult();
+
+    // Wait the end of warming up period
+    if (this.warmingUpPeriod === this.age) this.result = { k: slowK, d: slowD };
+    else this.age++;
+  }
+
+  public getResult() {
+    return this.result;
   }
 }
