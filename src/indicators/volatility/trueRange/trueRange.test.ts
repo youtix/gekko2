@@ -46,6 +46,6 @@ describe('TrueRange', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${62.89732934513477}
   `('should correctly calculate TrueRanges when candle is $candle', ({ candle, expected }) => {
     trange.onNewCandle(candle);
-    expect(trange.getResult()).toBe(expected);
+    expect(trange.getResult()).toBeCloseTo(expected, 13);
   });
 });

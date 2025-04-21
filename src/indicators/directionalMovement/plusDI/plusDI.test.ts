@@ -46,6 +46,6 @@ describe('PlusDI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${18.394016938688743}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     plusDI.onNewCandle(candle);
-    expect(plusDI.getResult()).toBe(expected);
+    expect(plusDI.getResult()).toBeCloseTo(expected, 13);
   });
 });

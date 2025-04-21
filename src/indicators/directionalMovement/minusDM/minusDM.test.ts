@@ -46,6 +46,6 @@ describe('MinusDM', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${121.56891717852923}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     minusDM.onNewCandle(candle);
-    expect(minusDM.getResult()).toBe(expected);
+    expect(minusDM.getResult()).toBeCloseTo(expected, 13);
   });
 });

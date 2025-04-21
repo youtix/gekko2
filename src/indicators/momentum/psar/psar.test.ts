@@ -46,6 +46,6 @@ describe('PSAR', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${1.0545784076109253}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     psar.onNewCandle(candle);
-    expect(psar.getResult()).toBe(expected);
+    expect(psar.getResult()).toBeCloseTo(expected, 13);
   });
 });

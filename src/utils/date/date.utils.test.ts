@@ -39,12 +39,9 @@ describe('isDaterangeValid', () => {
     ${'2023-01-01'}   | ${'2023-01-01'}   | ${false}
     ${'2023-01-01'}   | ${'2023-12-31'}   | ${true}
     ${'2023-05-14'}   | ${'2023-05-15'}   | ${true}
-  `(
-    'returns $expected for startDate: $startDate and endDate: $endDate',
-    ({ startDate, endDate, expected }) => {
-      expect(isDaterangeValid(startDate, endDate)).toBe(expected);
-    },
-  );
+  `('returns $expected for startDate: $startDate and endDate: $endDate', ({ startDate, endDate, expected }) => {
+    expect(isDaterangeValid(startDate, endDate)).toBe(expected);
+  });
 });
 
 import { startOfMinute, subMilliseconds } from 'date-fns';

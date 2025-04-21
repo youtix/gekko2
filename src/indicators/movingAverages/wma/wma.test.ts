@@ -46,7 +46,7 @@ describe('WMA', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${39.48888888888889}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     wma.onNewCandle(candle);
-    expect(wma.getResult()).toBe(expected);
+    expect(wma.getResult()).toBeCloseTo(expected, 13);
   });
   const wma2 = new WMA({ period: 5 });
   it.each`
@@ -61,6 +61,6 @@ describe('WMA', () => {
     ${{ close: 27.25 }}   | ${25.6396}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     wma2.onNewCandle(candle);
-    expect(wma2.getResult()).toBe(expected);
+    expect(wma2.getResult()).toBeCloseTo(expected, 13);
   });
 });

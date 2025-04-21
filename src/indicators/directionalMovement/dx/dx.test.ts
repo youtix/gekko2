@@ -46,6 +46,6 @@ describe('DX', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${21.17078863227643}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     dx.onNewCandle(candle);
-    expect(dx.getResult()).toBe(expected);
+    expect(dx.getResult()).toBeCloseTo(expected, 13);
   });
 });

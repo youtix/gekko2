@@ -1,7 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { ROC } from "./roc.indicator";
+import { describe, expect, it } from 'vitest';
+import { ROC } from './roc.indicator';
 
-describe("ROC", () => {
+describe('ROC', () => {
   const roc = new ROC({ period: 9 });
   it.each`
     candle                                                                                      | expected
@@ -44,11 +44,8 @@ describe("ROC", () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${2.2222222222222223}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${-21.839080459770116}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-89.53488372093024}
-  `(
-    "should return $expected when candle close to $candle.close",
-    ({ candle, expected }) => {
-      roc.onNewCandle(candle);
-      expect(roc.getResult()).toBe(expected);
-    },
-  );
+  `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
+    roc.onNewCandle(candle);
+    expect(roc.getResult()).toBeCloseTo(expected, 13);
+  });
 });

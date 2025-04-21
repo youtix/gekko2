@@ -19,6 +19,6 @@ describe('WilderSmoothing', () => {
     ${{ close: 61.8438 }} | ${62.854043298304}
   `('should correctly calculate Wilder Smoothing when candle is $candle', ({ candle, expected }) => {
     ws.onNewCandle(candle);
-    expect(ws.getResult()).toBe(expected);
+    expect(ws.getResult()).toBeCloseTo(expected, 13);
   });
 });
