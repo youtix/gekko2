@@ -18,9 +18,8 @@ Features to consider for the roadmap:
 ### Momentum
 - ✅ MACD
 - ✅ ROC
-- ⬜ KST
-- ⬜ PSAR
-- ⬜ Stochastic
+- ✅ PSAR
+- ✅ Stochastic
 - ⬜ Stochastic RSI
 - ⬜ TRIX
 - ⬜ Williams %R

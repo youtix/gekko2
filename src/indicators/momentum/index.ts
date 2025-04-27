@@ -1,4 +1,3 @@
-export * from './kst/kst.indicator';
 export * from './macd/macd.indicator';
 export * from './psar/psar.indicator';
 export * from './roc/roc.indicator';
