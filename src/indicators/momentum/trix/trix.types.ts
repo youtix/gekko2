@@ -1,6 +1,6 @@
 declare global {
   interface IndicatorRegistry {
-    TRIX: { input: null; output: null };
+    TRIX: { input?: { period: number }; output: number | null };
   }
 }
 
