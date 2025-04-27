@@ -8,10 +8,10 @@ export default {
       include: ['src/**/*.ts'],
       exclude: ['src/**/*.{schema,mock,types,error,const}.ts', 'src/**/index.ts'],
       thresholds: {
-        lines: 70,
-        functions: 70,
+        lines: 75,
+        functions: 80,
         branches: 90,
-        statements: 70,
+        statements: 75,
       },
     },
   },
