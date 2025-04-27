@@ -4,7 +4,7 @@ import Big from 'big.js';
 import { Indicator } from '../../indicator';
 import { PlusDM } from '../plusDM/plusDM.indicator';
 
-export class PlusDI extends Indicator {
+export class PlusDI extends Indicator<'PlusDI'> {
   private age: number;
   private period: number;
   private plusDM: PlusDM;
@@ -41,7 +41,7 @@ export class PlusDI extends Indicator {
     this.prevTR = newTR;
   }
 
-  public getResult(): number | null {
+  public getResult() {
     return this.result;
   }
 }

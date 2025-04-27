@@ -1,6 +1,7 @@
 import { Candle } from '@models/types/candle.types';
 import { debug, info } from '@services/logger';
 import { Strategy } from '@strategies/strategy';
+import { isNumber } from 'lodash-es';
 
 export class DEMA extends Strategy<'DEMA'> {
   private currentTrend?: 'down' | 'up';
@@ -15,7 +16,7 @@ export class DEMA extends Strategy<'DEMA'> {
     const resDEMA = dema.getResult();
     const resSMA = sma.getResult();
     const price = candle.close;
-    if (!resSMA || !resDEMA) return;
+    if (!isNumber(resSMA) || !isNumber(resDEMA)) return;
 
     const diff = resSMA - resDEMA;
 
@@ -44,13 +45,16 @@ export class DEMA extends Strategy<'DEMA'> {
 
   protected log(): void {
     const [dema, sma] = this.indicators;
+    const resDEMA = dema.getResult();
+    const resSMA = sma.getResult();
+    if (!isNumber(resSMA) || !isNumber(resDEMA)) return;
 
     debug(
       'strategy',
       [
         'Calculated DEMA and SMA properties for candle:',
-        `DEMA: ${dema.getResult()?.toFixed(5)}`,
-        `SMA: ${sma.getResult()?.toFixed(5)}`,
+        `DEMA: ${resDEMA.toFixed(5)}`,
+        `SMA: ${resSMA.toFixed(5)}`,
       ].join(' '),
     );
   }
