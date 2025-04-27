@@ -1,11 +1,11 @@
 export type CcxtParams = {
-  /** 
-   * Indicates that the user wants to paginate through different pages to get more data. 
-   * Default is false. 
+  /**
+   * Indicates that the user wants to paginate through different pages to get more data.
+   * Default is false.
    */
   paginate?: boolean;
-  
-  /** 
+
+  /**
    * Allows the user to control the maximum amount of requests to paginate the data.
    * Due to the rate limits, this value should not be too high. Default is 10.
    */

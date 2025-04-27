@@ -2,11 +2,7 @@ import { first, isNil } from 'lodash-es';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { PerformanceAnalyzer } from './performanceAnalyzer';
-import {
-  PERFORMANCE_REPORT_EVENT,
-  ROUNDTRIP_EVENT,
-  ROUNDTRIP_UPDATE_EVENT,
-} from './performanceAnalyzer.const';
+import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT, ROUNDTRIP_UPDATE_EVENT } from './performanceAnalyzer.const';
 
 vi.mock('./performanceAnalyzer.utils');
 vi.mock('../../services/configuration/configuration', () => {
@@ -39,9 +35,9 @@ describe('PerformanceAnalyzer', () => {
       expect(analyzer.start.balance).toBe(1000);
     });
     it.each`
-      initBalance | eventBalance | expectedStartBalance | expectedBalance
-      ${undefined}   | ${1000}      | ${1000}              | ${1000}
-      ${500}         | ${1500}      | ${500}               | ${1500}
+      initBalance  | eventBalance | expectedStartBalance | expectedBalance
+      ${undefined} | ${1000}      | ${1000}              | ${1000}
+      ${500}       | ${1500}      | ${500}               | ${1500}
     `(
       'sets start.balance and balance correctly when initBalance is $initBalance and event.balance is $eventBalance',
       ({ initBalance, eventBalance, expectedStartBalance, expectedBalance }) => {
@@ -102,9 +98,7 @@ describe('PerformanceAnalyzer', () => {
     });
     it('should call calculateReportStatistics', () => {
       const tradeEvent = { portfolio: { asset: 100, currency: 200 }, balance: 1000 };
-      const calculateReportStatisticsSpy = vi
-        .spyOn(analyzer, 'calculateReportStatistics')
-        .mockReturnValue(undefined);
+      const calculateReportStatisticsSpy = vi.spyOn(analyzer, 'calculateReportStatistics').mockReturnValue(undefined);
       analyzer.onTradeCompleted(tradeEvent);
       expect(calculateReportStatisticsSpy).toHaveBeenCalledOnce();
     });

@@ -1,9 +1,9 @@
-import { Candle } from "@models/types/candle.types";
-import { sum, sumBy } from "@utils/math/math.utils";
-import Big from "big.js";
-import { Indicator } from "../../indicator";
+import { Candle } from '@models/types/candle.types';
+import { sum, sumBy } from '@utils/math/math.utils';
+import Big from 'big.js';
+import { Indicator } from '../../indicator';
 
-export class CCI extends Indicator<"CCI"> {
+export class CCI extends Indicator<'CCI'> {
   // Constant multiplier (usually 0.015 for CCI)
   protected readonly constant: number;
   // Maximum number of candles to consider (history size)
@@ -17,8 +17,8 @@ export class CCI extends Indicator<"CCI"> {
   // Pointer for the next insertion position in the circular buffer
   protected currentIndex: number;
 
-  constructor({ constant, history }: IndicatorRegistry["CCI"]["input"]) {
-    super("CCI", NaN);
+  constructor({ constant, history }: IndicatorRegistry['CCI']['input']) {
+    super('CCI', NaN);
     this.constant = constant;
     this.historySize = history;
     // Pre-fill the history with zeros
@@ -48,18 +48,12 @@ export class CCI extends Indicator<"CCI"> {
     const avgtp = sum(this.history) / this.size;
 
     // Calculate the mean absolute deviation from the average typical price
-    const sumAbsDeviation = sumBy(
-      this.history,
-      (value) => +Big(value).minus(avgtp).abs(),
-    );
+    const sumAbsDeviation = sumBy(this.history, value => +Big(value).minus(avgtp).abs());
     const mean = +Big(sumAbsDeviation).div(this.size);
 
     // Protect against division by zero
     if (mean === 0) this.result = 0;
-    else
-      this.result = +Big(this.tp)
-        .minus(avgtp)
-        .div(+Big(this.constant).mul(mean));
+    else this.result = +Big(this.tp).minus(avgtp).div(+Big(this.constant).mul(mean));
   }
 
   /**

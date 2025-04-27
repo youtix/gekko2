@@ -1,9 +1,9 @@
-import Big from "big.js";
-import { isFunction, map, mean, mergeWith, reduce, sortBy } from "lodash-es";
+import Big from 'big.js';
+import { isFunction, map, mean, mergeWith, reduce, sortBy } from 'lodash-es';
 
 const valuesMinusMeanSquared = (values: number[] = []) => {
   const average = mean(values);
-  return map(values, (val) => Math.pow(+Big(val).minus(average), 2));
+  return map(values, val => Math.pow(+Big(val).minus(average), 2));
 };
 
 export const stdev = (vals: number[] = []) => {
@@ -29,20 +29,13 @@ export const percentile = (values: number[] = [], ptile?: number) => {
 };
 
 export const weightedMean = (values: number[], weights: number[]): number => {
-  if (values.length !== weights.length || !values.length || sum(weights) === 0)
-    throw new Error();
-  return divide(
-    reduce(mergeWith(values, weights, multiply), add, 0),
-    sum(weights),
-  );
+  if (values.length !== weights.length || !values.length || sum(weights) === 0) throw new Error();
+  return divide(reduce(mergeWith(values, weights, multiply), add, 0), sum(weights));
 };
 
 /** Least squares linear regression fitting. */
 export const linreg = (valuesX: number[], valuesY: number[]) => {
-  if (valuesX.length !== valuesY.length)
-    throw new Error(
-      "The parameters valuesX and valuesY need to have same size!",
-    );
+  if (valuesX.length !== valuesY.length) throw new Error('The parameters valuesX and valuesY need to have same size!');
 
   const n = valuesX.length;
   if (n === 0) return [];
@@ -50,16 +43,8 @@ export const linreg = (valuesX: number[], valuesY: number[]) => {
   // Calculate sums using Big.js for high-precision arithmetic.
   const sumX = reduce(valuesX, (acc, x) => acc.plus(Big(x)), Big(0));
   const sumY = reduce(valuesY, (acc, y) => acc.plus(Big(y)), Big(0));
-  const sumXX = reduce(
-    valuesX,
-    (acc, x) => acc.plus(Big(x).times(Big(x))),
-    Big(0),
-  );
-  const sumXY = reduce(
-    valuesX,
-    (acc, x, i) => acc.plus(Big(x).times(Big(valuesY[i]))),
-    Big(0),
-  );
+  const sumXX = reduce(valuesX, (acc, x) => acc.plus(Big(x).times(Big(x))), Big(0));
+  const sumXY = reduce(valuesX, (acc, x, i) => acc.plus(Big(x).times(Big(valuesY[i]))), Big(0));
 
   const count = Big(n);
 
@@ -78,10 +63,7 @@ export const multiply = (a: number, b: number) => +Big(a).mul(b);
 export const add = (a: number, b: number) => +Big(a).add(b);
 export const divide = (a: number, b: number) => +Big(a).div(b);
 export const sum = (values: number[]) => reduce(values, add, 0);
-export const sumBy = <T>(
-  values: T[],
-  cond: keyof T | ((value: T) => number),
-) => {
+export const sumBy = <T>(values: T[], cond: keyof T | ((value: T) => number)) => {
   if (isFunction(cond)) return reduce(values, (p, c) => add(p, cond(c)), 0);
   else return reduce(values, (p, c) => add(p, c[cond] as number), 0);
 };

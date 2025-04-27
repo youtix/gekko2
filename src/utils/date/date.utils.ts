@@ -1,12 +1,5 @@
 import { TZDateMini } from '@date-fns/tz';
-import {
-  addMinutes,
-  differenceInMinutes,
-  isBefore,
-  isValid,
-  startOfMinute,
-  subMilliseconds,
-} from 'date-fns';
+import { addMinutes, differenceInMinutes, isBefore, isValid, startOfMinute, subMilliseconds } from 'date-fns';
 import { isNil, reduce } from 'lodash-es';
 import { dateFnsMapper } from './date.const';
 import { Time } from './date.types';
@@ -21,17 +14,16 @@ import { Time } from './date.types';
 export const resetDateParts = (date?: EpochTimeStamp, parts?: Time[]): EpochTimeStamp =>
   date
     ? reduce(
-      parts,
-      (modifiedDate, part) => dateFnsMapper[part](modifiedDate, 0),
-      new TZDateMini(date, '+00:00'),
-    ).getTime()
+        parts,
+        (modifiedDate, part) => dateFnsMapper[part](modifiedDate, 0),
+        new TZDateMini(date, '+00:00'),
+      ).getTime()
     : 0;
 
 export const toISOString = (timestamp?: EpochTimeStamp): string =>
-  !isNil(timestamp) ? new Date(timestamp).toISOString(): 'Unknwon Date';
+  !isNil(timestamp) ? new Date(timestamp).toISOString() : 'Unknwon Date';
 
-export const toTimestamp = (iso8601String?: string): EpochTimeStamp =>
-  new Date(iso8601String ?? 0).getTime();
+export const toTimestamp = (iso8601String?: string): EpochTimeStamp => new Date(iso8601String ?? 0).getTime();
 
 export const isDaterangeValid = (startDate: string, endDate: string) => {
   const start = toTimestamp(startDate);
@@ -46,8 +38,7 @@ export const splitIntervals = (startDate: number, endDate: number, batchSize = 1
 
   const chunkMaxDuration = batchSize;
   const chunkCount = Math.ceil(totalMinutes / chunkMaxDuration);
-  const remainder =
-    chunkCount === 1 ? totalMinutes : totalMinutes % chunkMaxDuration || chunkMaxDuration;
+  const remainder = chunkCount === 1 ? totalMinutes : totalMinutes % chunkMaxDuration || chunkMaxDuration;
 
   return Array.from({ length: chunkCount }, (_, i) => {
     const minutesInChunk = i === chunkCount - 1 ? remainder : chunkMaxDuration;

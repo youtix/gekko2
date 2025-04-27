@@ -1,14 +1,14 @@
-import { Indicator } from "@indicators/indicator";
-import { Candle } from "@models/types/candle.types";
-import Big from "big.js";
+import { Indicator } from '@indicators/indicator';
+import { Candle } from '@models/types/candle.types';
+import Big from 'big.js';
 
-export class ROC extends Indicator<"ROC"> {
+export class ROC extends Indicator<'ROC'> {
   private period: number;
   private fifo: number[];
   private age: number;
 
-  constructor({ period }: IndicatorRegistry["ROC"]["input"]) {
-    super("ROC", null);
+  constructor({ period }: IndicatorRegistry['ROC']['input']) {
+    super('ROC', null);
     this.period = period;
     this.fifo = [];
     this.age = 0;
@@ -20,8 +20,7 @@ export class ROC extends Indicator<"ROC"> {
       this.fifo = [...this.fifo, close];
       this.age++;
       // Compute the first ROC value.
-      if (this.age === this.period)
-        this.result = this.computeROC(this.fifo[0], close);
+      if (this.age === this.period) this.result = this.computeROC(this.fifo[0], close);
       return;
     }
 

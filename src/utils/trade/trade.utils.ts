@@ -15,8 +15,4 @@ export const mapToOrder = (order: unknown): Order =>
   pick(order, ['id', 'status', 'filled', 'remaining', 'price', 'timestamp']) as Order;
 
 export const mapToCandles = (candles: OHLCV[]): Candle[] =>
-  map(
-    candles,
-    candle =>
-      zipObject(['start', 'open', 'high', 'low', 'close', 'volume'], [...candle]) as Candle,
-  );
+  map(candles, candle => zipObject(['start', 'open', 'high', 'low', 'close', 'volume'], [...candle]) as Candle);
