@@ -1,66 +1,47 @@
+import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
-import { sum, sumBy } from '@utils/math/math.utils';
+import { sum } from '@utils/math/math.utils';
 import Big from 'big.js';
-import { Indicator } from '../../indicator';
+import { map } from 'lodash-es';
 
 export class CCI extends Indicator<'CCI'> {
-  // Constant multiplier (usually 0.015 for CCI)
-  protected readonly constant: number;
-  // Maximum number of candles to consider (history size)
-  protected readonly historySize: number;
-  // Circular buffer to store typical prices
-  protected history: number[];
-  // Latest typical price
-  protected tp: number;
-  // Number of valid values stored (grows until it reaches historySize)
-  protected size: number;
-  // Pointer for the next insertion position in the circular buffer
-  protected currentIndex: number;
+  private fifoCandle: Candle[];
+  private period: number;
+  private age: number;
 
-  constructor({ constant, history }: IndicatorRegistry['CCI']['input']) {
-    super('CCI', NaN);
-    this.constant = constant;
-    this.historySize = history;
-    // Pre-fill the history with zeros
-    this.history = new Array<number>(history).fill(0);
-    this.tp = 0;
-    this.size = 0;
-    this.currentIndex = 0;
+  constructor({ period }: IndicatorRegistry['CCI']['input'] = { period: 14 }) {
+    super('CCI', null);
+    this.period = period;
+    this.fifoCandle = [];
+    this.age = 0;
   }
 
-  /**
-   * Process a new candle and update the CCI result.
-   * @param candle The latest candle data.
-   */
   public onNewCandle(candle: Candle): void {
-    // Calculate the typical price (TP) for the candle
-    this.tp = +Big(candle.high).plus(candle.close).plus(candle.low).div(3);
+    // Warmup phase: collect enough data
+    if (this.age < this.period) {
+      this.fifoCandle = [...this.fifoCandle, candle];
+      this.age++;
+      if (this.age === this.period) this.result = this.computeCCI();
+      return;
+    }
 
-    // Insert the new tp into the circular buffer
-    this.history[this.currentIndex] = this.tp;
-    this.currentIndex = (this.currentIndex + 1) % this.historySize;
-    if (this.size < this.historySize) this.size++;
-
-    // Not enough data yet
-    if (this.size < this.historySize) return;
-
-    // Calculate the average typical price (avgtp)
-    const avgtp = sum(this.history) / this.size;
-
-    // Calculate the mean absolute deviation from the average typical price
-    const sumAbsDeviation = sumBy(this.history, value => +Big(value).minus(avgtp).abs());
-    const mean = +Big(sumAbsDeviation).div(this.size);
-
-    // Protect against division by zero
-    if (mean === 0) this.result = 0;
-    else this.result = +Big(this.tp).minus(avgtp).div(+Big(this.constant).mul(mean));
+    // Rolling window update
+    this.fifoCandle = [...this.fifoCandle.slice(1), candle];
+    this.result = this.computeCCI();
   }
 
-  /**
-   * Retrieve the latest CCI result.
-   * @returns The latest CCI value or NaN if insufficient data.
-   */
-  public getResult(): number {
+  private computeCCI() {
+    const hlc3 = map(this.fifoCandle, ({ high, low, close }) => +Big(high).plus(low).plus(close).div(3));
+    const mean = +Big(sum(hlc3)).div(this.period);
+    const devSum = hlc3.reduce((acc, v) => +Big(v).minus(mean).abs().plus(acc), 0);
+    const denom = +Big(devSum).div(this.period).times(0.015);
+    if (denom === 0) return 0;
+    return +Big(hlc3[this.period - 1])
+      .minus(mean)
+      .div(denom);
+  }
+
+  public getResult() {
     return this.result;
   }
 }
