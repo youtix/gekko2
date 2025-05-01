@@ -1,6 +1,6 @@
 declare global {
   interface IndicatorRegistry {
-    RSI: { input: null; output: null };
+    RSI: { input: { period: number }; output: number | null };
   }
 }
 
