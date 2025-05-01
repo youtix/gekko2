@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { AO } from './ao.indicator';
 
 describe('AO', () => {
-  const sma = new AO({ short: 3, long: 9 });
+  const ao = new AO({ short: 3, long: 9 });
   it.each`
     candle                                                                                      | expected
     ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}    | ${null}
@@ -45,7 +45,7 @@ describe('AO', () => {
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${-2.1111111111111143}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${10.055555555555557}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
-    sma.onNewCandle(candle);
-    expect(sma.getResult()).toBeCloseTo(expected, 13);
+    ao.onNewCandle(candle);
+    expect(ao.getResult()).toBeCloseTo(expected, 13);
   });
 });
