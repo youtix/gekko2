@@ -1,12 +1,14 @@
+import { MovingAverageTypes } from '@indicators/indicator.types';
+
 declare global {
   interface IndicatorRegistry {
     Stochastic: {
       input: {
         fastKPeriod: number;
         slowKPeriod: number;
-        slowKMaType: 'sma' | 'ema' | 'dema' | 'wma';
+        slowKMaType: MovingAverageTypes;
         slowDPeriod: number;
-        slowDMaType: 'sma' | 'ema' | 'dema' | 'wma';
+        slowDMaType: MovingAverageTypes;
       };
       output: { k: number | null; d: number | null };
     };
