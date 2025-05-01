@@ -2,6 +2,10 @@
 
 If you want to use Gekko to [backtest against historical data](./backtest.md), you’ll first need historical data to test against. Gekko includes functionality to automatically import historical data from certain exchanges. However, only a few exchanges support this. You can check which exchanges are supported [here](../introduction/supported-exchanges.md).
 
+## Architecture
+
+![image](https://github.com/user-attachments/assets/9720cc8c-d2a7-445e-86fa-08ad2f2649f7)
+
 ## Setup
 
 To import data, you should [enable and configure](../plugins/introduction.md) the following plugin:
