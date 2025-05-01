@@ -6,6 +6,10 @@ import { isNumber } from 'lodash-es';
 export class DEMA extends Strategy<'DEMA'> {
   private currentTrend?: 'down' | 'up';
 
+  constructor(strategyName: string, candleSize: number, requiredHistory?: number) {
+    super(strategyName, candleSize, requiredHistory);
+  }
+
   protected init(): void {
     this.addIndicator('DEMA', { period: this.strategySettings.period });
     this.addIndicator('SMA', { period: this.strategySettings.period });
