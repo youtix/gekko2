@@ -9,17 +9,20 @@ storage:
   database: ./db/gekko.sql
 
 strategy:
-  name: DEMA
-  period: 12
+  name: MACD
+  short: 12
+  long: 26
+  signal: 9
   thresholds:
-    up: 100
-    down: -150
+    up: 750
+    down: -750
+    persistence: 3
 
 plugins:
   - name: TradingAdvisor
-    strategyName: DEMA
-    candleSize: 60
-    historySize: 5
+    strategyName: MACD
+    candleSize: 1440
+    historySize: 0
 
   - name: PaperTrader
     reportInCurrency: true # report the profit in the currency or the asset?
