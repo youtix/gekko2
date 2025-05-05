@@ -1,6 +1,7 @@
 import Big from 'big.js';
-import { first, last, max, min, take } from 'lodash-es';
+import { compact, first, map, max, min } from 'lodash-es';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { Candle } from '../../../../models/types/candle.types';
 import { toTimestamp } from '../../../../utils/date/date.utils';
 import { CandleBatcher } from './candleBatcher';
 
@@ -103,33 +104,80 @@ describe('candleBatcher', () => {
     candleBatcher = new CandleBatcher(2);
   });
 
-  it('should not create a candle when fed not enough small candles', () => {
-    const result = candleBatcher.addSmallCandle(candles[0]);
+  it('should NOT create a candle when fed not enough small candles', () => {
+    const candle = { ...candles[0], start: toTimestamp('2025-05-10T23:58:00.000Z') };
+    const result = candleBatcher.addSmallCandle(candle);
     expect(result).toBeUndefined();
   });
 
   it('should return 5 results when fed 10 candles', () => {
-    const result = candleBatcher.addSmallCandles(candles);
+    const result = compact(map(candles, candleBatcher.addSmallCandle.bind(candleBatcher)));
     expect(result).toHaveLength(5);
   });
 
   it('should correctly add two candles together', () => {
-    const _candles = take(candles, 2);
-    const firstCandle = first(_candles);
-    const second = last(_candles);
+    const firstCandle = { ...candles[0], start: toTimestamp('2025-05-10T23:58:00.000Z') };
+    const secondCandle = { ...candles[1], start: toTimestamp('2025-05-10T23:59:00.000Z') };
 
     const expectedResult = {
       start: firstCandle?.start,
       open: firstCandle?.open,
-      high: max([firstCandle?.high, second?.high]),
-      low: min([firstCandle?.low, second?.low]),
-      close: second?.close,
-      volume: +Big(firstCandle?.volume ?? 0).plus(second?.volume ?? 0),
+      high: max([firstCandle?.high, secondCandle?.high]),
+      low: min([firstCandle?.low, secondCandle?.low]),
+      close: secondCandle?.close,
+      volume: +Big(firstCandle?.volume ?? 0).plus(secondCandle?.volume ?? 0),
     };
+    const result: (Candle | undefined)[] = [];
+    result.push(candleBatcher.addSmallCandle(firstCandle));
+    result.push(candleBatcher.addSmallCandle(secondCandle));
 
-    const result = candleBatcher.addSmallCandles(_candles);
+    expect(compact(result)).toStrictEqual([expectedResult]);
+    expect(first(compact(result))?.id).toBeUndefined();
+  });
 
-    expect(result).toStrictEqual([expectedResult]);
-    expect(first(result)?.id).toBeUndefined();
+  it.each`
+    description                        | startDate                     | candleSize | expected
+    ${'one minute timeframe'}          | ${'2025-05-10T23:59:00.000Z'} | ${1}       | ${true}
+    ${'first candle of 2m timeframe'}  | ${'2025-05-10T23:58:00.000Z'} | ${2}       | ${false}
+    ${'last candle of 2m timeframe'}   | ${'2025-05-10T23:59:00.000Z'} | ${2}       | ${true}
+    ${'first candle of 3m timeframe'}  | ${'2025-05-10T23:57:00.000Z'} | ${3}       | ${false}
+    ${'last candle of 3m timeframe'}   | ${'2025-05-10T23:59:00.000Z'} | ${3}       | ${true}
+    ${'first candle of 5m timeframe'}  | ${'2025-05-10T23:55:00.000Z'} | ${5}       | ${false}
+    ${'last candle of 5m timeframe'}   | ${'2025-05-10T23:59:00.000Z'} | ${5}       | ${true}
+    ${'first candle of 10m timeframe'} | ${'2025-05-10T23:50:00.000Z'} | ${10}      | ${false}
+    ${'last candle of 10m timeframe'}  | ${'2025-05-10T23:59:00.000Z'} | ${10}      | ${true}
+    ${'first candle of 15m timeframe'} | ${'2025-05-10T23:45:00.000Z'} | ${15}      | ${false}
+    ${'last candle of 15m timeframe'}  | ${'2025-05-10T23:59:00.000Z'} | ${15}      | ${true}
+    ${'first candle of 30m timeframe'} | ${'2025-05-10T23:30:00.000Z'} | ${30}      | ${false}
+    ${'last candle of 30m timeframe'}  | ${'2025-05-10T23:59:00.000Z'} | ${30}      | ${true}
+    ${'first candle of 1h timeframe'}  | ${'2025-05-10T23:00:00.000Z'} | ${60}      | ${false}
+    ${'last candle of 1h timeframe'}   | ${'2025-05-10T23:59:00.000Z'} | ${60}      | ${true}
+    ${'first candle of 2h timeframe'}  | ${'2025-05-10T22:00:00.000Z'} | ${120}     | ${false}
+    ${'last candle of 2h timeframe'}   | ${'2025-05-10T23:59:00.000Z'} | ${120}     | ${true}
+    ${'first candle of 4h timeframe'}  | ${'2025-05-10T20:00:00.000Z'} | ${240}     | ${false}
+    ${'last candle of 4h timeframe'}   | ${'2025-05-10T23:59:00.000Z'} | ${240}     | ${true}
+    ${'first candle of 6h timeframe'}  | ${'2025-05-10T18:00:00.000Z'} | ${360}     | ${false}
+    ${'last candle of 6h timeframe'}   | ${'2025-05-10T23:59:00.000Z'} | ${360}     | ${true}
+    ${'first candle of 8h timeframe'}  | ${'2025-05-10T16:00:00.000Z'} | ${480}     | ${false}
+    ${'last candle of 8h timeframe'}   | ${'2025-05-10T23:59:00.000Z'} | ${480}     | ${true}
+    ${'first candle of 12h timeframe'} | ${'2025-05-10T12:00:00.000Z'} | ${720}     | ${false}
+    ${'last candle of 12h timeframe'}  | ${'2025-05-10T23:59:00.000Z'} | ${720}     | ${true}
+    ${'first candle of 1d timeframe'}  | ${'2025-05-10T00:00:00.000Z'} | ${1440}    | ${false}
+    ${'last candle of 1d timeframe'}   | ${'2025-05-10T23:59:00.000Z'} | ${1440}    | ${true}
+    ${'first candle of 1w timeframe'}  | ${'2025-05-12T00:00:00.000Z'} | ${10080}   | ${false}
+    ${'last candle of 1w timeframe'}   | ${'2025-05-18T23:59:00.000Z'} | ${10080}   | ${true}
+    ${'first candle of 1M timeframe'}  | ${'2025-05-01T00:00:00.000Z'} | ${43200}   | ${false}
+    ${'last candle of 1M timeframe'}   | ${'2025-05-31T23:59:00.000Z'} | ${43200}   | ${true}
+    ${'first candle of 3M timeframe'}  | ${'2025-01-31T23:59:00.000Z'} | ${129600}  | ${false}
+    ${'last candle of 3M timeframe'}   | ${'2025-03-31T23:59:00.000Z'} | ${129600}  | ${true}
+    ${'first candle of 6M timeframe'}  | ${'2025-01-01T00:00:00.000Z'} | ${259200}  | ${false}
+    ${'last candle of 6M timeframe'}   | ${'2025-06-30T23:59:00.000Z'} | ${259200}  | ${true}
+    ${'first candle of 1y timeframe'}  | ${'2025-01-01T00:00:00.000Z'} | ${518400}  | ${false}
+    ${'last candle of 1y timeframe'}   | ${'2025-12-31T23:59:00.000Z'} | ${518400}  | ${true}
+  `('should return $expected when it is the $description for $startDate', ({ startDate, candleSize, expected }) => {
+    const lastCandle = { ...candles[0], start: toTimestamp(startDate) };
+    candleBatcher['candleSize'] = candleSize;
+    const result = candleBatcher['isBigCandleReady'](lastCandle);
+    expect(result).toBe(expected);
   });
 });

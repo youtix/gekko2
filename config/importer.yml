@@ -4,8 +4,8 @@ watch:
   mode: importer # backtest | importer | realtime
   fillGaps: empty
   daterange:
-    start: '2021-01-01T00:00:00.000Z'
-    end: '2022-01-01T00:00:00.000Z'
+    start: '2020-01-31T00:00:00.000Z'
+    end: '2021-01-01T00:00:00.000Z'
 
 broker:
   name: binance

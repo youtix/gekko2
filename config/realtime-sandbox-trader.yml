@@ -19,7 +19,7 @@ strategy:
 plugins:
   - name: 'TradingAdvisor'
     strategyName: 'DEMA'
-    candleSize: 3
+    timeframe: '3m'
     historySize: 3
 
   - name: 'Trader'

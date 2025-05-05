@@ -14,7 +14,7 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: DebugAdvice
-    candleSize: 1
+    timeframe: '1m'
     historySize: 0
 
   - name: Telegram

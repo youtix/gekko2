@@ -16,7 +16,7 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: DEMA
-    candleSize: 1
+    timeframe: '1m'
     historySize: 5
 
   - name: PaperTrader

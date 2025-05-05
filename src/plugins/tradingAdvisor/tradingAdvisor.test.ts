@@ -12,6 +12,7 @@ import {
   STRATEGY_UPDATE_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
 } from './tradingAdvisor.const';
+import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
 vi.mock('../../strategies/index', () => ({
   DummyStrategy: class {
@@ -32,10 +33,11 @@ vi.mock('../../services/configuration/configuration', () => {
 describe('TradingAdvisor', () => {
   const config = {
     name: 'TradingAdvisor',
-    candleSize: 1,
+    timeframe: '1m',
     strategyName: 'DummyStrategy',
     historySize: 10,
-  };
+    windowMode: 'calendar',
+  } satisfies TradingAdvisorConfiguration;
   const advisor = new TradingAdvisor(config);
   advisor['deferredEmit'] = vi.fn();
 
@@ -45,9 +47,10 @@ describe('TradingAdvisor', () => {
         () =>
           new TradingAdvisor({
             name: 'TradingAdvisor',
-            candleSize: 1,
+            timeframe: '1m',
             strategyName: 'NonExistentStrategy',
             historySize: 10,
+            windowMode: 'calendar',
           }),
       ).toThrowError(StrategyNotFoundError);
     });

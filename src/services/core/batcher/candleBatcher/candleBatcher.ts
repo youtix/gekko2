@@ -1,51 +1,74 @@
 import Big from 'big.js';
-import { compact, drop, first, max, min, omit, reduce } from 'lodash-es';
+import { omit } from 'lodash-es';
 import { Candle } from '../../../../models/types/candle.types';
+import { CandleSize, WindowMode } from './candleBatcher.types';
 
 export class CandleBatcher {
   smallCandles: Candle[];
-  candleSize: number;
-  constructor(candleSize: number) {
+  candleSize: CandleSize;
+  windowMode: WindowMode;
+
+  constructor(candleSize: CandleSize, windowMode: WindowMode = 'calendar') {
     this.smallCandles = [];
     this.candleSize = candleSize;
+    this.windowMode = windowMode;
   }
 
-  public addSmallCandle(candle: Candle) {
-    this.smallCandles = [...this.smallCandles, candle];
-
-    if (this.smallCandles.length % this.candleSize === 0) {
+  public addSmallCandle(candle: Candle): Candle | undefined {
+    this.smallCandles.push(candle);
+    const isBigCandleReady =
+      this.windowMode === 'calendar' ? this.isBigCandleReady(candle) : this.smallCandles.length % this.candleSize === 0;
+    if (isBigCandleReady) {
       const newCandle = this.createBigCandleFrom(this.smallCandles);
-      this.smallCandles = [];
+      this.smallCandles.length = 0;
       return newCandle;
     }
   }
 
-  public addSmallCandles(candles: Candle[]) {
-    return reduce(
-      candles,
-      (candleBucket, currentCandle) => {
-        return compact([...candleBucket, this.addSmallCandle(currentCandle)]);
-      },
-      [] as Candle[],
+  private createBigCandleFrom(smallCandles: Candle[]): Candle {
+    const [firstCandle, ...rest] = smallCandles;
+    const base = { ...omit(firstCandle, 'id') };
+
+    return rest.reduce<Candle>(
+      (acc, curr) => ({
+        ...acc,
+        start: base.start,
+        high: Math.max(acc.high, curr.high),
+        low: Math.min(acc.low, curr.low),
+        close: curr.close,
+        volume: +Big(acc.volume).plus(curr.volume),
+      }),
+      base,
     );
   }
 
-  private createBigCandleFrom(smallCandles: Candle[]): Candle {
-    const firstCandle = omit(first(smallCandles), 'id');
+  private isBigCandleReady(currentCandle: Candle) {
+    const date = new Date(currentCandle.start);
+    const size = this.candleSize;
+    const minute = date.getUTCMinutes();
+    const hour = date.getUTCHours();
+    const day = date.getUTCDate();
+    const month = date.getUTCMonth(); // 0 (january) - 11 (december)
+    const weekday = date.getUTCDay(); // 0 (sunday) - 6 (saturday)
 
-    const candle = reduce(
-      drop(smallCandles),
-      (prevCandle, currentCandle) => ({
-        ...prevCandle,
-        start: firstCandle.start,
-        high: max([prevCandle.high, currentCandle.high]) ?? 0,
-        low: min([prevCandle.low, currentCandle.low]) ?? 0,
-        close: currentCandle.close,
-        volume: +Big(currentCandle.volume).plus(prevCandle.volume),
-      }),
-      firstCandle,
-    );
+    if (size < 60) return minute % size === size - 1;
+    if (size < 1440) {
+      const hours = size / 60;
+      return minute === 59 && hour % hours === hours - 1;
+    }
+    if (size < 10080) return hour === 23 && minute === 59;
+    if (size === 10080) return weekday === 0 && hour === 23 && minute === 59;
+    if (size === 43200) return this.isMonthEnd(date);
+    if (size === 129600) return (month + 1) % 3 === 0 && this.isMonthEnd(date);
+    if (size === 259200) return [5, 11].includes(month) && this.isMonthEnd(date);
+    if (size === 518400) return month === 11 && day === 31 && hour === 23 && minute === 59;
+    return false;
+  }
 
-    return candle;
+  private isMonthEnd(date: Date): boolean {
+    const y = date.getUTCFullYear();
+    const m = date.getUTCMonth();
+    const lastDay = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+    return date.getUTCDate() === lastDay && date.getUTCHours() === 23 && date.getUTCMinutes() === 59;
   }
 }
