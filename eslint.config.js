@@ -27,7 +27,7 @@ export default [
   },
   {
     settings: {
-      'import/resolver': { typescript: true, node: true },
+      'import/resolver': { typescript: { bun: true } },
       'import/ignore': ['node_modules', 'dist'],
       'import/core-modules': ['reflect-metadata'],
     },
