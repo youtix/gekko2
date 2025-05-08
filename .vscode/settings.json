@@ -9,5 +9,6 @@
     "source.fixAll.ts": "always",
     "source.fixAll.eslint": "always"
   },
-  "terminal.integrated.scrollback": 1000
+  "terminal.integrated.scrollback": 1000,
+  "explorer.compactFolders": false
 }
