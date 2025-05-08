@@ -26,7 +26,8 @@ export abstract class Broker {
 
   constructor({ name, interval, key, secret, sandbox, verbose }: BrokerConfig) {
     const { asset, currency } = config.getWatch();
-    this.broker = new ccxt[name]({ apiKey: key, secret, verbose });
+    const ccxtConfig = { ...(key && { apiKey: key }), ...(secret && { secret }), verbose };
+    this.broker = new ccxt[name](ccxtConfig);
     const mandatoryFeatures = [...BROKER_MANDATORY_FEATURES, ...(sandbox ? ['sandbox'] : [])];
     each(mandatoryFeatures, feature => {
       if (!this.broker.has[feature]) throw new MissingBrokerFeatureError(name, feature);

@@ -22,10 +22,10 @@ export const watchSchema = object({
 export const brokerSchema = object({
   name: string().oneOf(['binance', 'bitfinex']).required(),
   interval: number().positive().notRequired(),
-  sandbox: boolean().notRequired(),
+  sandbox: boolean().default(false),
   key: string().notRequired(),
   secret: string().notRequired(),
-  verbose: boolean().notRequired(),
+  verbose: boolean().default(false),
 });
 
 export const storageSchema = object({
