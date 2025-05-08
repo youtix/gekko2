@@ -28,6 +28,7 @@
   "main": "gekko.js",
   "type": "module",
   "scripts": {
+    "preinstall": "git update-index --assume-unchanged ./src/strategies/custom/index.ts",
     "build": "bun build ./src/gekko.ts --outdir ./dist --target bun --minify --sourcemap",
     "coverage": "vitest run --coverage",
     "dev": "bun ./src/gekko.ts",

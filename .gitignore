@@ -5,3 +5,4 @@ db
 .sql
 .sql-shm
 .sql-wal
+src/strategies/custom
