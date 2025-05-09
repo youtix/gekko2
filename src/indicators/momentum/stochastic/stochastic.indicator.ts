@@ -1,14 +1,8 @@
-import { DEMA, EMA, SMA, WMA } from '@indicators/movingAverages';
+import { MOVING_AVERAGES } from '@indicators/indicator.const';
+import { MovingAverageClasses } from '@indicators/indicator.types';
 import { Candle } from '@models/types/candle.types';
 import Big from 'big.js';
 import { Indicator } from '../../indicator';
-
-const MovingAverages = {
-  sma: SMA,
-  ema: EMA,
-  dema: DEMA,
-  wma: WMA,
-};
 
 export class Stochastic extends Indicator<'Stochastic'> {
   private highs: number[] = [];
@@ -18,8 +12,8 @@ export class Stochastic extends Indicator<'Stochastic'> {
   private age: number;
   private warmingUpPeriod: number;
 
-  private maSlowK: SMA | EMA | DEMA | WMA;
-  private maSlowD: SMA | EMA | DEMA | WMA;
+  private maSlowK: MovingAverageClasses;
+  private maSlowD: MovingAverageClasses;
 
   constructor(
     { fastKPeriod, slowKPeriod, slowKMaType, slowDPeriod, slowDMaType }: IndicatorRegistry['Stochastic']['input'] = {
@@ -41,8 +35,8 @@ export class Stochastic extends Indicator<'Stochastic'> {
     this.warmingUpPeriod = fastKPeriod - 1 + slowKPeriod - 1 + slowDPeriod - 1;
 
     // smoothing engines
-    this.maSlowK = new MovingAverages[slowKMaType]({ period: slowKPeriod });
-    this.maSlowD = new MovingAverages[slowDMaType]({ period: slowDPeriod });
+    this.maSlowK = new MOVING_AVERAGES[slowKMaType]({ period: slowKPeriod });
+    this.maSlowD = new MOVING_AVERAGES[slowDMaType]({ period: slowDPeriod });
 
     // store periods on the instance for use below
     this.fastKPeriod = fastKPeriod;
