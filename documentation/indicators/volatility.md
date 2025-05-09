@@ -13,11 +13,13 @@ True Range is the raw measure of volatility, calculated as the greatest of:
 - Absolute value of current high minus previous close
 - Absolute value of current low minus previous close
 
-ATR is simply a smoothed version of True Range.
 
 ## **ATR (Average True Range)**
-
 ATR measures market volatility by averaging the true range over a specified number of periods. While it doesn’t indicate trend direction, it helps assess how volatile a market is.
+ATR is simply a smoothed version of True Range.
+
+## **Bollinger Bands**
+Bollinger Bands consist of a moving average (usually SMA) and two bands plotted at a specified number of standard deviations above and below the moving average. The bands expand during periods of high volatility and contract during periods of low volatility. Bollinger Bands help identify overbought and oversold conditions, as well as potential breakout opportunities when price moves outside the bands.
 
 ---
 
