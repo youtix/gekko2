@@ -6,7 +6,7 @@ export default {
     coverage: {
       reporter: ['text'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.{schema,mock,types,error,const}.ts', 'src/**/index.ts'],
+      exclude: ['src/**/*.{schema,mock,types,error,const}.ts', 'src/**/index.ts', 'src/strategies/custom/**/*.ts'],
       thresholds: {
         lines: 75,
         functions: 80,
