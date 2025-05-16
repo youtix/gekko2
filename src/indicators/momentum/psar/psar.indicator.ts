@@ -1,4 +1,4 @@
-import { MinusDM } from '@indicators/directionalMovement';
+import { MinusDM } from '@indicators/directionalMovement/minusDM/minusDM.indicator';
 import { Candle } from '@models/types/candle.types';
 import Big from 'big.js';
 import { Indicator } from '../../indicator';

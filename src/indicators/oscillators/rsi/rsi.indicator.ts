@@ -1,5 +1,6 @@
 import { Indicator } from '@indicators/indicator';
-import { WilderSmoothing } from '@indicators/movingAverages';
+import { INPUT_SOURCES } from '@indicators/indicator.const';
+import { WilderSmoothing } from '@indicators/movingAverages/wilderSmoothing/wilderSmoothing.indicator';
 import { Candle } from '@models/types/candle.types';
 import Big from 'big.js';
 import { isNil } from 'lodash-es';
@@ -7,21 +8,24 @@ import { isNil } from 'lodash-es';
 export class RSI extends Indicator<'RSI'> {
   private wilderGain: WilderSmoothing;
   private wilderLoss: WilderSmoothing;
-  private prevClose?: number;
+  private prevPrice?: number;
+  private getPrice: (candle: Candle) => number;
 
-  constructor({ period }: IndicatorRegistry['RSI']['input'] = { period: 14 }) {
+  constructor({ period = 14, src = 'close' }: IndicatorRegistry['RSI']['input'] = { period: 14, src: 'close' }) {
     super('RSI', null);
     this.wilderGain = new WilderSmoothing({ period });
     this.wilderLoss = new WilderSmoothing({ period });
+    this.getPrice = INPUT_SOURCES[src];
   }
 
-  public onNewCandle({ close }: Candle): void {
-    if (isNil(this.prevClose)) {
-      this.prevClose = close;
+  public onNewCandle(candle: Candle): void {
+    const price = this.getPrice(candle);
+    if (isNil(this.prevPrice)) {
+      this.prevPrice = price;
       return;
     }
 
-    const change = +Big(close).minus(this.prevClose);
+    const change = +Big(price).minus(this.prevPrice);
     const gain = change > 0 ? change : 0;
     const loss = change < 0 ? -change : 0;
 
@@ -36,7 +40,7 @@ export class RSI extends Indicator<'RSI'> {
       this.result = total === 0 ? 0 : +Big(avgGain).div(total).times(100);
     }
 
-    this.prevClose = close;
+    this.prevPrice = price;
   }
 
   public getResult() {

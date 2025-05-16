@@ -1,8 +1,8 @@
+import { Indicator } from '@indicators/indicator';
 import { MOVING_AVERAGES } from '@indicators/indicator.const';
 import { MovingAverageClasses } from '@indicators/indicator.types';
 import { Candle } from '@models/types/candle.types';
 import Big from 'big.js';
-import { Indicator } from '../../indicator';
 
 export class Stochastic extends Indicator<'Stochastic'> {
   private highs: number[] = [];
@@ -16,7 +16,13 @@ export class Stochastic extends Indicator<'Stochastic'> {
   private maSlowD: MovingAverageClasses;
 
   constructor(
-    { fastKPeriod, slowKPeriod, slowKMaType, slowDPeriod, slowDMaType }: IndicatorRegistry['Stochastic']['input'] = {
+    {
+      fastKPeriod = 5,
+      slowKPeriod = 3,
+      slowKMaType = 'sma',
+      slowDPeriod = 3,
+      slowDMaType = 'sma',
+    }: IndicatorRegistry['Stochastic']['input'] = {
       fastKPeriod: 5,
       slowKPeriod: 3,
       slowKMaType: 'sma',

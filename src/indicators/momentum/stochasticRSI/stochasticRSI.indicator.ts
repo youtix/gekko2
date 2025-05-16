@@ -1,8 +1,8 @@
 import { Indicator } from '@indicators/indicator';
-import { Stochastic } from '@indicators/momentum';
-import { RSI } from '@indicators/oscillators';
+import { RSI } from '@indicators/oscillators/rsi/rsi.indicator';
 import { Candle } from '@models/types/candle.types';
 import { isNil } from 'lodash-es';
+import { Stochastic } from '../stochastic/stochastic.indicator';
 
 export class StochasticRSI extends Indicator<'StochasticRSI'> {
   private rsi: RSI;

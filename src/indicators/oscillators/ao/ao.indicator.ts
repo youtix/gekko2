@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { SMA } from '@indicators/movingAverages';
+import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
 import { Candle } from '@models/types/candle.types';
 import Big from 'big.js';
 import { isNil } from 'lodash-es';

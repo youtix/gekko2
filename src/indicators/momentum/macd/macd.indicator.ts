@@ -1,4 +1,4 @@
-import { EMA } from '@indicators/movingAverages';
+import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { Candle } from '@models/types/candle.types';
 import Big from 'big.js';
 import { isNil } from 'lodash-es';
@@ -11,11 +11,18 @@ export class MACD extends Indicator<'MACD'> {
   private threshold: number;
   private age: number;
 
-  constructor({ short, long, signal }: IndicatorRegistry['MACD']['input']) {
+  constructor(
+    { short = 12, long = 26, signal = 9, src = 'close' }: IndicatorRegistry['MACD']['input'] = {
+      short: 12,
+      long: 26,
+      signal: 9,
+      src: 'close',
+    },
+  ) {
     super('MACD', { macd: null, signal: null, hist: null });
 
-    this.emaFast = new EMA({ period: short });
-    this.emaSlow = new EMA({ period: long });
+    this.emaFast = new EMA({ period: short, src });
+    this.emaSlow = new EMA({ period: long, src });
     this.emaSignal = new EMA({ period: signal });
     this.threshold = long - 1 - (short - 1);
     this.age = 0;

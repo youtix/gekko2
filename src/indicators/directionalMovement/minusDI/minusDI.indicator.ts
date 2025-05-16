@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { TrueRange } from '@indicators/volatility';
+import { TrueRange } from '@indicators/volatility/trueRange/trueRange.indicator';
 import { Candle } from '@models/types/candle.types';
 import Big from 'big.js';
 import { MinusDM } from '../minusDM/minusDM.indicator';

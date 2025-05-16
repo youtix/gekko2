@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { EMA } from '@indicators/movingAverages';
+import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { Candle } from '@models/types/candle.types';
 import { isNil } from 'lodash-es';
 import { ROC } from '../roc/roc.indicator';

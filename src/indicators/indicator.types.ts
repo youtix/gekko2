@@ -1,6 +1,10 @@
-import { DEMA, EMA, SMA, WMA } from './movingAverages';
+import { DEMA } from './movingAverages/dema/dema.indicator';
+import { EMA } from './movingAverages/ema/ema.indicator';
+import { SMA } from './movingAverages/sma/sma.indicator';
+import { WMA } from './movingAverages/wma/wma.indicator';
 
 export type IndicatorNames = keyof IndicatorRegistry;
 export type IndicatorParamaters<T extends IndicatorNames> = IndicatorRegistry[T]['input'];
-export type MovingAverageTypes = 'sma' | 'ema' | 'dema' | 'wma';
 export type MovingAverageClasses = SMA | EMA | DEMA | WMA;
+export type MovingAverageTypes = 'sma' | 'ema' | 'dema' | 'wma';
+export type InputSources = 'open' | 'high' | 'low' | 'close' | 'hl2' | 'hlc3' | 'ohlc4';

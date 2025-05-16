@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { toTimestamp } from '../date/date.utils';
-import { fillMissingCandles } from './candle.utils';
+import { fillMissingCandles, hl2, hlc3, ohlc4 } from './candle.utils';
 
 const createCandle = (start: number, open: number, close: number, high: number, low: number, volume: number) => ({
   start,
@@ -35,6 +35,45 @@ describe('fillMissingCandles', () => {
     const result = fillMissingCandles([]);
     expect(result).toBeUndefined();
   });
+});
+
+describe('hl2', () => {
+  it.each`
+    high   | low    | expected
+    ${5}   | ${3}   | ${4}
+    ${10}  | ${2}   | ${6}
+    ${1.5} | ${0.5} | ${1}
+  `('returns $expected for high=$high and low=$low', ({ high, low, expected }) => {
+    const candle = { open: 0, high, low, close: 0 };
+    expect(hl2(candle)).toBe(expected);
+  });
+});
+
+describe('hlc3', () => {
+  it.each`
+    high   | low    | close | expected
+    ${5}   | ${3}   | ${4}  | ${4}
+    ${6}   | ${2}   | ${4}  | ${4}
+    ${1.5} | ${0.5} | ${2}  | ${1.3333333333333333}
+  `('returns $expected for high=$high, low=$low and close=$close', ({ high, low, close, expected }) => {
+    const candle = { open: 0, high, low, close };
+    expect(hlc3(candle)).toBeCloseTo(expected);
+  });
+});
+
+describe('ohlc4', () => {
+  it.each`
+    open   | high   | low    | close  | expected
+    ${1}   | ${5}   | ${3}   | ${4}   | ${3.25}
+    ${10}  | ${4}   | ${2}   | ${8}   | ${6}
+    ${1.5} | ${3.5} | ${0.5} | ${2.5} | ${(1.5 + 3.5 + 0.5 + 2.5) / 4}
+  `(
+    'returns $expected for open=$open, high=$high, low=$low and close=$close',
+    ({ open, high, low, close, expected }) => {
+      const candle = { open, high, low, close };
+      expect(ohlc4(candle)).toBeCloseTo(expected);
+    },
+  );
 });
 
 // describe('bridgeCandleGap', () => {
