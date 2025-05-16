@@ -48,3 +48,4 @@ _Use Gekko 2 at your own risk._
 
   - [DEMA](./documentation/strategies/dema.md)
   - [MACD](./documentation/strategies/macd.md)
+  - [TMA](./documentation/strategies/tma.md)

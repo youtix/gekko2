@@ -28,6 +28,7 @@ Below you can find simple and exemplary strategies that come with Gekko. These s
 Gekko currently comes with the following example strategies:
 - [DEMA](./dema.md)
 - [MACD](./macd.md)
+- [TMA](./tma.md)
 
 More strategies will be available in future releases.
 
