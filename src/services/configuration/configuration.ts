@@ -12,8 +12,8 @@ import { Configuration as ConfigurationModel } from '../../models/types/configur
 class Configuration {
   private configuration?: ConfigurationModel;
   constructor() {
-    const configFilePath = process.env['CONFIG_FILE_PATH'];
-    if (!configFilePath) throw new MissingEnvVarError('CONFIG_FILE_PATH');
+    const configFilePath = process.env['GEKKO_CONFIG_FILE_PATH'];
+    if (!configFilePath) throw new MissingEnvVarError('GEKKO_CONFIG_FILE_PATH');
     const isJson = configFilePath?.endsWith('json5') || configFilePath?.endsWith('json5');
     const isYaml = configFilePath?.endsWith('yml') || configFilePath?.endsWith('yaml');
     const data = readFileSync(configFilePath, 'utf8');

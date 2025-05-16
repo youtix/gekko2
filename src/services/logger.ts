@@ -19,7 +19,7 @@ type Tag =
 type LogInput = { tag: Tag; message: unknown; level: string };
 
 const logger = createLogger({
-  level: process.env.LOG_LEVEL || 'error',
+  level: process.env.GEKKO_LOG_LEVEL || 'error',
   format: combine(timestamp(), json()),
   transports: [new transports.Console()],
 });

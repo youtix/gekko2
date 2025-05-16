@@ -44,12 +44,12 @@ This option ensures smoother datasets and more reliable backtesting when dealing
 
 ## Environment variables
 
-Gekko requires the `CONFIG_FILE_PATH` environment variable to locate and load your configuration file. You can define it either directly in your environment or in a `.env` file:
+Gekko requires the `GEKKO_CONFIG_FILE_PATH` environment variable to locate and load your configuration file. You can define it either directly in your environment or in a `.env` file:
 
 ```bash
 # .env
-LOG_LEVEL=info
-CONFIG_FILE_PATH=./config/importer.yml
+GEKKO_LOG_LEVEL=info
+GEKKO_CONFIG_FILE_PATH=./config/importer.yml
 ```
 
 ## Configuartion file example

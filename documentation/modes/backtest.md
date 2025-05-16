@@ -40,12 +40,12 @@ watch:
     end: '2024-02-01T00:00:00.000Z'
 ```
 
-Then, set the `CONFIG_FILE_PATH` environment variable to tell Gekko where to find the configuration file. This can be done in your environment or in a `.env` file:
+Then, set the `GEKKO_CONFIG_FILE_PATH` environment variable to tell Gekko where to find the configuration file. This can be done in your environment or in a `.env` file:
 
 ```bash
 # .env
-LOG_LEVEL=info
-CONFIG_FILE_PATH=./config/backtest.yml
+GEKKO_LOG_LEVEL=info
+GEKKO_CONFIG_FILE_PATH=./config/backtest.yml
 ```
 
 ## Configuration file example
