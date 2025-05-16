@@ -2,6 +2,7 @@ import { Candle } from '@models/types/candle.types';
 import { Portfolio } from '@models/types/portfolio.types';
 import { RoundTrip } from '@models/types/roundtrip.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { warning } from '@services/logger';
 import { percentile, stdev } from '@utils/math/math.utils';
 import { Big } from 'big.js';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
@@ -10,7 +11,7 @@ import { Plugin } from '../plugin';
 import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT, ROUNDTRIP_UPDATE_EVENT } from './performanceAnalyzer.const';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 import { DateRange, PerformanceAnalyzerConfig, Report, SingleRoundTrip, Start } from './performanceAnalyzer.types';
-import { logFinalize, logImpossibleToProcessReport, logRoundtrip, logTrade } from './performanceAnalyzer.utils';
+import { logFinalize, logRoundtrip, logTrade } from './performanceAnalyzer.utils';
 
 export class PerformanceAnalyzer extends Plugin {
   private balance: number;
@@ -29,8 +30,9 @@ export class PerformanceAnalyzer extends Plugin {
   private trades: number;
   private warmupCandle?: Candle;
   private warmupCompleted: boolean;
+  private enableConsoleTable: boolean;
 
-  constructor({ riskFreeReturn }: PerformanceAnalyzerConfig) {
+  constructor({ riskFreeReturn, enableConsoleTable }: PerformanceAnalyzerConfig) {
     super(PerformanceAnalyzer.name);
 
     this.balance = 0;
@@ -48,6 +50,7 @@ export class PerformanceAnalyzer extends Plugin {
     this.startPrice = 0;
     this.trades = 0;
     this.warmupCompleted = false;
+    this.enableConsoleTable = enableConsoleTable;
   }
 
   // --- BEGIN LISTENERS ---
@@ -103,7 +106,7 @@ export class PerformanceAnalyzer extends Plugin {
     if (this.trades) {
       const report = this.calculateReportStatistics();
       if (report) {
-        logFinalize(report, this.currency);
+        logFinalize(report, this.currency, this.enableConsoleTable);
         this.emit(PERFORMANCE_REPORT_EVENT, report);
       }
     }
@@ -172,7 +175,7 @@ export class PerformanceAnalyzer extends Plugin {
 
     this.roundTrips[this.roundTrip.id] = roundtrip;
 
-    logRoundtrip(roundtrip, this.currency);
+    logRoundtrip(roundtrip, this.currency, this.enableConsoleTable);
 
     this.deferredEmit<RoundTrip>(ROUNDTRIP_EVENT, roundtrip);
 
@@ -183,7 +186,11 @@ export class PerformanceAnalyzer extends Plugin {
   }
 
   private calculateReportStatistics() {
-    if (!this.start.balance || !this.start.portfolio) return logImpossibleToProcessReport();
+    if (!this.start.balance || !this.start.portfolio)
+      return warning(
+        'performance analyzer',
+        'Cannot calculate a profit report without having received portfolio data. Skipping performanceReport..',
+      );
 
     // the portfolio's balance is measured in {currency}
     const profit = +Big(this.balance).minus(this.start.balance);
