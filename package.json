@@ -16,6 +16,7 @@
     "automated-trading",
     "technical-analysis",
     "gekko",
+    "gekko2",
     "exchange",
     "finance",
     "market-data",
@@ -30,13 +31,13 @@
   "scripts": {
     "preinstall": "git update-index --assume-unchanged ./src/strategies/custom/index.ts",
     "build": "bun build ./src/gekko.ts --outdir ./dist --target bun --minify --sourcemap",
-    "coverage": "vitest run --coverage",
     "dev": "bun ./src/gekko.ts",
     "lint": "bun eslint ./src --fix",
     "format": "bun prettier ./src --write",
     "prepare": "husky",
     "start": "bun dist/gekko.js",
     "test": "vitest --run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "type:check": "bun tsc --noEmit"
   },

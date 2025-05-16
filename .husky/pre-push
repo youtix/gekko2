@@ -1,2 +1,2 @@
-pnpm coverage
+pnpm test:coverage
 pnpm type:check
