@@ -1,8 +1,18 @@
 import { Indicator } from '@indicators/indicator';
-import { MOVING_AVERAGES } from '@indicators/indicator.const';
 import { MovingAverageClasses } from '@indicators/indicator.types';
+import { DEMA } from '@indicators/movingAverages/dema/dema.indicator';
+import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
+import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
+import { WMA } from '@indicators/movingAverages/wma/wma.indicator';
 import { Candle } from '@models/types/candle.types';
 import { stdev } from '@utils/math/math.utils';
+
+const MOVING_AVERAGES = {
+  sma: SMA,
+  ema: EMA,
+  dema: DEMA,
+  wma: WMA,
+} as const;
 
 export class BollingerBands extends Indicator<'BollingerBands'> {
   private period: number;
