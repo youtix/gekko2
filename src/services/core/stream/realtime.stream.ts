@@ -4,8 +4,8 @@ import { config } from '@services/configuration/configuration';
 import { TradeBatcher } from '@services/core/batcher/tradeBatcher/tradeBatcher';
 import { CandleManager } from '@services/core/candleManager/candleManager';
 import { Heart } from '@services/core/heart/heart';
+import { inject } from '@services/injecter/injecter';
 import { warning } from '@services/logger';
-import { inject } from '@services/storage/injecter/injecter';
 import { bindAll, each } from 'lodash-es';
 import { Readable } from 'node:stream';
 

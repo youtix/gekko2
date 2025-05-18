@@ -11,8 +11,8 @@ import { GapFillerStream } from '@services/core/stream/gapFiller/gapFiller.strea
 import { ImporterStream } from '@services/core/stream/importer/importer.stream';
 import { PluginsStream } from '@services/core/stream/plugins.stream';
 import { RealtimeStream } from '@services/core/stream/realtime.stream';
+import { inject } from '@services/injecter/injecter';
 import { debug } from '@services/logger';
-import { inject } from '@services/storage/injecter/injecter';
 import { keepDuplicates } from '@utils/array/array.utils';
 import { toISOString, toTimestamp } from '@utils/date/date.utils';
 import { toCamelCase } from '@utils/string/string.utils';

@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { BrokerError } from '../../../errors/broker/broker.error';
-import { StorageError } from '../../../errors/storage/storage.error';
-import { config } from '../../configuration/configuration';
-import { fetcher } from '../../fetcher/fetcher.service';
+import { BrokerError } from '../../errors/broker/broker.error';
+import { StorageError } from '../../errors/storage/storage.error';
+import { config } from '../configuration/configuration';
+import { fetcher } from '../fetcher/fetcher.service';
 import { inject } from './injecter';
 
 vi.mock('@services/configuration/configuration', () => {
@@ -42,7 +42,7 @@ describe('Injecter', () => {
 
   describe('broker', () => {
     it('should cache the broker instance and return the same object on multiple calls', () => {
-      getBrokerMock.mockReturnValue({ name: 'binance' });
+      getBrokerMock.mockReturnValue({ name: 'binance', verbose: false, sandbox: false });
       const first = inject.broker();
       const second = inject.broker();
       expect(second).toBe(first);

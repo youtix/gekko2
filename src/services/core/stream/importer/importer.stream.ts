@@ -3,12 +3,12 @@ import { Candle } from '@models/types/candle.types';
 import { Broker } from '@services/broker/broker';
 import { config } from '@services/configuration/configuration';
 import { Heart } from '@services/core/heart/heart';
+import { inject } from '@services/injecter/injecter';
 import { info } from '@services/logger';
-import { inject } from '@services/storage/injecter/injecter';
 import { toISOString, toTimestamp } from '@utils/date/date.utils';
 import { formatDuration, intervalToDuration, isAfter, isBefore } from 'date-fns';
 import { bindAll, each, filter, last } from 'lodash-es';
-import { Readable } from 'node:stream';
+import { Readable } from 'stream';
 
 export class ImporterStream extends Readable {
   private start: EpochTimeStamp;

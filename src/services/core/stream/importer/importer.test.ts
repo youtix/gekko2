@@ -3,7 +3,7 @@ import { ImporterError } from '../../../../errors/importer.error';
 import { Candle } from '../../../../models/types/candle.types';
 import { toTimestamp } from '../../../../utils/date/date.utils';
 import { config } from '../../../configuration/configuration';
-import { inject } from '../../../storage/injecter/injecter';
+import { inject } from '../../../injecter/injecter';
 import { ImporterStream } from './importer.stream';
 
 function candleFactory(time: string, value: number) {
@@ -25,7 +25,7 @@ vi.mock('@services/configuration/configuration', () => {
   }));
   return { config: new Configuration() };
 });
-vi.mock('@services/storage/injecter/injecter', () => ({
+vi.mock('@services/injecter/injecter', () => ({
   inject: { broker: vi.fn() },
 }));
 vi.mock('@services/core/heart/heart', () => ({
