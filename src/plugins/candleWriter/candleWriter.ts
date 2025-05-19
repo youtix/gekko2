@@ -8,6 +8,14 @@ export class CandleWriter extends Plugin {
     super(name);
   }
 
+  // --------------------------------------------------------------------------
+  //                           PLUGIN LIFECYCLE HOOKS
+  // --------------------------------------------------------------------------
+
+  protected processInit(): void {
+    /* noop */
+  }
+
   protected processCandle(candle: Candle): void {
     this.getStorage().addCandle(candle);
   }

@@ -4,6 +4,7 @@ import { Broker } from '@services/broker/broker';
 import { GenericBroker } from '@services/broker/generic/generic';
 import { config } from '@services/configuration/configuration';
 import { fetcher } from '@services/fetcher/fetcher.service';
+import { lockSync } from '@services/fs/fs.service';
 import { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { Storage } from '@services/storage/storage';
 
@@ -29,6 +30,10 @@ class Injecter {
 
   public fetcher() {
     return fetcher;
+  }
+
+  public fs() {
+    return { lockSync };
   }
 }
 

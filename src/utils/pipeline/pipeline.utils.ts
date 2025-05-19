@@ -60,6 +60,15 @@ const askForDaterange = async () => {
   return result.daterange;
 };
 
+export const initPlugins = async (context: PipelineContext) => {
+  await Promise.all(
+    context.map(pipeline => {
+      pipeline.plugin?.processInitStream();
+    }),
+  );
+  return context;
+};
+
 export const injectServices = async (context: PipelineContext) =>
   each(context, pipeline => {
     each(pipeline.inject, async serviceName => {

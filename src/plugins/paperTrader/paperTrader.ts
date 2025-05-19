@@ -123,29 +123,6 @@ export class PaperTrader extends Plugin {
   }
   // --- END LISTENERS ---
 
-  // --- BEGIN PROCESSORS ---
-  protected processCandle(candle: Candle): void {
-    if (this.warmupCompleted) {
-      this.price = candle.close;
-      this.candle = candle;
-
-      if (!this.balance) {
-        this.balance = this.getBalance();
-        this.emitPortfolioChangeEvent();
-        this.emitPortfolioValueChangeEvent();
-      }
-      if (this.exposed) this.emitPortfolioValueChangeEvent();
-      if (this.activeStopTrigger) this.activeStopTrigger.instance.updatePrice(this.price);
-    } else {
-      this.warmupCandle = candle;
-    }
-  }
-
-  protected processFinalize(): void {
-    // Nothing to do in this plugin
-  }
-  // --- END PROCESSORS ---
-
   // --- BEGIN INTERNALS ---
   private emitPortfolioChangeEvent() {
     this.deferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, {
@@ -256,6 +233,35 @@ export class PaperTrader extends Plugin {
     this.activeStopTrigger = undefined;
   }
   // --- END INTERNALS ---
+
+  // --------------------------------------------------------------------------
+  //                           PLUGIN LIFECYCLE HOOKS
+  // --------------------------------------------------------------------------
+
+  protected processInit(): void {
+    /* noop */
+  }
+
+  protected processCandle(candle: Candle): void {
+    if (this.warmupCompleted) {
+      this.price = candle.close;
+      this.candle = candle;
+
+      if (!this.balance) {
+        this.balance = this.getBalance();
+        this.emitPortfolioChangeEvent();
+        this.emitPortfolioValueChangeEvent();
+      }
+      if (this.exposed) this.emitPortfolioValueChangeEvent();
+      if (this.activeStopTrigger) this.activeStopTrigger.instance.updatePrice(this.price);
+    } else {
+      this.warmupCandle = candle;
+    }
+  }
+
+  protected processFinalize(): void {
+    /* noop */
+  }
 
   public static getStaticConfiguration() {
     return {

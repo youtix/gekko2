@@ -1,6 +1,7 @@
 import { PluginMissingServiceError } from '@errors/plugin/pluginMissingService.error';
 import { Broker } from '@services/broker/broker';
 import { Fetcher } from '@services/fetcher/fetcher.types';
+import { Fs } from '@services/fs/fs.types';
 import { Storage } from '@services/storage/storage';
 import { drop, first } from 'lodash-es';
 import EventEmitter from 'node:events';
@@ -13,6 +14,7 @@ export abstract class Plugin extends EventEmitter {
   private storage?: Storage;
   private broker?: Broker;
   private fetcher?: Fetcher;
+  private fs?: Fs;
 
   protected asset: string;
   protected currency: string;
@@ -28,6 +30,10 @@ export abstract class Plugin extends EventEmitter {
     this.currency = currency;
   }
 
+  // --------------------------------------------------------------------------
+  //                           PLUGIN SERVICE ACCESSORS
+  // --------------------------------------------------------------------------
+
   public setStorage(storage: Storage) {
     this.storage = storage;
   }
@@ -38,6 +44,10 @@ export abstract class Plugin extends EventEmitter {
 
   public setFetcher(fetcher: Fetcher) {
     this.fetcher = fetcher;
+  }
+
+  public setFs(fs: Fs) {
+    this.fs = fs;
   }
 
   public getStorage() {
@@ -55,19 +65,33 @@ export abstract class Plugin extends EventEmitter {
     return this.fetcher;
   }
 
-  /** To call in Gekko stream */
+  public getFs() {
+    if (!this.fs) throw new PluginMissingServiceError(this.pluginName, 'fs');
+    return this.fs;
+  }
+
+  // --------------------------------------------------------------------------
+  //                           PLUGIN LIFECYCLE HOOKS
+  // --------------------------------------------------------------------------
+
+  /** Invoked once immediately after plugin instantiation before any candles are processed. */
+  public async processInitStream() {
+    await this.processInit();
+  }
+
+  /** Executed for every new candle after it passes through the stream pipeline.  */
   public async processInputStream(candle: Candle, done: () => void) {
     await this.processCandle(candle);
     done();
   }
 
-  /** To call in Gekko stream */
+  /** Invoked once when the stream pipeline terminates. */
   public async processCloseStream(done?: () => void) {
     await this.processFinalize();
     done?.();
   }
 
-  /** To call in Gekko stream */
+  /** Emits deferred event, invoked in loop after each candle has been handled by all plugins. */
   public broadcastDeferredEmit() {
     const event = first(this.defferedEvents);
     if (!event) return false;
@@ -80,6 +104,7 @@ export abstract class Plugin extends EventEmitter {
     this.defferedEvents = [...this.defferedEvents, { name, payload }];
   }
 
+  protected abstract processInit(): void;
   protected abstract processCandle(candle: Candle): void;
   protected abstract processFinalize(): void;
 }

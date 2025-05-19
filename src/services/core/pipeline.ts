@@ -5,6 +5,7 @@ import {
   checkPluginsModesCompatibility,
   createPlugins,
   getPluginsStaticConfiguration,
+  initPlugins,
   injectServices,
   launchStream,
   preloadMarkets,
@@ -23,6 +24,7 @@ export const pipeline = () => {
     createPlugins,
     wirePlugins,
     injectServices,
+    initPlugins,
     launchStream,
   ].reduce(async (params, fn) => fn(await params), Promise.resolve(config.getPlugins()));
 };

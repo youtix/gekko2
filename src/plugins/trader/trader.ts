@@ -97,32 +97,6 @@ export class Trader extends Plugin {
     this.exposed = this.exposure > 0.1;
   }
 
-  public async processCandle(candle: Candle) {
-    this.price = candle.close;
-    const previousBalance = this.balance;
-    this.setBalance();
-
-    if (!this.sendInitialPortfolio) {
-      this.sendInitialPortfolio = true;
-      await this.synchronize();
-      this.deferredEmit(PORTFOLIO_CHANGE_EVENT, {
-        asset: this.portfolio.asset,
-        currency: this.portfolio.currency,
-      });
-    }
-
-    if (this.balance !== previousBalance) {
-      // this can happen because:
-      // A) the price moved and we have > 0 asset
-      // B) portfolio got changed
-      this.emitPortfolioValueChangeEvent();
-    }
-  }
-
-  public processFinalize(): void {
-    // Nothing to do in this plugin
-  }
-
   public onAdvice(advice: Advice) {
     if (!['long', 'short'].includes(advice.recommendation)) {
       error('trader', 'Ignoring advice in unknown direction');
@@ -300,6 +274,40 @@ export class Trader extends Plugin {
       feePercent: feePercent,
       effectivePrice,
     });
+  }
+
+  // --------------------------------------------------------------------------
+  //                           PLUGIN LIFECYCLE HOOKS
+  // --------------------------------------------------------------------------
+
+  protected processInit(): void {
+    /* noop */
+  }
+
+  protected async processCandle(candle: Candle) {
+    this.price = candle.close;
+    const previousBalance = this.balance;
+    this.setBalance();
+
+    if (!this.sendInitialPortfolio) {
+      this.sendInitialPortfolio = true;
+      await this.synchronize();
+      this.deferredEmit(PORTFOLIO_CHANGE_EVENT, {
+        asset: this.portfolio.asset,
+        currency: this.portfolio.currency,
+      });
+    }
+
+    if (this.balance !== previousBalance) {
+      // this can happen because:
+      // A) the price moved and we have > 0 asset
+      // B) portfolio got changed
+      this.emitPortfolioValueChangeEvent();
+    }
+  }
+
+  protected processFinalize(): void {
+    /* noop */
   }
 
   public static getStaticConfiguration() {

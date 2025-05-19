@@ -29,15 +29,6 @@ export class Telegram extends Plugin {
     this.chatId = chatId;
   }
 
-  // --- BEGIN PROCESSORS ---
-  protected processCandle(candle: Candle) {
-    this.price = candle.close;
-  }
-  protected processFinalize() {
-    // Nothing to do
-  }
-  // --- END PROCESSORS ---
-
   // --- BEGIN LISTENERS ---
   public onAdvice({ recommendation, date }: Advice) {
     const message = [
@@ -143,6 +134,22 @@ export class Telegram extends Plugin {
     } catch {
       return; // Don't stop the music if we can't send the message
     }
+  }
+
+  // --------------------------------------------------------------------------
+  //                           PLUGIN LIFECYCLE HOOKS
+  // --------------------------------------------------------------------------
+
+  protected processInit(): void {
+    /* noop */
+  }
+
+  protected processCandle(candle: Candle) {
+    this.price = candle.close;
+  }
+
+  protected processFinalize() {
+    /* noop */
   }
 
   public static getStaticConfiguration() {

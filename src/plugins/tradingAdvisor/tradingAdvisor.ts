@@ -45,21 +45,6 @@ export class TradingAdvisor extends Plugin {
   }
   // --- END LISTENERS ---
 
-  // --- BEGIN PROCESSORS ---
-  protected processCandle(candle: Candle) {
-    this.candle = candle;
-    const newCandle = this.candleBatcher.addSmallCandle(candle);
-    if (newCandle) {
-      this.deferredEmit(STRATEGY_CANDLE_EVENT, newCandle);
-      this.strategy?.onNewCandle(newCandle);
-    }
-  }
-
-  protected processFinalize() {
-    this.strategy?.finish();
-  }
-  // --- END PROCESSORS ---
-
   // --- BEGIN INTERNALS ---
   private setUpStrategy(strategyName: string, candleSize: number, historySize: number) {
     const SelectedStrategy = strategies[strategyName as keyof typeof strategies];
@@ -92,6 +77,27 @@ export class TradingAdvisor extends Plugin {
     this.deferredEmit(ADVICE_EVENT, { ...advice, date: addMinutes(this.candle.start, 1) });
   }
   // --- END INTERNALS ---
+
+  // --------------------------------------------------------------------------
+  //                           PLUGIN LIFECYCLE HOOKS
+  // --------------------------------------------------------------------------
+
+  protected processInit(): void {
+    /* noop */
+  }
+
+  protected processCandle(candle: Candle) {
+    this.candle = candle;
+    const newCandle = this.candleBatcher.addSmallCandle(candle);
+    if (newCandle) {
+      this.deferredEmit(STRATEGY_CANDLE_EVENT, newCandle);
+      this.strategy?.onNewCandle(newCandle);
+    }
+  }
+
+  protected processFinalize() {
+    this.strategy?.finish();
+  }
 
   public static getStaticConfiguration() {
     return {

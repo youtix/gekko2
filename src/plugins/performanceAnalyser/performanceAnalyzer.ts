@@ -11,7 +11,7 @@ import { Plugin } from '../plugin';
 import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT, ROUNDTRIP_UPDATE_EVENT } from './performanceAnalyzer.const';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 import { DateRange, PerformanceAnalyzerConfig, Report, SingleRoundTrip, Start } from './performanceAnalyzer.types';
-import { logFinalize, logRoundtrip, logTrade } from './performanceAnalyzer.utils';
+import { logFinalize, logRoundtrip } from './performanceAnalyzer.utils';
 
 export class PerformanceAnalyzer extends Plugin {
   private balance: number;
@@ -75,43 +75,16 @@ export class PerformanceAnalyzer extends Plugin {
 
     this.registerRoundtripPart(event);
 
-    const report = this.calculateReportStatistics();
-    if (report) {
-      logTrade(event, this.currency, this.asset);
-      this.deferredEmit(PERFORMANCE_REPORT_EVENT, report);
-    }
-  }
-  // --- END LISTENERS ---
-
-  // --- BEGIN PROCESSORS ---
-  protected processCandle(candle: Candle): void {
-    if (this.warmupCompleted) {
-      this.price = candle.close;
-      this.dates.end = addMinutes(candle.start, 1).getTime();
-
-      if (!this.dates.start) {
-        this.dates.start = candle.start;
-        this.startPrice = candle.close;
-      }
-
-      this.endPrice = candle.close;
-
-      if (this.openRoundTrip) this.emitRoundtripUpdate();
-    } else {
-      this.warmupCandle = candle;
-    }
-  }
-
-  protected processFinalize(): void {
-    if (this.trades) {
+    /*
+      TODO: Provide an option to emit intermediate reports on trade completed
       const report = this.calculateReportStatistics();
       if (report) {
-        logFinalize(report, this.currency, this.enableConsoleTable);
-        this.emit(PERFORMANCE_REPORT_EVENT, report);
-      }
-    }
+        logTrade(event, this.currency, this.asset);
+        this.deferredEmit(PERFORMANCE_REPORT_EVENT, report);
+     }
+    */
   }
-  // --- END PROCESSORS ---
+  // --- END LISTENERS ---
 
   // --- BEGIN INTERNALS ---
   private emitRoundtripUpdate(): void {
@@ -192,6 +165,8 @@ export class PerformanceAnalyzer extends Plugin {
         'Cannot calculate a profit report without having received portfolio data. Skipping performanceReport..',
       );
 
+    // TODO: When no trades are done, should send an empty report
+
     // the portfolio's balance is measured in {currency}
     const profit = +Big(this.balance).minus(this.start.balance);
 
@@ -244,6 +219,40 @@ export class PerformanceAnalyzer extends Plugin {
     return report;
   }
   // --- END INTERNALS ---
+
+  // --------------------------------------------------------------------------
+  //                           PLUGIN LIFECYCLE HOOKS
+  // --------------------------------------------------------------------------
+
+  protected processInit(): void {
+    /* noop */
+  }
+
+  protected processCandle(candle: Candle): void {
+    if (this.warmupCompleted) {
+      this.price = candle.close;
+      this.dates.end = addMinutes(candle.start, 1).getTime();
+
+      if (!this.dates.start) {
+        this.dates.start = candle.start;
+        this.startPrice = candle.close;
+      }
+
+      this.endPrice = candle.close;
+
+      if (this.openRoundTrip) this.emitRoundtripUpdate();
+    } else {
+      this.warmupCandle = candle;
+    }
+  }
+
+  protected processFinalize(): void {
+    const report = this.calculateReportStatistics();
+    if (report) {
+      logFinalize(report, this.currency, this.enableConsoleTable);
+      this.emit(PERFORMANCE_REPORT_EVENT, report);
+    }
+  }
 
   public static getStaticConfiguration() {
     return {
