@@ -19,10 +19,12 @@ export abstract class Plugin extends EventEmitter {
   protected asset: string;
   protected currency: string;
   protected pluginName: string;
+  protected strategySettings: unknown;
 
   constructor(pluginName: string) {
     super();
     const { asset, currency } = config.getWatch();
+    this.strategySettings = config.getStrategy();
 
     this.defferedEvents = [];
     this.pluginName = pluginName;

@@ -19,8 +19,10 @@ vi.mock('@services/core/order/trailingStop', () => ({
   TrailingStop: vi.fn(() => ({ updatePrice: vi.fn() })),
 }));
 vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn();
-  Configuration.prototype.getWatch = vi.fn(() => ({ mode: 'realtime' }));
+  const Configuration = vi.fn(() => ({
+    getWatch: vi.fn(() => ({ mode: 'realtime' })),
+    getStrategy: vi.fn(() => ({})),
+  }));
   return { config: new Configuration() };
 });
 

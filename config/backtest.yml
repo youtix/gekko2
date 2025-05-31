@@ -14,14 +14,14 @@ strategy:
   name: DEMA
   period: 12
   thresholds:
-    up: 100
-    down: -150
+    up: 500
+    down: -500
 
 plugins:
   - name: TradingAdvisor
     strategyName: DEMA
     timeframe: '1h'
-    historySize: 5
+    historySize: 0
 
   - name: PaperTrader
     reportInCurrency: true # report the profit in the currency or the asset?

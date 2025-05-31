@@ -6,8 +6,10 @@ import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT, ROUNDTRIP_UPDATE_EVENT } fro
 
 vi.mock('./performanceAnalyzer.utils');
 vi.mock('../../services/configuration/configuration', () => {
-  const Configuration = vi.fn();
-  Configuration.prototype.getWatch = vi.fn(() => ({}));
+  const Configuration = vi.fn(() => ({
+    getWatch: vi.fn(() => ({})),
+    getStrategy: vi.fn(() => ({})),
+  }));
   return { config: new Configuration() };
 });
 

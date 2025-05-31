@@ -26,7 +26,10 @@ vi.mock('../../strategies/index', () => ({
   NonExistentStrategy: undefined,
 }));
 vi.mock('../../services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({ getWatch: vi.fn(() => ({})) }));
+  const Configuration = vi.fn(() => ({
+    getWatch: vi.fn(() => ({})),
+    getStrategy: vi.fn(() => ({})),
+  }));
   return { config: new Configuration() };
 });
 

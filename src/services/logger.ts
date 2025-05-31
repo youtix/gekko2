@@ -12,6 +12,7 @@ type Tag =
   | 'strategy'
   | 'paper trader'
   | 'performance analyzer'
+  | 'performance reporter'
   | 'telegram'
   | 'trader'
   | 'trading advisor'

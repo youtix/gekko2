@@ -13,8 +13,10 @@ export class SQLiteStorage extends Storage {
   constructor() {
     super();
     const { database } = config.getStorage() ?? {};
-    this.db = new Database(database, { create: true });
-    this.db.exec('PRAGMA journal_mode = WAL;');
+    this.db = new Database(database);
+    this.db.run('PRAGMA busy_timeout = 5000;'); // Wait instead of erroring when the DB is locked
+    this.db.run('PRAGMA journal_mode = WAL;');
+    this.db.run('PRAGMA synchronous = NORMAL;');
     this.upsertTable();
   }
 

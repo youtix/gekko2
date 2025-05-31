@@ -18,8 +18,10 @@ import { telegramSchema } from './telegram.schema';
 
 vi.mock('../../services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() }));
 vi.mock('../../services/configuration/configuration', () => {
-  const Configuration = vi.fn();
-  Configuration.prototype.getWatch = vi.fn(() => ({ mode: 'realtime' }));
+  const Configuration = vi.fn(() => ({
+    getWatch: vi.fn(() => ({ mode: 'realtime' })),
+    getStrategy: vi.fn(() => ({})),
+  }));
   return { config: new Configuration() };
 });
 
