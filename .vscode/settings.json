@@ -10,5 +10,8 @@
     "source.fixAll.eslint": "always"
   },
   "terminal.integrated.scrollback": 1000,
-  "explorer.compactFolders": false
+  "explorer.compactFolders": false,
+  "files.associations": {
+    "*.csv": "csv (semicolon)"
+  }
 }
