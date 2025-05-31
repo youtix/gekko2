@@ -1,3 +1,9 @@
+![CI](https://github.com/youtix/gekko2/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/github/license/youtix/gekko2)
+![Bun](https://img.shields.io/badge/runtime-bun-blue?logo=bun)
+![TypeScript](https://img.shields.io/badge/language-typescript-blue?logo=typescript)
+![Vitest](https://img.shields.io/badge/test-vitest-6E9F18?logo=vitest)
+
 # Gekko 2
 
 ![Gordon Gekko](https://github.com/user-attachments/assets/769a2373-e22d-4b30-979f-09e636a49e4d)
