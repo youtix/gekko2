@@ -1,48 +1,33 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
+import { RingBuffer } from '@utils/array/ringBuffer';
 import Big from 'big.js';
 
 export class WilliamsR extends Indicator<'WilliamsR'> {
-  private period: number;
-  private fifoHigh: number[];
-  private fifoLow: number[];
-  private fifoClose: number[];
-  private age: number;
+  private ringBufferHigh: RingBuffer<number>;
+  private ringBufferLow: RingBuffer<number>;
+  private ringBufferClose: RingBuffer<number>;
 
   constructor({ period }: IndicatorRegistry['WilliamsR']['input'] = { period: 14 }) {
     super('WilliamsR', null);
-    this.period = period;
-    this.fifoHigh = [];
-    this.fifoLow = [];
-    this.fifoClose = [];
-    this.age = 0;
+    this.ringBufferHigh = new RingBuffer(period);
+    this.ringBufferLow = new RingBuffer(period);
+    this.ringBufferClose = new RingBuffer(period);
   }
 
   public onNewCandle({ high, low, close }: Candle): void {
+    this.ringBufferHigh.push(high);
+    this.ringBufferLow.push(low);
+    this.ringBufferClose.push(close);
+
     // Warmup phase
-    if (this.age < this.period) {
-      this.fifoHigh.push(high);
-      this.fifoLow.push(low);
-      this.fifoClose.push(close);
-      this.age++;
-      if (this.age === this.period) this.result = this.computeWillR();
-      return;
-    }
+    if (!this.ringBufferClose.isFull()) return;
 
-    // Rolling window update
-    this.fifoHigh = [...this.fifoHigh.slice(1), high];
-    this.fifoLow = [...this.fifoLow.slice(1), low];
-    this.fifoClose = [...this.fifoClose.slice(1), close];
-    this.result = this.computeWillR();
-  }
-
-  private computeWillR() {
-    const highest = Math.max(...this.fifoHigh);
-    const lowest = Math.min(...this.fifoLow);
-    const lastClose = this.fifoClose[this.fifoClose.length - 1];
-    if (highest === lowest) return 0;
+    const highest = this.ringBufferHigh.max();
+    const lowest = this.ringBufferLow.min();
+    const lastClose = this.ringBufferClose.last();
     // Williams %R = (Close - HighestHigh) / (HighestHigh - LowestLow) * 100
-    return +Big(lastClose).minus(highest).div(Big(highest).minus(lowest)).times(100);
+    this.result = highest === lowest ? 0 : +Big(lastClose).minus(highest).div(Big(highest).minus(lowest)).times(100);
   }
 
   public getResult() {

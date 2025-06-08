@@ -1,4 +1,4 @@
-import { xor } from 'lodash-es';
+import { isNumber, xor } from 'lodash-es';
 import { SortedDirection } from './array.utils.types';
 
 export const removeDuplicates = <T>(arr: T[]) => xor(...arr.map(a => [a]));
@@ -16,3 +16,5 @@ export const isSorted = (data: number[], direction: SortedDirection = 'SAsc') =>
   const cmp = comparators[direction];
   return data.every((v, i, arr) => !i || cmp(arr[i - 1], v));
 };
+
+export const isNumberArray = (data: unknown[]): data is number[] => data.every(isNumber);
