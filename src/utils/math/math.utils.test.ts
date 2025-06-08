@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, divide, linreg, multiply, percentile, stdev, sum, sumBy, weightedMean } from './math.utils';
+import { add, divide, linreg, mean, multiply, percentile, stdev, sum, sumBy, weightedMean } from './math.utils';
 
 describe('stdev', () => {
   it.each`
@@ -150,5 +150,19 @@ describe('sumBy', () => {
   it('sums values using a function accessor', () => {
     const data = [{ a: 1 }, { a: 2 }];
     expect(sumBy(data, obj => obj.a)).toBe(3);
+  });
+});
+
+describe('mean', () => {
+  it.each`
+    values       | expected
+    ${[1, 2, 3]} | ${2}
+    ${[0]}       | ${0}
+    ${[10, 20]}  | ${15}
+    ${[]}        | ${NaN}
+    ${null}      | ${NaN}
+    ${undefined} | ${NaN}
+  `('returns $expected for $values', ({ values, expected }) => {
+    expect(mean(values)).toBe(expected);
   });
 });

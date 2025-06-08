@@ -1,5 +1,5 @@
 import Big from 'big.js';
-import { isFunction, map, mean, mergeWith, reduce, sortBy } from 'lodash-es';
+import { isFunction, map, mergeWith, reduce, sortBy } from 'lodash-es';
 
 const valuesMinusMeanSquared = (values: number[] = []) => {
   const average = mean(values);
@@ -67,3 +67,4 @@ export const sumBy = <T>(values: T[], cond: keyof T | ((value: T) => number)) =>
   if (isFunction(cond)) return reduce(values, (p, c) => add(p, cond(c)), 0);
   else return reduce(values, (p, c) => add(p, c[cond] as number), 0);
 };
+export const mean = (values: number[] = []) => (!values?.length ? NaN : divide(reduce(values, add, 0), values.length));
