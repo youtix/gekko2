@@ -1,4 +1,4 @@
-import { InputSources } from '@indicators/indicator.types';
+import { InputSources } from '@models/types/inputSources.types';
 
 declare global {
   interface IndicatorRegistry {

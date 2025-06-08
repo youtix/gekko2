@@ -7,4 +7,3 @@ export type IndicatorNames = keyof IndicatorRegistry;
 export type IndicatorParamaters<T extends IndicatorNames> = IndicatorRegistry[T]['input'];
 export type MovingAverageClasses = SMA | EMA | DEMA | WMA;
 export type MovingAverageTypes = 'sma' | 'ema' | 'dema' | 'wma';
-export type InputSources = 'open' | 'high' | 'low' | 'close' | 'hl2' | 'hlc3' | 'ohlc4';
