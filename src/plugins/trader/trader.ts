@@ -255,8 +255,13 @@ export class Trader extends Plugin {
   private processCostAndPrice(side: Action, price: number, amount: number, feePercent?: number) {
     if (feePercent) {
       const cost = +Big(feePercent).div(100).mul(amount).mul(price);
-      if (side === 'buy') return { effectivePrice: +Big(price).mul(Big(feePercent).div(100).add(1)), cost };
-      else return { effectivePrice: +Big(price).mul(Big(feePercent).div(100).minus(1)), cost };
+      if (side === 'buy')
+        return { effectivePrice: +Big(price).mul(Big(feePercent).div(100).add(1)), cost };
+      else
+        return {
+          effectivePrice: +Big(price).mul(Big(1).minus(Big(feePercent).div(100))),
+          cost,
+        };
     }
     logger.warn('WARNING: exchange did not provide fee information, assuming no fees..');
     return { effectivePrice: price, cost: +Big(price).mul(amount) };

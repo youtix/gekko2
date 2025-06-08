@@ -554,9 +554,9 @@ describe('Trader', () => {
       const amount = 2;
       const feePercent = 1; // 1%
       // Expected cost = (1/100) * 2 * 100 = 2,
-      // Expected effectivePrice = 100 * ((1/100) - 1) = 100 * (-0.99) = -99.
+      // Expected effectivePrice = 100 * (1 - 1/100) = 99.
       const result = trader['processCostAndPrice'](side, price, amount, feePercent);
-      expect(result).toEqual({ effectivePrice: -99, cost: 2 });
+      expect(result).toEqual({ effectivePrice: 99, cost: 2 });
     });
 
     it('should calculate cost and effectivePrice when feePercent is not provided', () => {
