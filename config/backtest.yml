@@ -11,16 +11,16 @@ storage:
   database: ./db/gekko.sql
 
 strategy:
-  name: DEMA
-  period: 12
-  thresholds:
-    up: 500
-    down: -500
+  name: TMA
+  short: 12
+  medium: 12
+  long: 12
+  src: 'ohlc4'
 
 plugins:
   - name: TradingAdvisor
-    strategyName: DEMA
-    timeframe: '1h'
+    strategyName: TMA
+    timeframe: '1d'
     historySize: 0
 
   - name: PaperTrader

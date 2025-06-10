@@ -1,2 +1,1 @@
-pnpm test:coverage
-pnpm type:check
+bun run test:coverage
