@@ -8,9 +8,10 @@ export class TMA extends Strategy<'TMA'> {
   }
 
   protected init(): void {
-    this.addIndicator('SMA', { period: this.strategySettings.short });
-    this.addIndicator('SMA', { period: this.strategySettings.medium });
-    this.addIndicator('SMA', { period: this.strategySettings.long });
+    const { long, medium, short, src } = this.strategySettings;
+    this.addIndicator('SMA', { period: short, src });
+    this.addIndicator('SMA', { period: medium, src });
+    this.addIndicator('SMA', { period: long, src });
   }
 
   protected onCandleAfterWarmup(): void {
