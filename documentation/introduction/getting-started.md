@@ -7,7 +7,6 @@ Welcome to Gekko 2! This guide will help you set up your environment and run you
 Before you begin, ensure you have the following installed:
 
 - [Bun](https://bun.sh/) (latest version)
-- Node.js (optional, for compatibility)
 - Git (to clone the repository)
 
 ## Installation
