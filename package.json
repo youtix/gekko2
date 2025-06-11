@@ -30,7 +30,7 @@
   "type": "module",
   "scripts": {
     "preinstall": "git update-index --assume-unchanged ./src/strategies/custom/index.ts",
-    "build": "bun build ./src/gekko.ts --outdir ./dist --target bun --minify --sourcemap",
+    "build": "bun build src/gekko.ts --compile --outfile dist/gekko",
     "dev": "bun ./src/gekko.ts",
     "lint": "bun eslint ./src --fix",
     "lint:check": "bun eslint ./src",
