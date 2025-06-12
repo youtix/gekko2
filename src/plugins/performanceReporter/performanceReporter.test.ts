@@ -24,7 +24,7 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 
 const HEADER =
-  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;expected downside;ratio roundtrip\n';
+  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;expected downside;ratio roundtrip;worst mae\n';
 
 const baseConfig = {
   name: 'PerformanceReporter',
@@ -49,6 +49,7 @@ const sampleReport = {
   sharpe: 1.25,
   downside: 0.08,
   ratioRoundTrips: 0.9,
+  worstMaxAdverseExcursion: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -114,6 +115,7 @@ describe('PerformanceReporter', () => {
           '1.25',
           '0.08%',
           '0.9%',
+          '0 USDT',
         ].join(';') + '\n';
 
       expect(fs.appendFileSync).toHaveBeenCalledWith(expectedPath, expectedLine, 'utf8');

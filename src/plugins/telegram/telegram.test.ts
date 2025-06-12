@@ -196,6 +196,7 @@ describe('Telegram', () => {
         entryPrice: 155,
         exitBalance: 200,
         exitPrice: 200,
+        maxAdverseExcursion: 0,
         duration: 3600000, // 1 hour in ms
         entryAt: toTimestamp('2022-01-07T10:00:00Z'),
         exitAt: toTimestamp('2022-01-07T11:00:00Z'),
@@ -210,6 +211,7 @@ describe('Telegram', () => {
         `Exposed Duration: ${formatDuration(intervalToDuration({ start: 0, end: roundtrip.duration }))}`,
         `Profit & Loss: ${formater.format(roundtrip.pnl)} ${telegram['currency']}`,
         `Profit percent: ${+Big(roundtrip.profit).round(2, Big.roundDown)}%`,
+        `MAE: ${formater.format(roundtrip.maxAdverseExcursion)} ${telegram['currency']}`,
       ].join('\n');
       expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
     });

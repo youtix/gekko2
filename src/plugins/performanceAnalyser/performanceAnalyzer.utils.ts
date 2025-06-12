@@ -17,6 +17,7 @@ export const logRoundtrip = (roundTrip: RoundTrip, currency: string, enableConso
       exposedDuration: formatDuration(intervalToDuration({ start: 0, end: roundTrip.duration })),
       'P&L': `${formater.format(roundTrip.pnl)} ${currency}`,
       profit: `${+Big(roundTrip.profit).round(2, Big.roundDown)}%`,
+      MAE: `${formater.format(roundTrip.maxAdverseExcursion)} ${currency}`,
     });
   }
   info('performance analyzer', roundTrip);
@@ -44,6 +45,7 @@ export const logFinalize = (report: Report, currency: string, enableConsoleTable
       sharpeRatio: report.sharpe,
       expectedDownside: `${+Big(report.downside).round(2, Big.roundDown)}%`,
       ratioRoundtrip: `${+Big(report.ratioRoundTrips).round(2, Big.roundDown)}%`,
+      worstMAE: `${formater.format(report.worstMaxAdverseExcursion)} ${currency}`,
     });
   }
   info('performance analyzer', report);

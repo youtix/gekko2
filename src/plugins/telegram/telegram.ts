@@ -111,13 +111,14 @@ export class Telegram extends Plugin {
     this.sendMessage(this.token, this.chatId, message);
   }
 
-  public onRoundtrip({ duration, entryAt, exitAt, pnl, profit }: RoundTrip) {
+  public onRoundtrip({ duration, entryAt, exitAt, pnl, profit, maxAdverseExcursion }: RoundTrip) {
     const formater = new Intl.NumberFormat();
     const message = [
       `Roundtrip done from ${toISOString(entryAt)} to ${toISOString(exitAt)}`,
       `Exposed Duration: ${formatDuration(intervalToDuration({ start: 0, end: duration }))}`,
       `Profit & Loss: ${formater.format(pnl)} ${this.currency}`,
       `Profit percent: ${+Big(profit).round(2, Big.roundDown)}%`,
+      `MAE: ${formater.format(maxAdverseExcursion)} ${this.currency}`,
     ].join('\n');
     this.sendMessage(this.token, this.chatId, message);
   }
