@@ -25,6 +25,7 @@ export class PerformanceAnalyzer extends Plugin {
   private riskFreeReturn: number;
   private roundTrip: SingleRoundTrip;
   private roundTrips: RoundTrip[];
+  private maxAdverseExcursion: number;
   private start: Start;
   private startPrice: number;
   private trades: number;
@@ -46,6 +47,7 @@ export class PerformanceAnalyzer extends Plugin {
     this.riskFreeReturn = riskFreeReturn ?? 1;
     this.roundTrip = { id: 0, entry: null, exit: null };
     this.roundTrips = [];
+    this.maxAdverseExcursion = 0;
     this.start = { balance: 0 };
     this.startPrice = 0;
     this.trades = 0;
@@ -113,6 +115,7 @@ export class PerformanceAnalyzer extends Plugin {
         price: trade.price,
         total: +Big(trade.portfolio.asset).mul(trade.price).plus(trade.portfolio.currency),
       };
+      this.maxAdverseExcursion = 0;
       this.openRoundTrip = true;
     } else if (trade.action === 'sell') {
       this.roundTrip.exit = {
@@ -142,11 +145,15 @@ export class PerformanceAnalyzer extends Plugin {
 
       pnl: +Big(this.roundTrip.exit.total).minus(this.roundTrip.entry.total),
       profit: +Big(100).mul(this.roundTrip.exit.total).div(this.roundTrip.entry.total).minus(100),
+      maxAdverseExcursion: this.maxAdverseExcursion,
 
       duration: differenceInMilliseconds(this.roundTrip.exit.date, this.roundTrip.entry.date),
     };
 
     this.roundTrips[this.roundTrip.id] = roundtrip;
+
+    // reset MAE tracker for next roundtrip
+    this.maxAdverseExcursion = 0;
 
     logRoundtrip(roundtrip, this.currency, this.enableConsoleTable);
 
@@ -195,6 +202,8 @@ export class PerformanceAnalyzer extends Plugin {
 
     const market = +Big(this.endPrice).minus(this.startPrice).div(this.startPrice).mul(100);
 
+    const worstMaxAdverseExcursion = Math.max(0, ...this.roundTrips.map(r => r.maxAdverseExcursion));
+
     const report: Report = {
       alpha: +Big(relativeProfit).minus(market),
       balance: this.balance,
@@ -205,6 +214,7 @@ export class PerformanceAnalyzer extends Plugin {
       market,
       profit,
       ratioRoundTrips,
+      worstMaxAdverseExcursion,
       relativeProfit: relativeProfit,
       relativeYearlyProfit,
       sharpe,
@@ -240,7 +250,13 @@ export class PerformanceAnalyzer extends Plugin {
 
       this.endPrice = candle.close;
 
-      if (this.openRoundTrip) this.emitRoundtripUpdate();
+      if (this.openRoundTrip) {
+        if (this.roundTrip.entry) {
+          const adverse = +Big(this.roundTrip.entry.price).minus(candle.close);
+          if (adverse > this.maxAdverseExcursion) this.maxAdverseExcursion = adverse;
+        }
+        this.emitRoundtripUpdate();
+      }
     } else {
       this.warmupCandle = candle;
     }
