@@ -57,3 +57,4 @@ _Use Gekko 2 at your own risk._
   - [TMA](./documentation/strategies/tma.md)
 
 This project adheres to a [Code of Conduct](./CODE_OF_CONDUCT.md).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines.

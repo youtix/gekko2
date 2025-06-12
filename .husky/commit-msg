@@ -1,1 +1,2 @@
-bun x commitlint --edit
+#!/usr/bin/env sh
+bun run commit:check --edit "$1"
