@@ -214,28 +214,28 @@ describe('Trader', () => {
     it('should update the price with candle.close', async () => {
       // Stub synchronize so it does not affect our test.
       trader['synchronize'] = vi.fn(() => Promise.resolve());
-      await trader.processCandle(fakeCandle);
+      await trader['processCandle'](fakeCandle);
       expect(trader['price']).toBe(fakeCandle.close);
     });
 
     it('should call setBalance', async () => {
       trader['sendInitialPortfolio'] = true;
       trader['setBalance'] = vi.fn();
-      await trader.processCandle(fakeCandle);
+      await trader['processCandle'](fakeCandle);
       expect(trader['setBalance']).toHaveBeenCalledWith();
     });
 
     it('should set sendInitialPortfolio to true when it was false', async () => {
       trader['sendInitialPortfolio'] = false;
       trader['synchronize'] = vi.fn(() => Promise.resolve());
-      await trader.processCandle(fakeCandle);
+      await trader['processCandle'](fakeCandle);
       expect(trader['sendInitialPortfolio']).toBe(true);
     });
 
     it('should call synchronize when sendInitialPortfolio is false', async () => {
       trader['sendInitialPortfolio'] = false;
       trader['synchronize'] = vi.fn(() => Promise.resolve());
-      await trader.processCandle(fakeCandle);
+      await trader['processCandle'](fakeCandle);
       expect(trader['synchronize']).toHaveBeenCalledWith();
     });
 
@@ -243,7 +243,7 @@ describe('Trader', () => {
       trader['sendInitialPortfolio'] = false;
       trader['synchronize'] = vi.fn(() => Promise.resolve());
       trader['portfolio'] = { asset: 10, currency: 20 };
-      await trader.processCandle(fakeCandle);
+      await trader['processCandle'](fakeCandle);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, {
         asset: trader['portfolio'].asset,
         currency: trader['portfolio'].currency,
@@ -257,7 +257,7 @@ describe('Trader', () => {
         trader['balance'] = 150;
       });
       trader['emitPortfolioValueChangeEvent'] = vi.fn();
-      await trader.processCandle(fakeCandle);
+      await trader['processCandle'](fakeCandle);
       expect(trader['emitPortfolioValueChangeEvent']).toHaveBeenCalled();
     });
 
@@ -268,7 +268,7 @@ describe('Trader', () => {
         trader['balance'] = 100;
       });
       trader['emitPortfolioValueChangeEvent'] = vi.fn();
-      await trader.processCandle(fakeCandle);
+      await trader['processCandle'](fakeCandle);
       expect(trader['emitPortfolioValueChangeEvent']).not.toHaveBeenCalled();
     });
   });
@@ -552,9 +552,9 @@ describe('Trader', () => {
       const amount = 2;
       const feePercent = 1; // 1%
       // Expected cost = (1/100) * 2 * 100 = 2,
-      // Expected effectivePrice = 100 * ((1/100) - 1) = 100 * (-0.99) = -99.
+      // Expected effectivePrice = 100 * (1 - 1/100) = 99.
       const result = trader['processCostAndPrice'](side, price, amount, feePercent);
-      expect(result).toEqual({ effectivePrice: -99, cost: 2 });
+      expect(result).toEqual({ effectivePrice: 99, cost: 2 });
     });
 
     it('should calculate cost and effectivePrice when feePercent is not provided', () => {
