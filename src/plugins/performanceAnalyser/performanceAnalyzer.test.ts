@@ -380,6 +380,7 @@ describe('PerformanceAnalyzer', () => {
         exitBalance: roundTrip.exit.total,
         pnl: roundTrip.exit.total - roundTrip.entry.total,
         profit: 10,
+        maxAdverseExcursion: 0,
         duration: 10 * 60 * 1000, // 10 minutes
       });
     });
@@ -416,6 +417,7 @@ describe('PerformanceAnalyzer', () => {
         exitBalance: roundTrip.exit.total,
         pnl: roundTrip.exit.total - roundTrip.entry.total,
         profit: 10,
+        maxAdverseExcursion: 0,
         duration: 10 * 60 * 1000, // 10 minutes
       });
     });
@@ -452,6 +454,29 @@ describe('PerformanceAnalyzer', () => {
 
       expect(analyzer.losses).toHaveLength(0);
     });
+
+    it('should track max adverse excursion during a roundtrip', () => {
+      analyzer.warmupCompleted = true;
+      const buyTrade = {
+        action: 'buy',
+        date: toTimestamp('2020-01-01T00:00:00Z'),
+        price: 100,
+        portfolio: { asset: 1, currency: 0 },
+      };
+      const sellTrade = {
+        action: 'sell',
+        date: toTimestamp('2020-01-01T00:02:00Z'),
+        price: 110,
+        portfolio: { asset: 0, currency: 110 },
+      };
+
+      analyzer.registerRoundtripPart(buyTrade);
+      // price drops to 90 before selling
+      analyzer.processCandle({ close: 90, start: toTimestamp('2020-01-01T00:01:00Z') });
+      analyzer.registerRoundtripPart(sellTrade);
+
+      expect(first(analyzer.roundTrips)?.maxAdverseExcursion).toBe(10);
+    });
   });
   describe('calculateReportStatistics', () => {
     beforeEach(() => {
@@ -470,6 +495,7 @@ describe('PerformanceAnalyzer', () => {
           id: 1,
           pnl: 50,
           profit: 5,
+          maxAdverseExcursion: 0,
           entryAt: 0,
           entryPrice: 0,
           entryBalance: 0,
@@ -482,6 +508,7 @@ describe('PerformanceAnalyzer', () => {
           id: 2,
           pnl: -20,
           profit: -2,
+          maxAdverseExcursion: 0,
           entryAt: 0,
           entryPrice: 0,
           entryBalance: 0,
@@ -517,6 +544,7 @@ describe('PerformanceAnalyzer', () => {
         market: 30,
         profit: 200,
         ratioRoundTrips: 50,
+        worstMaxAdverseExcursion: 0,
         relativeProfit: 20,
         relativeYearlyProfit: 20,
         sharpe: 4.285714285714286,
@@ -525,8 +553,17 @@ describe('PerformanceAnalyzer', () => {
         startTime: toTimestamp('2020-01-01T00:00:00Z'),
         duration: '9 days',
         trades: 10,
-        yearlyProfit: 200,
-      });
+      yearlyProfit: 200,
+    });
+    });
+
+    it('should report the worst MAE across roundtrips', () => {
+      analyzer.roundTrips[0].maxAdverseExcursion = 5;
+      analyzer.roundTrips[1].maxAdverseExcursion = 12;
+
+      const report = analyzer.calculateReportStatistics();
+
+      expect(report?.worstMaxAdverseExcursion).toBe(12);
     });
   });
 });

@@ -48,7 +48,7 @@ The **Telegram** plugin listens to a variety of events in order to send notifica
 | `onTradeAborted`       | Sends a message when a trade is aborted due to portfolio constraints.      |
 | `onTradeCanceled`      | Notifies when a pending trade is canceled before execution.                |
 | `onTradeErrored`       | Reports an error that occurred during trade execution.                     |
-| `onRoundtrip`          | Sends a summary when a roundtrip (buy → sell) is completed.                |
+| `onRoundtrip`          | Sends a summary when a roundtrip (buy → sell) is completed, including MAE.                |
 
 ## Plugin Limitations
 

@@ -49,7 +49,23 @@ Here are the metrics reported in the `performanceReport` event:
 | `exposure`                | % of time the strategy was in a trade.                |
 | `downside`                | Measure of downside risk based on losing trades.      |
 | `trades`                  | Number of trades executed.                            |
-| `ratioRoundTrips`         | % of roundtrips that were profitable.                 |
+| `ratioRoundTrips`         | % of roundtrips that were profitable. |
+| `worstMaxAdverseExcursion` | Largest MAE encountered among all roundtrips. |
 | `startTime` / `endTime`   | Start and end timestamps of the session.              |
 | `startPrice` / `endPrice` | Asset price at session start and end.                 |
 | `duration`                | Duration of the session in human-readable format.     |
+
+## Roundtrip Statistics
+
+Each `roundtrip` event carries detailed information about the trade that just closed. Besides the entry and exit information it now reports the **Maximum Adverse Excursion (MAE)**, describing the worst price movement against the position before it was closed.
+
+| Field                 | Description                                                              |
+|-----------------------|--------------------------------------------------------------------------|
+| `entryAt`             | Timestamp when the trade was opened.                                     |
+| `exitAt`              | Timestamp when the trade was closed.                                     |
+| `entryPrice`          | Price at entry.                                                          |
+| `exitPrice`           | Price at exit.                                                           |
+| `pnl`                 | Profit & loss in the configured currency.                                |
+| `profit`              | Profit percentage over the roundtrip.                                    |
+| `duration`            | Time the position was open.                                              |
+| `maxAdverseExcursion` | Largest drawdown from the entry price observed before closing the trade. |

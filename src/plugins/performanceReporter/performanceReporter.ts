@@ -13,7 +13,7 @@ export class PerformanceReporter extends Plugin {
   private readonly formater: Intl.NumberFormat;
   private readonly filePath: string;
   private readonly header =
-    'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;expected downside;ratio roundtrip\n';
+    'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;expected downside;ratio roundtrip;worst mae\n';
 
   constructor({ name, filePath, fileName }: PerformanceReporterConfig) {
     super(name);
@@ -41,6 +41,7 @@ export class PerformanceReporter extends Plugin {
         report.sharpe,
         `${+Big(report.downside).round(2, Big.roundDown)}%`,
         `${+Big(report.ratioRoundTrips).round(2, Big.roundDown)}%`,
+        `${this.formater.format(report.worstMaxAdverseExcursion)} ${this.currency}`,
       ].join(';') + '\n';
 
     try {

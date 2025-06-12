@@ -45,5 +45,9 @@ export type Report = {
   sharpe: number;
   downside: number;
   ratioRoundTrips: number;
+  /**
+   * Maximum adverse excursion observed across all closed roundtrips.
+   */
+  worstMaxAdverseExcursion: number;
   alpha: number;
 };

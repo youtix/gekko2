@@ -46,6 +46,7 @@ Each row in the CSV contains the following metrics:
 | `sharpeRatio`           | Risk-adjusted return metric                                                                     |
 | `expectedDownside`      | Worst-case loss estimate                                                                        |
 | `ratioRoundtrip`        | Ratio of trades that completed a full buy/sell cycle                                            |
+| `worstMae`              | Maximum MAE observed across all roundtrips                                            |
 
 ## Events Emitted
 
