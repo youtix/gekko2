@@ -196,9 +196,11 @@ export class PerformanceAnalyzer extends Plugin {
 
     const percentExposure = +Big(this.exposure).div(differenceInMilliseconds(this.dates.end, this.dates.start));
 
-    const sharpe = +Big(relativeYearlyProfit)
-      .minus(this.riskFreeReturn)
-      .div(stdev(this.roundTrips.map(r => r.profit)) || 1);
+    const volatility = stdev(this.roundTrips.map(r => r.profit));
+    const sharpe =
+      !volatility || Number.isNaN(volatility)
+        ? 0
+        : +Big(relativeYearlyProfit).minus(this.riskFreeReturn).div(volatility);
 
     const tradeCount = this.trades > 2 ? this.trades - 2 : 1;
     const downsideLosses = this.losses.map(r => r.profit);

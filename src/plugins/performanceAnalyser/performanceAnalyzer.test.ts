@@ -573,5 +573,48 @@ describe('PerformanceAnalyzer', () => {
 
       expect(report?.worstMaxAdverseExcursion).toBe(12);
     });
+
+    it('should set sharpe to 0 when there is no volatility', () => {
+      analyzer.roundTrips = [
+        {
+          id: 1,
+          profit: 2,
+          pnl: 0,
+          maxAdverseExcursion: 0,
+          entryAt: 0,
+          entryPrice: 0,
+          entryBalance: 0,
+          exitAt: 0,
+          exitPrice: 0,
+          exitBalance: 0,
+          duration: 0,
+        },
+        {
+          id: 2,
+          profit: 2,
+          pnl: 0,
+          maxAdverseExcursion: 0,
+          entryAt: 0,
+          entryPrice: 0,
+          entryBalance: 0,
+          exitAt: 0,
+          exitPrice: 0,
+          exitBalance: 0,
+          duration: 0,
+        },
+      ];
+
+      const report = analyzer.calculateReportStatistics();
+
+      expect(report?.sharpe).toBe(0);
+    });
+
+    it('should set sharpe to 0 when there are no roundtrips', () => {
+      analyzer.roundTrips = [];
+
+      const report = analyzer.calculateReportStatistics();
+
+      expect(report?.sharpe).toBe(0);
+    });
   });
 });
