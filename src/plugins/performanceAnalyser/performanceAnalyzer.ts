@@ -91,7 +91,10 @@ export class PerformanceAnalyzer extends Plugin {
   // --- BEGIN INTERNALS ---
   private emitRoundtripUpdate(): void {
     if (this.roundTrip.entry) {
-      const uPnl = Big(this.price).minus(this.roundTrip.entry.price);
+      const qty = this.roundTrip.entry.asset;
+      const currency = this.roundTrip.entry.currency;
+      const currentValue = Big(this.price).mul(qty).plus(currency);
+      const uPnl = currentValue.minus(this.roundTrip.entry.total);
       this.deferredEmit(ROUNDTRIP_UPDATE_EVENT, {
         at: this.dates.end,
         duration: differenceInMilliseconds(this.dates.end, this.roundTrip.entry.date),
@@ -114,6 +117,8 @@ export class PerformanceAnalyzer extends Plugin {
         date: trade.date,
         price: trade.price,
         total: +Big(trade.portfolio.asset).mul(trade.price).plus(trade.portfolio.currency),
+        asset: trade.portfolio.asset,
+        currency: trade.portfolio.currency,
       };
       this.maxAdverseExcursion = 0;
       this.openRoundTrip = true;
@@ -122,6 +127,8 @@ export class PerformanceAnalyzer extends Plugin {
         date: trade.date,
         price: trade.price,
         total: +Big(trade.portfolio.asset).mul(trade.price).plus(trade.portfolio.currency),
+        asset: trade.portfolio.asset,
+        currency: trade.portfolio.currency,
       };
       this.openRoundTrip = false;
 
