@@ -198,7 +198,7 @@ export class PerformanceAnalyzer extends Plugin {
     const positiveRoundtrips = this.roundTrips.filter(roundTrip => roundTrip.pnl > 0);
 
     const ratioRoundTrips =
-      this.roundTrips.length > 0 ? +Big(positiveRoundtrips.length).div(this.roundTrips.length).mul(100).round(4) : 100;
+      this.roundTrips.length > 0 ? +Big(positiveRoundtrips.length).div(this.roundTrips.length).mul(100).round(4) : null;
 
     const market = +Big(this.endPrice).minus(this.startPrice).div(this.startPrice).mul(100);
 
