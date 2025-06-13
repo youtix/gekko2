@@ -41,7 +41,7 @@ export class PerformanceReporter extends Plugin {
         report.sharpe,
         `${+Big(report.downside).round(2, Big.roundDown)}%`,
         `${+Big(report.ratioRoundTrips).round(2, Big.roundDown)}%`,
-        `${this.formater.format(report.worstMaxAdverseExcursion)} ${this.currency}`,
+        `${+Big(report.worstMaxAdverseExcursion).round(2, Big.roundDown)}%`,
       ].join(';') + '\n';
 
     try {

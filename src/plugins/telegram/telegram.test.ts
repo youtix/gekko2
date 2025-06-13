@@ -211,7 +211,7 @@ describe('Telegram', () => {
         `Exposed Duration: ${formatDuration(intervalToDuration({ start: 0, end: roundtrip.duration }))}`,
         `Profit & Loss: ${formater.format(roundtrip.pnl)} ${telegram['currency']}`,
         `Profit percent: ${+Big(roundtrip.profit).round(2, Big.roundDown)}%`,
-        `MAE: ${formater.format(roundtrip.maxAdverseExcursion)} ${telegram['currency']}`,
+        `MAE: ${+Big(roundtrip.maxAdverseExcursion).round(2, Big.roundDown)}%`,
       ].join('\n');
       expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
     });
