@@ -118,7 +118,7 @@ export class Telegram extends Plugin {
       `Exposed Duration: ${formatDuration(intervalToDuration({ start: 0, end: duration }))}`,
       `Profit & Loss: ${formater.format(pnl)} ${this.currency}`,
       `Profit percent: ${+Big(profit).round(2, Big.roundDown)}%`,
-      `MAE: ${formater.format(maxAdverseExcursion)} ${this.currency}`,
+      `MAE: ${+Big(maxAdverseExcursion).round(2, Big.roundDown)}%`,
     ].join('\n');
     this.sendMessage(this.token, this.chatId, message);
   }

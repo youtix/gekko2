@@ -115,7 +115,7 @@ describe('PerformanceReporter', () => {
           '1.25',
           '0.08%',
           '0.9%',
-          '0 USDT',
+          '0%',
         ].join(';') + '\n';
 
       expect(fs.appendFileSync).toHaveBeenCalledWith(expectedPath, expectedLine, 'utf8');
