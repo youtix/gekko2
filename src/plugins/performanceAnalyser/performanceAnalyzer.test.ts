@@ -553,8 +553,8 @@ describe('PerformanceAnalyzer', () => {
         startTime: toTimestamp('2020-01-01T00:00:00Z'),
         duration: '9 days',
         trades: 10,
-      yearlyProfit: 200,
-    });
+        yearlyProfit: 200,
+      });
     });
 
     it('should report the worst MAE across roundtrips', () => {
