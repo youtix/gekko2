@@ -36,24 +36,24 @@ The **PerformanceAnalyzer** plugin emits a number of events that are used to tra
 
 Here are the metrics reported in the `performanceReport` event:
 
-| Metric                     | Description                                                |
-|----------------------------|------------------------------------------------------------|
-| `balance`                  | Current portfolio balance in the configured currency.      |
-| `profit`                   | Absolute profit since the start of the session.            |
-| `relativeProfit`           | Relative profit in percent since the start.                |
-| `yearlyProfit`             | Projected yearly profit in absolute terms.                 |
-| `relativeYearlyProfit`     | Projected yearly profit in percent.                        |
-| `market`                   | Market movement (start price vs end price) in percent.     |
-| `alpha`                    | Strategy outperformance vs market.                         |
-| `sharpe`                   | Sharpe ratio based on return volatility.                   |
-| `exposure`                 | % of time the strategy was in a trade.                     |
-| `downside`                 | Measure of downside risk based on losing trades.           |
-| `trades`                   | Number of trades executed.                                 |
-| `ratioRoundTrips`          | % of roundtrips that were profitable.                      |
-| `worstMaxAdverseExcursion` | Largest MAE encountered among all roundtrips (percentage). |
-| `startTime` / `endTime`    | Start and end timestamps of the session.                   |
-| `startPrice` / `endPrice`  | Asset price at session start and end.                      |
-| `duration`                 | Duration of the session in human-readable format.          |
+| Metric                     | Description                                                                        |
+|----------------------------|------------------------------------------------------------                        |
+| `balance`                  | Current portfolio balance in the configured currency.                              |
+| `profit`                   | Absolute profit since the start of the session.                                    |
+| `relativeProfit`           | Relative profit in percent since the start.                                        |
+| `yearlyProfit`             | Projected yearly profit in absolute terms.                                         |
+| `relativeYearlyProfit`     | Projected yearly profit in percent.                                                |
+| `market`                   | Market movement (start price vs end price) in percent.                             |
+| `alpha`                    | Strategy outperformance vs market.                                                 |
+| `sharpe`                   | Sharpe ratio based on return volatility.                                           |
+| `exposure`                 | % of time the strategy was in a trade.                                             |
+| `downside`                 | Measure of downside risk based on losing trades.                                   |
+| `trades`                   | Number of trades executed.                                                         |
+| `ratioRoundTrips`          | % of roundtrips that were profitable. Returns `null` when no roundtrips occurred.  |
+| `worstMaxAdverseExcursion` | Largest MAE encountered among all roundtrips (percentage).                         |
+| `startTime` / `endTime`    | Start and end timestamps of the session.                                           |
+| `startPrice` / `endPrice`  | Asset price at session start and end.                                              |
+| `duration`                 | Duration of the session in human-readable format.                                  |
 
 ## Roundtrip Statistics
 

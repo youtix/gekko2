@@ -565,6 +565,17 @@ describe('PerformanceAnalyzer', () => {
       });
     });
 
+    it('should set ratioRoundTrips to null when no roundtrips exist', () => {
+      analyzer.roundTrips = [];
+      analyzer.losses = [];
+      analyzer.trades = 0;
+      analyzer.exposure = 0;
+
+      const report = analyzer.calculateReportStatistics();
+
+      expect(report?.ratioRoundTrips).toBeNull();
+    });
+
     it('should report the worst MAE across roundtrips', () => {
       analyzer.roundTrips[0].maxAdverseExcursion = 5;
       analyzer.roundTrips[1].maxAdverseExcursion = 12;

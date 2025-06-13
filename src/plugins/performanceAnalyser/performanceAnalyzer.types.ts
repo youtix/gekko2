@@ -46,7 +46,7 @@ export type Report = {
   exposure: number;
   sharpe: number;
   downside: number;
-  ratioRoundTrips: number;
+  ratioRoundTrips: Nullable<number>;
   /**
    * Maximum adverse excursion observed across all closed roundtrips.
    * Expressed as a percentage.
