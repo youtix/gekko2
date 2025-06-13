@@ -554,14 +554,14 @@ describe('PerformanceAnalyzer', () => {
         ratioRoundTrips: 50,
         worstMaxAdverseExcursion: 0,
         relativeProfit: 20,
-        relativeYearlyProfit: 20,
-        sharpe: 4.285714285714286,
+        relativeYearlyProfit: 811.1111111111111,
+        sharpe: 230.3174603174603,
         startBalance: 1000,
         startPrice: 100,
         startTime: toTimestamp('2020-01-01T00:00:00Z'),
         duration: '9 days',
         trades: 10,
-        yearlyProfit: 200,
+        yearlyProfit: 8111.111111111111,
       });
     });
 

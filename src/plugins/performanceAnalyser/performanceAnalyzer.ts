@@ -13,6 +13,8 @@ import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 import { DateRange, PerformanceAnalyzerConfig, Report, SingleRoundTrip, Start } from './performanceAnalyzer.types';
 import { logFinalize, logRoundtrip } from './performanceAnalyzer.utils';
 
+const YEAR_MS = 1000 * 60 * 60 * 24 * 365;
+
 export class PerformanceAnalyzer extends Plugin {
   private balance: number;
   private dates: DateRange;
@@ -188,8 +190,9 @@ export class PerformanceAnalyzer extends Plugin {
       start: this.dates.start,
       end: this.dates.end,
     });
+    const elapsedYears = differenceInMilliseconds(this.dates.end, this.dates.start) / YEAR_MS;
     const relativeProfit = +Big(this.balance).div(this.start.balance).mul(100).minus(100);
-    const relativeYearlyProfit = +Big(relativeProfit).div(timespan.years || 1);
+    const relativeYearlyProfit = +Big(relativeProfit).div(elapsedYears || 1);
 
     const percentExposure = +Big(this.exposure).div(differenceInMilliseconds(this.dates.end, this.dates.start));
 
@@ -230,7 +233,7 @@ export class PerformanceAnalyzer extends Plugin {
       startTime: this.dates.start,
       duration: formatDuration(timespan),
       trades: this.trades,
-      yearlyProfit: +Big(profit).div(timespan.years || 1),
+      yearlyProfit: +Big(profit).div(elapsedYears || 1),
     };
 
     return report;
