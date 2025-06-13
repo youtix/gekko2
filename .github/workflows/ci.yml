@@ -36,7 +36,13 @@ jobs:
 
       - name: Check commit messages
         if: ${{ github.event_name == 'pull_request' }}
-        run: bun run commit:check
+        run: |
+          if git rev-parse HEAD~10 >/dev/null 2>&1; then
+            FROM="HEAD~10"
+          else
+            FROM=$(git rev-list --max-parents=0 HEAD)
+          fi
+          bunx commitlint --from="$FROM"
 
       - name: Check formatting
         run: bun run format:check
