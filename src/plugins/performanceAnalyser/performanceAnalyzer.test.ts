@@ -225,7 +225,9 @@ describe('PerformanceAnalyzer', () => {
       analyzer.roundTrip.entry = {
         price: 900,
         date: toTimestamp('2020-01-01T00:00:00Z'),
-        total: 100,
+        total: 1800,
+        asset: 2,
+        currency: 0,
       };
       analyzer.price = 1000;
       analyzer.dates.end = toTimestamp('2020-01-01T00:10:00Z');
@@ -234,8 +236,8 @@ describe('PerformanceAnalyzer', () => {
       expect(deferredEmitSpy).toHaveBeenCalledExactlyOnceWith(ROUNDTRIP_UPDATE_EVENT, {
         at: toTimestamp('2020-01-01T00:10:00Z'),
         duration: 10 * 60 * 1000,
-        uPnl: 100,
-        uProfit: 100,
+        uPnl: 200,
+        uProfit: 11.11111111111111,
       });
     });
   });
@@ -264,6 +266,8 @@ describe('PerformanceAnalyzer', () => {
         date: trade.date,
         price: trade.price,
         total: 200,
+        asset: trade.portfolio.asset,
+        currency: trade.portfolio.currency,
       });
     });
     it('should open a round trip', () => {
@@ -281,6 +285,8 @@ describe('PerformanceAnalyzer', () => {
         date: toTimestamp('2020-01-01T00:00:00Z'),
         price: 100,
         total: 200,
+        asset: 0,
+        currency: 200,
       };
       const trade = {
         action: 'buy',
@@ -312,6 +318,8 @@ describe('PerformanceAnalyzer', () => {
         date: sellTrade.date,
         price: sellTrade.price,
         total: sellTrade.portfolio.currency,
+        asset: sellTrade.portfolio.asset,
+        currency: sellTrade.portfolio.currency,
       });
     });
     it('should close a round trip', () => {

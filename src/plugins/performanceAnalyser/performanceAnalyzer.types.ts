@@ -25,6 +25,8 @@ export type RoundTripData = {
   price: number;
   date: number;
   total: number;
+  asset: number;
+  currency: number;
 };
 
 export type Report = {
