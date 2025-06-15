@@ -149,7 +149,7 @@ describe('TradingAdvisor', () => {
       advisor['relayAdvice'](dummyAdvice);
       expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(ADVICE_EVENT, {
         ...dummyAdvice,
-        date: addMinutes(candleStart, 1),
+        date: addMinutes(candleStart, 1).getTime(),
       });
     });
   });
