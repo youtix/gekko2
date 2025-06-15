@@ -74,7 +74,10 @@ export class TradingAdvisor extends Plugin {
 
   private relayAdvice(advice: Advice) {
     if (!this.candle) throw new PluginError(this.pluginName, 'No candle when relaying advice');
-    this.deferredEmit(ADVICE_EVENT, { ...advice, date: addMinutes(this.candle.start, 1) });
+    this.deferredEmit(ADVICE_EVENT, {
+      ...advice,
+      date: addMinutes(this.candle.start, 1).getTime(),
+    });
   }
   // --- END INTERNALS ---
 
