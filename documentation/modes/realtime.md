@@ -87,7 +87,7 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: MyAwesomeStrategy
-    candleSize: 1
+    timeframe: '1m'
     historySize: 10
 
   - name: PaperTrader # or Trader for live/sandbox mode
