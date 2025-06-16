@@ -114,8 +114,17 @@ export const preloadMarkets = async (context: PipelineContext) => {
 };
 
 export const checkPluginsDuplicateEvents = async (context: PipelineContext) => {
-  const duplicateEvents = keepDuplicates(compact(flatMap(context, p => p.eventsEmitted)));
-  const duplicatePlugins = map(filter(context, { eventsEmitted: duplicateEvents }), p => p.name);
+  const eventsByPlugin = map(context, ({ name, eventsEmitted }) => ({
+    name,
+    events: eventsEmitted ?? [],
+  }));
+
+  const duplicateEvents = keepDuplicates(compact(flatMap(eventsByPlugin, p => p.events)));
+  const duplicatePlugins = map(
+    filter(eventsByPlugin, ({ events }) => events.some(e => duplicateEvents.includes(e))),
+    p => p.name,
+  );
+
   if (duplicateEvents.length) throw new PluginsEmitSameEventError(duplicatePlugins, duplicateEvents);
   return context;
 };
