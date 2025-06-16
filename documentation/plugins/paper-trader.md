@@ -8,7 +8,7 @@ This is useful for:
 
 - Testing strategies in live markets without risking real money.
 - Measuring the performance of a strategy in real-time / backtest mode.
-- Comparing different strategy outcomes with configurable fees, slippage, and balances.
+- Comparing different strategy outcomes with configurable fees and balances.
 
 The PaperTrader plugin is fully compatible with triggers such as trailing stops, allowing it to simulate more advanced trading behavior (e.g. exiting long positions with a trailing stop loss).
 
@@ -20,22 +20,16 @@ In your configuration file, under the `plugins` section, you can configure the P
 ```yaml
 plugins:
   - name: PaperTrader # Must be set to PaperTrader
-    reportInCurrency: true # Report profits in the currency (e.g., USDT) instead of the asset
     simulationBalance:
       asset: 1 # Starting simulated asset balance (e.g., BTC)
       currency: 100 # Starting simulated currency balance (e.g., USDT)
     feeMaker: 0.5 # Maker fee in percent (e.g., 0.5%)
     feeTaker: 0.6 # Taker fee in percent (e.g., 0.6%)
     feeUsing: maker # Which fee to apply ("maker" or "taker")
-    slippage: 0.1 # Simulated slippage per trade (in percent)
 
 ```
 
-```
-💡 Note:
-Make sure to set realistic slippage and fees, especially if you plan to use Paper Trader for performance evaluation.
-Unrealistic values can lead to inaccurate results.
-```
+
 
 ## Events Emitted
 

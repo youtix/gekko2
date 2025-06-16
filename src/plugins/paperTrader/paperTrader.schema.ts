@@ -1,4 +1,4 @@
-import { boolean, number, object, string } from 'yup';
+import { number, object, string } from 'yup';
 
 const simulationBalanceSchema = object({
   asset: number().min(0).required(),
@@ -7,10 +7,8 @@ const simulationBalanceSchema = object({
 
 export const paperTraderSchema = object({
   name: string().required(),
-  reportInCurrency: boolean().required(),
   simulationBalance: simulationBalanceSchema,
   feeMaker: number().positive().required(),
   feeTaker: number().positive().required(),
   feeUsing: string().oneOf(['maker', 'taker']).required(),
-  slippage: number().positive().required(),
 });

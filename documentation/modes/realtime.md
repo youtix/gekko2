@@ -97,8 +97,6 @@ plugins:
     feeUsing: taker
     feeTaker: 0.1
     feeMaker: 0.05
-    reportInCurrency: true
-    slippage: 0.2
 
   - name: PerformanceAnalyzer
 

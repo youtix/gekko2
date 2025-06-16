@@ -78,7 +78,6 @@ plugins:
     historySize: 5
 
   - name: PaperTrader
-    reportInCurrency: true # report the profit in the currency or the asset?
     simulationBalance: # start balance, on what the current balance is compared with
       # these are in the unit types configured in the watcher.
       asset: 0
@@ -87,7 +86,6 @@ plugins:
     feeMaker: 0.15
     feeTaker: 0.25
     feeUsing: maker
-    slippage: 0.05 # how much slippage/spread should Gekko assume per trade?
 
   - name: PerformanceAnalyzer
     riskFreeReturn: 5
