@@ -10,7 +10,6 @@ This is useful for:
 - Measuring the performance of a strategy in real-time / backtest mode.
 - Comparing different strategy outcomes with configurable fees and balances.
 
-The PaperTrader plugin is fully compatible with triggers such as trailing stops, allowing it to simulate more advanced trading behavior (e.g. exiting long positions with a trailing stop loss).
 
 
 ## Configuration
@@ -41,6 +40,3 @@ The **PaperTrader** plugin emits several events during the simulation of trades.
 | `TRADE_COMPLETED_EVENT`        | Emitted when a simulated trade has been successfully completed.            |
 | `PORTFOLIO_CHANGE_EVENT`       | Emitted when the simulated portfolio (asset or currency) changes.          |
 | `PORTFOLIO_VALUE_CHANGE_EVENT` | Emitted when the total simulated portfolio value changes.                  |
-| `TRIGGER_CREATED_EVENT`        | Emitted when a trailing stop trigger is created.                           |
-| `TRIGGER_FIRED_EVENT`          | Emitted when a trailing stop trigger condition is met and executes.        |
-| `TRIGGER_ABORTED_EVENT`        | Emitted when an active trigger is canceled due to a new incoming advice.   |

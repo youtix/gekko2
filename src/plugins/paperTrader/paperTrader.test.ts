@@ -1,23 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginError } from '../../errors/plugin/plugin.error';
-import { TrailingStop } from '../../services/core/order/trailingStop';
-import { warning } from '../../services/logger';
 import { toTimestamp } from '../../utils/date/date.utils';
 import {
   PORTFOLIO_CHANGE_EVENT,
   PORTFOLIO_VALUE_CHANGE_EVENT,
   TRADE_COMPLETED_EVENT,
   TRADE_INITIATED_EVENT,
-  TRIGGER_CREATED_EVENT,
-  TRIGGER_FIRED_EVENT,
 } from '../plugin.const';
 import { PaperTrader } from './paperTrader';
 import { PapertraderConfig } from './paperTrader.types';
 
 vi.mock('@services/logger', () => ({ warning: vi.fn() }));
-vi.mock('@services/core/order/trailingStop', () => ({
-  TrailingStop: vi.fn(() => ({ updatePrice: vi.fn() })),
-}));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getWatch: vi.fn(() => ({ mode: 'realtime' })),
@@ -67,46 +60,6 @@ describe('PaperTrader', () => {
     });
   });
   describe('onAdvice', () => {
-    it('should clean up potential old stop trigger on "short" recommendation', () => {
-      const advice = { id: 'advice-100', recommendation: 'short' };
-      const trailingStopArgs = { initialPrice: 100, trail: 10, onTrigger: () => {} };
-      trader['activeStopTrigger'] = {
-        id: 'trigger-10',
-        adviceId: 'advice-50',
-        instance: new TrailingStop(trailingStopArgs),
-      };
-      trader['price'] = 100;
-      trader.onAdvice(advice);
-      expect(trader['activeStopTrigger']).toBeUndefined();
-    });
-    it('should clean up potential old stop trigger on "long" recommendation & advice contain trigger', () => {
-      const trigger = { type: 'trailingStop', trailValue: 10, trailPercentage: 0.5 };
-      const advice = { id: 'advice-100', recommendation: 'long', trigger };
-      const trailingStopArgs = { initialPrice: 100, trail: 10, onTrigger: () => {} };
-      trader['activeStopTrigger'] = {
-        id: 'trigger-10',
-        adviceId: 'advice-50',
-        instance: new TrailingStop(trailingStopArgs),
-      };
-      trader['price'] = 100;
-      vi.spyOn(trader, 'createTrigger').mockImplementationOnce(() => {});
-      trader.onAdvice(advice);
-      expect(trader['activeStopTrigger']).toBeUndefined();
-    });
-    it('should create a new trigger on "long" recommendation & advice contain trigger', () => {
-      const trigger = { type: 'trailingStop', trailValue: 10, trailPercentage: 0.5 };
-      const advice = { id: 'advice-100', recommendation: 'long', trigger };
-      const trailingStopArgs = { initialPrice: 100, trail: 10, onTrigger: () => {} };
-      trader['activeStopTrigger'] = {
-        id: 'trigger-10',
-        adviceId: 'advice-50',
-        instance: new TrailingStop(trailingStopArgs),
-      };
-      trader['price'] = 100;
-      const createTriggerSpy = vi.spyOn(trader, 'createTrigger').mockImplementationOnce(() => {});
-      trader.onAdvice(advice);
-      expect(createTriggerSpy).toHaveBeenCalledExactlyOnceWith(advice);
-    });
     it('should ignore unknown recommendation', () => {
       const advice = { id: 'advice-100', recommendation: 'other than shoart and long reco' };
       const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
@@ -219,30 +172,17 @@ describe('PaperTrader', () => {
       trader['warmupCompleted'] = true;
       trader['balance'] = 100;
       trader['exposed'] = false;
-      trader['activeStopTrigger'] = undefined;
       const candle = { close: 150 };
 
       trader['processCandle'](candle);
 
       expect(trader['price']).toBe(150);
     });
-    it('should update candle when warmup is done', () => {
-      trader['warmupCompleted'] = true;
-      trader['balance'] = 100;
-      trader['exposed'] = false;
-      trader['activeStopTrigger'] = undefined;
-      const candle = { close: 150 };
-
-      trader['processCandle'](candle);
-
-      expect(trader['candle']).toStrictEqual(candle);
-    });
     it('should set balance when warmup is done & balance is NOT set', () => {
       trader['warmupCompleted'] = true;
       trader['balance'] = null;
       trader['price'] = 100;
       trader['exposed'] = false;
-      trader['activeStopTrigger'] = undefined;
       const candle = { close: 150 };
 
       trader['processCandle'](candle);
@@ -254,7 +194,6 @@ describe('PaperTrader', () => {
       trader['balance'] = null;
       trader['price'] = 100;
       trader['exposed'] = false;
-      trader['activeStopTrigger'] = undefined;
       const candle = { close: 150 };
       const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
 
@@ -270,7 +209,6 @@ describe('PaperTrader', () => {
       trader['balance'] = null;
       trader['price'] = 100;
       trader['exposed'] = false;
-      trader['activeStopTrigger'] = undefined;
       const candle = { close: 150 };
       const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
 
@@ -285,7 +223,6 @@ describe('PaperTrader', () => {
       trader['balance'] = 10;
       trader['price'] = 100;
       trader['exposed'] = true;
-      trader['activeStopTrigger'] = undefined;
       const candle = { close: 150 };
       const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
 
@@ -300,7 +237,6 @@ describe('PaperTrader', () => {
       trader['balance'] = 10;
       trader['price'] = 100;
       trader['exposed'] = false;
-      trader['activeStopTrigger'] = undefined;
       const candle = { close: 150 };
       const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
 
@@ -318,7 +254,6 @@ describe('PaperTrader', () => {
       trader['warmupCompleted'] = true;
       trader['price'] = 100;
       trader['exposed'] = false;
-      trader['activeStopTrigger'] = undefined;
       const candle = { close: 150 };
 
       trader['processCandle'](candle);
@@ -332,82 +267,6 @@ describe('PaperTrader', () => {
         balance: 0,
       });
       expect(trader['deferredEmit']).toHaveBeenCalledTimes(2);
-    });
-    it('should update price of active trailing stop if set when warmup is done', () => {
-      trader['warmupCompleted'] = true;
-      trader['balance'] = 1000;
-      trader['exposed'] = true;
-      const trailingStopArgs = { initialPrice: 100, trail: 10, onTrigger: () => {} };
-      trader['activeStopTrigger'] = {
-        id: 'trigger-10',
-        adviceId: 'advice-50',
-        instance: new TrailingStop(trailingStopArgs),
-      };
-      const candle = { close: 150 };
-
-      trader['processCandle'](candle);
-
-      expect(trader['activeStopTrigger'].instance.updatePrice).toHaveBeenCalledExactlyOnceWith(150);
-    });
-  });
-  describe('createTrigger', () => {
-    it('should emit triggerCreated event for a valid trailingStop trigger', () => {
-      trader['price'] = 100;
-      const advice = {
-        id: 'test-advice-1',
-        date: toTimestamp('2025-01-01T00:00:00Z'),
-        trigger: { type: 'trailingStop', trailValue: 5 },
-      };
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
-
-      trader['createTrigger'](advice);
-
-      expect(deferredEmitSpy).toHaveBeenCalledExactlyOnceWith(TRIGGER_CREATED_EVENT, {
-        id: 'trigger-1',
-        at: advice.date,
-        type: 'trailingStop',
-        proprties: { trail: 5, initialPrice: 100 },
-      });
-    });
-    it('should set activeStopTrigger with correct properties for a valid trailingStop trigger', () => {
-      const advice = {
-        id: 'test-advice-1',
-        date: toTimestamp('2025-01-01T00:00:00Z'),
-        trigger: { type: 'trailingStop', trailValue: 5 },
-      };
-
-      trader['createTrigger'](advice);
-
-      expect(trader['activeStopTrigger']).toEqual({
-        id: 'trigger-1',
-        adviceId: 'test-advice-1',
-        instance: expect.any(Object),
-      });
-    });
-    it('should log if a trailingStop trigger is missing a trailValue', () => {
-      const advice = {
-        id: 'test-advice-2',
-        date: toTimestamp('2025-01-01T01:00:00Z'),
-        trigger: { type: 'trailingStop' },
-      };
-
-      trader['createTrigger'](advice);
-
-      expect(warning).toHaveBeenCalledWith('paper trader', 'Ignoring trailing stop without trail value');
-    });
-    it('should log if trigger type is unknown', () => {
-      const advice = {
-        id: 'test-advice-3',
-        date: toTimestamp('2025-01-01T02:00:00Z'),
-        trigger: { type: 'unknown', trailValue: 5 },
-      };
-
-      trader['createTrigger'](advice);
-
-      expect(warning).toHaveBeenCalledWith(
-        'paper trader',
-        'Gekko does not know trigger with type "unknown".. Ignoring stop.',
-      );
     });
   });
   describe('getBalance', () => {
@@ -537,96 +396,6 @@ describe('PaperTrader', () => {
         trader['updatePosition']('short');
         expect(trader['trades']).toBe(1);
       });
-    });
-  });
-  describe('stopTrigger', () => {
-    it('should throw if no candle are set', () => {
-      expect(() => trader['stopTrigger']()).toThrowError(PluginError);
-    });
-    it('should emit "triggerFired" with correct id and date', () => {
-      trader['candle'] = { start: toTimestamp('2025-01-01T00:00:00Z'), close: 150 };
-      const trailingStopArgs = { initialPrice: 100, trail: 10, onTrigger: () => {} };
-      trader['activeStopTrigger'] = {
-        id: 'trigger-1',
-        adviceId: 'advice-50',
-        instance: new TrailingStop(trailingStopArgs),
-      };
-      vi.spyOn(trader, 'updatePosition').mockImplementation(() => ({
-        cost: 10,
-        amount: 200,
-        effectivePrice: 99.75,
-      }));
-      trader['stopTrigger']();
-      expect(trader['deferredEmit']).toHaveBeenNthCalledWith(1, TRIGGER_FIRED_EVENT, {
-        id: 'trigger-1',
-        date: toTimestamp('2025-01-01T00:01:00Z'),
-      });
-    });
-    it('should emit "portfolioChange"', () => {
-      trader['candle'] = { start: toTimestamp('2025-01-01T00:00:00Z'), close: 150 };
-      vi.spyOn(trader, 'updatePosition').mockImplementation(() => ({
-        cost: 10,
-        amount: 200,
-        effectivePrice: 99.75,
-      }));
-      trader['stopTrigger']();
-      expect(trader['deferredEmit']).toHaveBeenNthCalledWith(2, PORTFOLIO_CHANGE_EVENT, {
-        asset: 0,
-        currency: 1000,
-      });
-    });
-    it('should emit "portfolioValueChange"', () => {
-      trader['candle'] = { start: toTimestamp('2025-01-01T00:00:00Z'), close: 150 };
-      vi.spyOn(trader, 'updatePosition').mockImplementation(() => ({
-        cost: 10,
-        amount: 200,
-        effectivePrice: 99.75,
-      }));
-      trader['stopTrigger']();
-      expect(trader['deferredEmit']).toHaveBeenNthCalledWith(3, PORTFOLIO_VALUE_CHANGE_EVENT, {
-        balance: 1000,
-      });
-    });
-    it('should emit "tradeCompleted" with the correct payload', () => {
-      trader['candle'] = { start: toTimestamp('2025-01-01T00:00:00Z'), close: 150 };
-      trader['price'] = 200;
-      trader['tradeId'] = 'trade-1';
-      vi.spyOn(trader, 'updatePosition').mockImplementation(() => ({
-        cost: 100,
-        amount: 3,
-        effectivePrice: 190,
-      }));
-      const trailingStopArgs = { initialPrice: 100, trail: 10, onTrigger: () => {} };
-      trader['activeStopTrigger'] = {
-        id: 'trigger-1',
-        adviceId: 'advice-1',
-        instance: new TrailingStop(trailingStopArgs),
-      };
-      trader['stopTrigger']();
-      const expectedPayload = {
-        id: 'trade-1',
-        adviceId: 'advice-1',
-        action: 'sell',
-        cost: 100,
-        amount: 3,
-        price: 200,
-        portfolio: trader['portfolio'],
-        balance: 1000,
-        date: toTimestamp('2025-01-01T00:01:00Z'),
-        effectivePrice: 190,
-        feePercent: 0.25,
-      };
-      expect(trader['deferredEmit']).toHaveBeenNthCalledWith(4, TRADE_COMPLETED_EVENT, expectedPayload);
-    });
-    it('should delete activeStopTrigger after execution', () => {
-      trader['candle'] = { start: toTimestamp('2025-01-01T00:00:00Z'), close: 150 };
-      vi.spyOn(trader, 'updatePosition').mockImplementation(() => ({
-        cost: 100,
-        amount: 3,
-        effectivePrice: 190,
-      }));
-      trader['stopTrigger']();
-      expect(trader['activeStopTrigger']).toBeUndefined();
     });
   });
 });
