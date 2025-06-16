@@ -16,6 +16,7 @@ import {
 import { ActiveStopTrigger } from '@plugins/plugin.types';
 import { TrailingStop } from '@services/core/order/trailingStop';
 import { warning } from '@services/logger';
+import { Nullable } from '@models/types/generic.types';
 import Big from 'big.js';
 import { addMinutes } from 'date-fns';
 import { filter } from 'lodash-es';
@@ -24,7 +25,7 @@ import { PapertraderConfig, Position } from './paperTrader.types';
 
 export class PaperTrader extends Plugin {
   private activeStopTrigger?: ActiveStopTrigger;
-  private balance: number;
+  private balance: Nullable<number>;
   private candle?: Candle;
   private exposed: boolean;
   private fee: number;
@@ -40,7 +41,7 @@ export class PaperTrader extends Plugin {
 
   constructor({ feeUsing, feeMaker, feeTaker, simulationBalance }: PapertraderConfig) {
     super(PaperTrader.name);
-    this.balance = NaN;
+    this.balance = null;
     this.rawFee = feeUsing === 'maker' ? feeMaker : feeTaker;
     this.fee = +Big(1).minus(Big(this.rawFee).div(100));
     this.portfolio = { ...simulationBalance };
@@ -247,7 +248,7 @@ export class PaperTrader extends Plugin {
       this.price = candle.close;
       this.candle = candle;
 
-      if (!this.balance) {
+      if (this.balance === null) {
         this.balance = this.getBalance();
         this.emitPortfolioChangeEvent();
         this.emitPortfolioValueChangeEvent();
