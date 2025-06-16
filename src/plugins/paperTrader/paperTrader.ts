@@ -1,6 +1,7 @@
 import { PluginError } from '@errors/plugin/plugin.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
+import { Nullable } from '@models/types/generic.types';
 import { Portfolio } from '@models/types/portfolio.types';
 import { TradeInitiated } from '@models/types/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
@@ -9,30 +10,20 @@ import {
   PORTFOLIO_VALUE_CHANGE_EVENT,
   TRADE_COMPLETED_EVENT,
   TRADE_INITIATED_EVENT,
-  TRIGGER_ABORTED_EVENT,
-  TRIGGER_CREATED_EVENT,
-  TRIGGER_FIRED_EVENT,
 } from '@plugins/plugin.const';
-import { ActiveStopTrigger } from '@plugins/plugin.types';
-import { TrailingStop } from '@services/core/order/trailingStop';
 import { warning } from '@services/logger';
-import { Nullable } from '@models/types/generic.types';
 import Big from 'big.js';
-import { addMinutes } from 'date-fns';
 import { filter } from 'lodash-es';
 import { paperTraderSchema } from './paperTrader.schema';
 import { PapertraderConfig, Position } from './paperTrader.types';
 
 export class PaperTrader extends Plugin {
-  private activeStopTrigger?: ActiveStopTrigger;
   private balance: Nullable<number>;
-  private candle?: Candle;
   private exposed: boolean;
   private fee: number;
   private portfolio: Portfolio;
   private price: number;
   private propogatedTrades: number;
-  private propogatedTriggers: number;
   private rawFee: number;
   private trades: number;
   private tradeId?: string;
@@ -48,7 +39,6 @@ export class PaperTrader extends Plugin {
     this.exposed = this.portfolio.asset > 0;
     this.price = 0;
     this.propogatedTrades = 0;
-    this.propogatedTriggers = 0;
     this.trades = 0;
     this.warmupCompleted = false;
   }
@@ -62,31 +52,7 @@ export class PaperTrader extends Plugin {
   }
 
   public onAdvice(advice: Advice) {
-    if (advice.recommendation === 'short') {
-      // clean up potential old stop trigger
-      if (this.activeStopTrigger) {
-        this.deferredEmit(TRIGGER_ABORTED_EVENT, {
-          id: this.activeStopTrigger.id,
-          date: advice.date,
-        });
-
-        this.activeStopTrigger = undefined;
-      }
-    } else if (advice.recommendation === 'long') {
-      if (advice.trigger) {
-        // clean up potential old stop trigger
-        if (this.activeStopTrigger) {
-          this.deferredEmit(TRIGGER_ABORTED_EVENT, {
-            id: this.activeStopTrigger.id,
-            date: advice.date,
-          });
-
-          this.activeStopTrigger = undefined;
-        }
-
-        this.createTrigger(advice);
-      }
-    } else {
+    if (!['short', 'long'].includes(advice.recommendation)) {
       warning('paper trader', `Ignoring unknown advice recommendation: ${advice.recommendation}`);
       return;
     }
@@ -138,40 +104,6 @@ export class PaperTrader extends Plugin {
     });
   }
 
-  private createTrigger(advice: Advice) {
-    const trigger = advice.trigger;
-
-    if (trigger && trigger.type === 'trailingStop') {
-      if (!trigger.trailValue) {
-        return warning('paper trader', 'Ignoring trailing stop without trail value');
-      }
-
-      const triggerId = `trigger-${++this.propogatedTriggers}`;
-
-      this.deferredEmit(TRIGGER_CREATED_EVENT, {
-        id: triggerId,
-        at: advice.date,
-        type: 'trailingStop',
-        proprties: {
-          trail: trigger.trailValue,
-          initialPrice: this.price,
-        },
-      });
-
-      this.activeStopTrigger = {
-        id: triggerId,
-        adviceId: advice.id,
-        instance: new TrailingStop({
-          initialPrice: this.price,
-          trail: trigger.trailValue,
-          onTrigger: this.stopTrigger,
-        }),
-      };
-    } else {
-      warning('paper trader', `Gekko does not know trigger with type "${trigger?.type}".. Ignoring stop.`);
-    }
-  }
-
   private getBalance() {
     return +Big(this.price).mul(this.portfolio.asset).plus(this.portfolio.currency);
   }
@@ -202,37 +134,6 @@ export class PaperTrader extends Plugin {
     return result;
   }
 
-  private stopTrigger() {
-    if (!this.candle) throw new PluginError(this.pluginName, 'No candle on stop trigger event');
-
-    const date = addMinutes(this.candle.start, 1).getTime();
-
-    this.deferredEmit(TRIGGER_FIRED_EVENT, {
-      id: this.activeStopTrigger?.id,
-      date,
-    });
-
-    const { cost, amount, effectivePrice } = this.updatePosition('short');
-
-    this.emitPortfolioChangeEvent();
-    this.emitPortfolioValueChangeEvent();
-
-    this.deferredEmit(TRADE_COMPLETED_EVENT, {
-      id: this.tradeId,
-      adviceId: this.activeStopTrigger?.adviceId,
-      action: 'sell',
-      cost,
-      amount,
-      price: this.price,
-      portfolio: this.portfolio,
-      balance: this.getBalance(),
-      date,
-      effectivePrice,
-      feePercent: this.rawFee,
-    });
-
-    this.activeStopTrigger = undefined;
-  }
   // --- END INTERNALS ---
 
   // --------------------------------------------------------------------------
@@ -246,7 +147,6 @@ export class PaperTrader extends Plugin {
   protected processCandle(candle: Candle): void {
     if (this.warmupCompleted) {
       this.price = candle.close;
-      this.candle = candle;
 
       if (this.balance === null) {
         this.balance = this.getBalance();
@@ -254,7 +154,6 @@ export class PaperTrader extends Plugin {
         this.emitPortfolioValueChangeEvent();
       }
       if (this.exposed) this.emitPortfolioValueChangeEvent();
-      if (this.activeStopTrigger) this.activeStopTrigger.instance.updatePrice(this.price);
     } else {
       this.warmupCandle = candle;
     }
@@ -276,9 +175,6 @@ export class PaperTrader extends Plugin {
         PORTFOLIO_VALUE_CHANGE_EVENT,
         TRADE_COMPLETED_EVENT,
         TRADE_INITIATED_EVENT,
-        TRIGGER_ABORTED_EVENT,
-        TRIGGER_CREATED_EVENT,
-        TRIGGER_FIRED_EVENT,
       ],
       name: 'PaperTrader',
     };

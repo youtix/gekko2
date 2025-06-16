@@ -11,7 +11,7 @@ At its core, a strategy:
 - Receives new market candles in real time or during backtesting.
 - Runs indicators to interpret the market.
 - Makes decisions based on predefined logic.
-- Emits advice (`long`, `short`, or trigger-based entries).
+- Emits advice (`long`, `short`).
 - Reacts to trades once they’re executed (via broker or simulation).
 - Optionally logs or notifies events for debugging or visualization.
 

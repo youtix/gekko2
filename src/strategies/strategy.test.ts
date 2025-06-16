@@ -7,9 +7,7 @@ import { IndicatorNotFoundError } from '../errors/indicator/indicatorNotFound.er
 import { StrategyAlreadyInitializedError } from '../errors/strategy/strategyAlreadyInitialized.error';
 import * as indicators from '../indicators/index';
 import { Indicator } from '../indicators/indicator';
-import { Advice } from '../models/types/advice.types';
 import { TradeCompleted } from '../models/types/tradeStatus.types';
-import { warning } from '../services/logger';
 import { toTimestamp } from '../utils/date/date.utils';
 
 vi.mock('@services/logger', () => ({ debug: vi.fn(), warning: vi.fn() }));
@@ -99,18 +97,6 @@ describe('Strategy', () => {
   });
 
   describe('onTradeCompleted', () => {
-    it('should update currentDirection to "short" when trade action is sell and pendingTriggerAdvice matches', () => {
-      strategy['pendingTriggerAdvice'] = 'advice-1';
-      strategy.onTradeCompleted({ action: 'sell', adviceId: 'advice-1' } as TradeCompleted);
-      expect(strategy['currentDirection']).toBe('short');
-    });
-
-    it('should clear pendingTriggerAdvice when trade action is sell and pendingTriggerAdvice matches', () => {
-      strategy['pendingTriggerAdvice'] = 'advice-1';
-      strategy.onTradeCompleted({ action: 'sell', adviceId: 'advice-1' } as TradeCompleted);
-      expect(strategy['pendingTriggerAdvice']).toBeUndefined();
-    });
-
     it('should call onTradeExecuted with the trade object', () => {
       const trade = { action: 'buy', adviceId: 'advice-2' } as TradeCompleted;
       const execSpy = vi.spyOn(strategy, 'onTradeExecuted');
@@ -183,34 +169,6 @@ describe('Strategy', () => {
       strategy['candle'] = dummyCandle;
       strategy['advice']('long');
       expect(strategy['currentDirection']).toBe('long');
-    });
-
-    it('should emit an advice event with trigger when given an object for a long direction', () => {
-      strategy['candle'] = dummyCandle;
-      const emitSpy = vi.spyOn(strategy, 'emit');
-      strategy['advice']({
-        direction: 'long',
-        trigger: { trailPercentage: 10, type: 'trailingStop' },
-      });
-      const emittedAdvice: Advice = emitSpy.mock.calls[0][1];
-      // Expect trailValue to be 10% of candle.close (i.e. 10% of 100 = 10)
-      expect(emittedAdvice.trigger?.trailValue).toBe(10);
-    });
-
-    it('should log a warning if given a direction object with direction "short"', () => {
-      strategy['candle'] = dummyCandle;
-      strategy['advice']({
-        direction: 'short',
-        trigger: { trailPercentage: 10, trailValue: 1, type: 'trailingStop' },
-      });
-      expect(warning).toHaveBeenCalled();
-    });
-
-    it('should clear pendingTriggerAdvice if direction is "short"', () => {
-      strategy['pendingTriggerAdvice'] = 'advice-99';
-      strategy['candle'] = dummyCandle;
-      strategy['advice']('short');
-      expect(strategy['pendingTriggerAdvice']).toBeUndefined();
     });
   });
 });

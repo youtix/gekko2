@@ -7,18 +7,16 @@ import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { config } from '@services/configuration/configuration';
-import { warning } from '@services/logger';
 import { processStartTime } from '@utils/process/process.utils';
-import Big from 'big.js';
 import { isBefore, subMinutes } from 'date-fns';
-import { each, isNil, isObject, isString, map } from 'lodash-es';
+import { each, isNil, map } from 'lodash-es';
 import EventEmitter from 'node:events';
 import {
   STRATEGY_NOTIFICATION_EVENT,
   STRATEGY_UPDATE_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
 } from '../plugins/tradingAdvisor/tradingAdvisor.const';
-import { Direction, RecommendedAdvice, StrategyNames, StrategyParamaters } from './strategy.types';
+import { Direction, StrategyNames, StrategyParamaters } from './strategy.types';
 
 export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
   protected strategyName: string;
@@ -31,7 +29,6 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
   protected candleSize: number;
   protected isWarmupCompleted: boolean;
 
-  protected pendingTriggerAdvice?: string;
   protected currentDirection?: Direction;
   protected propogatedAdvices: number;
 
@@ -73,13 +70,7 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
   }
 
   public onTradeCompleted(trade: TradeCompleted) {
-    if (this.pendingTriggerAdvice && trade.action === 'sell' && this.pendingTriggerAdvice === trade.adviceId) {
-      // This trade came from a trigger of the previous advice,
-      // update stored direction
-      this.currentDirection = 'short';
-      this.pendingTriggerAdvice = undefined;
-    }
-
+    // Trigger strategy hook
     this.onTradeExecuted(trade);
   }
 
@@ -106,34 +97,16 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
     this.emit(STRATEGY_NOTIFICATION_EVENT, { content, date: new Date() });
   }
 
-  protected advice(direction: RecommendedAdvice) {
-    // Checks
-    const newDirection = isString(direction) ? direction : direction.direction;
+  protected advice(newDirection: Direction) {
+    // If advice the same direction than before or candle is not known then ignore it
     if (newDirection === this.currentDirection || !this.candle) return;
 
-    this.pendingTriggerAdvice = undefined;
     this.propogatedAdvices++;
-    const advice: Partial<Advice> = {
-      id: `advice-${this.propogatedAdvices}`,
-      recommendation: newDirection,
-    };
 
-    if (isObject(direction)) {
-      if (newDirection === 'short') {
-        warning('strategy', 'Strategy adviced a stop on not long, this is not supported. As such the stop is ignored');
-      }
-      if (newDirection === 'long') {
-        const { trailPercentage, trailValue } = direction.trigger;
-        advice.trigger = {
-          ...direction.trigger,
-          ...(trailPercentage && !trailValue && { trailValue: +Big(trailPercentage).div(100).mul(this.candle.close) }),
-        };
-        this.pendingTriggerAdvice = `advice-${this.propogatedAdvices}`;
-      }
-    }
+    // Timestamp handled in trading advisor
+    this.emit<Partial<Advice>>('advice', { id: `advice-${this.propogatedAdvices}`, recommendation: newDirection });
 
     this.currentDirection = newDirection;
-    this.emit('advice', advice);
     return this.propogatedAdvices;
   }
   // -------------------------------
