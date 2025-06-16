@@ -239,7 +239,7 @@ describe('PaperTrader', () => {
     });
     it('should set balance when warmup is done & balance is NOT set', () => {
       trader['warmupCompleted'] = true;
-      trader['balance'] = NaN;
+      trader['balance'] = null;
       trader['price'] = 100;
       trader['exposed'] = false;
       trader['activeStopTrigger'] = undefined;
@@ -251,7 +251,7 @@ describe('PaperTrader', () => {
     });
     it('should emit portfolio change event when warmup is done & balance is NOT set', () => {
       trader['warmupCompleted'] = true;
-      trader['balance'] = NaN;
+      trader['balance'] = null;
       trader['price'] = 100;
       trader['exposed'] = false;
       trader['activeStopTrigger'] = undefined;
@@ -267,7 +267,7 @@ describe('PaperTrader', () => {
     });
     it('should emit portfolio value change event when warmup is done & balance is NOT set', () => {
       trader['warmupCompleted'] = true;
-      trader['balance'] = NaN;
+      trader['balance'] = null;
       trader['price'] = 100;
       trader['exposed'] = false;
       trader['activeStopTrigger'] = undefined;
@@ -307,6 +307,31 @@ describe('PaperTrader', () => {
       trader['processCandle'](candle);
 
       expect(deferredEmitSpy).not.toHaveBeenCalled();
+    });
+    it('should emit portfolio events only once when starting balance is zero', () => {
+      const zeroConfig = {
+        ...papertraderConfig,
+        simulationBalance: { asset: 0, currency: 0 },
+      } as PapertraderConfig;
+      trader = new PaperTrader(zeroConfig);
+      trader['deferredEmit'] = vi.fn();
+      trader['warmupCompleted'] = true;
+      trader['price'] = 100;
+      trader['exposed'] = false;
+      trader['activeStopTrigger'] = undefined;
+      const candle = { close: 150 };
+
+      trader['processCandle'](candle);
+      trader['processCandle'](candle);
+
+      expect(trader['deferredEmit']).toHaveBeenNthCalledWith(1, PORTFOLIO_CHANGE_EVENT, {
+        asset: 0,
+        currency: 0,
+      });
+      expect(trader['deferredEmit']).toHaveBeenNthCalledWith(2, PORTFOLIO_VALUE_CHANGE_EVENT, {
+        balance: 0,
+      });
+      expect(trader['deferredEmit']).toHaveBeenCalledTimes(2);
     });
     it('should update price of active trailing stop if set when warmup is done', () => {
       trader['warmupCompleted'] = true;
