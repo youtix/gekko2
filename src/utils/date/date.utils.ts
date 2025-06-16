@@ -21,7 +21,7 @@ export const resetDateParts = (date?: EpochTimeStamp, parts?: Time[]): EpochTime
     : 0;
 
 export const toISOString = (timestamp?: EpochTimeStamp): string =>
-  !isNil(timestamp) ? new Date(timestamp).toISOString() : 'Unknwon Date';
+  !isNil(timestamp) ? new Date(timestamp).toISOString() : 'Unknown Date';
 
 export const toTimestamp = (iso8601String?: string): EpochTimeStamp => new Date(iso8601String ?? 0).getTime();
 
