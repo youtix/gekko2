@@ -25,7 +25,7 @@ import { debug, error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { wait } from '@utils/process/process.utils';
 import Big from 'big.js';
-import { bindAll, filter, isEqual } from 'lodash-es';
+import { bindAll, filter, isEqual, isNil } from 'lodash-es';
 import { SYNCHRONIZATION_INTERVAL } from './trader.const';
 import { traderSchema } from './trader.schema';
 
@@ -229,7 +229,7 @@ export class Trader extends Plugin {
   }
 
   private processCostAndPrice(side: Action, price: number, amount: number, feePercent?: number) {
-    if (feePercent) {
+    if (!isNil(feePercent)) {
       const cost = +Big(feePercent).div(100).mul(amount).mul(price);
       if (side === 'buy') return { effectivePrice: +Big(price).mul(Big(feePercent).div(100).add(1)), cost };
       else return { effectivePrice: +Big(price).mul(Big(1).minus(Big(feePercent).div(100))), cost };

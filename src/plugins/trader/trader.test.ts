@@ -557,6 +557,15 @@ describe('Trader', () => {
       expect(result).toEqual({ effectivePrice: 99, cost: 2 });
     });
 
+    it('should handle a feePercent of 0 correctly', () => {
+      const side = 'buy';
+      const price = 100;
+      const amount = 2;
+      const feePercent = 0;
+      const result = trader['processCostAndPrice'](side, price, amount, feePercent);
+      expect(result).toEqual({ effectivePrice: 100, cost: 0 });
+    });
+
     it('should calculate cost and effectivePrice when feePercent is not provided', () => {
       const side = 'buy'; // side doesn't matter in this branch
       const price = 100;
