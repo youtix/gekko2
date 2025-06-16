@@ -14,7 +14,7 @@ class Configuration {
   constructor() {
     const configFilePath = process.env['GEKKO_CONFIG_FILE_PATH'];
     if (!configFilePath) throw new MissingEnvVarError('GEKKO_CONFIG_FILE_PATH');
-    const isJson = configFilePath?.endsWith('json5') || configFilePath?.endsWith('json5');
+    const isJson = configFilePath?.endsWith('json') || configFilePath?.endsWith('json5');
     const isYaml = configFilePath?.endsWith('yml') || configFilePath?.endsWith('yaml');
     const data = readFileSync(configFilePath, 'utf8');
     if (isJson) this.configuration = JSON5.parse(data);
