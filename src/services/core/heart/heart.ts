@@ -31,7 +31,7 @@ export class Heart extends EventEmitter {
   }
 
   public stop() {
-    debug('core', 'Stoping heartbeat ticks');
+    debug('core', 'Stopping heartbeat ticks');
     clearInterval(this.timeout);
     this.timeout = undefined;
   }

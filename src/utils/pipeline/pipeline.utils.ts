@@ -61,11 +61,7 @@ const askForDaterange = async () => {
 };
 
 export const initPlugins = async (context: PipelineContext) => {
-  await Promise.all(
-    context.map(pipeline => {
-      pipeline.plugin?.processInitStream();
-    }),
-  );
+  await Promise.all(context.map(pipeline => pipeline.plugin?.processInitStream()));
   return context;
 };
 
@@ -124,16 +120,18 @@ export const checkPluginsDuplicateEvents = async (context: PipelineContext) => {
   return context;
 };
 
-export const checkPluginsDependencies = async (context: PipelineContext) =>
-  each(context, async plugin => {
-    each(plugin.dependencies, async dependency => {
+export const checkPluginsDependencies = async (context: PipelineContext) => {
+  for (const plugin of context) {
+    for (const dependency of plugin.dependencies ?? []) {
       try {
         await import(dependency);
       } catch {
         throw new PluginMissingDependencyError(plugin.name, dependency);
       }
-    });
-  });
+    }
+  }
+  return context;
+};
 
 export const validatePluginsSchema = async (context: PipelineContext) => {
   const parameters = config.getPlugins();
