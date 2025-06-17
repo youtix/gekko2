@@ -527,8 +527,7 @@ describe('PerformanceAnalyzer', () => {
         },
       ];
       analyzer.losses = [{ id: 2, profit: -2 }];
-      // Set exposure to 10 days in milliseconds
-      analyzer.exposure = 3 * 60 * 60 * 1000;
+      analyzer.exposure = 3 * 60 * 60 * 1000; // 3h
     });
 
     it('should return undefined if start balance or portfolio is missing', () => {
@@ -548,7 +547,7 @@ describe('PerformanceAnalyzer', () => {
         downside: -2.23606797749979,
         endPrice: 130,
         endTime: toTimestamp('2020-01-10T00:00:00Z'),
-        exposure: 0.013888888888888888,
+        exposure: 1.3888888888888888,
         market: 30,
         profit: 200,
         ratioRoundTrips: 50,
