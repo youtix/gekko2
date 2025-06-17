@@ -83,10 +83,10 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
   protected addIndicator<T extends IndicatorNames>(name: T, parameters: IndicatorParamaters<T>) {
     if (this.isStartegyInitialized) throw new StrategyAlreadyInitializedError(name);
 
+    // @ts-expect-error TODO fix complex typescript error
     const Indicator = indicators[name];
     if (!Indicator) throw new IndicatorNotFoundError(name);
 
-    // @ts-expect-error TODO fix complex typescript error
     const indicator = new Indicator(parameters);
     this.indicators = [...this.indicators, indicator];
 

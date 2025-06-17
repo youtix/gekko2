@@ -29,3 +29,7 @@ SMMA is similar to EMA but applies a longer smoothing factor, resulting in a slo
 ## **WilderSmoothing**
 
 This smoothing method is based on the technique introduced by J. Welles Wilder and is often used in indicators like ATR and RSI. It is a form of exponential smoothing that reduces lag while maintaining stability.
+
+## Super Guppy
+
+Super Guppy combines 22 EMAs with increasing periods to form two ribbons (fast and slow). It tracks the alignment and spread of these EMAs to assess trend direction and strength. It’s useful for identifying sustained trends and spotting early reversals.
