@@ -16,6 +16,7 @@ export * from './movingAverages/dema/dema.indicator';
 export * from './movingAverages/ema/ema.indicator';
 export * from './movingAverages/sma/sma.indicator';
 export * from './movingAverages/smma/smma.indicator';
+export * from './movingAverages/superGuppy/superGuppy.indicator';
 export * from './movingAverages/tema/tema.indicator';
 export * from './movingAverages/wilderSmoothing/wilderSmoothing.indicator';
 export * from './movingAverages/wma/wma.indicator';
