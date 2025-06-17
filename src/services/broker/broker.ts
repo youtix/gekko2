@@ -102,7 +102,7 @@ export abstract class Broker {
     return price;
   }
 
-  protected async calculateAmount(amount: number) {
+  protected calculateAmount(amount: number) {
     const minimalAmount = this.broker.market(this.symbol).limits.amount?.min;
     const maximalAmount = this.broker.market(this.symbol).limits.amount?.max;
 
@@ -114,7 +114,7 @@ export abstract class Broker {
     return amount;
   }
 
-  protected async checkCost(amount: number, price: number) {
+  protected checkCost(amount: number, price: number) {
     const minimalCost = this.broker.market(this.symbol).limits.cost?.min;
     const maximalCost = this.broker.market(this.symbol).limits.cost?.max;
 

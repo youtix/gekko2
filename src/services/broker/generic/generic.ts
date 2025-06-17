@@ -71,7 +71,7 @@ export class GenericBroker extends Broker {
 
   protected async createLimitOrderOnce(side: Action, amount: number) {
     const orderPrice = await this.calculatePrice(side);
-    const orderAmount = await this.calculateAmount(amount);
+    const orderAmount = this.calculateAmount(amount);
     this.checkCost(orderAmount, orderPrice);
     const order = await this.broker.createLimitOrder(this.symbol, side, orderAmount, orderPrice);
     if (!isOrderStatus(order.status)) throw new MissingPropertyError('status', 'createLimitOrder');
