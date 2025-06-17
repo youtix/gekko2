@@ -194,7 +194,9 @@ export class PerformanceAnalyzer extends Plugin {
     const relativeProfit = +Big(this.balance).div(this.start.balance).mul(100).minus(100);
     const relativeYearlyProfit = +Big(relativeProfit).div(elapsedYears || 1);
 
-    const percentExposure = +Big(this.exposure).div(differenceInMilliseconds(this.dates.end, this.dates.start));
+    const percentExposure = +Big(this.exposure)
+      .div(differenceInMilliseconds(this.dates.end, this.dates.start))
+      .mul(100);
 
     const volatility = stdev(this.roundTrips.map(r => r.profit));
     const sharpe =
