@@ -1,3 +1,4 @@
+import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { PluginError } from '@errors/plugin/plugin.error';
 import { StrategyNotFoundError } from '@errors/strategy/strategyNotFound.error';
 import { Advice } from '@models/types/advice.types';
@@ -17,7 +18,6 @@ import {
   STRATEGY_NOTIFICATION_EVENT,
   STRATEGY_UPDATE_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
-  TIMEFRAME_TO_MINUTES,
 } from './tradingAdvisor.const';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
@@ -27,14 +27,14 @@ export class TradingAdvisor extends Plugin {
   candleBatcher: CandleBatcher;
   strategy?: Strategy<StrategyNames>;
 
-  constructor({ timeframe, strategyName, historySize, windowMode }: TradingAdvisorConfiguration) {
+  constructor({ strategyName, windowMode }: TradingAdvisorConfiguration) {
     super(TradingAdvisor.name);
-    this.candleBatcher = new CandleBatcher(TIMEFRAME_TO_MINUTES[timeframe], windowMode);
+    this.candleBatcher = new CandleBatcher(TIMEFRAME_TO_MINUTES[this.timeframe], windowMode);
 
     const relayers = filter(Object.getOwnPropertyNames(TradingAdvisor.prototype), p => p.startsWith('relay'));
     bindAll(this, [...relayers]);
 
-    this.setUpStrategy(strategyName, TIMEFRAME_TO_MINUTES[timeframe], historySize);
+    this.setUpStrategy(strategyName, TIMEFRAME_TO_MINUTES[this.timeframe], this.warmupPeriod);
     this.setUpListeners();
     info('trading advisor', `Using the strategy: ${strategyName}`);
   }

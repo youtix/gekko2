@@ -1,4 +1,3 @@
-import { NoDaterangeFoundError } from '@errors/backtest/NoDaterangeFound.error';
 import { PluginMissingDependencyError } from '@errors/plugin/pluginMissingDependency.error';
 import { PluginsEmitSameEventError } from '@errors/plugin/pluginsEmitSameEvent.error';
 import { PluginUnsupportedModeError } from '@errors/plugin/pluginUnsupportedMode.error';
@@ -6,58 +5,17 @@ import { PipelineContext } from '@models/types/pipeline.types';
 import * as pluginList from '@plugins/index';
 import { PluginsNames } from '@plugins/plugin.types';
 import { config } from '@services/configuration/configuration';
-import { BacktestStream } from '@services/core/stream/backtest.stream';
-import { GapFillerStream } from '@services/core/stream/gapFiller/gapFiller.stream';
-import { ImporterStream } from '@services/core/stream/importer/importer.stream';
-import { PluginsStream } from '@services/core/stream/plugins.stream';
-import { RealtimeStream } from '@services/core/stream/realtime.stream';
 import { inject } from '@services/injecter/injecter';
 import { debug } from '@services/logger';
 import { keepDuplicates } from '@utils/array/array.utils';
-import { toISOString, toTimestamp } from '@utils/date/date.utils';
 import { toCamelCase } from '@utils/string/string.utils';
-import { Interval } from 'date-fns';
-import inquirer from 'inquirer';
 import { compact, each, filter, flatMap, map, some } from 'lodash-es';
+import { streamPipelines } from './pipeline.utils';
 
 export const launchStream = async (context: PipelineContext) => {
   const plugins = compact(map(context, p => p.plugin));
-  const watch = config.getWatch();
-  switch (watch.mode) {
-    case 'realtime':
-      new RealtimeStream().pipe(new GapFillerStream()).pipe(new PluginsStream(plugins));
-      break;
-    case 'backtest':
-      new BacktestStream(
-        watch.scan
-          ? await askForDaterange()
-          : { start: toTimestamp(watch.daterange.start), end: toTimestamp(watch.daterange.end) },
-      )
-        .pipe(new GapFillerStream())
-        .pipe(new PluginsStream(plugins));
-      break;
-    case 'importer':
-      new ImporterStream().pipe(new GapFillerStream()).pipe(new PluginsStream(plugins));
-      break;
-  }
+  streamPipelines[config.getWatch().mode](plugins);
   return context;
-};
-
-const askForDaterange = async () => {
-  const dateranges = inject.storage().getCandleDateranges();
-  if (!dateranges) throw new NoDaterangeFoundError();
-  const result = await inquirer.prompt<{ daterange: Interval<EpochTimeStamp, EpochTimeStamp> }>([
-    {
-      name: 'daterange',
-      type: 'list',
-      message: 'Please pick the daterange you are interested in testing:',
-      choices: dateranges.map(b => ({
-        name: `start: ${toISOString(b.daterange_start)} -> end: ${toISOString(b.daterange_end)}`,
-        value: { start: b.daterange_start, end: b.daterange_end },
-      })),
-    },
-  ]);
-  return result.daterange;
 };
 
 export const initPlugins = async (context: PipelineContext) => {
@@ -163,3 +121,19 @@ export const getPluginsStaticConfiguration = async (context: PipelineContext) =>
       PluginClass.getStaticConfiguration();
     return { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject };
   });
+
+export const gekkoPipeline = () => {
+  [
+    getPluginsStaticConfiguration,
+    checkPluginsModesCompatibility,
+    validatePluginsSchema,
+    checkPluginsDependencies,
+    checkPluginsDuplicateEvents,
+    preloadMarkets,
+    createPlugins,
+    wirePlugins,
+    injectServices,
+    initPlugins,
+    launchStream,
+  ].reduce(async (params, fn) => fn(await params), Promise.resolve(config.getPlugins()));
+};

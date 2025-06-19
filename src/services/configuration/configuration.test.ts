@@ -1,12 +1,19 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import { writeFileSync, unlinkSync } from 'fs';
+import { unlinkSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const configPath = resolve(__dirname, 'temp-config.json');
 
 const configContent = {
   showLogo: false,
-  watch: { asset: 'BTC', currency: 'USDT', mode: 'realtime', fillGaps: 'no' },
+  watch: {
+    asset: 'BTC',
+    currency: 'USDT',
+    mode: 'realtime',
+    timeframe: '1d',
+    fillGaps: 'no',
+    warmup: { candleCount: 0 },
+  },
   plugins: [{ name: 'PerformanceAnalyzer' }],
   strategy: { name: 'demo' },
 };

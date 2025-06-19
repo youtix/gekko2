@@ -26,7 +26,7 @@ vi.mock('@services/logger', () => ({
   error: vi.fn(),
 }));
 vi.mock('../../services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({ getWatch: vi.fn(() => ({})), getStrategy: vi.fn(() => ({})) }));
+  const Configuration = vi.fn(() => ({ getWatch: vi.fn(() => ({ warmup: {} })), getStrategy: vi.fn(() => ({})) }));
   return { config: new Configuration() };
 });
 vi.mock('lodash-es', async () => ({

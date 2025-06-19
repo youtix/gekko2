@@ -2,7 +2,10 @@ watch:
   asset: BTC
   currency: USDT
   mode: backtest # backtest | importer | realtime
+  timeframe: '1w'
   scan: true
+  warmup:
+    candleCount: 52
 
 storage:
   type: sqlite
@@ -21,8 +24,6 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: MACD
-    timeframe: '1w'
-    historySize: 0
 
   - name: PaperTrader
     simulationBalance: # start balance, on what the current balance is compared with

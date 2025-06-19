@@ -27,7 +27,7 @@ vi.mock('../../strategies/index', () => ({
 }));
 vi.mock('../../services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
-    getWatch: vi.fn(() => ({})),
+    getWatch: vi.fn(() => ({ warmup: {} })),
     getStrategy: vi.fn(() => ({})),
   }));
   return { config: new Configuration() };
@@ -36,9 +36,7 @@ vi.mock('../../services/configuration/configuration', () => {
 describe('TradingAdvisor', () => {
   const config = {
     name: 'TradingAdvisor',
-    timeframe: '1m',
     strategyName: 'DummyStrategy',
-    historySize: 10,
     windowMode: 'calendar',
   } satisfies TradingAdvisorConfiguration;
   const advisor = new TradingAdvisor(config);
@@ -50,9 +48,7 @@ describe('TradingAdvisor', () => {
         () =>
           new TradingAdvisor({
             name: 'TradingAdvisor',
-            timeframe: '1m',
             strategyName: 'NonExistentStrategy',
-            historySize: 10,
             windowMode: 'calendar',
           }),
       ).toThrowError(StrategyNotFoundError);

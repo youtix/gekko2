@@ -1,29 +1,28 @@
-import { ImporterError } from '@errors/importer.error';
 import { Candle } from '@models/types/candle.types';
 import { Broker } from '@services/broker/broker';
-import { config } from '@services/configuration/configuration';
 import { Heart } from '@services/core/heart/heart';
+import { HistoricalCandleError } from '@services/core/stream/historicalCandle.error.ts/historicalCandle.error';
 import { inject } from '@services/injecter/injecter';
 import { info } from '@services/logger';
-import { toISOString, toTimestamp } from '@utils/date/date.utils';
+import { toISOString } from '@utils/date/date.utils';
 import { formatDuration, intervalToDuration, isAfter, isBefore } from 'date-fns';
 import { bindAll, each, filter, last } from 'lodash-es';
 import { Readable } from 'stream';
+import { HistoricalCandleStreamInput } from './historicalCandle.types';
 
-export class ImporterStream extends Readable {
+export class HistoricalCandleStream extends Readable {
   private start: EpochTimeStamp;
   private end: EpochTimeStamp;
   private heart: Heart;
   private broker: Broker;
   private isLocked: boolean;
 
-  constructor() {
+  constructor({ startDate, endDate, tickrate = 1 }: HistoricalCandleStreamInput) {
     super({ objectMode: true });
-    const { daterange, tickrate } = config.getWatch();
 
-    this.start = toTimestamp(daterange.start);
-    this.end = toTimestamp(daterange.end);
-    this.heart = new Heart(tickrate ?? 1);
+    this.start = startDate;
+    this.end = endDate;
+    this.heart = new Heart(tickrate);
     this.broker = inject.broker();
     this.isLocked = false;
 
@@ -32,7 +31,7 @@ export class ImporterStream extends Readable {
     info(
       'stream',
       [
-        `Importing data from ${toISOString(this.start)}`,
+        `Fetching historical data from ${toISOString(this.start)}`,
         `to ${toISOString(this.end)}`,
         `(${formatDuration(intervalToDuration({ start: this.start, end: this.end }))})`,
       ].join(' '),
@@ -46,7 +45,7 @@ export class ImporterStream extends Readable {
     if (this.isLocked) return;
     this.isLocked = true;
     const candles = await this.broker.fetchOHLCV(this.start);
-    if (!candles?.length) throw new ImporterError('No candle data was fetched.');
+    if (!candles?.length) throw new HistoricalCandleError('No candle data was fetched.');
     this.start = last(candles)?.start ?? Number.MAX_SAFE_INTEGER;
     this.start++;
     if (!isBefore(this.start, this.end)) {
