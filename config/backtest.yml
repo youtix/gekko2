@@ -3,25 +3,27 @@ watch:
   currency: USDT
   mode: backtest
   daterange:
-    start: '2024-01-01T00:00:00.000Z'
-    end: '2024-02-01T00:00:00.000Z'
+    start: '2019-01-01T00:00:00.000Z'
+    end: '2025-05-01T00:00:00.000Z'
 
 storage:
   type: sqlite
   database: ./db/gekko.sql
 
 strategy:
-  name: TMA
-  short: 12
-  medium: 12
-  long: 12
+  name: RSI
   src: 'ohlc4'
+  period: 21
+  thresholds:
+    high: 70
+    low: 30
+    persistence: 2
 
 plugins:
   - name: TradingAdvisor
-    strategyName: TMA
+    strategyName: RSI
     timeframe: '1d'
-    historySize: 0
+    historySize: 365
 
   - name: PaperTrader
     simulationBalance: # start balance, on what the current balance is compared with
@@ -34,4 +36,5 @@ plugins:
     feeUsing: maker
 
   - name: PerformanceAnalyzer
+    enableConsoleTable: true
     riskFreeReturn: 5
