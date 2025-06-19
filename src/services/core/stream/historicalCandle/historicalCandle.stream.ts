@@ -1,7 +1,7 @@
 import { Candle } from '@models/types/candle.types';
 import { Broker } from '@services/broker/broker';
 import { Heart } from '@services/core/heart/heart';
-import { HistoricalCandleError } from '@services/core/stream/historicalCandle.error.ts/historicalCandle.error';
+import { HistoricalCandleError } from '@services/core/stream/historicalCandle/historicalCandle.error';
 import { inject } from '@services/injecter/injecter';
 import { info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';

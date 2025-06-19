@@ -10,7 +10,7 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { BacktestStream } from '../stream/backtest.stream';
 import { GapFillerStream } from '../stream/gapFiller/gapFiller.stream';
-import { HistoricalCandleStream } from '../stream/historicalCandle.error.ts/historicalCandle.stream';
+import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCandle.stream';
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
 

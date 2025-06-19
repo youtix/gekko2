@@ -37,8 +37,8 @@ watch:
 ```
 
 Available values:
-- no (default): Do not fill missing candles.
-- empty: Fill gaps by inserting synthetic (empty) candles, duplicating the previous candle with adjusted timestamps.
+- empty (default): Fill gaps by inserting synthetic (empty) candles, duplicating the previous candle with adjusted timestamps.
+- no: Do not fill missing candles.
 
 This option ensures smoother datasets and more reliable backtesting when dealing with incomplete data from the exchange.
 
