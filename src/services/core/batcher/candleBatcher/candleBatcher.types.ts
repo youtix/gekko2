@@ -1,4 +1,3 @@
-export type WindowMode = 'calendar' | 'rolling';
 export type CandleSize =
   | 1
   | 2

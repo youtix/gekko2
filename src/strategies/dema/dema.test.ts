@@ -36,6 +36,37 @@ describe('DEMA Strategy', () => {
     strategy['candle'] = candle;
   });
 
+  describe('onTradeExecuted', () => {
+    it('should not emit advice ', () => {
+      dema.getResult.mockReturnValue(1);
+      sma.getResult.mockReturnValue(2);
+
+      strategy['onTradeExecuted']();
+
+      expect(advices).toHaveLength(0);
+    });
+  });
+  describe('onEachCandle', () => {
+    it('should not emit advice', () => {
+      dema.getResult.mockReturnValue(1);
+      sma.getResult.mockReturnValue(2);
+
+      strategy['onEachCandle']();
+
+      expect(advices).toHaveLength(0);
+    });
+  });
+  describe('end', () => {
+    it('should not emit advice', () => {
+      dema.getResult.mockReturnValue(1);
+      sma.getResult.mockReturnValue(2);
+
+      strategy['end']();
+
+      expect(advices).toHaveLength(0);
+    });
+  });
+
   it('should not emit advice when results are not numbers', () => {
     dema.getResult.mockReturnValue(undefined);
     sma.getResult.mockReturnValue(undefined);

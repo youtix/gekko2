@@ -6,8 +6,8 @@ import JSON5 from 'json5';
 import { find } from 'lodash-es';
 import { MalformedConfigurationError } from '../../errors/malformedConfiguration.error';
 import { MissingEnvVarError } from '../../errors/missingEnvVar.error';
-import { configurationSchema } from '../../models/schema/configuration.schema';
 import { Configuration as ConfigurationModel } from '../../models/types/configuration.types';
+import { configurationSchema } from './configuration.schema';
 
 class Configuration {
   private configuration?: ConfigurationModel;

@@ -1,24 +1,20 @@
 import Big from 'big.js';
 import { omit } from 'lodash-es';
 import { Candle } from '../../../../models/types/candle.types';
-import { CandleSize, WindowMode } from './candleBatcher.types';
+import { CandleSize } from './candleBatcher.types';
 
 export class CandleBatcher {
   smallCandles: Candle[];
   candleSize: CandleSize;
-  windowMode: WindowMode;
 
-  constructor(candleSize: CandleSize, windowMode: WindowMode = 'calendar') {
+  constructor(candleSize: CandleSize) {
     this.smallCandles = [];
     this.candleSize = candleSize;
-    this.windowMode = windowMode;
   }
 
   public addSmallCandle(candle: Candle): Candle | undefined {
     this.smallCandles.push(candle);
-    const isBigCandleReady =
-      this.windowMode === 'calendar' ? this.isBigCandleReady(candle) : this.smallCandles.length % this.candleSize === 0;
-    if (isBigCandleReady) {
+    if (this.isBigCandleReady(candle)) {
       const newCandle = this.createBigCandleFrom(this.smallCandles);
       this.smallCandles.length = 0;
       return newCandle;

@@ -1,4 +1,5 @@
 import { PluginMissingServiceError } from '@errors/plugin/pluginMissingService.error';
+import { Watch } from '@models/types/configuration.types';
 import { Broker } from '@services/broker/broker';
 import { Fetcher } from '@services/fetcher/fetcher.types';
 import { Fs } from '@services/fs/fs.types';
@@ -18,18 +19,22 @@ export abstract class Plugin extends EventEmitter {
 
   protected asset: string;
   protected currency: string;
+  protected timeframe: NonNullable<Watch['timeframe']>;
+  protected warmupPeriod: number;
   protected pluginName: string;
   protected strategySettings: unknown;
 
   constructor(pluginName: string) {
     super();
-    const { asset, currency } = config.getWatch();
+    const { asset, currency, timeframe, warmup } = config.getWatch();
     this.strategySettings = config.getStrategy();
 
     this.defferedEvents = [];
     this.pluginName = pluginName;
     this.asset = asset;
     this.currency = currency;
+    this.timeframe = timeframe;
+    this.warmupPeriod = warmup?.candleCount;
   }
 
   // --------------------------------------------------------------------------

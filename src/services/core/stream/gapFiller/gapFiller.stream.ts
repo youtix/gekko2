@@ -4,7 +4,7 @@ import { config } from '@services/configuration/configuration';
 import { warning } from '@services/logger';
 import { fillMissingCandles } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
-import { addMinutes } from 'date-fns';
+import { differenceInMinutes } from 'date-fns';
 import { bindAll, dropRight, each } from 'lodash-es';
 import { Transform, TransformCallback } from 'node:stream';
 import { FILL_GAPS_MODE } from './gapFiller.const';
@@ -22,26 +22,36 @@ export class GapFillerStream extends Transform {
     bindAll(this, ['pushCandle']);
   }
 
-  async _transform(candle: Candle, encoding: BufferEncoding, next: TransformCallback) {
+  async _transform(candle: Candle, _: BufferEncoding, next: TransformCallback) {
     try {
-      if (this.lastCandle) {
-        const expectedTimestamp = addMinutes(this.lastCandle.start, 1).getTime();
-        const hasMissingCandle = expectedTimestamp !== candle.start;
+      const gapBetweenCandle = this.lastCandle ? differenceInMinutes(candle.start, this.lastCandle.start) : 1;
+      const hasMissingCandle = gapBetweenCandle > 1;
+      const isCandleAlreadyProceed = gapBetweenCandle < 1;
 
-        if (hasMissingCandle) {
-          warning(
-            'stream',
-            [
-              `Gap detected: missing candle(s) between ${toISOString(this.lastCandle.start)}`,
-              `and ${toISOString(candle.start)}.`,
-            ].join(' '),
-          );
-          if (this.fillGaps === 'empty') this.fillWithEmptyCandles(this.lastCandle, candle);
-          // if (this.fillGaps === 'broker') await this.fillWithBrokerCandles(this.lastCandle, candle);
-        }
+      if (hasMissingCandle) {
+        warning(
+          'stream',
+          [
+            `Gap detected: missing candle(s) between ${toISOString(this.lastCandle?.start)}`,
+            `and ${toISOString(candle.start)}.`,
+          ].join(' '),
+        );
+        if (this.fillGaps === 'empty' && this.lastCandle) this.fillWithEmptyCandles(this.lastCandle, candle);
+        // if (this.fillGaps === 'broker') await this.fillWithBrokerCandles(this.lastCandle, candle);
       }
-      this.pushCandle(candle);
-      this.lastCandle = candle;
+      if (isCandleAlreadyProceed) {
+        warning(
+          'stream',
+          [
+            'Gap detected: candle already proceed ! Ignoring it !',
+            `Current candle being proceed: ${toISOString(candle.start)}`,
+            `Last candle proceed ${toISOString(this.lastCandle?.start)}.`,
+          ].join(' '),
+        );
+      } else {
+        this.pushCandle(candle);
+        this.lastCandle = candle;
+      }
       next();
     } catch (error) {
       next(error as Error);

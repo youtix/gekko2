@@ -1,16 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Candle } from '../models/types/candle.types';
-import { STRATEGY_NOTIFICATION_EVENT, STRATEGY_UPDATE_EVENT } from '../plugins/tradingAdvisor/tradingAdvisor.const';
-import { Strategy } from './strategy';
-// strategy.test.ts
 import { IndicatorNotFoundError } from '../errors/indicator/indicatorNotFound.error';
 import { StrategyAlreadyInitializedError } from '../errors/strategy/strategyAlreadyInitialized.error';
 import * as indicators from '../indicators/index';
 import { Indicator } from '../indicators/indicator';
+import { Candle } from '../models/types/candle.types';
 import { TradeCompleted } from '../models/types/tradeStatus.types';
+import { STRATEGY_NOTIFICATION_EVENT, STRATEGY_UPDATE_EVENT } from '../plugins/tradingAdvisor/tradingAdvisor.const';
 import { toTimestamp } from '../utils/date/date.utils';
+import { Strategy } from './strategy';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn(), warning: vi.fn() }));
+vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getWatch: vi.fn(() => ({ mode: 'backtest' })),

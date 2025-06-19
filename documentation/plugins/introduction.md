@@ -14,11 +14,14 @@ To configure a plugin, open your configuration file in a text editor and define 
 ## Plugin section example
 
 ```yaml
+watch:
+  timeframe: '3m'
+  warmup:
+    candleCount: 3
+
 plugins:
   - name: 'TradingAdvisor'
     strategyName: 'DEMA'
-    timeframe: '3m'
-    historySize: 3
 
   - name: 'Trader'
 

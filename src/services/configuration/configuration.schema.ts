@@ -1,20 +1,34 @@
 import { some } from 'lodash-es';
 import { array, boolean, number, object, string } from 'yup';
+import { TIMEFRAMES } from './configuration.const';
+
+const daterangeSchema = object({
+  start: string().datetime().required(),
+  end: string().datetime().required(),
+}).when(['mode', 'scan'], {
+  is: (mode: string, scan: boolean) => mode === 'importer' || (mode === 'backtest' && !scan),
+  then: schema => schema.required(),
+  otherwise: schema => schema.default(null).notRequired(),
+});
+
+const warmupSchema = object({
+  tickrate: number().default(1),
+  candleCount: number().default(0),
+}).when(['mode'], {
+  is: (mode: string) => ['realtime', 'backtest'].includes(mode),
+  then: schema => schema.required(),
+  otherwise: schema => schema.default(null).notRequired(),
+});
 
 export const watchSchema = object({
   currency: string().required(),
   asset: string().required(),
   tickrate: number().optional(),
   mode: string().oneOf(['realtime', 'backtest', 'importer']).defined(),
-  fillGaps: string().oneOf(['no', 'empty']).default('no'),
-  daterange: object({
-    start: string().datetime().required(),
-    end: string().datetime().required(),
-  }).when(['mode', 'scan'], {
-    is: (mode: string, scan: boolean) => mode === 'importer' || (mode === 'backtest' && !scan),
-    then: schema => schema.required(),
-    otherwise: schema => schema.default(null).notRequired(),
-  }),
+  timeframe: string().oneOf(TIMEFRAMES).default('1m'),
+  fillGaps: string().oneOf(['no', 'empty']).default('empty'),
+  warmup: warmupSchema,
+  daterange: daterangeSchema,
   scan: boolean().notRequired(),
   batchSize: number().notRequired(),
 });

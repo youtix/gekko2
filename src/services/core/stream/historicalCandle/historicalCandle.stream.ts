@@ -1,29 +1,29 @@
-import { ImporterError } from '@errors/importer.error';
 import { Candle } from '@models/types/candle.types';
 import { Broker } from '@services/broker/broker';
-import { config } from '@services/configuration/configuration';
 import { Heart } from '@services/core/heart/heart';
+import { HistoricalCandleError } from '@services/core/stream/historicalCandle/historicalCandle.error';
 import { inject } from '@services/injecter/injecter';
 import { info } from '@services/logger';
-import { toISOString, toTimestamp } from '@utils/date/date.utils';
+import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { formatDuration, intervalToDuration, isAfter, isBefore } from 'date-fns';
 import { bindAll, each, filter, last } from 'lodash-es';
 import { Readable } from 'stream';
+import { HistoricalCandleStreamInput } from './historicalCandle.types';
 
-export class ImporterStream extends Readable {
+export class HistoricalCandleStream extends Readable {
   private start: EpochTimeStamp;
   private end: EpochTimeStamp;
   private heart: Heart;
   private broker: Broker;
   private isLocked: boolean;
 
-  constructor() {
+  constructor({ startDate, endDate, tickrate = 1 }: HistoricalCandleStreamInput) {
     super({ objectMode: true });
-    const { daterange, tickrate } = config.getWatch();
 
-    this.start = toTimestamp(daterange.start);
-    this.end = toTimestamp(daterange.end);
-    this.heart = new Heart(tickrate ?? 1);
+    this.start = resetDateParts(startDate, ['s', 'ms']);
+    this.end = resetDateParts(endDate, ['s', 'ms']);
+
+    this.heart = new Heart(tickrate);
     this.broker = inject.broker();
     this.isLocked = false;
 
@@ -32,21 +32,24 @@ export class ImporterStream extends Readable {
     info(
       'stream',
       [
-        `Importing data from ${toISOString(this.start)}`,
+        `Fetching historical data from ${toISOString(this.start)}`,
         `to ${toISOString(this.end)}`,
         `(${formatDuration(intervalToDuration({ start: this.start, end: this.end }))})`,
       ].join(' '),
     );
 
     this.heart.on('tick', this.onTick);
-    this.heart.pump();
+
+    // Close stream if nothing to download
+    if (!isBefore(this.start, this.end)) this.push(null);
+    else this.heart.pump();
   }
 
   async onTick() {
     if (this.isLocked) return;
     this.isLocked = true;
     const candles = await this.broker.fetchOHLCV(this.start);
-    if (!candles?.length) throw new ImporterError('No candle data was fetched.');
+    if (!candles?.length) throw new HistoricalCandleError('No candle data was fetched.');
     this.start = last(candles)?.start ?? Number.MAX_SAFE_INTEGER;
     this.start++;
     if (!isBefore(this.start, this.end)) {
@@ -66,6 +69,7 @@ export class ImporterStream extends Readable {
   }
 
   pushCandle(candle: Candle): void {
+    // console.log({ clazz: 'HistoricalCandleStream', candle: toISOString(candle.start) });
     this.push(candle);
   }
 }

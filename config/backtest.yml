@@ -2,9 +2,12 @@ watch:
   asset: BTC
   currency: USDT
   mode: backtest
+  timeframe: '1d'
+  warmup:
+    candleCount: 365
   daterange:
-    start: '2024-01-01T00:00:00.000Z'
-    end: '2024-02-01T00:00:00.000Z'
+    start: '2019-01-01T00:00:00.000Z'
+    end: '2025-05-01T00:00:00.000Z'
 
 storage:
   type: sqlite
@@ -13,15 +16,13 @@ storage:
 strategy:
   name: TMA
   short: 12
-  medium: 12
-  long: 12
+  medium: 26
+  long: 28
   src: 'ohlc4'
 
 plugins:
   - name: TradingAdvisor
     strategyName: TMA
-    timeframe: '1d'
-    historySize: 0
 
   - name: PaperTrader
     simulationBalance: # start balance, on what the current balance is compared with
@@ -34,4 +35,5 @@ plugins:
     feeUsing: maker
 
   - name: PerformanceAnalyzer
+    enableConsoleTable: true
     riskFreeReturn: 5

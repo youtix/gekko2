@@ -15,7 +15,7 @@
 */
 
 import { config } from '@services/configuration/configuration';
-import { pipeline } from '@services/core/pipeline';
+import { gekkoPipeline } from '@services/core/pipeline/pipeline';
 import { error, info } from '@services/logger';
 import { logVersion } from '@utils/process/process.utils';
 
@@ -37,7 +37,7 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
 
   try {
     info('init', logVersion());
-    pipeline(); // Launch bot
+    gekkoPipeline(); // Launch bot
   } catch (e) {
     error('init', e instanceof Error ? e.message : e);
   }

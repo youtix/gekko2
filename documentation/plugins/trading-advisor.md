@@ -11,14 +11,17 @@ Documentation about how to create or configure strategies in Gekko can be found 
 In your configuration file, under the `plugins` section, you can configure the Trading Advisor plugin like this:
 
 ```yaml
+watch:
+  timeframe: '1d' # Size of the candle to feed into the strategy.
+  warmup:
+    candleCount: 10 # Number of candles the strategy needs before it can start generating advice.
+
 plugins:
   - name: TradingAdvisor # Must be set to TradingAdvisor.
     strategyName: DEMA # Name of the strategy to run (same as strategy section).
-    timeframe: '1d' # Size of the candle to feed into the strategy.
-    historySize: 10 # Number of candles the strategy needs before it can start generating advice. (warm-up phase)
 ```
 
-`timeframe` must be one of the following values:
+`watch.timeframe` must be one of the following values:
 
 `'1m'`, `'2m'`, `'3m'`, `'5m'`, `'10m'`, `'15m'`, `'30m'`, `'1h'`, `'2h'`, `'4h'`, `'6h'`, `'8h'`, `'12h'`, `'1d'`, `'1w'`, `'1M'`, `'3M'`, `'6M'`, `'1y'`.
 
