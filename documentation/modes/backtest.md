@@ -35,6 +35,9 @@ watch:
   asset: BTC
   currency: USDT
   mode: backtest
+  timeframe: '1d' # default is '1m'
+  warmup:
+    candleCount: 365 # 0 disables warmup
   daterange:
     start: '2024-01-01T00:00:00.000Z'
     end: '2024-02-01T00:00:00.000Z'
@@ -74,8 +77,6 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: DEMA
-    timeframe: '1d'
-    historySize: 5
 
   - name: PaperTrader
     simulationBalance: # start balance, on what the current balance is compared with

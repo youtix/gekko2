@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PipelineContext } from '../../models/types/pipeline.types';
-import * as allPlugin from '../../plugins/index';
+import type { PipelineContext } from '../../../models/types/pipeline.types';
+import * as allPlugin from '../../../plugins/index';
 import {
   checkPluginsDependencies,
   checkPluginsDuplicateEvents,
   checkPluginsModesCompatibility,
   createPlugins,
   getPluginsStaticConfiguration,
-} from './pipeline.utils';
+} from './pipeline';
 
 vi.mock('@services/configuration/configuration', () => ({
   config: { getWatch: vi.fn(() => ({ mode: 'realtime' })) },
@@ -15,7 +15,7 @@ vi.mock('@services/configuration/configuration', () => ({
 vi.mock('@services/injecter/injecter', () => ({ inject: {} }));
 vi.mock('@plugins/index');
 
-describe('', () => {
+describe('Pipeline Steps', () => {
   describe('checkPluginsDuplicateEvents', () => {
     it('returns context when no duplicate events are present', async () => {
       const context: PipelineContext = [

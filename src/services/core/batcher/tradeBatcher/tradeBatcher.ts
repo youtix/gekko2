@@ -1,16 +1,16 @@
 import { Batch } from '@models/types/batch.types';
 import { Trade } from '@models/types/trade.types';
 import { debug, warning } from '@services/logger';
-import { toISOString } from '@utils/date/date.utils';
+import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { filterTradesByTimestamp } from '@utils/trade/trade.utils';
-import { formatDuration, intervalToDuration } from 'date-fns';
+import { formatDuration, intervalToDuration, subMilliseconds } from 'date-fns';
 import { filter, first, last } from 'lodash-es';
 
 export class TradeBatcher {
   threshold: EpochTimeStamp;
 
-  constructor() {
-    this.threshold = 0;
+  constructor(threshold?: number) {
+    this.threshold = threshold ? subMilliseconds(resetDateParts(threshold, ['s', 'ms']), 1).getTime() : 0;
   }
 
   processTrades(trades: Trade[]) {

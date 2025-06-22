@@ -1,7 +1,10 @@
 watch:
   asset: BTC
   currency: USDT
-  mode: realtime
+  mode: realtime # backtest | importer | realtime
+  timeframe: '1d'
+  warmup:
+    candleCount: 365
 
 broker:
   name: binance
@@ -14,8 +17,6 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: DebugAdvice
-    timeframe: '1m'
-    historySize: 0
 
   - name: Telegram
     token: # Your Telegram bot token

@@ -2,6 +2,9 @@ watch:
   asset: BTC
   currency: USDT
   mode: backtest
+  timeframe: '1d'
+  warmup:
+    candleCount: 365
   daterange:
     start: '2019-01-01T00:00:00.000Z'
     end: '2025-05-01T00:00:00.000Z'
@@ -22,8 +25,6 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: RSI
-    timeframe: '1d'
-    historySize: 365
 
   - name: PaperTrader
     simulationBalance: # start balance, on what the current balance is compared with

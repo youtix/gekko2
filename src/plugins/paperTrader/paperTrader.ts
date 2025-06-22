@@ -64,7 +64,7 @@ export class PaperTrader extends Plugin {
       id: this.tradeId,
       adviceId: advice.id,
       action,
-      portfolio: this.portfolio,
+      portfolio: { ...this.portfolio },
       balance: this.getBalance(),
       date: advice.date,
     });
