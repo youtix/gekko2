@@ -17,9 +17,7 @@ To configure a plugin, open your configuration file in a text editor and define 
 plugins:
   - name: 'TradingAdvisor'
     strategyName: 'DEMA'
-    timeframe: '3m'
-    historySize: 3
-
+  
   - name: 'Trader'
 
   - name: 'PerformanceAnalyzer'

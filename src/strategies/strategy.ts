@@ -7,9 +7,9 @@ import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { config } from '@services/configuration/configuration';
-import { processStartTime } from '@utils/process/process.utils';
-import { isBefore, subMinutes } from 'date-fns';
-import { each, isNil, map } from 'lodash-es';
+import { info } from '@services/logger';
+import { toISOString } from '@utils/date/date.utils';
+import { each, map } from 'lodash-es';
 import EventEmitter from 'node:events';
 import {
   STRATEGY_NOTIFICATION_EVENT,
@@ -19,30 +19,29 @@ import {
 import { Direction, StrategyNames, StrategyParamaters } from './strategy.types';
 
 export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
-  protected strategyName: string;
-  protected strategySettings: StrategyParamaters<T>;
-  protected indicators: Indicator[];
-  protected isStartegyInitialized: boolean;
   protected age: number;
   protected candle?: Candle;
-  protected requiredHistory?: number;
   protected candleSize: number;
-  protected isWarmupCompleted: boolean;
-
   protected currentDirection?: Direction;
+  protected indicators: Indicator[];
+  protected isStartegyInitialized: boolean;
+  protected isWarmupCompleted: boolean;
   protected propogatedAdvices: number;
+  protected requiredHistory: number;
+  protected strategyName: string;
+  protected strategySettings: StrategyParamaters<T>;
 
-  constructor(strategyName: string, candleSize: number, requiredHistory?: number) {
+  constructor(strategyName: string, candleSize: number, requiredHistory = 0) {
     super();
-    this.strategyName = strategyName;
-    this.strategySettings = config.getStrategy<StrategyParamaters<T>>();
+    this.age = 0;
     this.candleSize = candleSize;
     this.indicators = [];
     this.isStartegyInitialized = false;
-    this.age = 0;
+    this.isWarmupCompleted = false;
     this.propogatedAdvices = 0;
     this.requiredHistory = requiredHistory;
-    this.isWarmupCompleted = false;
+    this.strategyName = strategyName;
+    this.strategySettings = config.getStrategy<StrategyParamaters<T>>();
 
     // Initialize user strategy
     this.init();
@@ -122,13 +121,9 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
 
   private warmup(candle: Candle) {
     this.age++;
-    // In live mode we might receive more candles than minimally needed.
-    // In that case, check whether candle start time is > startTime
-    const isPremature =
-      config.getWatch().mode === 'realtime' && isBefore(candle.start, subMinutes(processStartTime(), this.candleSize));
-
-    if (!isNil(this.requiredHistory) && this.requiredHistory <= this.age && !isPremature) {
+    if (this.requiredHistory <= this.age) {
       this.isWarmupCompleted = true;
+      info('strategy', `Strategy warmup done ! First candle to use is ${toISOString(candle.start)}`);
       this.emit(STRATEGY_WARMUP_COMPLETED_EVENT, { start: candle.start });
     }
   }

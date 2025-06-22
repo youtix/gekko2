@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../date/date.utils';
-import { fillMissingCandles, hl2, hlc3, ohlc4 } from './candle.utils';
+import { fillMissingCandles, getCandleTimeOffset, hl2, hlc3, ohlc4 } from './candle.utils';
 
 const createCandle = (start: number, open: number, close: number, high: number, low: number, volume: number) => ({
   start,
@@ -74,6 +74,28 @@ describe('ohlc4', () => {
       expect(ohlc4(candle)).toBeCloseTo(expected);
     },
   );
+});
+
+describe('getCandleTimeOffset', () => {
+  beforeAll(() => {
+    vi.useFakeTimers().setSystemTime(toTimestamp('2025-06-22T19:53:30Z'));
+  });
+
+  it.each`
+    size     | expected
+    ${1}     | ${0}
+    ${5}     | ${53 % 5}
+    ${120}   | ${(19 * 60 + 53) % 120}
+    ${1440}  | ${19 * 60 + 53}
+    ${10080} | ${((0 + 6) % 7) * 1440 + 19 * 60 + 53}
+    ${43200} | ${Math.floor((toTimestamp('2025-06-22T19:53:30Z') - Date.UTC(2025, 5, 1)) / 60000)}
+  `('should return $size => $expected', ({ size, expected }) => {
+    expect(getCandleTimeOffset(size)).toBe(expected);
+  });
+
+  afterAll(() => {
+    vi.useRealTimers();
+  });
 });
 
 // describe('bridgeCandleGap', () => {

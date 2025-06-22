@@ -266,7 +266,7 @@ export class PerformanceAnalyzer extends Plugin {
 
       if (this.openRoundTrip) {
         if (this.roundTrip.entry) {
-          const adverse = +Big(this.roundTrip.entry.price).minus(candle.close).div(this.roundTrip.entry.price).mul(100);
+          const adverse = +Big(this.roundTrip.entry.price).minus(candle.low).div(this.roundTrip.entry.price).mul(100);
           if (adverse > this.maxAdverseExcursion) this.maxAdverseExcursion = adverse;
         }
         this.emitRoundtripUpdate();
