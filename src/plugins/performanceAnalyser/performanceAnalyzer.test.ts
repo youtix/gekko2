@@ -479,11 +479,11 @@ describe('PerformanceAnalyzer', () => {
       };
 
       analyzer.registerRoundtripPart(buyTrade);
-      // price drops to 90 before selling
-      analyzer.processCandle({ close: 90, start: toTimestamp('2020-01-01T00:01:00Z') });
+      // Low price drops to 90 and close to 100 before selling
+      analyzer.processCandle({ close: 100, low: 90, start: toTimestamp('2020-01-01T00:01:00Z') });
       analyzer.registerRoundtripPart(sellTrade);
 
-      expect(first(analyzer.roundTrips)?.maxAdverseExcursion).toBe(10);
+      expect(first(analyzer.roundTrips)?.['maxAdverseExcursion']).toBe(10);
     });
   });
   describe('calculateReportStatistics', () => {
