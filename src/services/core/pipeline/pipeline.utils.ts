@@ -16,8 +16,51 @@ import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCan
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
 
-const getOffset = () => {
-  // TODO code this function
+export const getOffset = () => {
+  const { timeframe } = config.getWatch();
+  const size = TIMEFRAME_TO_MINUTES[timeframe];
+  const now = new Date();
+
+  const minute = now.getUTCMinutes();
+  const hour = now.getUTCHours();
+  const month = now.getUTCMonth();
+  const weekday = now.getUTCDay();
+
+  if (size <= 1) return 0;
+
+  if (size < 60) return minute % size;
+
+  const minutesSinceMidnight = hour * 60 + minute;
+
+  if (size < 1440) return minutesSinceMidnight % size;
+
+  if (size < 10080) return minutesSinceMidnight;
+
+  if (size === 10080) {
+    const minutesSinceWeekStart = ((weekday + 6) % 7) * 1440 + minutesSinceMidnight;
+    return minutesSinceWeekStart;
+  }
+
+  const startOfMonth = Date.UTC(now.getUTCFullYear(), month, 1);
+  if (size === 43200) return Math.floor((now.getTime() - startOfMonth) / 60000);
+
+  if (size === 129600) {
+    const quarterStartMonth = Math.floor(month / 3) * 3;
+    const quarterStart = Date.UTC(now.getUTCFullYear(), quarterStartMonth, 1);
+    return Math.floor((now.getTime() - quarterStart) / 60000);
+  }
+
+  if (size === 259200) {
+    const halfStartMonth = Math.floor(month / 6) * 6;
+    const halfStart = Date.UTC(now.getUTCFullYear(), halfStartMonth, 1);
+    return Math.floor((now.getTime() - halfStart) / 60000);
+  }
+
+  if (size === 518400) {
+    const startOfYear = Date.UTC(now.getUTCFullYear(), 0, 1);
+    return Math.floor((now.getTime() - startOfYear) / 60000);
+  }
+
   return 0;
 };
 /**
