@@ -69,6 +69,10 @@ Gekko only executes what your strategy tells it to do.
 - Monitor logs and Telegram messages for unexpected behavior.
 - Ensure you understand the exchange’s fees, limits, and slippage risks.
 
+## Warmup
+
+When `watch.warmup.candleCount` is greater than zero, Gekko will fetch historical candles before starting realtime trading. This allows your strategy and plugins to initialize with sufficient data.
+
 ## Example Realtime Configuration
 
 ```yaml
@@ -76,6 +80,9 @@ watch:
   asset: BTC
   currency: USDT
   mode: realtime
+  timeframe: '1m' # default timeframe is 1m
+  warmup:
+    candleCount: 10
 
 broker:
   name: binance
@@ -87,8 +94,6 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: MyAwesomeStrategy
-    timeframe: '1m'
-    historySize: 10
 
   - name: PaperTrader # or Trader for live/sandbox mode
     simulationBalance:
