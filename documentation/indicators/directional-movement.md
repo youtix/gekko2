@@ -27,3 +27,7 @@ The DX measures the difference between the positive and negative directional ind
 ## **-DM (Negative Directional Movement / minusDM)**
 
 -DM is based on the difference between the current and previous lows. It contributes to the -DI value and represents the magnitude of downward movement.
+
+## **ADX Ribbon**
+
+The ADX Ribbon stacks many ADX values with increasing periods to create fast and slow groups. When each group is aligned in one direction, it highlights a strong and persistent trend.
