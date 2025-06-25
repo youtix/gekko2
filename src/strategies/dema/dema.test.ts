@@ -1,3 +1,4 @@
+import { STARTEGY_ADVICE_EVENT } from '@plugins/plugin.const';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Advice } from '../../models/types/advice.types';
 import { Candle } from '../../models/types/candle.types';
@@ -28,7 +29,7 @@ describe('DEMA Strategy', () => {
     strategy['indicators'] = [dema, sma];
 
     advices = [];
-    strategy['on']('advice', (advice: Advice) => advices.push(advice.recommendation));
+    strategy['on'](STARTEGY_ADVICE_EVENT, (advice: Advice) => advices.push(advice.recommendation));
 
     candle = { start: Date.now(), open: 1, high: 2, low: 0, close: 1, volume: 100 };
     // Bypass warmup if using onNewCandle directly

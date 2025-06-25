@@ -12,6 +12,7 @@ import { toISOString } from '@utils/date/date.utils';
 import { each, map } from 'lodash-es';
 import EventEmitter from 'node:events';
 import {
+  STARTEGY_ADVICE_EVENT,
   STRATEGY_NOTIFICATION_EVENT,
   STRATEGY_UPDATE_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
@@ -103,7 +104,10 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
     this.propogatedAdvices++;
 
     // Timestamp handled in trading advisor
-    this.emit<Partial<Advice>>('advice', { id: `advice-${this.propogatedAdvices}`, recommendation: newDirection });
+    this.emit<Partial<Advice>>(STARTEGY_ADVICE_EVENT, {
+      id: `advice-${this.propogatedAdvices}`,
+      recommendation: newDirection,
+    });
 
     this.currentDirection = newDirection;
     return this.propogatedAdvices;
