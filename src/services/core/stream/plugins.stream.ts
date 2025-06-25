@@ -30,7 +30,8 @@ export class PluginsStream extends Writable {
   }
 
   private broadcastRecursively() {
-    const hasBroadcasted = find(this.plugins, p => p.broadcastDeferredEmit());
-    if (hasBroadcasted) this.broadcastRecursively();
+    while (find(this.plugins, p => p.broadcastDeferredEmit())) {
+      // continue looping while at least one plugin emitted an event
+    }
   }
 }
