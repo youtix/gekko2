@@ -87,7 +87,7 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
 
     // @ts-expect-error TODO fix complex typescript error
     const indicator = new Indicator(parameters);
-    this.indicators = [...this.indicators, indicator];
+    this.indicators.push(indicator);
 
     return indicator;
   }

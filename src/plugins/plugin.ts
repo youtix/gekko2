@@ -108,7 +108,7 @@ export abstract class Plugin extends EventEmitter {
   }
 
   protected deferredEmit<T = unknown>(name: string, payload: T) {
-    this.defferedEvents = [...this.defferedEvents, { name, payload }];
+    this.defferedEvents.push({ name, payload });
   }
 
   protected abstract processInit(): void;

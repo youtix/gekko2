@@ -22,15 +22,15 @@ export class WMA extends Indicator<'WMA'> {
   public onNewCandle({ close }: Candle): void {
     // Warming up phase
     if (this.age < this.period) {
-      this.fifo = [...this.fifo, close];
+      this.fifo.push(close);
       this.age++;
       // Compute first value
       if (this.age === this.period) this.result = this.computeWMA();
       return;
     }
 
-    const [, ...rest] = this.fifo;
-    this.fifo = [...rest, close];
+    this.fifo.shift();
+    this.fifo.push(close);
     this.result = this.computeWMA();
   }
 

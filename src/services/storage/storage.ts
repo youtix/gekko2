@@ -22,7 +22,7 @@ export abstract class Storage {
   }
 
   public addCandle(candle: Candle) {
-    this.buffer = [...this.buffer, candle];
+    this.buffer.push(candle);
     if (this.buffer.length >= this.insertThreshold) {
       this.insertCandles();
       this.buffer = [];
