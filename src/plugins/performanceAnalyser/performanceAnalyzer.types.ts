@@ -7,7 +7,7 @@ export type PerformanceAnalyzerConfig = Yup.InferType<typeof performanceAnalyzer
 
 export type Start = {
   balance: number;
-  portfolio?: Portfolio;
+  portfolio: Nullable<Portfolio>;
 };
 
 export type SingleRoundTrip = {

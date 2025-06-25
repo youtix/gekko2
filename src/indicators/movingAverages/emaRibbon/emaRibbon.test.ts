@@ -49,11 +49,10 @@ describe('EMARibbon', () => {
     const result = ribbon.getResult();
 
     if (expected === null) {
-      // Still warming-up: all EMAs not yet seeded
       expect(result).toBeNull();
     } else {
       expect(result).not.toBeNull();
-      expected.results.forEach((value, idx) => {
+      expected.results.forEach((value: number, idx: number) => {
         expect(result!.results[idx]).toBeCloseTo(value, 13);
       });
       expect(result!.spread).toBeCloseTo(expected.spread, 13); // same 1e-13 tolerance as the TEMA test

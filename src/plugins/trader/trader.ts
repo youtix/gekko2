@@ -97,7 +97,7 @@ export class Trader extends Plugin {
     this.exposed = this.exposure > 0.1;
   }
 
-  public onAdvice(advice: Advice) {
+  public onStrategyAdvice(advice: Advice) {
     if (!['long', 'short'].includes(advice.recommendation)) {
       error('trader', 'Ignoring advice in unknown direction');
       return;
@@ -125,7 +125,7 @@ export class Trader extends Plugin {
         ].join(' '),
       );
 
-      this.cancelOrder(id, advice, () => this.onAdvice(advice));
+      this.cancelOrder(id, advice, () => this.onStrategyAdvice(advice));
       return;
     }
 
@@ -284,7 +284,7 @@ export class Trader extends Plugin {
     /* noop */
   }
 
-  protected async processCandle(candle: Candle) {
+  protected async processOneMinuteCandle(candle: Candle) {
     this.price = candle.close;
     const previousBalance = this.balance;
     this.setBalance();

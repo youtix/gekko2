@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Advice } from '../../models/types/advice.types';
 import { Candle } from '../../models/types/candle.types';
 import { DEMA } from './dema.strategy';
@@ -15,8 +15,8 @@ vi.mock('@services/configuration/configuration', () => {
 
 describe('DEMA Strategy', () => {
   let strategy: DEMA;
-  let dema: { onNewCandle: Mock; getResult: Mock };
-  let sma: { onNewCandle: Mock; getResult: Mock };
+  let dema: any;
+  let sma: any;
   let advices: string[];
   let candle: Candle;
 

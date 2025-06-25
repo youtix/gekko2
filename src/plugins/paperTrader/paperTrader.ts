@@ -48,10 +48,10 @@ export class PaperTrader extends Plugin {
     this.warmupCompleted = true;
     if (!this.warmupCandle)
       throw new PluginError(this.pluginName, 'No warmup candle on strategy warmup completed event');
-    this.processCandle(this.warmupCandle);
+    this.processOneMinuteCandle(this.warmupCandle);
   }
 
-  public onAdvice(advice: Advice) {
+  public onStrategyAdvice(advice: Advice) {
     if (!['short', 'long'].includes(advice.recommendation)) {
       warning('paper trader', `Ignoring unknown advice recommendation: ${advice.recommendation}`);
       return;
@@ -144,7 +144,7 @@ export class PaperTrader extends Plugin {
     /* noop */
   }
 
-  protected processCandle(candle: Candle): void {
+  protected processOneMinuteCandle(candle: Candle): void {
     if (this.warmupCompleted) {
       this.price = candle.close;
 

@@ -41,8 +41,8 @@ The **Telegram** plugin listens to a variety of events in order to send notifica
 
 | Event                  | Description                                                                |
 |------------------------|----------------------------------------------------------------------------|
-| `processCandle`        | Updates the current price based on incoming candle data.                   |
-| `onAdvice`             | Sends a message when new advice is received from a strategy.               |
+| `processOneMinuteCandle`        | Updates the current price based on incoming candle data.                   |
+| `onStrategyAdvice`             | Sends a message when new advice is received from a strategy.               |
 | `onTradeInitiated`     | Notifies when a trade is about to be placed.                               |
 | `onTradeCompleted`     | Sends detailed info once a trade is successfully executed.                 |
 | `onTradeAborted`       | Sends a message when a trade is aborted due to portfolio constraints.      |

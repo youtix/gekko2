@@ -49,10 +49,10 @@ describe('ADXRibbon', () => {
     const result = ribbon.getResult();
     if (expected === null) expect(result).toBeNull();
     else {
-      expected.results.forEach((value, idx) => {
-        expect(result.results[idx]).toBeCloseTo(value, 13);
+      expected.results.forEach((value: number, idx: number) => {
+        expect(result!.results[idx]).toBeCloseTo(value, 13);
       });
-      expect(result.spread).toBeCloseTo(expected.spread, 13);
+      expect(result!.spread).toBeCloseTo(expected.spread, 13);
     }
   });
 });

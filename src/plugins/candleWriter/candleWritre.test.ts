@@ -12,12 +12,13 @@ vi.mock('../../services/configuration/configuration', () => {
 
 describe('CandleWriter', () => {
   let writer: CandleWriter;
-  let fakeStorage;
+  let fakeStorage: Storage;
   beforeEach(() => {
     const config = { name: 'CandleWriter' };
     writer = new CandleWriter(config);
-    fakeStorage = { addCandle: vi.fn(), insertCandles: vi.fn(), close: vi.fn() };
-    writer['getStorage'] = () => fakeStorage;
+    fakeStorage = { addCandle: vi.fn(), insertCandles: vi.fn(), close: vi.fn() } as unknown as Storage;
+    // @ts-expect-error Force casting to storage
+    writer.getStorage = (): Storage => fakeStorage;
   });
 
   describe('constructor', () => {
@@ -26,7 +27,7 @@ describe('CandleWriter', () => {
     });
   });
 
-  describe('processCandle', () => {
+  describe('processOneMinuteCandle', () => {
     it('should add a candle to the storage', () => {
       const candle = {
         open: 100,
@@ -34,16 +35,15 @@ describe('CandleWriter', () => {
         high: 110,
         low: 95,
         volume: 1000,
-        time: 1620000000000,
+        start: 1620000000000,
       };
-      writer['processCandle'](candle);
+      writer['processOneMinuteCandle'](candle);
       expect(fakeStorage.addCandle).toHaveBeenCalledWith(candle);
     });
   });
 
   describe('processFinalize', () => {
     it('should call insertCandles on the storage', () => {
-      writer['getStorage'] = () => fakeStorage;
       writer['processFinalize']();
       expect(fakeStorage.insertCandles).toHaveBeenCalled();
     });

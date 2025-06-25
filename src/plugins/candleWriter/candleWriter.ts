@@ -16,7 +16,7 @@ export class CandleWriter extends Plugin {
     /* noop */
   }
 
-  protected processCandle(candle: Candle): void {
+  protected processOneMinuteCandle(candle: Candle): void {
     this.getStorage().addCandle(candle);
   }
 

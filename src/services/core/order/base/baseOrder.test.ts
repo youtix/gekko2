@@ -1,3 +1,6 @@
+import { Order } from '@models/types/order.types';
+import { Broker } from '@services/broker/broker';
+import { toTimestamp } from '@utils/date/date.utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BaseOrder } from './baseOrder';
 import {
@@ -31,10 +34,11 @@ const fakeBroker = {
 };
 
 describe('BaseOrder', () => {
+  const defaultOrder: Order = { id: 'tx1', status: 'open', filled: 0, price: 100, timestamp: toTimestamp('2025') };
   let testOrder: TestOrder;
 
   beforeEach(() => {
-    testOrder = new TestOrder(fakeBroker);
+    testOrder = new TestOrder(fakeBroker as unknown as Broker);
   });
 
   it('should have status "initializing" upon creation', () => {
@@ -80,13 +84,13 @@ describe('BaseOrder', () => {
     it('should emit ORDER_PARTIALLY_FILLED_EVENT with filled amount on orderPartiallyFilled', () => {
       const spy = vi.spyOn(testOrder, 'emit');
       // Prepopulate transactions with a matching id.
-      testOrder['transactions'] = [{ id: 'tx1', filled: 0 }];
+      testOrder['transactions'] = [defaultOrder];
       testOrder['orderPartiallyFilled']('tx1', 10);
       expect(spy).toHaveBeenCalledWith(ORDER_PARTIALLY_FILLED_EVENT, 10);
     });
 
     it('should update the transaction filled amount in orderPartiallyFilled', () => {
-      testOrder['transactions'] = [{ id: 'tx1', filled: 0 }];
+      testOrder['transactions'] = [defaultOrder];
       testOrder['orderPartiallyFilled']('tx1', 10);
       expect(testOrder['transactions'][0].filled).toBe(10);
     });

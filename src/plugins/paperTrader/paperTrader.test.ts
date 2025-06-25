@@ -1,3 +1,5 @@
+import { Advice } from '@models/types/advice.types';
+import { Candle } from '@models/types/candle.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginError } from '../../errors/plugin/plugin.error';
 import { toTimestamp } from '../../utils/date/date.utils';
@@ -20,7 +22,10 @@ vi.mock('@services/configuration/configuration', () => {
 });
 
 describe('PaperTrader', () => {
-  const papertraderConfig = {
+  const defaultAdvice: Advice = { id: 'advice-100', recommendation: 'short', date: toTimestamp('2020') };
+  const defaultCandle: Candle = { close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
+  const papertraderConfig: PapertraderConfig = {
+    name: 'PaperTrader',
     feeUsing: 'maker',
     feeMaker: 0.25,
     feeTaker: 0.4,
@@ -28,7 +33,7 @@ describe('PaperTrader', () => {
       asset: 0,
       currency: 1000,
     },
-  } as PapertraderConfig;
+  };
   let trader: PaperTrader;
   beforeEach(() => {
     trader = new PaperTrader(papertraderConfig);
@@ -44,148 +49,117 @@ describe('PaperTrader', () => {
       expect(() => trader.onStrategyWarmupCompleted()).toThrowError(PluginError);
     });
     it('should mark warmup completed', () => {
-      trader['warmupCandle'] = { close: 130 };
+      trader['warmupCandle'] = { close: 130 } as Candle;
 
       trader.onStrategyWarmupCompleted();
 
       expect(trader['warmupCompleted']).toBe(true);
     });
-    it('should call process candle function', () => {
-      trader['warmupCandle'] = { close: 130 };
-      const processCandleSpy = vi.spyOn(trader, 'processCandle');
+    it('should call process one minute candle function', () => {
+      trader['warmupCandle'] = { close: 130 } as Candle;
+      const processOneMinuteCandleSpy = vi.spyOn(trader as any, 'processOneMinuteCandle');
 
       trader.onStrategyWarmupCompleted();
 
-      expect(processCandleSpy).toHaveBeenCalledExactlyOnceWith({ close: 130 });
+      expect(processOneMinuteCandleSpy).toHaveBeenCalledExactlyOnceWith({ close: 130 });
     });
   });
-  describe('onAdvice', () => {
+  describe('onStrategyAdvice', () => {
     it('should ignore unknown recommendation', () => {
-      const advice = { id: 'advice-100', recommendation: 'other than shoart and long reco' };
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
-      trader.onAdvice(advice);
+      const unknownAdvice = {
+        id: 'advice-100',
+        recommendation: 'other than shoart and long reco',
+      } as unknown as Advice;
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
+      trader.onStrategyAdvice(unknownAdvice);
       expect(deferredEmitSpy).not.toHaveBeenCalled();
     });
     it('should emit tradeInitiated', () => {
-      const advice = {
-        id: 'advice-100',
-        recommendation: 'short',
-        date: toTimestamp('2020-01-01T00:00:00Z'),
-      };
       trader['price'] = 100;
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
-      vi.spyOn(trader, 'updatePosition').mockImplementation(() => ({}));
-      trader.onAdvice(advice);
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
+      vi.spyOn(trader as any, 'updatePosition').mockImplementation(() => ({}));
+      trader.onStrategyAdvice(defaultAdvice);
       expect(deferredEmitSpy).toHaveBeenNthCalledWith(1, TRADE_INITIATED_EVENT, {
         id: 'trade-1',
-        adviceId: advice.id,
+        adviceId: defaultAdvice.id,
         action: 'sell',
         portfolio: papertraderConfig.simulationBalance,
         balance: 1000,
-        date: advice.date,
+        date: defaultAdvice.date,
       });
     });
     it('should emit portfolioChange', () => {
-      const advice = {
-        id: 'advice-100',
-        recommendation: 'short',
-        date: toTimestamp('2020-01-01T00:00:00Z'),
-      };
       trader['price'] = 100;
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
-      vi.spyOn(trader, 'updatePosition').mockImplementation(() => ({}));
-      trader.onAdvice(advice);
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
+      vi.spyOn(trader as any, 'updatePosition').mockImplementation(() => ({}));
+      trader.onStrategyAdvice(defaultAdvice);
       expect(deferredEmitSpy).toHaveBeenNthCalledWith(2, PORTFOLIO_CHANGE_EVENT, {
         asset: 0,
         currency: 1000,
       });
     });
     it('should emit portfolioValueChange', () => {
-      const advice = {
-        id: 'advice-100',
-        recommendation: 'short',
-        date: toTimestamp('2020-01-01T00:00:00Z'),
-      };
       trader['price'] = 100;
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
-      vi.spyOn(trader, 'updatePosition').mockImplementation(() => ({}));
-      trader.onAdvice(advice);
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
+      vi.spyOn(trader as any, 'updatePosition').mockImplementation(() => ({}));
+      trader.onStrategyAdvice(defaultAdvice);
       expect(deferredEmitSpy).toHaveBeenNthCalledWith(3, PORTFOLIO_VALUE_CHANGE_EVENT, {
         balance: 1000,
       });
     });
     it('should emit tradeCompleted', () => {
-      const advice = {
-        id: 'advice-100',
-        recommendation: 'short',
-        date: toTimestamp('2020-01-01T00:00:00Z'),
-      };
       trader['price'] = 100;
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
-      vi.spyOn(trader, 'updatePosition').mockImplementation(() => ({
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
+      vi.spyOn(trader as any, 'updatePosition').mockImplementation(() => ({
         cost: 10,
         amount: 200,
         effectivePrice: 99.75,
       }));
-      trader.onAdvice(advice);
+      trader.onStrategyAdvice(defaultAdvice);
       expect(deferredEmitSpy).toHaveBeenNthCalledWith(4, TRADE_COMPLETED_EVENT, {
         id: 'trade-1',
-        adviceId: advice.id,
+        adviceId: defaultAdvice.id,
         action: 'sell',
         cost: 10,
         amount: 200,
         price: 100,
         portfolio: { asset: 0, currency: 1000 },
         balance: 1000,
-        date: advice.date,
+        date: defaultAdvice.date,
         effectivePrice: 99.75,
         feePercent: 0.25,
       });
     });
   });
-  describe('processCandle', () => {
+  describe('processOneMinuteCandle', () => {
     it('should store the candle as warmupCandle during warmup', () => {
       trader['warmupCompleted'] = false;
-      const candle = { close: 100 };
+      trader['processOneMinuteCandle'](defaultCandle);
 
-      trader['processCandle'](candle);
-
-      expect(trader['warmupCandle']).toEqual(candle);
+      expect(trader['warmupCandle']).toEqual(defaultCandle);
     });
     it('should NOT update price during warmup', () => {
       trader['warmupCompleted'] = false;
-      const candle = { close: 100 };
-
-      trader['processCandle'](candle);
+      trader['processOneMinuteCandle'](defaultCandle);
 
       expect(trader['price']).toBe(0);
-    });
-    it('should NOT update candle during warmup', () => {
-      trader['warmupCompleted'] = false;
-      const candle = { close: 100 };
-
-      trader['processCandle'](candle);
-
-      expect(trader['candle']).toBeUndefined();
     });
     it('should update price when warmup is done', () => {
       trader['warmupCompleted'] = true;
       trader['balance'] = 100;
       trader['exposed'] = false;
-      const candle = { close: 150 };
 
-      trader['processCandle'](candle);
+      trader['processOneMinuteCandle'](defaultCandle);
 
-      expect(trader['price']).toBe(150);
+      expect(trader['price']).toBe(100);
     });
     it('should set balance when warmup is done & balance is NOT set', () => {
       trader['warmupCompleted'] = true;
       trader['balance'] = null;
       trader['price'] = 100;
       trader['exposed'] = false;
-      const candle = { close: 150 };
 
-      trader['processCandle'](candle);
+      trader['processOneMinuteCandle'](defaultCandle);
 
       expect(trader['balance']).toBe(1000);
     });
@@ -194,10 +168,9 @@ describe('PaperTrader', () => {
       trader['balance'] = null;
       trader['price'] = 100;
       trader['exposed'] = false;
-      const candle = { close: 150 };
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
 
-      trader['processCandle'](candle);
+      trader['processOneMinuteCandle'](defaultCandle);
 
       expect(deferredEmitSpy).toHaveBeenNthCalledWith(1, PORTFOLIO_CHANGE_EVENT, {
         asset: 0,
@@ -209,10 +182,9 @@ describe('PaperTrader', () => {
       trader['balance'] = null;
       trader['price'] = 100;
       trader['exposed'] = false;
-      const candle = { close: 150 };
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
 
-      trader['processCandle'](candle);
+      trader['processOneMinuteCandle'](defaultCandle);
 
       expect(deferredEmitSpy).toHaveBeenNthCalledWith(2, PORTFOLIO_VALUE_CHANGE_EVENT, {
         balance: 1000,
@@ -223,10 +195,9 @@ describe('PaperTrader', () => {
       trader['balance'] = 10;
       trader['price'] = 100;
       trader['exposed'] = true;
-      const candle = { close: 150 };
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
 
-      trader['processCandle'](candle);
+      trader['processOneMinuteCandle'](defaultCandle);
 
       expect(deferredEmitSpy).toHaveBeenCalledExactlyOnceWith(PORTFOLIO_VALUE_CHANGE_EVENT, {
         balance: 1000,
@@ -237,10 +208,9 @@ describe('PaperTrader', () => {
       trader['balance'] = 10;
       trader['price'] = 100;
       trader['exposed'] = false;
-      const candle = { close: 150 };
-      const deferredEmitSpy = vi.spyOn(trader, 'deferredEmit');
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
 
-      trader['processCandle'](candle);
+      trader['processOneMinuteCandle'](defaultCandle);
 
       expect(deferredEmitSpy).not.toHaveBeenCalled();
     });
@@ -254,10 +224,9 @@ describe('PaperTrader', () => {
       trader['warmupCompleted'] = true;
       trader['price'] = 100;
       trader['exposed'] = false;
-      const candle = { close: 150 };
 
-      trader['processCandle'](candle);
-      trader['processCandle'](candle);
+      trader['processOneMinuteCandle'](defaultCandle);
+      trader['processOneMinuteCandle'](defaultCandle);
 
       expect(trader['deferredEmit']).toHaveBeenNthCalledWith(1, PORTFOLIO_CHANGE_EVENT, {
         asset: 0,

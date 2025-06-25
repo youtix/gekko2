@@ -1,17 +1,20 @@
 // tradingAdvisor.test.ts
+import { Advice } from '@models/types/advice.types';
+import { Candle } from '@models/types/candle.types';
+import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { addMinutes } from 'date-fns';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginError } from '../../errors/plugin/plugin.error';
 import { StrategyNotFoundError } from '../../errors/strategy/strategyNotFound.error';
 import { toTimestamp } from '../../utils/date/date.utils';
-import { TradingAdvisor } from './tradingAdvisor';
 import {
-  ADVICE_EVENT,
+  STARTEGY_ADVICE_EVENT,
   STRATEGY_CANDLE_EVENT,
   STRATEGY_NOTIFICATION_EVENT,
   STRATEGY_UPDATE_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
-} from './tradingAdvisor.const';
+} from '../plugin.const';
+import { TradingAdvisor } from './tradingAdvisor';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
 vi.mock('../../strategies/index', () => ({
@@ -34,11 +37,22 @@ vi.mock('../../services/configuration/configuration', () => {
 });
 
 describe('TradingAdvisor', () => {
-  const config = {
-    name: 'TradingAdvisor',
-    strategyName: 'DummyStrategy',
-    windowMode: 'calendar',
-  } satisfies TradingAdvisorConfiguration;
+  const config = { name: 'TradingAdvisor', strategyName: 'DummyStrategy' } satisfies TradingAdvisorConfiguration;
+  const defaultAdvice: Advice = { id: 'advice-100', recommendation: 'short', date: toTimestamp('2020') };
+  const defaultCandle: Candle = { close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
+  const defaultBuyTradeEvent: TradeCompleted = {
+    action: 'buy',
+    id: 'buy',
+    adviceId: 'buyAdvice',
+    date: 0,
+    portfolio: { asset: 100, currency: 200 },
+    balance: 1000,
+    price: 100,
+    cost: 1,
+    amount: 30,
+    effectivePrice: 31,
+    feePercent: 0.33,
+  };
   const advisor = new TradingAdvisor(config);
   advisor['deferredEmit'] = vi.fn();
 
@@ -49,7 +63,6 @@ describe('TradingAdvisor', () => {
           new TradingAdvisor({
             name: 'TradingAdvisor',
             strategyName: 'NonExistentStrategy',
-            windowMode: 'calendar',
           }),
       ).toThrowError(StrategyNotFoundError);
     });
@@ -58,59 +71,51 @@ describe('TradingAdvisor', () => {
     });
   });
 
-  describe('processCandle', () => {
-    it('should update the candle property when processCandle is called', () => {
-      const dummyCandle = { start: toTimestamp('2025-01-01T00:00:00Z') };
-      advisor['processCandle'](dummyCandle);
-      expect(advisor.candle).toEqual(dummyCandle);
+  describe('processOneMinuteCandle', () => {
+    it('should update the candle property when processOneMinuteCandle is called', () => {
+      advisor['processOneMinuteCandle'](defaultCandle);
+      expect(advisor.candle).toEqual(defaultCandle);
     });
 
     it('should emit STRATEGY_CANDLE_EVENT when addSmallCandle returns a new candle', () => {
-      const dummyCandle = { start: toTimestamp('2025-01-01T00:00:00Z') };
-      const newCandle = { dummy: 'newCandle' };
-      advisor.candleBatcher.addSmallCandle = vi.fn(() => newCandle);
-      advisor['processCandle'](dummyCandle);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CANDLE_EVENT, newCandle);
+      advisor.candleBatcher['addSmallCandle'] = vi.fn(() => defaultCandle);
+      advisor['processOneMinuteCandle'](defaultCandle);
+      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CANDLE_EVENT, defaultCandle);
     });
 
     it('should call strategy.onNewCandle when addSmallCandle returns a new candle', () => {
-      const dummyCandle = { start: toTimestamp('2025-01-01T00:00:00Z') };
-      const newCandle = { dummy: 'newCandle' };
-      advisor.candleBatcher.addSmallCandle = vi.fn(() => newCandle);
-      advisor.strategy.onNewCandle = vi.fn();
-      advisor['processCandle'](dummyCandle);
-      expect(advisor.strategy.onNewCandle).toHaveBeenCalledExactlyOnceWith(newCandle);
+      advisor.candleBatcher.addSmallCandle = vi.fn(() => defaultCandle);
+      advisor.strategy!.onNewCandle = vi.fn();
+      advisor['processOneMinuteCandle'](defaultCandle);
+      expect(advisor.strategy?.onNewCandle).toHaveBeenCalledExactlyOnceWith(defaultCandle);
     });
 
     it('should NOT emit any event when addSmallCandle returns a falsy value', () => {
-      const dummyCandle = { start: toTimestamp('2025-01-01T00:00:00Z') };
       advisor.candleBatcher.addSmallCandle = vi.fn(() => undefined);
-      advisor['processCandle'](dummyCandle);
+      advisor['processOneMinuteCandle'](defaultCandle);
       expect(advisor['deferredEmit']).not.toHaveBeenCalled();
     });
 
     it('should NOT call strategy.onNewCandle when addSmallCandle returns a falsy value', () => {
-      const dummyCandle = { start: toTimestamp('2025-01-01T00:00:00Z') };
       advisor.candleBatcher.addSmallCandle = vi.fn(() => undefined);
-      advisor['processCandle'](dummyCandle);
-      expect(advisor.strategy.onNewCandle).not.toHaveBeenCalled();
+      advisor['processOneMinuteCandle'](defaultCandle);
+      expect(advisor.strategy?.onNewCandle).not.toHaveBeenCalled();
     });
   });
 
   describe('onTradeCompleted', () => {
     it('should call strategy.onTradeCompleted when onTradeCompleted is called', () => {
-      const dummyTrade = { trade: 'dummy' };
-      advisor.strategy.onTradeCompleted = vi.fn();
-      advisor.onTradeCompleted(dummyTrade);
-      expect(advisor.strategy.onTradeCompleted).toHaveBeenCalledExactlyOnceWith(dummyTrade);
+      advisor.strategy!.onTradeCompleted = vi.fn();
+      advisor.onTradeCompleted(defaultBuyTradeEvent);
+      expect(advisor.strategy?.onTradeCompleted).toHaveBeenCalledExactlyOnceWith(defaultBuyTradeEvent);
     });
   });
 
   describe('processFinalize', () => {
     it('should call strategy.finish when processFinalize is called', () => {
-      advisor.strategy.finish = vi.fn();
+      advisor.strategy!.finish = vi.fn();
       advisor['processFinalize']();
-      expect(advisor.strategy.finish).toHaveBeenCalled();
+      expect(advisor.strategy?.finish).toHaveBeenCalled();
     });
   });
   describe('relay functions', () => {
@@ -134,17 +139,15 @@ describe('TradingAdvisor', () => {
 
     it('should throw PluginError in relayAdvice if no candle is set', () => {
       advisor.candle = undefined;
-      const dummyAdvice = { advice: 'dummy' };
-      expect(() => advisor['relayAdvice'](dummyAdvice)).toThrow(PluginError);
+      expect(() => advisor['relayAdvice'](defaultAdvice)).toThrow(PluginError);
     });
 
-    it('should emit ADVICE_EVENT in relayAdvice when a candle is set', () => {
+    it('should emit STARTEGY_ADVICE_EVENT in relayAdvice when a candle is set', () => {
       const candleStart = toTimestamp('2025-01-01T00:00:00Z');
-      advisor.candle = { start: candleStart };
-      const dummyAdvice = { advice: 'dummy' };
-      advisor['relayAdvice'](dummyAdvice);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(ADVICE_EVENT, {
-        ...dummyAdvice,
+      advisor.candle = defaultCandle;
+      advisor['relayAdvice'](defaultAdvice);
+      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STARTEGY_ADVICE_EVENT, {
+        ...defaultAdvice,
         date: addMinutes(candleStart, 1).getTime(),
       });
     });

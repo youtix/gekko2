@@ -13,12 +13,12 @@ import { StrategyNames } from '@strategies/strategy.types';
 import { addMinutes } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
 import {
-  ADVICE_EVENT,
+  STARTEGY_ADVICE_EVENT,
   STRATEGY_CANDLE_EVENT,
   STRATEGY_NOTIFICATION_EVENT,
   STRATEGY_UPDATE_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
-} from './tradingAdvisor.const';
+} from '../plugin.const';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
@@ -55,7 +55,7 @@ export class TradingAdvisor extends Plugin {
   private setUpListeners() {
     this.strategy
       ?.on(STRATEGY_WARMUP_COMPLETED_EVENT, this.relayStrategyWarmupCompleted)
-      .on(ADVICE_EVENT, this.relayAdvice)
+      .on(STARTEGY_ADVICE_EVENT, this.relayAdvice)
       .on(STRATEGY_UPDATE_EVENT, this.relayStrategyUpdate)
       .on(STRATEGY_NOTIFICATION_EVENT, this.relayStrategyNotification);
   }
@@ -74,7 +74,7 @@ export class TradingAdvisor extends Plugin {
 
   private relayAdvice(advice: Advice) {
     if (!this.candle) throw new PluginError(this.pluginName, 'No candle when relaying advice');
-    this.deferredEmit(ADVICE_EVENT, {
+    this.deferredEmit(STARTEGY_ADVICE_EVENT, {
       ...advice,
       date: addMinutes(this.candle.start, 1).getTime(),
     });
@@ -89,7 +89,7 @@ export class TradingAdvisor extends Plugin {
     /* noop */
   }
 
-  protected processCandle(candle: Candle) {
+  protected processOneMinuteCandle(candle: Candle) {
     this.candle = candle;
     const newCandle = this.candleBatcher.addSmallCandle(candle);
     if (newCandle) {
@@ -111,7 +111,7 @@ export class TradingAdvisor extends Plugin {
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(TradingAdvisor.prototype), p => p.startsWith('on')),
       eventsEmitted: [
-        ADVICE_EVENT,
+        STARTEGY_ADVICE_EVENT,
         STRATEGY_CANDLE_EVENT,
         STRATEGY_NOTIFICATION_EVENT,
         STRATEGY_UPDATE_EVENT,

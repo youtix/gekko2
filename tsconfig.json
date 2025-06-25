@@ -19,5 +19,5 @@
       "@plugins/*": ["./src/plugins/*"]
     }
   },
-  "exclude": ["./*.ts", "**/*.test.ts"]
+  "exclude": ["./*.ts"]
 }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Advice } from '../../models/types/advice.types';
 import { TMA } from './tma.strategy';
 
@@ -11,16 +11,16 @@ vi.mock('@services/configuration/configuration', () => {
 
 describe('TMA Strategy', () => {
   let strategy: TMA;
-  let short: { onNewCandle: Mock; getResult: Mock };
-  let medium: { onNewCandle: Mock; getResult: Mock };
-  let long: { onNewCandle: Mock; getResult: Mock };
+  let short: any;
+  let medium: any;
+  let long: any;
   let advices: string[];
 
   beforeEach(() => {
     strategy = new TMA('TMA', 60, 0);
 
     // Replace indicators with mocks to control their outputs
-    short = { onNewCandle: vi.fn(), getResult: vi.fn() };
+    short = { onNewCandle: vi.fn(), getResult: vi.fn(), getName: vi.fn(), name: '', result: 0 };
     medium = { onNewCandle: vi.fn(), getResult: vi.fn() };
     long = { onNewCandle: vi.fn(), getResult: vi.fn() };
     strategy['indicators'] = [short, medium, long];

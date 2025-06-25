@@ -1,3 +1,4 @@
+import { Report } from '@plugins/performanceAnalyser/performanceAnalyzer.types';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import * as fs from 'fs';
 import path from 'path';
@@ -32,7 +33,7 @@ const baseConfig = {
   fileName: 'performance_report.csv',
 };
 
-const sampleReport = {
+const sampleReport: Report = {
   startTime: 1748563200000,
   endTime: 1748649600000,
   duration: formatDuration(intervalToDuration({ start: 1748563200000, end: 1748649600000 })),
@@ -50,6 +51,8 @@ const sampleReport = {
   downside: 0.08,
   ratioRoundTrips: 0.9,
   worstMaxAdverseExcursion: 0,
+  profit: 10,
+  relativeProfit: 1,
 };
 
 // ---------------------------------------------------------------------------

@@ -83,7 +83,7 @@ export class PerformanceReporter extends Plugin {
     }
   }
 
-  protected processCandle(): void {
+  protected processOneMinuteCandle(): void {
     /* noop */
   }
   protected processFinalize(): void {

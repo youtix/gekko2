@@ -23,6 +23,7 @@ export default [
       'import/no-cycle': 'error',
       'import/no-unresolved': 'error',
       'import/no-unused-modules': 'error',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
   {
@@ -30,6 +31,12 @@ export default [
       'import/resolver': { typescript: { bun: true } },
       'import/ignore': ['node_modules', 'dist'],
       'import/core-modules': ['reflect-metadata'],
+    },
+  },
+  {
+    files: ['**/*.test.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
 ];

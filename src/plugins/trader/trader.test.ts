@@ -1,3 +1,4 @@
+import { Broker } from '@services/broker/broker';
 import { bindAll } from 'lodash-es';
 import EventEmitter from 'node:events';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
@@ -43,7 +44,7 @@ vi.mock('../../services/core/order/sticky/stickyOrder', () => ({
 describe('Trader', () => {
   let onceEventCallback: () => Promise<void> = () => Promise.resolve();
   const setIntervalSpy = vi.spyOn(global, 'setInterval');
-  let trader: Trader;
+  let trader: any;
   let fakeBroker: {
     getBrokerName: Mock;
     getInterval: Mock;
@@ -208,34 +209,34 @@ describe('Trader', () => {
     });
   });
 
-  describe('processCandle', () => {
+  describe('processOneMinuteCandle', () => {
     const fakeCandle = { close: 123 };
 
     it('should update the price with candle.close', async () => {
       // Stub synchronize so it does not affect our test.
       trader['synchronize'] = vi.fn(() => Promise.resolve());
-      await trader['processCandle'](fakeCandle);
+      await trader['processOneMinuteCandle'](fakeCandle);
       expect(trader['price']).toBe(fakeCandle.close);
     });
 
     it('should call setBalance', async () => {
       trader['sendInitialPortfolio'] = true;
       trader['setBalance'] = vi.fn();
-      await trader['processCandle'](fakeCandle);
+      await trader['processOneMinuteCandle'](fakeCandle);
       expect(trader['setBalance']).toHaveBeenCalledWith();
     });
 
     it('should set sendInitialPortfolio to true when it was false', async () => {
       trader['sendInitialPortfolio'] = false;
       trader['synchronize'] = vi.fn(() => Promise.resolve());
-      await trader['processCandle'](fakeCandle);
+      await trader['processOneMinuteCandle'](fakeCandle);
       expect(trader['sendInitialPortfolio']).toBe(true);
     });
 
     it('should call synchronize when sendInitialPortfolio is false', async () => {
       trader['sendInitialPortfolio'] = false;
       trader['synchronize'] = vi.fn(() => Promise.resolve());
-      await trader['processCandle'](fakeCandle);
+      await trader['processOneMinuteCandle'](fakeCandle);
       expect(trader['synchronize']).toHaveBeenCalledWith();
     });
 
@@ -243,7 +244,7 @@ describe('Trader', () => {
       trader['sendInitialPortfolio'] = false;
       trader['synchronize'] = vi.fn(() => Promise.resolve());
       trader['portfolio'] = { asset: 10, currency: 20 };
-      await trader['processCandle'](fakeCandle);
+      await trader['processOneMinuteCandle'](fakeCandle);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, {
         asset: trader['portfolio'].asset,
         currency: trader['portfolio'].currency,
@@ -257,7 +258,7 @@ describe('Trader', () => {
         trader['balance'] = 150;
       });
       trader['emitPortfolioValueChangeEvent'] = vi.fn();
-      await trader['processCandle'](fakeCandle);
+      await trader['processOneMinuteCandle'](fakeCandle);
       expect(trader['emitPortfolioValueChangeEvent']).toHaveBeenCalled();
     });
 
@@ -268,15 +269,15 @@ describe('Trader', () => {
         trader['balance'] = 100;
       });
       trader['emitPortfolioValueChangeEvent'] = vi.fn();
-      await trader['processCandle'](fakeCandle);
+      await trader['processOneMinuteCandle'](fakeCandle);
       expect(trader['emitPortfolioValueChangeEvent']).not.toHaveBeenCalled();
     });
   });
 
-  describe('onAdvice', () => {
+  describe('onStrategyAdvice', () => {
     it('should ignore advice with unknown recommendation', () => {
       const invalidAdvice = { recommendation: 'neutral', id: 'adv-invalid', date: Date.now() };
-      trader.onAdvice(invalidAdvice);
+      trader.onStrategyAdvice(invalidAdvice);
       expect(error).toHaveBeenCalledWith('trader', 'Ignoring advice in unknown direction');
     });
 
@@ -284,7 +285,7 @@ describe('Trader', () => {
       trader['order'] = { getSide: () => 'buy' };
       trader['createOrder'] = vi.fn().mockImplementation(() => {});
       const advice = { recommendation: 'long', id: 'adv-long-same', date: Date.now() };
-      trader.onAdvice(advice);
+      trader.onStrategyAdvice(advice);
       expect(trader['createOrder']).not.toHaveBeenCalled();
     });
 
@@ -292,7 +293,7 @@ describe('Trader', () => {
       trader['order'] = { getSide: () => 'sell' };
       trader['createOrder'] = vi.fn().mockImplementation(() => {});
       const advice = { recommendation: 'short', id: 'adv-short-same', date: Date.now() };
-      trader.onAdvice(advice);
+      trader.onStrategyAdvice(advice);
       expect(trader['createOrder']).not.toHaveBeenCalled();
     });
 
@@ -301,7 +302,7 @@ describe('Trader', () => {
       trader['cancellingOrder'] = true;
       trader['createOrder'] = vi.fn().mockImplementation(() => {});
       const advice = { recommendation: 'long', id: 'adv-cancelling', date: Date.now() };
-      trader.onAdvice(advice);
+      trader.onStrategyAdvice(advice);
       expect(trader['createOrder']).not.toHaveBeenCalled();
     });
 
@@ -310,7 +311,7 @@ describe('Trader', () => {
       trader['cancellingOrder'] = false;
       trader['cancelOrder'] = vi.fn();
       const advice = { recommendation: 'long', id: 'adv-diff-side', date: Date.now() };
-      trader.onAdvice(advice);
+      trader.onStrategyAdvice(advice);
       expect(trader['cancelOrder']).toHaveBeenCalled();
     });
 
@@ -320,7 +321,7 @@ describe('Trader', () => {
       trader['portfolio'] = { asset: 0, currency: 100 };
       trader['balance'] = 50;
       const advice = { recommendation: 'long', id: 'adv-buy-abort', date: Date.now() };
-      trader.onAdvice(advice);
+      trader.onStrategyAdvice(advice);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_ABORTED_EVENT, {
         id: 'trade-1',
         adviceId: advice.id,
@@ -339,7 +340,7 @@ describe('Trader', () => {
       trader['price'] = 100;
       trader['createOrder'] = vi.fn().mockImplementation(() => {});
       const advice = { recommendation: 'long', id: 'adv-buy-create', date: Date.now() };
-      trader.onAdvice(advice);
+      trader.onStrategyAdvice(advice);
       expect(trader['createOrder']).toHaveBeenCalledWith('buy', 1.9, advice, 'trade-1');
     });
 
@@ -349,7 +350,7 @@ describe('Trader', () => {
       trader['portfolio'] = { asset: 5, currency: 50 };
       trader['balance'] = 100;
       const advice = { recommendation: 'short', id: 'adv-sell-abort', date: Date.now() };
-      trader.onAdvice(advice);
+      trader.onStrategyAdvice(advice);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_ABORTED_EVENT, {
         id: 'trade-1',
         adviceId: advice.id,
@@ -367,7 +368,7 @@ describe('Trader', () => {
       trader['portfolio'] = { asset: 3, currency: 50 };
       trader['createOrder'] = vi.fn();
       const advice = { recommendation: 'short', id: 'adv-sell-create', date: Date.now() };
-      trader.onAdvice(advice);
+      trader.onStrategyAdvice(advice);
       expect(trader['createOrder']).toHaveBeenCalledWith('sell', 3, advice, 'trade-1');
     });
   });
@@ -452,7 +453,7 @@ describe('Trader', () => {
     const amount = 2;
 
     beforeEach(() => {
-      trader['order'] = new StickyOrder('', 0, undefined);
+      trader['order'] = new StickyOrder('buy', 0, fakeBroker as unknown as Broker);
     });
 
     it('should emit TRADE_INITIATED_EVENT with correct payload', async () => {
@@ -669,7 +670,7 @@ describe('Trader', () => {
 
     it('should return a configuration object with all eventsHandlers', () => {
       const config = Trader.getStaticConfiguration();
-      expect(config.eventsHandlers).toEqual(['onAdvice']);
+      expect(config.eventsHandlers).toEqual(['onStrategyAdvice']);
     });
 
     it('should return a configuration object with eventsEmitted equal to the expected array', () => {

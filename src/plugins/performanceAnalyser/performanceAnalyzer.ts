@@ -8,13 +8,12 @@ import { Big } from 'big.js';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
-import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT, ROUNDTRIP_UPDATE_EVENT } from './performanceAnalyzer.const';
+import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT } from '../plugin.const';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 import { DateRange, PerformanceAnalyzerConfig, Report, SingleRoundTrip, Start } from './performanceAnalyzer.types';
 import { logFinalize, logRoundtrip } from './performanceAnalyzer.utils';
 
 const YEAR_MS = 1000 * 60 * 60 * 24 * 365;
-
 export class PerformanceAnalyzer extends Plugin {
   private balance: number;
   private dates: DateRange;
@@ -22,8 +21,6 @@ export class PerformanceAnalyzer extends Plugin {
   private exposure: number;
   private losses: RoundTrip[];
   private openRoundTrip: boolean;
-  private portfolio: unknown;
-  private price: number;
   private riskFreeReturn: number;
   private roundTrip: SingleRoundTrip;
   private roundTrips: RoundTrip[];
@@ -44,13 +41,11 @@ export class PerformanceAnalyzer extends Plugin {
     this.exposure = 0;
     this.losses = [];
     this.openRoundTrip = false;
-    this.portfolio = {};
-    this.price = 0;
     this.riskFreeReturn = riskFreeReturn ?? 1;
     this.roundTrip = { id: 0, entry: null, exit: null };
     this.roundTrips = [];
     this.maxAdverseExcursion = 0;
-    this.start = { balance: 0 };
+    this.start = { balance: 0, portfolio: null };
     this.startPrice = 0;
     this.trades = 0;
     this.warmupCompleted = false;
@@ -67,44 +62,22 @@ export class PerformanceAnalyzer extends Plugin {
     if (!this.start.portfolio) this.start.portfolio = event;
   }
 
-  public onStrategyWarmupCompleted(): void {
+  public onStrategyWarmupCompleted({ start, close }: Candle): void {
     this.warmupCompleted = true;
-    if (this.warmupCandle) this.processCandle(this.warmupCandle);
+    this.dates.start = start;
+    this.startPrice = close;
+    if (this.warmupCandle) this.processOneMinuteCandle(this.warmupCandle);
   }
 
   public onTradeCompleted(event: TradeCompleted): void {
     this.trades++;
-    this.portfolio = event.portfolio;
     this.balance = event.balance;
 
     this.registerRoundtripPart(event);
-
-    /*
-      TODO: Provide an option to emit intermediate reports on trade completed
-      const report = this.calculateReportStatistics();
-      if (report) {
-        logTrade(event, this.currency, this.asset);
-        this.deferredEmit(PERFORMANCE_REPORT_EVENT, report);
-     }
-    */
   }
   // --- END LISTENERS ---
 
   // --- BEGIN INTERNALS ---
-  private emitRoundtripUpdate(): void {
-    if (this.roundTrip.entry) {
-      const qty = this.roundTrip.entry.asset;
-      const currency = this.roundTrip.entry.currency;
-      const currentValue = Big(this.price).mul(qty).plus(currency);
-      const uPnl = currentValue.minus(this.roundTrip.entry.total);
-      this.deferredEmit(ROUNDTRIP_UPDATE_EVENT, {
-        at: this.dates.end,
-        duration: differenceInMilliseconds(this.dates.end, this.roundTrip.entry.date),
-        uPnl: +uPnl,
-        uProfit: +uPnl.div(this.roundTrip.entry.total).mul(100),
-      });
-    }
-  }
 
   private registerRoundtripPart(trade: TradeCompleted): void {
     // this is not part of a valid roundtrip
@@ -252,24 +225,13 @@ export class PerformanceAnalyzer extends Plugin {
     /* noop */
   }
 
-  protected processCandle(candle: Candle): void {
+  protected processOneMinuteCandle(candle: Candle): void {
     if (this.warmupCompleted) {
-      this.price = candle.close;
       this.dates.end = addMinutes(candle.start, 1).getTime();
-
-      if (!this.dates.start) {
-        this.dates.start = candle.start;
-        this.startPrice = candle.close;
-      }
-
       this.endPrice = candle.close;
-
-      if (this.openRoundTrip) {
-        if (this.roundTrip.entry) {
-          const adverse = +Big(this.roundTrip.entry.price).minus(candle.low).div(this.roundTrip.entry.price).mul(100);
-          if (adverse > this.maxAdverseExcursion) this.maxAdverseExcursion = adverse;
-        }
-        this.emitRoundtripUpdate();
+      if (this.openRoundTrip && this.roundTrip.entry) {
+        const adverse = ((this.roundTrip.entry.price - candle.low) / this.roundTrip.entry.price) * 100;
+        if (adverse > this.maxAdverseExcursion) this.maxAdverseExcursion = adverse;
       }
     } else {
       this.warmupCandle = candle;
@@ -291,7 +253,7 @@ export class PerformanceAnalyzer extends Plugin {
       dependencies: [],
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(PerformanceAnalyzer.prototype), p => p.startsWith('on')),
-      eventsEmitted: [PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT, ROUNDTRIP_UPDATE_EVENT],
+      eventsEmitted: [PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT],
       name: 'PerformanceAnalyzer',
     };
   }

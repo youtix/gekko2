@@ -34,23 +34,23 @@ describe('Telegram', () => {
     telegram['currency'] = 'USD';
   });
 
-  describe('processCandle', () => {
+  describe('processOneMinuteCandle', () => {
     it.each`
       candle              | expectedPrice
       ${{ close: 100 }}   | ${100}
       ${{ close: 150.5 }} | ${150.5}
     `('should set price to candle.close when candle.close is $candleClose', ({ candle, expectedPrice }) => {
-      telegram['processCandle'](candle);
+      telegram['processOneMinuteCandle'](candle);
       expect(telegram['price']).toBe(expectedPrice);
     });
   });
 
-  describe('onAdvice', () => {
+  describe('onStrategyAdvice', () => {
     it('should call sendMessage with the correct message', () => {
       telegram['price'] = 250;
       const advice: Advice = { id: 'advice-1', recommendation: 'long', date: toTimestamp('2022-01-01T12:00:00Z') };
       telegram['sendMessage'] = vi.fn();
-      telegram.onAdvice(advice);
+      telegram.onStrategyAdvice(advice);
       const expectedMessage = [
         `Received advice to go ${advice.recommendation}`,
         `At time: ${toISOString(advice.date)}`,

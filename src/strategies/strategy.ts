@@ -15,7 +15,7 @@ import {
   STRATEGY_NOTIFICATION_EVENT,
   STRATEGY_UPDATE_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
-} from '../plugins/tradingAdvisor/tradingAdvisor.const';
+} from '../plugins/plugin.const';
 import { Direction, StrategyNames, StrategyParamaters } from './strategy.types';
 
 export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
@@ -121,10 +121,10 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
 
   private warmup(candle: Candle) {
     this.age++;
-    if (this.requiredHistory <= this.age) {
+    if (this.requiredHistory < this.age) {
       this.isWarmupCompleted = true;
-      info('strategy', `Strategy warmup done ! First candle to use is ${toISOString(candle.start)}`);
-      this.emit(STRATEGY_WARMUP_COMPLETED_EVENT, { start: candle.start });
+      info('strategy', `Strategy warmup done ! Sending first candle (${toISOString(candle.start)}) to strategy`);
+      this.emit(STRATEGY_WARMUP_COMPLETED_EVENT, candle);
     }
   }
 }

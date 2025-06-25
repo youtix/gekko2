@@ -1,3 +1,6 @@
+import { Order } from '@models/types/order.types';
+import { Broker } from '@services/broker/broker';
+import { toTimestamp } from '@utils/date/date.utils';
 import { InvalidOrder, OrderNotFound } from 'ccxt';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { OrderOutOfRangeError } from '../../../../errors/broker/OrderOutRange.error';
@@ -12,12 +15,6 @@ vi.mock('@services/logger', () => ({
   error: vi.fn(),
 }));
 
-const defaultOrder = {
-  id: 'order-1',
-  status: 'open',
-  filled: 0,
-  price: 100,
-};
 const fakeBroker = {
   createLimitOrder: vi.fn(),
   cancelLimitOrder: vi.fn(),
@@ -31,10 +28,11 @@ vi.useFakeTimers();
 
 describe('StickyOrder', () => {
   let stickyOrder: StickyOrder;
+  const defaultOrder: Order = { id: 'new-id', status: 'open', filled: 0, price: 100, timestamp: toTimestamp('2025') };
 
   beforeEach(() => {
     fakeBroker.createLimitOrder.mockResolvedValue(defaultOrder);
-    stickyOrder = new StickyOrder('buy', 10, fakeBroker);
+    stickyOrder = new StickyOrder('buy', 10, fakeBroker as unknown as Broker);
   });
 
   afterAll(() => {
@@ -315,12 +313,7 @@ describe('StickyOrder', () => {
     });
 
     it('should update the order id to the new id', () => {
-      stickyOrder['handleCreateOrderSuccess']({
-        id: 'new-id',
-        status: 'open',
-        filled: 0,
-        price: 100,
-      });
+      stickyOrder['handleCreateOrderSuccess'](defaultOrder);
       expect(stickyOrder['id']).toBe('new-id');
     });
 
@@ -331,29 +324,19 @@ describe('StickyOrder', () => {
     `('should call clearInterval when status is "$status"', ({ status }) => {
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
       stickyOrder['orderFilled'] = vi.fn();
-      stickyOrder['handleCreateOrderSuccess']({ id: 'new-id', status, filled: 0, price: 100 });
+      stickyOrder['handleCreateOrderSuccess']({ ...defaultOrder, status });
       expect(clearIntervalSpy).toHaveBeenCalled();
     });
 
     it('should call orderFilled when status is "closed"', () => {
       stickyOrder['orderFilled'] = vi.fn();
-      stickyOrder['handleCreateOrderSuccess']({
-        id: 'new-id',
-        status: 'closed',
-        filled: 0,
-        price: 100,
-      });
+      stickyOrder['handleCreateOrderSuccess']({ ...defaultOrder, status: 'closed' });
       expect(stickyOrder['orderFilled']).toHaveBeenCalled();
     });
 
     it('should call orderPartiallyFilled when status is "open" and filled is nonzero', () => {
       stickyOrder['orderPartiallyFilled'] = vi.fn();
-      stickyOrder['handleCreateOrderSuccess']({
-        id: 'new-id',
-        status: 'open',
-        filled: 5,
-        price: 100,
-      });
+      stickyOrder['handleCreateOrderSuccess']({ ...defaultOrder, status: 'open', filled: 5 });
       expect(stickyOrder['orderPartiallyFilled']).toHaveBeenCalledWith('new-id', 5);
     });
 
@@ -365,34 +348,19 @@ describe('StickyOrder', () => {
       'should call orderCanceled with $expectedArg when status is "canceled" and filled is $filled',
       ({ filled, expectedArg }) => {
         stickyOrder['orderCanceled'] = vi.fn();
-        stickyOrder['handleCreateOrderSuccess']({
-          id: 'new-id',
-          status: 'canceled',
-          filled,
-          price: 100,
-        });
+        stickyOrder['handleCreateOrderSuccess']({ ...defaultOrder, status: 'canceled', filled });
         expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(expectedArg);
       },
     );
 
     it('should call setStatus with "open" when status is "open"', () => {
       stickyOrder['setStatus'] = vi.fn();
-      stickyOrder['handleCreateOrderSuccess']({
-        id: 'new-id',
-        status: 'open',
-        filled: 0,
-        price: 100,
-      });
+      stickyOrder['handleCreateOrderSuccess']({ ...defaultOrder, status: 'open' });
       expect(stickyOrder['setStatus']).toHaveBeenCalledWith('open');
     });
 
     it('should log a warning when status is unknown', () => {
-      stickyOrder['handleCreateOrderSuccess']({
-        id: 'new-id',
-        status: 'unknown',
-        filled: 0,
-        price: 100,
-      });
+      stickyOrder['handleCreateOrderSuccess']({ ...defaultOrder, status: 'unknown' } as unknown as Order);
       expect(warning).toHaveBeenCalled();
     });
   });
@@ -452,7 +420,7 @@ describe('StickyOrder', () => {
     it('should call orderFilled when remaining is 0', () => {
       stickyOrder['orderFilled'] = vi.fn();
       stickyOrder['transactions'] = [{ id: 'order-id-1', filled: 3, timestamp: 1710000000000 }];
-      stickyOrder['handleCancelOrderSuccess']({ id: 'test', filled: 1, remaining: 0 });
+      stickyOrder['handleCancelOrderSuccess']({ ...defaultOrder, remaining: 0 });
       expect(stickyOrder['orderFilled']).toHaveBeenCalled();
     });
 
@@ -460,7 +428,7 @@ describe('StickyOrder', () => {
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
       stickyOrder['orderFilled'] = vi.fn();
       stickyOrder['transactions'] = [{ id: 'order-id-1', filled: 3, timestamp: 1710000000000 }];
-      stickyOrder['handleCancelOrderSuccess']({ id: 'test', filled: 1, remaining: 0 });
+      stickyOrder['handleCancelOrderSuccess']({ ...defaultOrder, remaining: 0 });
       expect(clearIntervalSpy).toHaveBeenCalled();
     });
 
@@ -468,7 +436,7 @@ describe('StickyOrder', () => {
       stickyOrder['orderFilled'] = vi.fn();
       stickyOrder['amount'] = 5;
       stickyOrder['transactions'] = [{ id: 'order-id-1', filled: 2, timestamp: 1710000000000 }];
-      stickyOrder['handleCancelOrderSuccess']({ id: 'order-id-2', filled: 3 });
+      stickyOrder['handleCancelOrderSuccess']({ ...defaultOrder, filled: 3 });
       expect(stickyOrder['orderFilled']).toHaveBeenCalled();
     });
 
@@ -477,21 +445,21 @@ describe('StickyOrder', () => {
       stickyOrder['orderFilled'] = vi.fn();
       stickyOrder['amount'] = 5;
       stickyOrder['transactions'] = [{ id: 'order-id-1', filled: 2, timestamp: 1710000000000 }];
-      stickyOrder['handleCancelOrderSuccess']({ id: 'order-id-2', filled: 3 });
+      stickyOrder['handleCancelOrderSuccess']({ ...defaultOrder, filled: 3 });
       expect(clearIntervalSpy).toHaveBeenCalled();
     });
 
     it('should call updateTransactionPartialFilledAmount when filled is greater than the total filled amount', () => {
       stickyOrder['updateTransactionPartialFilledAmount'] = vi.fn();
       stickyOrder['transactions'] = [{ id: 'test', filled: 3, timestamp: 1710000000000 }];
-      stickyOrder['handleCancelOrderSuccess']({ id: 'test', filled: 5, remaining: 10 });
+      stickyOrder['handleCancelOrderSuccess']({ ...defaultOrder, filled: 5, remaining: 10 });
       expect(stickyOrder['updateTransactionPartialFilledAmount']).toHaveBeenCalled();
     });
 
     it('should call orderCanceled when no prior branch is triggered and moving is false', () => {
       stickyOrder['orderCanceled'] = vi.fn();
       stickyOrder['transactions'] = [{ id: 'test', filled: 2, timestamp: 1710000000000 }];
-      stickyOrder['handleCancelOrderSuccess']({ id: 'test', filled: 1, remaining: 10 });
+      stickyOrder['handleCancelOrderSuccess']({ ...defaultOrder, filled: 1, remaining: 10 });
       expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(true);
     });
 
@@ -499,7 +467,7 @@ describe('StickyOrder', () => {
       stickyOrder['orderCanceled'] = vi.fn();
       stickyOrder['transactions'] = [{ id: 'test', filled: 2, timestamp: 1710000000000 }];
       stickyOrder['moving'] = true;
-      stickyOrder['handleCancelOrderSuccess']({ id: 'test', filled: 1, remaining: 10 });
+      stickyOrder['handleCancelOrderSuccess']({ ...defaultOrder, filled: 1, remaining: 10 });
       expect(stickyOrder['orderCanceled']).not.toHaveBeenCalled();
     });
   });
@@ -532,45 +500,28 @@ describe('StickyOrder', () => {
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
       stickyOrder['orderFilled'] = vi.fn();
       await stickyOrder['handleFetchOrderSuccess']({
-        id: 'test-id',
+        ...defaultOrder,
         status: 'closed',
-        filled: 0,
-        price: 100,
       });
       expect(clearIntervalSpy).toHaveBeenCalled();
     });
 
     it('should call orderFilled when status is "closed"', async () => {
       stickyOrder['orderFilled'] = vi.fn();
-      await stickyOrder['handleFetchOrderSuccess']({
-        id: 'test-id',
-        status: 'closed',
-        filled: 0,
-        price: 100,
-      });
+      await stickyOrder['handleFetchOrderSuccess']({ ...defaultOrder, status: 'closed' });
       expect(stickyOrder['orderFilled']).toHaveBeenCalled();
     });
 
     it('should call updateTransactionPartialFilledAmount', async () => {
       stickyOrder['updateTransactionPartialFilledAmount'] = vi.fn();
-      await stickyOrder['handleFetchOrderSuccess']({
-        id: 'test-id',
-        status: 'canceled',
-        filled: 5,
-        price: 100,
-      });
+      await stickyOrder['handleFetchOrderSuccess']({ ...defaultOrder, status: 'canceled', filled: 5 });
       expect(stickyOrder['updateTransactionPartialFilledAmount']).toHaveBeenCalled();
     });
 
     it('should call clearInterval when status is "closed"', async () => {
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
       stickyOrder['orderCanceled'] = vi.fn();
-      await stickyOrder['handleFetchOrderSuccess']({
-        id: 'test-id',
-        status: 'canceled',
-        filled: 0,
-        price: 100,
-      });
+      await stickyOrder['handleFetchOrderSuccess']({ ...defaultOrder, status: 'canceled' });
       expect(clearIntervalSpy).toHaveBeenCalled();
     });
 
@@ -580,12 +531,7 @@ describe('StickyOrder', () => {
       ${5}
     `('should call orderCanceled when status is "canceled" and filled is $filled', async ({ filled }) => {
       stickyOrder['orderCanceled'] = vi.fn();
-      await stickyOrder['handleFetchOrderSuccess']({
-        id: 'test-id',
-        status: 'canceled',
-        filled,
-        price: 100,
-      });
+      await stickyOrder['handleFetchOrderSuccess']({ ...defaultOrder, status: 'canceled', filled });
       expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(!!filled);
     });
 
@@ -594,7 +540,7 @@ describe('StickyOrder', () => {
       stickyOrder['transactions'] = [{ id: 'test-id', filled: 5, timestamp: 1710000000000 }];
       fakeBroker.fetchTicker.mockResolvedValue({ bid: 101, ask: 99 });
       await stickyOrder['handleFetchOrderSuccess']({
-        id: 'test-id',
+        ...defaultOrder,
         status: 'open',
         filled: 5,
         price: 100,
@@ -606,26 +552,14 @@ describe('StickyOrder', () => {
       stickyOrder['move'] = vi.fn();
       stickyOrder['transactions'] = [{ id: 'test-id', filled: 5, timestamp: 1710000000000 }];
       fakeBroker.fetchTicker.mockResolvedValue({ bid: 100, ask: 99 });
-      await stickyOrder['handleFetchOrderSuccess']({
-        id: 'test-id',
-        status: 'open',
-        filled: 5,
-        price: 100,
-      });
+      await stickyOrder['handleFetchOrderSuccess']({ ...defaultOrder, status: 'open', price: 100 });
       expect(stickyOrder['move']).not.toHaveBeenCalled();
     });
 
     it('should rethrow error when fetchTicker fails', async () => {
       const testError = new Error('Ticker fetch failed');
       fakeBroker.fetchTicker.mockRejectedValue(testError);
-      await expect(
-        stickyOrder['handleFetchOrderSuccess']({
-          id: 'test-id',
-          status: 'open',
-          filled: 5,
-          price: 100,
-        }),
-      ).rejects.toThrow('Ticker fetch failed');
+      await expect(stickyOrder['handleFetchOrderSuccess'](defaultOrder)).rejects.toThrow('Ticker fetch failed');
     });
 
     it('should call orderErrored when fetchTicker fails', async () => {
@@ -633,12 +567,7 @@ describe('StickyOrder', () => {
       const testError = new Error('Ticker fetch failed');
       fakeBroker.fetchTicker.mockRejectedValue(testError);
       try {
-        await stickyOrder['handleFetchOrderSuccess']({
-          id: 'test-id',
-          status: 'open',
-          filled: 5,
-          price: 100,
-        });
+        await stickyOrder['handleFetchOrderSuccess'](defaultOrder);
       } catch {
         // In catch block, assert that orderErrored was called.
         expect(stickyOrder['orderErrored']).toHaveBeenCalledWith(testError);

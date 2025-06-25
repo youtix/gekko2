@@ -30,7 +30,7 @@ export class Telegram extends Plugin {
   }
 
   // --- BEGIN LISTENERS ---
-  public onAdvice({ recommendation, date }: Advice) {
+  public onStrategyAdvice({ recommendation, date }: Advice) {
     const message = [
       `Received advice to go ${recommendation}`,
       `At time: ${toISOString(date)}`,
@@ -145,7 +145,7 @@ export class Telegram extends Plugin {
     /* noop */
   }
 
-  protected processCandle(candle: Candle) {
+  protected processOneMinuteCandle(candle: Candle) {
     this.price = candle.close;
   }
 

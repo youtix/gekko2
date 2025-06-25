@@ -46,13 +46,13 @@ describe('Pipeline Steps', () => {
         }
       }
 
-      allPlugin['MyPlugin'] = MyPlugin;
+      (allPlugin as any)['MyPlugin'] = MyPlugin;
 
       const context: PipelineContext = [{ name: 'MyPlugin', parameters: { name: 'bar' } }];
 
       const result = await createPlugins(context);
       expect(result[0].plugin).toBeInstanceOf(MyPlugin);
-      expect((result[0].plugin as MyPlugin).parameters).toEqual({ name: 'bar' });
+      expect((result[0].plugin as any).parameters).toEqual({ name: 'bar' });
     });
   });
   describe('getPluginsStaticConfiguration', () => {
@@ -71,7 +71,7 @@ describe('Pipeline Steps', () => {
         }
       }
 
-      allPlugin['Plug'] = Plug;
+      (allPlugin as any)['Plug'] = Plug;
       const res = await getPluginsStaticConfiguration([{ name: 'Plug' }]);
       expect(res[0]).toEqual({
         modes: ['realtime'],

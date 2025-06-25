@@ -5,7 +5,7 @@ import * as indicators from '../indicators/index';
 import { Indicator } from '../indicators/indicator';
 import { Candle } from '../models/types/candle.types';
 import { TradeCompleted } from '../models/types/tradeStatus.types';
-import { STRATEGY_NOTIFICATION_EVENT, STRATEGY_UPDATE_EVENT } from '../plugins/tradingAdvisor/tradingAdvisor.const';
+import { STRATEGY_NOTIFICATION_EVENT, STRATEGY_UPDATE_EVENT } from '../plugins/plugin.const';
 import { toTimestamp } from '../utils/date/date.utils';
 import { Strategy } from './strategy';
 
@@ -19,7 +19,7 @@ vi.mock('@services/configuration/configuration', () => {
 });
 vi.mock('@services/storage/stateManager', () => ({ StateManager: vi.fn() }));
 
-class DummyStrategy extends Strategy<'Dummy'> {
+class DummyStrategy extends Strategy<'RSI'> {
   ended = false;
   init() {}
   onEachCandle() {}
@@ -51,14 +51,13 @@ describe('Strategy', () => {
     });
 
     it('should call each indicator’s onNewCandle method', () => {
-      class DummyIndicator extends Indicator {
-        name = 'dummy';
+      class DummyIndicator extends Indicator<'RSI'> {
         result = 0;
         getResult = vi.fn();
         getName = vi.fn();
         onNewCandle = vi.fn();
       }
-      const dummyIndic = new DummyIndicator('dummy', 0);
+      const dummyIndic = new DummyIndicator('RSI', 0);
       strategy['indicators'] = [dummyIndic];
       strategy.onNewCandle(dummyCandle);
       expect(dummyIndic.onNewCandle).toHaveBeenCalledWith(dummyCandle);
@@ -115,12 +114,13 @@ describe('Strategy', () => {
   describe('addIndicator', () => {
     it('should throw an error if the strategy is already initialized', () => {
       strategy['isStartegyInitialized'] = true;
-      expect(() => strategy['addIndicator']('DummyIndicator', {})).toThrow(StrategyAlreadyInitializedError);
+      expect(() => strategy['addIndicator']('RSI', {})).toThrow(StrategyAlreadyInitializedError);
     });
 
     it('should throw an error if the indicator is not found', () => {
       strategy['isStartegyInitialized'] = false;
-      expect(() => strategy['addIndicator']('NonExistentIndicator', {})).toThrow(IndicatorNotFoundError);
+      const nonExistentIndicator = '?' as unknown as keyof IndicatorRegistry;
+      expect(() => strategy['addIndicator'](nonExistentIndicator, {})).toThrow(IndicatorNotFoundError);
     });
 
     it('should add and return the indicator if valid', () => {
@@ -132,10 +132,10 @@ describe('Strategy', () => {
         }
       }
       // Temporarily set the indicator in the imported indicators object.
-      indicators['DummyIndicator'] = DummyIndicator;
+      (indicators as any)['DummyIndicator'] = DummyIndicator;
       strategy['isStartegyInitialized'] = false;
-      const indicator = strategy['addIndicator']('DummyIndicator', { foo: 'bar' });
-      expect(indicator.params).toEqual({ foo: 'bar' });
+      const indicator = strategy['addIndicator']('DummyIndicator' as any, { foo: 'bar' });
+      expect((indicator as any).params).toEqual({ foo: 'bar' });
     });
   });
 

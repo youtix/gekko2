@@ -88,7 +88,7 @@ export abstract class Plugin extends EventEmitter {
 
   /** Executed for every new candle after it passes through the stream pipeline.  */
   public async processInputStream(candle: Candle, done: () => void) {
-    await this.processCandle(candle);
+    await this.processOneMinuteCandle(candle);
     done();
   }
 
@@ -112,6 +112,6 @@ export abstract class Plugin extends EventEmitter {
   }
 
   protected abstract processInit(): void;
-  protected abstract processCandle(candle: Candle): void;
+  protected abstract processOneMinuteCandle(oneMinCandle: Candle): void;
   protected abstract processFinalize(): void;
 }
