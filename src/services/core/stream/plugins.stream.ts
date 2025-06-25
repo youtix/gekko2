@@ -1,4 +1,5 @@
 import { Candle } from '@models/types/candle.types';
+import { Nullable } from '@models/types/generic.types';
 import { Plugin } from '@plugins/plugin';
 import { debug } from '@services/logger';
 import { after, bind, each, find } from 'lodash-es';
@@ -11,25 +12,25 @@ export class PluginsStream extends Writable {
     this.plugins = plugins;
   }
 
-  public _write(chunk: Candle, _: BufferEncoding, done: (error?: Error | null) => void): void {
+  public _write(chunk: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void): void {
     const flushEvents = bind(this.flushEvents(done), this);
     each(this.plugins, c => c.processInputStream(chunk, flushEvents));
   }
 
-  public end(_?: unknown, __?: unknown, done?: (error?: Error | null) => void): this {
+  public end(_?: unknown, __?: unknown, done?: (error?: Nullable<Error>) => void): this {
     each(this.plugins, c => c.processCloseStream(done));
     debug('stream', 'Stream ended !');
     return this;
   }
 
-  private flushEvents(done: (error?: Error | null) => void) {
+  private flushEvents(done: (error?: Nullable<Error>) => void) {
     return after(this.plugins.length, () => {
-      this.broadcastRecursively();
+      this.broadcastAllDeferredEvents();
       done();
     });
   }
 
-  private broadcastRecursively() {
+  private broadcastAllDeferredEvents() {
     while (find(this.plugins, p => p.broadcastDeferredEmit())) {
       // continue looping while at least one plugin emitted an event
     }
