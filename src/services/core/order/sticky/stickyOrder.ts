@@ -148,7 +148,7 @@ export class StickyOrder extends BaseOrder {
 
     // Updating transactions
     this.transactions = reject(this.transactions, t => t.id === this.id && t.filled === 0);
-    this.transactions = [...this.transactions, { id, timestamp, filled }];
+    this.transactions.push({ id, timestamp, filled });
 
     // Updating current transaction ID
     this.id = id;

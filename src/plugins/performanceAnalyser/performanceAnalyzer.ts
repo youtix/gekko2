@@ -171,7 +171,7 @@ export class PerformanceAnalyzer extends Plugin {
     // update cached exposure
     this.exposure = +Big(this.exposure).plus(roundtrip.duration);
     // track losses separately for downside report
-    if (roundtrip.exitBalance < roundtrip.entryBalance) this.losses = [...this.losses, roundtrip];
+    if (roundtrip.exitBalance < roundtrip.entryBalance) this.losses.push(roundtrip);
   }
 
   private calculateReportStatistics() {
