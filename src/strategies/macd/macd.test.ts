@@ -1,4 +1,4 @@
-import { STARTEGY_ADVICE_EVENT } from '@plugins/plugin.const';
+import { STRATEGY_ADVICE_EVENT } from '@plugins/plugin.const';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Advice } from '../../models/types/advice.types';
 import { MACD } from './macd.strategy';
@@ -32,7 +32,7 @@ describe('MACD Strategy', () => {
     strategy['candle'] = { start: Date.now(), open: 1, high: 2, low: 0, close: 1, volume: 100 };
 
     advices = [];
-    strategy['on'](STARTEGY_ADVICE_EVENT, (advice: Advice) => advices.push(advice.recommendation));
+    strategy['on'](STRATEGY_ADVICE_EVENT, (advice: Advice) => advices.push(advice.recommendation));
   });
 
   it('should not emit advice before persistence on uptrend', () => {

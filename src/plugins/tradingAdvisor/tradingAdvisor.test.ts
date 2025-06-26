@@ -8,7 +8,7 @@ import { PluginError } from '../../errors/plugin/plugin.error';
 import { StrategyNotFoundError } from '../../errors/strategy/strategyNotFound.error';
 import { toTimestamp } from '../../utils/date/date.utils';
 import {
-  STARTEGY_ADVICE_EVENT,
+  STRATEGY_ADVICE_EVENT,
   STRATEGY_CANDLE_EVENT,
   STRATEGY_NOTIFICATION_EVENT,
   STRATEGY_UPDATE_EVENT,
@@ -142,11 +142,11 @@ describe('TradingAdvisor', () => {
       expect(() => advisor['relayAdvice'](defaultAdvice)).toThrow(PluginError);
     });
 
-    it('should emit STARTEGY_ADVICE_EVENT in relayAdvice when a candle is set', () => {
+    it('should emit STRATEGY_ADVICE_EVENT in relayAdvice when a candle is set', () => {
       const candleStart = toTimestamp('2025-01-01T00:00:00Z');
       advisor.candle = defaultCandle;
       advisor['relayAdvice'](defaultAdvice);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STARTEGY_ADVICE_EVENT, {
+      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_ADVICE_EVENT, {
         ...defaultAdvice,
         date: addMinutes(candleStart, 1).getTime(),
       });

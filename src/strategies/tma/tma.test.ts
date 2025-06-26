@@ -1,4 +1,4 @@
-import { STARTEGY_ADVICE_EVENT } from '@plugins/plugin.const';
+import { STRATEGY_ADVICE_EVENT } from '@plugins/plugin.const';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Advice } from '../../models/types/advice.types';
 import { TMA } from './tma.strategy';
@@ -33,7 +33,7 @@ describe('TMA Strategy', () => {
     // Capture emitted advices
     advices = [];
 
-    strategy['on'](STARTEGY_ADVICE_EVENT, (advice: Advice) => advices.push(advice.recommendation));
+    strategy['on'](STRATEGY_ADVICE_EVENT, (advice: Advice) => advices.push(advice.recommendation));
   });
 
   it('should emits long advice when short > medium > long', () => {
