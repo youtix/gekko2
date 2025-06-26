@@ -7,7 +7,7 @@ export const TRADE_ABORTED_EVENT = 'tradeAborted';
 export const TRADE_CANCELED_EVENT = 'tradeCanceled';
 export const TRADE_COMPLETED_EVENT = 'tradeCompleted';
 
-export const STARTEGY_ADVICE_EVENT = 'strategyAdvice';
+export const STRATEGY_ADVICE_EVENT = 'strategyAdvice';
 export const STRATEGY_CANDLE_EVENT = 'strategyTimeframeCandle';
 export const STRATEGY_NOTIFICATION_EVENT = 'strategyNotification';
 export const STRATEGY_UPDATE_EVENT = 'strategyUpdate';
