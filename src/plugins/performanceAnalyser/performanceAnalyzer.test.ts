@@ -316,6 +316,18 @@ describe('PerformanceAnalyzer', () => {
       expect(analyzer['losses']).toHaveLength(0);
     });
 
+    it('should set profit to 0 when entry balance is 0 to avoid division by zero', () => {
+      analyzer['roundTrip'] = {
+        id: 0,
+        entry: { date: toTimestamp('2020'), price: 0, total: 0, asset: 0, currency: 0 },
+        exit: { date: toTimestamp('2020'), price: 100, total: 100, asset: 0, currency: 100 },
+      };
+
+      analyzer['handleCompletedRoundtrip']();
+
+      expect(first(analyzer['roundTrips'])?.profit).toBe(0);
+    });
+
     it('should track max adverse excursion during a roundtrip', () => {
       analyzer['warmupCompleted'] = true;
 
