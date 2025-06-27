@@ -18,6 +18,14 @@ True Range is the raw measure of volatility, calculated as the greatest of:
 ATR measures market volatility by averaging the true range over a specified number of periods. While it doesn’t indicate trend direction, it helps assess how volatile a market is.
 ATR is simply a smoothed version of True Range.
 
+## **ATRCD (ATR Convergence Divergence)**
+ATR Convergence Divergence takes two ATR values of different lengths and
+compares them to reveal changes in volatility momentum. The difference
+between the fast and slow ATRs is smoothed with another EMA to create a
+signal line, while the histogram shows how far the ATRCD line is from
+this signal. Rising values indicate increasing volatility relative to the
+recent trend, while falling values suggest contracting volatility.
+
 ## **Bollinger Bands**
 Bollinger Bands consist of a moving average (usually SMA) and two bands plotted at a specified number of standard deviations above and below the moving average. The bands expand during periods of high volatility and contract during periods of low volatility. Bollinger Bands help identify overbought and oversold conditions, as well as potential breakout opportunities when price moves outside the bands.
 
