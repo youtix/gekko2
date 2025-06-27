@@ -1,8 +1,8 @@
 import { Candle } from '@models/types/candle.types';
 import { Nullable } from '@models/types/generic.types';
 import { Plugin } from '@plugins/plugin';
-import { debug } from '@services/logger';
-import { after, bind, each, find } from 'lodash-es';
+import { info } from '@services/logger';
+import { after, find } from 'lodash-es';
 import { Writable } from 'node:stream';
 
 export class PluginsStream extends Writable {
@@ -12,21 +12,21 @@ export class PluginsStream extends Writable {
     this.plugins = plugins;
   }
 
-  public _write(chunk: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void): void {
-    const flushEvents = bind(this.flushEvents(done), this);
-    each(this.plugins, c => c.processInputStream(chunk, flushEvents));
+  public async _write(chunk: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
+    const flushEvents = this.flushEvents().bind(this);
+    for (const plugin of this.plugins) await plugin.processInputStream(chunk, flushEvents);
+    done();
   }
 
-  public end(_?: unknown, __?: unknown, done?: (error?: Nullable<Error>) => void): this {
-    each(this.plugins, c => c.processCloseStream(done));
-    debug('stream', 'Stream ended !');
-    return this;
+  public async _final(done: (error?: Nullable<Error>) => void) {
+    for (const plugin of this.plugins) await plugin.processCloseStream();
+    info('stream', 'Gekko is closing the application !');
+    done();
   }
 
-  private flushEvents(done: (error?: Nullable<Error>) => void) {
+  private flushEvents() {
     return after(this.plugins.length, () => {
       this.broadcastAllDeferredEvents();
-      done();
     });
   }
 

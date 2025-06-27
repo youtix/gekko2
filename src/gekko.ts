@@ -37,7 +37,7 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
 
   try {
     info('init', logVersion());
-    gekkoPipeline(); // Launch bot
+    await gekkoPipeline(); // Launch bot
   } catch (e) {
     error('init', e instanceof Error ? e.message : e);
   }

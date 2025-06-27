@@ -17,7 +17,7 @@ import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCan
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
 
-const buildRealtimePipeline = (plugins: Plugin[]) => {
+const buildRealtimePipeline = async (plugins: Plugin[]) => {
   info('init', 'Waiting for the end of the minute to synchronize streams');
   waitSync(getNextMinute() - Date.now());
 
@@ -26,7 +26,7 @@ const buildRealtimePipeline = (plugins: Plugin[]) => {
   const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe]);
   const startDate = subMinutes(endDate, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe] + offset).getTime();
 
-  return pipeline(
+  await pipeline(
     mergeSequentialStreams(
       new HistoricalCandleStream({ startDate, endDate, tickrate: warmup.tickrate }),
       new RealtimeStream({ tickrate, threshold: startDate }),
@@ -38,7 +38,7 @@ const buildRealtimePipeline = (plugins: Plugin[]) => {
 
 const buildBacktestPipeline = async (plugins: Plugin[]) => {
   const watch = config.getWatch();
-  return pipeline(
+  await pipeline(
     new BacktestStream(
       watch.scan
         ? await askForDaterange()
@@ -49,9 +49,9 @@ const buildBacktestPipeline = async (plugins: Plugin[]) => {
   );
 };
 
-const buildImporterPipeline = (plugins: Plugin[]) => {
+const buildImporterPipeline = async (plugins: Plugin[]) => {
   const { daterange, tickrate } = config.getWatch();
-  return pipeline(
+  await pipeline(
     new HistoricalCandleStream({
       startDate: toTimestamp(daterange.start),
       endDate: toTimestamp(daterange.end),

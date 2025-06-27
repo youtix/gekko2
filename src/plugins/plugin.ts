@@ -4,7 +4,6 @@ import { Broker } from '@services/broker/broker';
 import { Fetcher } from '@services/fetcher/fetcher.types';
 import { Fs } from '@services/fs/fs.types';
 import { Storage } from '@services/storage/storage';
-import { drop, first } from 'lodash-es';
 import EventEmitter from 'node:events';
 import { Candle } from '../models/types/candle.types';
 import { DeffferedEvent } from '../models/types/event.types';
@@ -93,16 +92,14 @@ export abstract class Plugin extends EventEmitter {
   }
 
   /** Invoked once when the stream pipeline terminates. */
-  public async processCloseStream(done?: () => void) {
+  public async processCloseStream() {
     await this.processFinalize();
-    done?.();
   }
 
   /** Emits deferred event, invoked in loop after each candle has been handled by all plugins. */
   public broadcastDeferredEmit() {
-    const event = first(this.defferedEvents);
+    const event = this.defferedEvents.shift();
     if (!event) return false;
-    this.defferedEvents = drop(this.defferedEvents);
     this.emit(event.name, event.payload);
     return true;
   }
