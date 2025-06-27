@@ -29,12 +29,13 @@ describe('percentile', () => {
     ${scores}    | ${undefined} | ${NaN}
     ${scores}    | ${0.5}       | ${7}
     ${scores}    | ${0.25}      | ${5}
-    ${scores}    | ${0.85}      | ${9.5}
-    ${scores2}   | ${0.25}      | ${6}
-    ${scores3}   | ${0.4}       | ${27.5}
-    ${scores4}   | ${0.9}       | ${200}
+    ${scores}    | ${0.85}      | ${9.15}
+    ${scores2}   | ${0.25}      | ${6.5}
+    ${scores3}   | ${0.4}       | ${29}
+    ${scores4}   | ${0.9}       | ${190}
   `('should return $expected when input is $input and percentile $ptile', ({ input, ptile, expected }) => {
-    expect(percentile(input, ptile)).toBe(expected);
+    if (Number.isFinite(expected)) expect(percentile(input, ptile)).toBeCloseTo(expected, 2);
+    else expect(percentile(input, ptile)).toBeNaN();
   });
 });
 

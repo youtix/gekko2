@@ -1,9 +1,9 @@
 import Big from 'big.js';
-import { isFunction, map, mergeWith, reduce, sortBy } from 'lodash-es';
+import { isFunction, map, mergeWith, reduce } from 'lodash-es';
 
 const valuesMinusMeanSquared = (values: number[] = []) => {
   const average = mean(values);
-  return map(values, val => Math.pow(+Big(val).minus(average), 2));
+  return map(values, val => Math.pow(val - average, 2));
 };
 
 export const stdev = (vals: number[] = []) => {
@@ -11,21 +11,39 @@ export const stdev = (vals: number[] = []) => {
   return Math.sqrt(mean(valuesMinusMeanSquared(vals)));
 };
 
-export const percentile = (values: number[] = [], ptile?: number) => {
-  if (!values?.length || !ptile || ptile < 0) return NaN;
+/**
+ * Linear-interpolated percentile (inclusive-range definition)
+ *
+ * @param values  data set (numbers only)
+ * @param ptile   desired percentile.
+ *                • Accepts 0 … 1  (e.g. 0.95)
+ *                • or 0 … 100 (e.g. 95).
+ *                  Anything > 1 is assumed to be a percentage and is divided by 100.
+ * @returns the interpolated value, or NaN if the inputs are invalid
+ */
+export const percentile = (values: number[] = [], ptile?: number): number => {
+  if (!values?.length || ptile === undefined || ptile < 0) return NaN;
 
-  // Fudge anything over 100 to 1.0
-  const _ptile = ptile > 1 ? 1 : ptile;
-  const vals = sortBy(values);
-  const i = +Big(vals.length).mul(_ptile).minus(0.5);
-  if ((i | 0) === i) return vals[i];
-  // interpolated percentile -- using Estimation method
-  const intPart = i | 0;
-  const fract = Big(i).minus(intPart);
-  return +Big(1)
-    .minus(fract)
-    .mul(vals[intPart])
-    .plus(fract.mul(vals[Math.min(intPart + 1, vals.length - 1)]));
+  // Convert 0–100 → 0–1
+  let p = ptile;
+  if (p > 1) p /= 100;
+  if (p > 1) p = 1;
+
+  // Sort ascending without mutating the caller’s array
+  const vals = [...values].sort((a, b) => a - b);
+
+  // Exact endpoints
+  if (p === 0) return vals[0];
+  if (p === 1) return vals[vals.length - 1];
+
+  // Rank-based interpolation: (n-1) · p
+  const rank = (vals.length - 1) * p;
+  const lower = Math.floor(rank);
+  const upper = Math.ceil(rank);
+  const weight = rank - lower;
+
+  // Linear interpolate between the two bracketing values
+  return vals[lower] * (1 - weight) + vals[upper] * weight;
 };
 
 export const weightedMean = (values: number[], weights: number[]): number => {
