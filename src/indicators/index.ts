@@ -1,4 +1,3 @@
-export * from './';
 export * from './directionalMovement/adx/adx.indicator';
 export * from './directionalMovement/adxRibbon/adxRibbon.indicator';
 export * from './directionalMovement/dx/dx.indicator';
