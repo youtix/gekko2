@@ -124,14 +124,14 @@ export class Telegram extends Plugin {
   }
   // --- END LISTENERS ---
 
-  private sendMessage(token: string, chatId: string, message: string) {
+  private async sendMessage(token: string, chatId: string, message: string) {
     const url = `${TELEGRAM_API_BASE_URL}${token}/sendMessage`;
     const payload = { chat_id: chatId, text: message };
 
     debug('telegram', `Sending POST HTTP request to ${url} with payload ${JSON.stringify(payload)}`);
 
     try {
-      return this.getFetcher().post({ url, payload });
+      return await this.getFetcher().post({ url, payload });
     } catch {
       return; // Don't stop the music if we can't send the message
     }
