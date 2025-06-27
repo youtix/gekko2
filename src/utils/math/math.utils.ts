@@ -1,5 +1,5 @@
 import Big from 'big.js';
-import { isFunction, map, mergeWith, reduce } from 'lodash-es';
+import { isFunction, map, reduce } from 'lodash-es';
 
 const valuesMinusMeanSquared = (values: number[] = []) => {
   const average = mean(values);
@@ -47,8 +47,14 @@ export const percentile = (values: number[] = [], ptile?: number): number => {
 };
 
 export const weightedMean = (values: number[], weights: number[]): number => {
-  if (values.length !== weights.length || !values.length || sum(weights) === 0) throw new Error();
-  return divide(reduce(mergeWith(values, weights, multiply), add, 0), sum(weights));
+  if (values.length !== weights.length || !values.length) throw new Error();
+
+  const totalWeight = sum(weights);
+  if (totalWeight === 0) throw new Error();
+
+  const numerator = reduce(values, (acc, v, i) => add(acc, multiply(v, weights[i])), 0);
+
+  return divide(numerator, totalWeight);
 };
 
 /** Least squares linear regression fitting. */

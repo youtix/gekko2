@@ -89,6 +89,18 @@ describe('weightedMean', () => {
   it('throws error when sum of weights is zero', () => {
     expect(() => weightedMean([1, 2, 3], [0, 0, 0])).toThrow();
   });
+
+  it('does not mutate the input arrays', () => {
+    const values = [1, 2, 3];
+    const weights = [1, 1, 1];
+    const valuesCopy = [...values];
+    const weightsCopy = [...weights];
+
+    weightedMean(values, weights);
+
+    expect(values).toEqual(valuesCopy);
+    expect(weights).toEqual(weightsCopy);
+  });
 });
 
 describe('multiply', () => {
