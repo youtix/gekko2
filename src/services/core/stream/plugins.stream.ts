@@ -14,14 +14,22 @@ export class PluginsStream extends Writable {
 
   public async _write(chunk: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
     const flushEvents = this.flushEvents().bind(this);
-    for (const plugin of this.plugins) await plugin.processInputStream(chunk, flushEvents);
-    done();
+    try {
+      for (const plugin of this.plugins) await plugin.processInputStream(chunk, flushEvents);
+      done();
+    } catch (error) {
+      if (error instanceof Error) done(error);
+    }
   }
 
   public async _final(done: (error?: Nullable<Error>) => void) {
-    for (const plugin of this.plugins) await plugin.processCloseStream();
-    info('stream', 'Gekko is closing the application !');
-    done();
+    try {
+      for (const plugin of this.plugins) await plugin.processCloseStream();
+      info('stream', 'Gekko is closing the application !');
+      done();
+    } catch (error) {
+      if (error instanceof Error) done(error);
+    }
   }
 
   private flushEvents() {
