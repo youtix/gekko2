@@ -9,7 +9,6 @@ import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuratio
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
 import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT } from '../plugin.const';
-import { PerformanceAnalyzerError } from './performanceAnalyzer.error';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 import { DateRange, PerformanceAnalyzerConfig, Report, SingleRoundTrip, Start } from './performanceAnalyzer.types';
 import { logFinalize, logRoundtrip } from './performanceAnalyzer.utils';
@@ -71,12 +70,8 @@ export class PerformanceAnalyzer extends Plugin {
   }
 
   public onTradeCompleted(trade: TradeCompleted): void {
-    // Error handling
-    if (this.trades === 1 && trade.action === 'sell') throw new PerformanceAnalyzerError('Invalid sell trade');
-    if (trade.portfolio.asset === 0 && trade.portfolio.currency === 0 && trade.action === 'buy')
-      throw new PerformanceAnalyzerError(
-        'Impossible to process performance analyze on buy trade when portfolio is empty.',
-      );
+    if (this.trades === 0 && trade.action === 'sell') return;
+    if (trade.portfolio.asset === 0 && trade.portfolio.currency === 0 && trade.action === 'buy') return;
 
     this.trades++;
     this.balance = trade.balance;

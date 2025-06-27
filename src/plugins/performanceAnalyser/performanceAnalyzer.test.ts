@@ -6,7 +6,6 @@ import { first, isNil } from 'lodash-es';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { PerformanceAnalyzer } from './performanceAnalyzer';
-import { PerformanceAnalyzerError } from './performanceAnalyzer.error';
 import { SingleRoundTrip } from './performanceAnalyzer.types';
 
 vi.mock('./performanceAnalyzer.utils');
@@ -128,17 +127,22 @@ describe('PerformanceAnalyzer', () => {
     });
   });
   describe('onTradeCompleted', () => {
-    it('should throw if the first trade is a sell', () => {
-      analyzer['trades'] = 1;
-      expect(() => analyzer.onTradeCompleted(defaultSellTradeEvent)).toThrowError(PerformanceAnalyzerError);
+    it('should NOT process if the first trade is a sell', () => {
+      analyzer['trades'] = 0;
+      analyzer.onTradeCompleted(defaultSellTradeEvent);
+      expect(analyzer['trades']).toBe(0);
     });
-    it('should throw during buy trade if portfolio is empty', () => {
+    it('should NOT process buy trade if portfolio is empty', () => {
+      analyzer['trades'] = 0;
       const buyTrade = { ...defaultBuyTradeEvent, portfolio: { asset: 0, currency: 0 } };
-      expect(() => analyzer.onTradeCompleted(buyTrade)).toThrowError(PerformanceAnalyzerError);
+      analyzer.onTradeCompleted(buyTrade);
+      expect(analyzer['trades']).toBe(0);
     });
-    it('should NOT throw during sell trade if portfolio is empty', () => {
+    it('should process the sell trade if portfolio is empty', () => {
+      analyzer['trades'] = 1;
       const sellTrade = { ...defaultSellTradeEvent, portfolio: { asset: 0, currency: 0 } };
-      expect(() => analyzer.onTradeCompleted(sellTrade)).not.toThrowError(PerformanceAnalyzerError);
+      analyzer.onTradeCompleted(sellTrade);
+      expect(analyzer['trades']).toBe(2);
     });
     it('should increment trades', () => {
       analyzer.onTradeCompleted(defaultBuyTradeEvent);
