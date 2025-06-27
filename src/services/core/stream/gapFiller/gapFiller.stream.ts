@@ -58,11 +58,6 @@ export class GapFillerStream extends Transform {
     }
   }
 
-  _flush(callback: TransformCallback) {
-    // Finalize any remaining work if necessary.
-    callback();
-  }
-
   fillWithEmptyCandles(before: Candle, after: Candle) {
     warning('stream', 'Filling gap using synthetic (empty) candles.');
     const [, ...emptyCandles] = fillMissingCandles([before, after]) ?? [];

@@ -39,8 +39,7 @@ export class BacktestStream extends Readable {
       ].join(' '),
     );
   }
-
-  public _read() {
+  public _read(_size: number): void {
     if (this.iteration >= this.dateranges.length) {
       this.push(null);
       return;

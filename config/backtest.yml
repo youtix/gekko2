@@ -11,7 +11,7 @@ watch:
 
 storage:
   type: sqlite
-  database: ./db/gekko.sql
+  database: ./db/binance-BTC_USDT.sql
 
 strategy:
   name: RSI

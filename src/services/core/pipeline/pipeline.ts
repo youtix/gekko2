@@ -14,7 +14,7 @@ import { streamPipelines } from './pipeline.utils';
 
 export const launchStream = async (context: PipelineContext) => {
   const plugins = compact(map(context, p => p.plugin));
-  streamPipelines[config.getWatch().mode](plugins);
+  await streamPipelines[config.getWatch().mode](plugins);
   return context;
 };
 
@@ -122,7 +122,7 @@ export const getPluginsStaticConfiguration = async (context: PipelineContext) =>
     return { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject };
   });
 
-export const gekkoPipeline = () => {
+export const gekkoPipeline = () =>
   [
     getPluginsStaticConfiguration,
     checkPluginsModesCompatibility,
@@ -136,4 +136,3 @@ export const gekkoPipeline = () => {
     initPlugins,
     launchStream,
   ].reduce(async (params, fn) => fn(await params), Promise.resolve(config.getPlugins()));
-};
