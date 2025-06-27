@@ -57,6 +57,12 @@ export class PaperTrader extends Plugin {
       return;
     }
 
+    // Skip long advice if the portfolio is completely empty (no assets and no currency)
+    if (advice.recommendation === 'long' && this.portfolio.asset === 0 && this.portfolio.currency === 0) {
+      warning('paper trader', 'Skipping advice: portfolio is completely empty (no assets, no currency).');
+      return;
+    }
+
     this.tradeId = `trade-${++this.propogatedTrades}`;
     const action = advice.recommendation === 'short' ? 'sell' : 'buy';
 
