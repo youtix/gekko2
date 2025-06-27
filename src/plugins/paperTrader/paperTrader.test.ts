@@ -12,7 +12,7 @@ import {
 import { PaperTrader } from './paperTrader';
 import { PapertraderConfig } from './paperTrader.types';
 
-vi.mock('@services/logger', () => ({ warning: vi.fn() }));
+vi.mock('@services/logger', () => ({ warning: vi.fn(), info: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getWatch: vi.fn(() => ({ mode: 'realtime' })),

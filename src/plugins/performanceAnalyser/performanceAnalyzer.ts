@@ -126,7 +126,9 @@ export class PerformanceAnalyzer extends Plugin {
       exitBalance: this.roundTrip.exit.total,
 
       pnl: +Big(this.roundTrip.exit.total).minus(this.roundTrip.entry.total),
-      profit: +Big(100).mul(this.roundTrip.exit.total).div(this.roundTrip.entry.total).minus(100),
+      profit: this.roundTrip.entry.total
+        ? +Big(100).mul(this.roundTrip.exit.total).div(this.roundTrip.entry.total).minus(100)
+        : 0,
       maxAdverseExcursion: this.maxAdverseExcursion,
 
       duration: differenceInMilliseconds(this.roundTrip.exit.date, this.roundTrip.entry.date),

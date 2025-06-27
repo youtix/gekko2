@@ -11,7 +11,7 @@ import {
   TRADE_COMPLETED_EVENT,
   TRADE_INITIATED_EVENT,
 } from '@plugins/plugin.const';
-import { warning } from '@services/logger';
+import { info, warning } from '@services/logger';
 import Big from 'big.js';
 import { filter } from 'lodash-es';
 import { paperTraderSchema } from './paperTrader.schema';
@@ -54,6 +54,12 @@ export class PaperTrader extends Plugin {
   public onStrategyAdvice(advice: Advice) {
     if (!['short', 'long'].includes(advice.recommendation)) {
       warning('paper trader', `Ignoring unknown advice recommendation: ${advice.recommendation}`);
+      return;
+    }
+
+    // Skip advice if the portfolio is completely empty (no assets and no currency)
+    if (this.portfolio.asset === 0 && this.portfolio.currency === 0) {
+      info('paper trader', 'Skipping advice: portfolio is completely empty (no assets, no currency).');
       return;
     }
 
