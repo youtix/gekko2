@@ -1,12 +1,12 @@
 # HeapStatsMonitor Plugin
 
-The **HeapStatsMonitor** plugin prints memory usage information from Bun's `jsc` engine.
+The **HeapStatsMonitor** plugin records memory usage information from Bun's `jsc` engine.
 It can be useful to monitor your strategy's memory consumption during both realtime
 and backtest runs.
 
-``` 
+```
 💡 Note:
-This plugin is read-only and only logs information to the console.
+This plugin is read-only and only writes to a CSV file.
 ```
 
 ## Configuration
@@ -23,6 +23,8 @@ plugins:
       - extraMemorySize
       - objectCount
       - protectedObjectCount
+    filePath: ./results            # Optional: directory for the CSV file
+    fileName: heap_stats.csv       # Optional: CSV file name
 ```
 
 If `metrics` is omitted, the plugin displays the five values above by default.
@@ -30,7 +32,7 @@ If `metrics` is omitted, the plugin displays the five values above by default.
 ## Events Handled
 
 The plugin listens to the `strategyAdvice` event. Every `interval` advices it will
-call `heapStats()` from `bun:jsc` and display the selected metrics using `console.table`.
+call `heapStats()` from `bun:jsc` and append the selected metrics to a CSV file.
 
 ## Events Emitted
 

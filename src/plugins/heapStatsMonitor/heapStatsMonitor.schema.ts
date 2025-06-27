@@ -4,4 +4,6 @@ export const heapStatsMonitorSchema = object({
   name: string().required(),
   interval: number().positive().integer().default(1),
   metrics: array().of(string()).optional(),
+  filePath: string().default(process.cwd()),
+  fileName: string().default('heap_stats.csv'),
 });
