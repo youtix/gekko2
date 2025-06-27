@@ -6,6 +6,7 @@ import { first, isNil } from 'lodash-es';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { PerformanceAnalyzer } from './performanceAnalyzer';
+import { PerformanceAnalyzerError } from './performanceAnalyzer.error';
 import { SingleRoundTrip } from './performanceAnalyzer.types';
 
 vi.mock('./performanceAnalyzer.utils');
@@ -127,6 +128,18 @@ describe('PerformanceAnalyzer', () => {
     });
   });
   describe('onTradeCompleted', () => {
+    it('should throw if the first trade is a sell', () => {
+      analyzer['trades'] = 1;
+      expect(() => analyzer.onTradeCompleted(defaultSellTradeEvent)).toThrowError(PerformanceAnalyzerError);
+    });
+    it('should throw during buy trade if portfolio is empty', () => {
+      const buyTrade = { ...defaultBuyTradeEvent, portfolio: { asset: 0, currency: 0 } };
+      expect(() => analyzer.onTradeCompleted(buyTrade)).toThrowError(PerformanceAnalyzerError);
+    });
+    it('should NOT throw during sell trade if portfolio is empty', () => {
+      const sellTrade = { ...defaultSellTradeEvent, portfolio: { asset: 0, currency: 0 } };
+      expect(() => analyzer.onTradeCompleted(sellTrade)).not.toThrowError(PerformanceAnalyzerError);
+    });
     it('should increment trades', () => {
       analyzer.onTradeCompleted(defaultBuyTradeEvent);
       expect(analyzer['trades']).toBe(1);
@@ -182,12 +195,6 @@ describe('PerformanceAnalyzer', () => {
     });
   });
   describe('registerRoundtripPart', () => {
-    it('should ignore the first trade if it is a sell', () => {
-      analyzer['trades'] = 1;
-      analyzer['registerRoundtripPart'](defaultSellTradeEvent);
-      expect(analyzer['roundTrip'].entry).toBeNull();
-      expect(analyzer['roundTrip'].exit).toBeNull();
-    });
     it('should register a buy trade as the entry of a new round trip', () => {
       analyzer['registerRoundtripPart'](defaultBuyTradeEvent);
       expect(analyzer['roundTrip'].entry).toStrictEqual({

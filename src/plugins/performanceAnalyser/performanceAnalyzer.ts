@@ -9,6 +9,7 @@ import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuratio
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
 import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT } from '../plugin.const';
+import { PerformanceAnalyzerError } from './performanceAnalyzer.error';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 import { DateRange, PerformanceAnalyzerConfig, Report, SingleRoundTrip, Start } from './performanceAnalyzer.types';
 import { logFinalize, logRoundtrip } from './performanceAnalyzer.utils';
@@ -69,20 +70,24 @@ export class PerformanceAnalyzer extends Plugin {
     if (this.warmupCandle) this.processOneMinuteCandle(this.warmupCandle);
   }
 
-  public onTradeCompleted(event: TradeCompleted): void {
-    this.trades++;
-    this.balance = event.balance;
+  public onTradeCompleted(trade: TradeCompleted): void {
+    // Error handling
+    if (this.trades === 1 && trade.action === 'sell') throw new PerformanceAnalyzerError('Invalid sell trade');
+    if (trade.portfolio.asset === 0 && trade.portfolio.currency === 0 && trade.action === 'buy')
+      throw new PerformanceAnalyzerError(
+        'Impossible to process performance analyze on buy trade when portfolio is empty.',
+      );
 
-    this.registerRoundtripPart(event);
+    this.trades++;
+    this.balance = trade.balance;
+
+    this.registerRoundtripPart(trade);
   }
   // --- END LISTENERS ---
 
   // --- BEGIN INTERNALS ---
 
   private registerRoundtripPart(trade: TradeCompleted): void {
-    // this is not part of a valid roundtrip
-    if (this.trades === 1 && trade.action === 'sell') return;
-
     if (trade.action === 'buy') {
       if (this.roundTrip.exit) {
         this.roundTrip.id++;
@@ -126,7 +131,9 @@ export class PerformanceAnalyzer extends Plugin {
       exitBalance: this.roundTrip.exit.total,
 
       pnl: +Big(this.roundTrip.exit.total).minus(this.roundTrip.entry.total),
-      profit: +Big(100).mul(this.roundTrip.exit.total).div(this.roundTrip.entry.total).minus(100),
+      profit: this.roundTrip.entry.total
+        ? +Big(100).mul(this.roundTrip.exit.total).div(this.roundTrip.entry.total).minus(100)
+        : 0,
       maxAdverseExcursion: this.maxAdverseExcursion,
 
       duration: differenceInMilliseconds(this.roundTrip.exit.date, this.roundTrip.entry.date),

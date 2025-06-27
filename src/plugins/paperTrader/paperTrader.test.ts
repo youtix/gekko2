@@ -130,6 +130,25 @@ describe('PaperTrader', () => {
         feePercent: 0.25,
       });
     });
+
+    it('should ignore advice when portfolio is empty', () => {
+      trader['portfolio'] = { asset: 0, currency: 0 };
+      trader['price'] = 100;
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
+
+      trader.onStrategyAdvice({ ...defaultAdvice, recommendation: 'long' });
+
+      expect(deferredEmitSpy).not.toHaveBeenCalled();
+    });
+    it('should let close the roundtrip when portfolio is empty', () => {
+      trader['portfolio'] = { asset: 0, currency: 0 };
+      trader['price'] = 100;
+      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
+
+      trader.onStrategyAdvice(defaultAdvice);
+
+      expect(deferredEmitSpy).toHaveBeenCalled();
+    });
   });
   describe('processOneMinuteCandle', () => {
     it('should store the candle as warmupCandle during warmup', () => {
