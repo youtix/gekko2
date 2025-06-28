@@ -1,7 +1,6 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
 import { RingBuffer } from '@utils/array/ringBuffer';
-import Big from 'big.js';
 
 export class WilliamsR extends Indicator<'WilliamsR'> {
   private ringBufferHigh: RingBuffer<number>;
@@ -27,7 +26,7 @@ export class WilliamsR extends Indicator<'WilliamsR'> {
     const lowest = this.ringBufferLow.min();
     const lastClose = this.ringBufferClose.last();
     // Williams %R = (Close - HighestHigh) / (HighestHigh - LowestLow) * 100
-    this.result = highest === lowest ? 0 : +Big(lastClose).minus(highest).div(Big(highest).minus(lowest)).times(100);
+    this.result = highest === lowest ? 0 : ((lastClose - highest) / (highest - lowest)) * 100;
   }
 
   public getResult() {

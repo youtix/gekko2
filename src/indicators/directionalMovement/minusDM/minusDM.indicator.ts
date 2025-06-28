@@ -1,6 +1,5 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 
 export class MinusDM extends Indicator<'MinusDM'> {
   private period: number;
@@ -18,8 +17,8 @@ export class MinusDM extends Indicator<'MinusDM'> {
   public onNewCandle(candle: Candle): void {
     const { low, high } = candle;
 
-    const diffP = +Big(high).minus(this.lastCandle?.high ?? high);
-    const diffM = +Big(this.lastCandle?.low ?? low).minus(low);
+    const diffP = high - (this.lastCandle?.high ?? high);
+    const diffM = (this.lastCandle?.low ?? low) - low;
     this.lastCandle = candle;
 
     // Warming up
@@ -30,8 +29,8 @@ export class MinusDM extends Indicator<'MinusDM'> {
       return;
     }
 
-    const base = Big(this.prevMinusDM).minus(Big(this.prevMinusDM).div(this.period));
-    this.prevMinusDM = diffM > 0 && diffM > diffP ? +base.plus(diffM) : +base;
+    const base = this.prevMinusDM - this.prevMinusDM / this.period;
+    this.prevMinusDM = diffM > 0 && diffM > diffP ? base + diffM : base;
     this.result = this.prevMinusDM;
   }
 

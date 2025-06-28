@@ -1,7 +1,6 @@
 import { Indicator } from '@indicators/indicator';
 import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { isNil } from 'lodash-es';
 
 export class AO extends Indicator<'AO'> {
@@ -16,7 +15,7 @@ export class AO extends Indicator<'AO'> {
 
   public onNewCandle({ high, low }: Candle): void {
     // Typical price: midpoint of the bar
-    const hl2 = +Big(high).plus(low).div(2);
+    const hl2 = (high + low) / 2;
 
     // Update fast and slow SMAs
     this.smaFast.onNewCandle({ close: hl2 } as Candle);

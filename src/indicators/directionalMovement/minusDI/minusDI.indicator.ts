@@ -1,7 +1,6 @@
 import { Indicator } from '@indicators/indicator';
 import { TrueRange } from '@indicators/volatility/trueRange/trueRange.indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { MinusDM } from '../minusDM/minusDM.indicator';
 
 export class MinusDI extends Indicator<'MinusDI'> {
@@ -33,11 +32,11 @@ export class MinusDI extends Indicator<'MinusDI'> {
       return;
     }
 
-    const baseTR = Big(this.prevTR).minus(Big(this.prevTR).div(this.period));
-    const newTR = +baseTR.plus(trueRange);
+    const baseTR = this.prevTR - this.prevTR / this.period;
+    const newTR = baseTR + trueRange;
     const newMinusDM = this.minusDM.getResult() ?? 0;
 
-    this.result = newTR === 0 ? 0 : +Big(100).times(Big(newMinusDM).div(newTR));
+    this.result = newTR === 0 ? 0 : (100 * newMinusDM) / newTR;
     this.prevTR = newTR;
   }
 

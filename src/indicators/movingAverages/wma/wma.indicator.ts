@@ -1,6 +1,5 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 
 export class WMA extends Indicator<'WMA'> {
   private period: number;
@@ -13,9 +12,7 @@ export class WMA extends Indicator<'WMA'> {
     this.period = period;
     this.fifo = [];
     // divider = period * (period + 1) / 2
-    this.divider = +Big(this.period)
-      .mul(this.period + 1)
-      .div(2);
+    this.divider = (this.period * (this.period + 1)) / 2;
     this.age = 0;
   }
 
@@ -35,8 +32,8 @@ export class WMA extends Indicator<'WMA'> {
   }
 
   private computeWMA() {
-    const periodSum = this.fifo.reduce((res, price, i) => +Big(res).plus(Big(price).times(i + 1)), 0);
-    return +Big(periodSum).div(this.divider);
+    const periodSum = this.fifo.reduce((res, price, i) => res + price * (i + 1), 0);
+    return periodSum / this.divider;
   }
 
   public getResult() {

@@ -1,6 +1,5 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { isNil } from 'lodash-es';
 import { DX } from '../dx/dx.indicator';
 
@@ -28,19 +27,16 @@ export class ADX extends Indicator<'ADX'> {
     // Warmup
     if (isNil(dx)) return;
     if (this.age < this.period) {
-      this.sumDX = +Big(this.sumDX).plus(dx);
+      this.sumDX += dx;
       this.age++;
       if (this.age === this.period) {
-        this.result = +Big(this.sumDX).div(this.period);
+        this.result = this.sumDX / this.period;
         this.prevADX = this.result;
       }
       return;
     }
 
-    this.result = +Big(this.prevADX)
-      .times(this.period - 1)
-      .plus(dx)
-      .div(this.period);
+    this.result = (this.prevADX * (this.period - 1) + dx) / this.period;
 
     this.prevADX = this.result;
   }

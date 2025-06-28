@@ -1,7 +1,6 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
 import { RingBuffer } from '@utils/array/ringBuffer';
-import Big from 'big.js';
 
 export class ROC extends Indicator<'ROC'> {
   private ringBuffer: RingBuffer<number>;
@@ -17,13 +16,7 @@ export class ROC extends Indicator<'ROC'> {
     this.ringBuffer.push(close);
     if (!this.ringBuffer.isFull()) return;
 
-    this.result =
-      oldest === 0
-        ? 0
-        : +Big(close)
-            .div(oldest ?? close)
-            .minus(1)
-            .times(100);
+    this.result = oldest === 0 ? 0 : (close / (oldest ?? close) - 1) * 100;
   }
 
   public getResult() {

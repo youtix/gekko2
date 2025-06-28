@@ -3,7 +3,6 @@ import { Candle } from '@models/types/candle.types';
 import { RingBuffer } from '@utils/array/ringBuffer';
 import { hlc3 } from '@utils/candle/candle.utils';
 import { sum } from '@utils/math/math.utils';
-import Big from 'big.js';
 import { map } from 'lodash-es';
 
 export class CCI extends Indicator<'CCI'> {
@@ -22,15 +21,10 @@ export class CCI extends Indicator<'CCI'> {
     if (!this.ringBuffer.isFull()) return;
 
     const price = map(this.ringBuffer.toArray(), hlc3);
-    const mean = +Big(sum(price)).div(this.period);
-    const devSum = price.reduce((acc, v) => +Big(v).minus(mean).abs().plus(acc), 0);
-    const denom = +Big(devSum).div(this.period).times(0.015);
-    this.result =
-      denom === 0
-        ? 0
-        : +Big(price[this.period - 1])
-            .minus(mean)
-            .div(denom);
+    const mean = sum(price) / this.period;
+    const devSum = price.reduce((acc, v) => Math.abs(v - mean) + acc, 0);
+    const denom = (devSum / this.period) * 0.015;
+    this.result = denom === 0 ? 0 : (price[this.period - 1] - mean) / denom;
   }
 
   public getResult() {
