@@ -4,7 +4,7 @@ import { RoundTrip } from '@models/types/roundtrip.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { warning } from '@services/logger';
 import { percentile, stdev } from '@utils/math/math.utils';
-import { Big } from 'big.js';
+import { round } from '@utils/math/round.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
@@ -91,7 +91,7 @@ export class PerformanceAnalyzer extends Plugin {
       this.roundTrip.entry = {
         date: trade.date,
         price: trade.price,
-        total: +Big(trade.portfolio.asset).mul(trade.price).plus(trade.portfolio.currency),
+        total: trade.portfolio.asset * trade.price + trade.portfolio.currency,
         asset: trade.portfolio.asset,
         currency: trade.portfolio.currency,
       };
@@ -101,7 +101,7 @@ export class PerformanceAnalyzer extends Plugin {
       this.roundTrip.exit = {
         date: trade.date,
         price: trade.price,
-        total: +Big(trade.portfolio.asset).mul(trade.price).plus(trade.portfolio.currency),
+        total: trade.portfolio.asset * trade.price + trade.portfolio.currency,
         asset: trade.portfolio.asset,
         currency: trade.portfolio.currency,
       };
@@ -125,10 +125,8 @@ export class PerformanceAnalyzer extends Plugin {
       exitPrice: this.roundTrip.exit.price,
       exitBalance: this.roundTrip.exit.total,
 
-      pnl: +Big(this.roundTrip.exit.total).minus(this.roundTrip.entry.total),
-      profit: this.roundTrip.entry.total
-        ? +Big(100).mul(this.roundTrip.exit.total).div(this.roundTrip.entry.total).minus(100)
-        : 0,
+      pnl: this.roundTrip.exit.total - this.roundTrip.entry.total,
+      profit: this.roundTrip.entry.total ? (100 * this.roundTrip.exit.total) / this.roundTrip.entry.total - 100 : 0,
       maxAdverseExcursion: this.maxAdverseExcursion,
 
       duration: differenceInMilliseconds(this.roundTrip.exit.date, this.roundTrip.entry.date),
@@ -144,7 +142,7 @@ export class PerformanceAnalyzer extends Plugin {
     this.deferredEmit<RoundTrip>(ROUNDTRIP_EVENT, roundtrip);
 
     // update cached exposure
-    this.exposure = +Big(this.exposure).plus(roundtrip.duration);
+    this.exposure = this.exposure + roundtrip.duration;
     // track losses separately for downside report
     if (roundtrip.exitBalance < roundtrip.entryBalance) this.losses.push(roundtrip);
   }
@@ -159,42 +157,38 @@ export class PerformanceAnalyzer extends Plugin {
     // TODO: When no trades are done, should send an empty report
 
     // the portfolio's balance is measured in {currency}
-    const profit = +Big(this.balance).minus(this.start.balance);
+    const profit = this.balance - this.start.balance;
 
     const timespan = intervalToDuration({
       start: this.dates.start,
       end: this.dates.end,
     });
     const elapsedYears = differenceInMilliseconds(this.dates.end, this.dates.start) / YEAR_MS;
-    const relativeProfit = +Big(this.balance).div(this.start.balance).mul(100).minus(100);
-    const relativeYearlyProfit = +Big(relativeProfit).div(elapsedYears || 1);
+    const relativeProfit = (this.balance / this.start.balance) * 100 - 100;
+    const relativeYearlyProfit = relativeProfit / (elapsedYears || 1);
 
-    const percentExposure = +Big(this.exposure)
-      .div(differenceInMilliseconds(this.dates.end, this.dates.start))
-      .mul(100);
+    const percentExposure = (this.exposure / differenceInMilliseconds(this.dates.end, this.dates.start)) * 100;
 
     const volatility = stdev(this.roundTrips.map(r => r.profit));
     const sharpe =
-      !volatility || Number.isNaN(volatility)
-        ? 0
-        : +Big(relativeYearlyProfit).minus(this.riskFreeReturn).div(volatility);
+      !volatility || Number.isNaN(volatility) ? 0 : (relativeYearlyProfit - this.riskFreeReturn) / volatility;
 
     const tradeCount = this.trades > 2 ? this.trades - 2 : 1;
     const downsideLosses = this.losses.map(r => r.profit);
     const downside =
-      downsideLosses.length > 0 ? +Big(this.trades).div(tradeCount).sqrt().mul(percentile(downsideLosses, 0.25)) : 0;
+      downsideLosses.length > 0 ? Math.sqrt(this.trades / tradeCount) * percentile(downsideLosses, 0.25) : 0;
 
     const positiveRoundtrips = this.roundTrips.filter(roundTrip => roundTrip.pnl > 0);
 
     const ratioRoundTrips =
-      this.roundTrips.length > 0 ? +Big(positiveRoundtrips.length).div(this.roundTrips.length).mul(100).round(4) : null;
+      this.roundTrips.length > 0 ? round((positiveRoundtrips.length / this.roundTrips.length) * 100, 4) : null;
 
-    const market = +Big(this.endPrice).minus(this.startPrice).div(this.startPrice).mul(100);
+    const market = ((this.endPrice - this.startPrice) / this.startPrice) * 100;
 
     const worstMaxAdverseExcursion = Math.max(0, ...this.roundTrips.map(r => r.maxAdverseExcursion));
 
     const report: Report = {
-      alpha: +Big(relativeProfit).minus(market),
+      alpha: relativeProfit - market,
       balance: this.balance,
       downside,
       endPrice: this.endPrice,
@@ -212,7 +206,7 @@ export class PerformanceAnalyzer extends Plugin {
       startTime: this.dates.start,
       duration: formatDuration(timespan),
       trades: this.trades,
-      yearlyProfit: +Big(profit).div(elapsedYears || 1),
+      yearlyProfit: profit / (elapsedYears || 1),
     };
 
     return report;

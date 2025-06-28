@@ -11,7 +11,7 @@ import {
 import { Plugin } from '@plugins/plugin';
 import { debug } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import Big from 'big.js';
+import { round } from '@utils/math/round.utils';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { filter, upperCase } from 'lodash-es';
 import { TELEGRAM_API_BASE_URL } from './telegram.const';
@@ -117,8 +117,8 @@ export class Telegram extends Plugin {
       `Roundtrip done from ${toISOString(entryAt)} to ${toISOString(exitAt)}`,
       `Exposed Duration: ${formatDuration(intervalToDuration({ start: 0, end: duration }))}`,
       `Profit & Loss: ${formater.format(pnl)} ${this.currency}`,
-      `Profit percent: ${+Big(profit).round(2, Big.roundDown)}%`,
-      `MAE: ${+Big(maxAdverseExcursion).round(2, Big.roundDown)}%`,
+      `Profit percent: ${round(profit, 2, 'down')}%`,
+      `MAE: ${round(maxAdverseExcursion, 2, 'down')}%`,
     ].join('\n');
     this.sendMessage(this.token, this.chatId, message);
   }
