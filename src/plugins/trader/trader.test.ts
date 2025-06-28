@@ -647,6 +647,17 @@ describe('Trader', () => {
     });
   });
 
+  describe('processFinalize', () => {
+    it('should clear sync interval if it exists', () => {
+      const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
+      trader['syncInterval'] = setInterval(() => {}, 100);
+      const interval = trader['syncInterval'];
+      trader['processFinalize']();
+      expect(clearIntervalSpy).toHaveBeenCalledWith(interval);
+      expect(trader['syncInterval']).toBeUndefined();
+    });
+  });
+
   describe('getStaticConfiguration', () => {
     it('should return a configuration object with schema equal to traderSchema', () => {
       const config = Trader.getStaticConfiguration();
