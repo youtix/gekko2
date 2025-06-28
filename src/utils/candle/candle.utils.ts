@@ -1,13 +1,11 @@
 import { Candle } from '@models/types/candle.types';
 import { Undefined } from '@models/types/generic.types';
-import Big from 'big.js';
 import { addMinutes, differenceInMinutes, isBefore } from 'date-fns';
 import { filter, first, last, map } from 'lodash-es';
 
-export const hl2 = (candle: Candle): number => +Big(candle.high).plus(candle.low).div(2);
-export const hlc3 = (candle: Candle): number => +Big(candle.high).plus(candle.low).plus(candle.close).div(3);
-export const ohlc4 = (candle: Candle): number =>
-  +Big(candle.open).plus(candle.high).plus(candle.low).plus(candle.close).div(4);
+export const hl2 = (candle: Candle): number => (candle.high + candle.low) / 2;
+export const hlc3 = (candle: Candle): number => (candle.high + candle.low + candle.close) / 3;
+export const ohlc4 = (candle: Candle): number => (candle.open + candle.high + candle.low + candle.close) / 4;
 
 export const fillMissingCandles = (candles: Candle[]): Undefined<Candle[]> => {
   const firstCandleStart = first(candles)?.start;
