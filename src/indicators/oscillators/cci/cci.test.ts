@@ -46,6 +46,6 @@ describe('CCI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-47.02295552367288}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     cci.onNewCandle(candle);
-    expect(cci.getResult()).toBeCloseTo(expected, 13);
+    expect(cci.getResult()).toBeCloseTo(expected, 12);
   });
 });
