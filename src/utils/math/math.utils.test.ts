@@ -74,23 +74,23 @@ describe('weightedMean', () => {
     ${[1, 2, 3]}    | ${[1, 1, 1]}    | ${2}
     ${[1, 2, 3, 4]} | ${[1, 2, 3, 4]} | ${3}
     ${[10, 20]}     | ${[0.5, 1.5]}   | ${17.5}
-  `('returns $expected for values $values and weights $weights', ({ values, weights, expected }) => {
+  `('should return $expected for values $values and weights $weights', ({ values, weights, expected }) => {
     expect(weightedMean(values, weights)).toBeCloseTo(expected);
   });
 
-  it('throws error when values and weights have different lengths', () => {
+  it('should throw an error when values and weights have different lengths', () => {
     expect(() => weightedMean([1, 2], [1])).toThrow();
   });
 
-  it('throws error when provided with empty arrays', () => {
+  it('should throw an error when provided with empty arrays', () => {
     expect(() => weightedMean([], [])).toThrow();
   });
 
-  it('throws error when sum of weights is zero', () => {
+  it('should throw an error when sum of weights is zero', () => {
     expect(() => weightedMean([1, 2, 3], [0, 0, 0])).toThrow();
   });
 
-  it('does not mutate the input arrays', () => {
+  it('should not mutate the input arrays', () => {
     const values = [1, 2, 3];
     const weights = [1, 1, 1];
     const valuesCopy = [...values];
@@ -110,7 +110,7 @@ describe('multiply', () => {
     ${2}   | ${0}   | ${0}
     ${-2}  | ${3}   | ${-6}
     ${0.1} | ${0.2} | ${0.02}
-  `('returns $expected when multiplying $a and $b', ({ a, b, expected }) => {
+  `('should return $expected when multiplying $a and $b', ({ a, b, expected }) => {
     expect(multiply(a, b)).toBeCloseTo(expected);
   });
 });
@@ -122,7 +122,7 @@ describe('add', () => {
     ${-1}  | ${2}   | ${1}
     ${1.1} | ${2.2} | ${3.3}
     ${0}   | ${0}   | ${0}
-  `('returns $expected when adding $a and $b', ({ a, b, expected }) => {
+  `('should return $expected when adding $a and $b', ({ a, b, expected }) => {
     expect(add(a, b)).toBeCloseTo(expected);
   });
 });
@@ -133,11 +133,11 @@ describe('divide', () => {
     ${6}  | ${3}  | ${2}
     ${1}  | ${2}  | ${0.5}
     ${10} | ${-2} | ${-5}
-  `('returns $expected when dividing $a by $b', ({ a, b, expected }) => {
+  `('should return $expected when dividing $a by $b', ({ a, b, expected }) => {
     expect(divide(a, b)).toBeCloseTo(expected);
   });
 
-  it('throws an error when dividing by zero', () => {
+  it('should throw an error when dividing by zero', () => {
     expect(() => divide(1, 0)).toThrow();
   });
 });
@@ -149,18 +149,18 @@ describe('sum', () => {
     ${[]}         | ${0}
     ${[-1, 1]}    | ${0}
     ${[0.1, 0.2]} | ${0.3}
-  `('returns $expected for sum($values)', ({ values, expected }) => {
+  `('should return $expected for sum($values)', ({ values, expected }) => {
     expect(sum(values)).toBeCloseTo(expected);
   });
 });
 
 describe('sumBy', () => {
-  it('sums values using a key accessor', () => {
+  it('should sum values using a key accessor', () => {
     const data = [{ value: 1 }, { value: 2 }, { value: 3 }];
     expect(sumBy(data, 'value')).toBe(6);
   });
 
-  it('sums values using a function accessor', () => {
+  it('should sum values using a function accessor', () => {
     const data = [{ a: 1 }, { a: 2 }];
     expect(sumBy(data, obj => obj.a)).toBe(3);
   });
@@ -175,7 +175,7 @@ describe('mean', () => {
     ${[]}        | ${NaN}
     ${null}      | ${NaN}
     ${undefined} | ${NaN}
-  `('returns $expected for $values', ({ values, expected }) => {
+  `('should return $expected for $values', ({ values, expected }) => {
     expect(mean(values)).toBe(expected);
   });
 });
