@@ -1,7 +1,7 @@
+import { GekkoError } from '@errors/gekko.error';
 import { getUnixTime } from 'date-fns';
 import { defer } from 'lodash-es';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FailedtoTickOnTimeError } from '../../../errors/failedToTickOnTime.error';
 import { Heart } from './heart';
 
 vi.mock('@services/logger', () => ({ debug: vi.fn() }));
@@ -43,7 +43,7 @@ describe('Heart', () => {
   it('should throw if tick is excessively delayed', () => {
     vi.setSystemTime(10000);
     heart['lastTick'] = getUnixTime(new Date()) - 100;
-    expect(() => heart.tick()).toThrowError(FailedtoTickOnTimeError);
+    expect(() => heart.tick()).toThrowError(GekkoError);
   });
 
   it('should update lastTick on every tick', () => {

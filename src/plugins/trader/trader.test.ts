@@ -1,8 +1,8 @@
+import { GekkoError } from '@errors/gekko.error';
 import { Broker } from '@services/broker/broker';
 import { bindAll } from 'lodash-es';
 import EventEmitter from 'node:events';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
-import { PluginError } from '../../errors/plugin/plugin.error';
 import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '../../services/core/order/base/baseOrder.const';
 import { StickyOrder } from '../../services/core/order/sticky/stickyOrder';
 import { error, warning } from '../../services/logger';
@@ -595,7 +595,7 @@ describe('Trader', () => {
       } catch (err) {
         error = err;
       }
-      expect(error).toBeInstanceOf(PluginError);
+      expect(error).toBeInstanceOf(GekkoError);
     });
 
     it('should clear order after handling the completed event', async () => {

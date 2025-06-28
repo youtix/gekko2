@@ -1,5 +1,4 @@
-import { IndicatorNotFoundError } from '@errors/indicator/indicatorNotFound.error';
-import { StrategyAlreadyInitializedError } from '@errors/strategy/strategyAlreadyInitialized.error';
+import { GekkoError } from '@errors/gekko.error';
 import * as indicators from '@indicators/index';
 import { Indicator } from '@indicators/indicator';
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
@@ -81,10 +80,11 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
 
   // ---- User startegy tools functions ----
   protected addIndicator<T extends IndicatorNames>(name: T, parameters: IndicatorParamaters<T>) {
-    if (this.isStartegyInitialized) throw new StrategyAlreadyInitializedError(name);
+    if (this.isStartegyInitialized)
+      throw new GekkoError('strategy', `Can only add indicators (${name}) in init function of the strategy.`);
 
     const Indicator = indicators[name];
-    if (!Indicator) throw new IndicatorNotFoundError(name);
+    if (!Indicator) throw new GekkoError('strategy', `${name} indicator not found.`);
 
     // @ts-expect-error TODO fix complex typescript error
     const indicator = new Indicator(parameters);

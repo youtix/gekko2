@@ -1,5 +1,4 @@
-import { BrokerError } from '@errors/broker/broker.error';
-import { StorageError } from '@errors/storage/storage.error';
+import { GekkoError } from '@errors/gekko.error';
 import { Broker } from '@services/broker/broker';
 import { GenericBroker } from '@services/broker/generic/generic';
 import { config } from '@services/configuration/configuration';
@@ -15,7 +14,7 @@ class Injecter {
   public storage() {
     if (this.storageInstance) return this.storageInstance;
     const storageConfig = config.getStorage();
-    if (!storageConfig?.type) throw new StorageError('Missing or unknown storage.');
+    if (!storageConfig?.type) throw new GekkoError('injecter', 'Missing or unknown storage.');
     this.storageInstance = new SQLiteStorage();
     return this.storageInstance;
   }
@@ -23,7 +22,7 @@ class Injecter {
   public broker() {
     if (this.brokerInstance) return this.brokerInstance;
     const brokerConfig = config.getBroker();
-    if (!brokerConfig?.name) throw new BrokerError('Missing or unknown broker.');
+    if (!brokerConfig?.name) throw new GekkoError('injecter', 'Missing or unknown broker.');
     this.brokerInstance = new GenericBroker(brokerConfig);
     return this.brokerInstance;
   }

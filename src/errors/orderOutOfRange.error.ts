@@ -1,8 +1,9 @@
+import { Tag } from '@models/types/tag.types';
 import { isNil } from 'lodash-es';
-import { BrokerError } from './broker.error';
+import { GekkoError } from './gekko.error';
 
-export class OrderOutOfRangeError extends BrokerError {
-  constructor(property: string, current: number, min?: number, max?: number) {
+export class OrderOutOfRangeError extends GekkoError {
+  constructor(tag: Tag, property: string, current: number, min?: number, max?: number) {
     const message =
       !isNil(min) && !isNil(max)
         ? `Order '${property}' with value ${current} is out of range. Expected a value between ${min} and ${max}.`
@@ -12,7 +13,7 @@ export class OrderOutOfRangeError extends BrokerError {
             ? `Order '${property}' with value ${current} is too high. Maximum allowed is ${max}.`
             : `Order '${property}' with value ${current} is out of range.`;
 
-    super(message);
+    super(tag, message);
     this.name = 'OrderOutOfRangeError';
   }
 }

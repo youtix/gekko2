@@ -1,33 +1,28 @@
-import { unlinkSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
-const configPath = resolve(__dirname, 'temp-config.json');
-
-const configContent = {
-  showLogo: false,
-  watch: {
-    asset: 'BTC',
-    currency: 'USDT',
-    mode: 'realtime',
-    timeframe: '1d',
-    fillGaps: 'no',
-    warmup: { candleCount: 0 },
-  },
-  plugins: [{ name: 'PerformanceAnalyzer' }],
-  strategy: { name: 'demo' },
-};
+vi.mock('fs', () => ({
+  readFileSync: vi.fn(() =>
+    JSON.stringify({
+      showLogo: false,
+      watch: {
+        asset: 'BTC',
+        currency: 'USDT',
+        mode: 'realtime',
+        timeframe: '1d',
+        fillGaps: 'no',
+        warmup: { candleCount: 0 },
+      },
+      plugins: [{ name: 'PerformanceAnalyzer' }],
+      strategy: { name: 'demo' },
+    }),
+  ),
+}));
 
 describe('Configuration service', () => {
-  beforeEach(() => {
-    writeFileSync(configPath, JSON.stringify(configContent));
-    process.env.GEKKO_CONFIG_FILE_PATH = configPath;
-    vi.resetModules();
-  });
+  process.env.GEKKO_CONFIG_FILE_PATH = './path/to/config/file.json';
 
-  afterEach(() => {
-    unlinkSync(configPath);
-    delete process.env.GEKKO_CONFIG_FILE_PATH;
+  beforeAll(() => {
+    vi.resetModules();
   });
 
   it('loads JSON configuration files', async () => {

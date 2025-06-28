@@ -1,4 +1,4 @@
-import { PluginError } from '@errors/plugin/plugin.error';
+import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { Nullable } from '@models/types/generic.types';
@@ -46,8 +46,7 @@ export class PaperTrader extends Plugin {
   // --- BEGIN LISTENERS ---
   public onStrategyWarmupCompleted() {
     this.warmupCompleted = true;
-    if (!this.warmupCandle)
-      throw new PluginError(this.pluginName, 'No warmup candle on strategy warmup completed event');
+    if (!this.warmupCandle) throw new GekkoError('paper trader', 'No warmup candle on strategy warmup completed event');
     this.processOneMinuteCandle(this.warmupCandle);
   }
 

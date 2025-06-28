@@ -1,7 +1,7 @@
+import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginError } from '../../errors/plugin/plugin.error';
 import { toTimestamp } from '../../utils/date/date.utils';
 import {
   PORTFOLIO_CHANGE_EVENT,
@@ -46,7 +46,7 @@ describe('PaperTrader', () => {
   });
   describe('onStrategyWarmupCompleted', () => {
     it('should throw if no warmup candle is set', () => {
-      expect(() => trader.onStrategyWarmupCompleted()).toThrowError(PluginError);
+      expect(() => trader.onStrategyWarmupCompleted()).toThrowError(GekkoError);
     });
     it('should mark warmup completed', () => {
       trader['warmupCandle'] = { close: 130 } as Candle;

@@ -1,5 +1,5 @@
-import { OrderOutOfRangeError } from '@errors/broker/OrderOutRange.error';
-import { OrderError } from '@errors/order/order.error';
+import { GekkoError } from '@errors/gekko.error';
+import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Action } from '@models/types/action.types';
 import { Order } from '@models/types/order.types';
 import { Broker } from '@services/broker/broker';
@@ -53,7 +53,7 @@ export class StickyOrder extends BaseOrder {
   }
 
   public async createSummary() {
-    if (!this.isOrderCompleted()) throw new OrderError('Order is not completed');
+    if (!this.isOrderCompleted()) throw new GekkoError('core', 'Order is not completed');
 
     const from = resetDateParts(first(this.transactions)?.timestamp, ['ms']);
     const myTrades = await this.broker.fetchMyTrades(from);
@@ -64,13 +64,13 @@ export class StickyOrder extends BaseOrder {
     );
 
     debug(
-      'order',
+      'core',
       [`${myTrades.length} trades used to fill sticky order.`, `First trade started at: ${toISOString(from)}.`].join(
         ' ',
       ),
     );
 
-    if (!trades.length) throw new OrderError('No trades found in order');
+    if (!trades.length) throw new GekkoError('core', 'No trades found in order');
 
     const amounts = map(trades, 'amount');
     const feePercents = reject(map(trades, 'fee.rate'), isNil);
@@ -85,7 +85,7 @@ export class StickyOrder extends BaseOrder {
   }
 
   private async checkOrder() {
-    debug('order', `Starting checking order ${this.id} status`);
+    debug('core', `Starting checking order ${this.id} status`);
 
     // If completed or canceling execute cancel() to clear interval.
     if (this.isOrderCompleted() || this.completing) return await this.cancel();
@@ -97,7 +97,7 @@ export class StickyOrder extends BaseOrder {
   }
 
   private async move() {
-    debug('order', `Starting moving order ${this.id}`);
+    debug('core', `Starting moving order ${this.id}`);
 
     // Ignoring move if cancel order has been given during checking
     if (this.completing || !this.id) return;
@@ -134,7 +134,7 @@ export class StickyOrder extends BaseOrder {
   // Overrided functions
   protected handleCreateOrderSuccess({ id, status, filled, price, remaining, timestamp }: Order) {
     debug(
-      'order',
+      'core',
       [
         `Order ${id} created with success.`,
         `Status: ${status};`,
@@ -165,7 +165,7 @@ export class StickyOrder extends BaseOrder {
     }
 
     if (status === 'open') return Promise.resolve(this.setStatus('open'));
-    warning('order', `Order creation succeeded, but unknown status (${status}) returned`);
+    warning('core', `Order creation succeeded, but unknown status (${status}) returned`);
     return Promise.resolve();
   }
 
@@ -185,7 +185,7 @@ export class StickyOrder extends BaseOrder {
 
   protected handleCancelOrderSuccess({ id, status, filled, remaining, timestamp, price }: Order) {
     debug(
-      'order',
+      'core',
       [
         `Order ${id} canceled with success.`,
         `Order is moving: ${this.moving};`,
@@ -221,7 +221,7 @@ export class StickyOrder extends BaseOrder {
 
   protected async handleFetchOrderSuccess({ id, status, filled, price, remaining, timestamp }: Order) {
     debug(
-      'order',
+      'core',
       [
         `Order ${id} fetched with success.`,
         `Order is moving: ${this.moving};`,
@@ -249,7 +249,7 @@ export class StickyOrder extends BaseOrder {
       try {
         const ticker = await this.broker.fetchTicker();
         const bookSide = this.side === 'buy' ? 'bid' : 'ask';
-        debug('order', `Moving order ${id} to ${bookSide} side ${ticker[bookSide]}. Old price: ${price}.`);
+        debug('core', `Moving order ${id} to ${bookSide} side ${ticker[bookSide]}. Old price: ${price}.`);
 
         if (price && ticker[bookSide] !== price) await this.move();
       } catch (error) {

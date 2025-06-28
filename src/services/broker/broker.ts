@@ -1,6 +1,5 @@
-import { MissingBrokerFeatureError } from '@errors/broker/missingBrokerFeature.error';
-import { OrderOutOfRangeError } from '@errors/broker/OrderOutRange.error';
-import { UndefinedLimitsError } from '@errors/broker/undefinedLimits.error';
+import { GekkoError } from '@errors/gekko.error';
+import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Action } from '@models/types/action.types';
 import { Candle } from '@models/types/candle.types';
 import { BrokerConfig } from '@models/types/configuration.types';
@@ -14,6 +13,7 @@ import { getRetryDelay } from '@utils/fetch/fetch.utils';
 import ccxt, { Exchange, NetworkError } from 'ccxt';
 import { each, isNil } from 'lodash-es';
 import { BROKER_MANDATORY_FEATURES, BROKER_MAX_RETRIES_ON_FAILURE, INTERVAL_BETWEEN_CALLS_IN_MS } from './broker.const';
+import { UndefinedLimitsError } from './broker.error';
 
 export abstract class Broker {
   protected broker: Exchange;
@@ -29,7 +29,7 @@ export abstract class Broker {
     this.broker = new ccxt[name](ccxtConfig);
     const mandatoryFeatures = [...BROKER_MANDATORY_FEATURES, ...(sandbox ? ['sandbox'] : [])];
     each(mandatoryFeatures, feature => {
-      if (!this.broker.has[feature]) throw new MissingBrokerFeatureError(name, feature);
+      if (!this.broker.has[feature]) throw new GekkoError('broker', `Missing ${feature} feature in ${name} broker`);
     });
     this.broker.setSandboxMode(sandbox ?? false);
     this.broker.options['maxRetriesOnFailure'] = 0; // we handle it manualy
@@ -97,7 +97,7 @@ export abstract class Broker {
     const ticker = await this.fetchTicker();
     const price = side === 'buy' ? ticker.bid + minimalPrice : ticker.ask - minimalPrice;
     if (price > maximalPrice || price < minimalPrice)
-      throw new OrderOutOfRangeError('price', price, minimalPrice, maximalPrice);
+      throw new OrderOutOfRangeError('broker', 'price', price, minimalPrice, maximalPrice);
     return price;
   }
 
@@ -107,7 +107,7 @@ export abstract class Broker {
 
     if (isNil(minimalAmount) || isNil(maximalAmount))
       throw new UndefinedLimitsError('amount', minimalAmount, maximalAmount);
-    if (amount < minimalAmount) throw new OrderOutOfRangeError('amount', amount, minimalAmount);
+    if (amount < minimalAmount) throw new OrderOutOfRangeError('broker', 'amount', amount, minimalAmount);
 
     if (amount > maximalAmount) return maximalAmount;
     return amount;
@@ -121,7 +121,7 @@ export abstract class Broker {
 
     const cost = amount * price;
     if (cost > maximalCost || cost < minimalCost)
-      throw new OrderOutOfRangeError('cost', cost, minimalCost, maximalCost);
+      throw new OrderOutOfRangeError('broker', 'cost', cost, minimalCost, maximalCost);
   }
 
   protected abstract cancelLimitOrderOnce(id: string): Promise<Order>;

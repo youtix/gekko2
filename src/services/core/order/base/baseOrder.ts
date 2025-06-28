@@ -26,7 +26,7 @@ export abstract class BaseOrder extends EventEmitter {
 
   protected async createOrder(action: Action, amount: number) {
     try {
-      debug('order', `Creating ${action} limit order with amount: ${amount}`);
+      debug('core', `Creating ${action} limit order with amount: ${amount}`);
       const order = await this.broker.createLimitOrder(action, amount);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
@@ -36,7 +36,7 @@ export abstract class BaseOrder extends EventEmitter {
 
   protected async cancelOrder(id: string) {
     try {
-      debug('order', `Canceling order with ID: ${id}`);
+      debug('core', `Canceling order with ID: ${id}`);
       const order = await this.broker.cancelLimitOrder(id);
       await this.handleCancelOrderSuccess(order);
     } catch (error) {
@@ -46,7 +46,7 @@ export abstract class BaseOrder extends EventEmitter {
 
   protected async fetchOrder(id: string) {
     try {
-      debug('order', `Fetching order with ID: ${id}`);
+      debug('core', `Fetching order with ID: ${id}`);
       const order = await this.broker.fetchOrder(id);
       await this.handleFetchOrderSuccess(order);
     } catch (error) {
@@ -61,8 +61,8 @@ export abstract class BaseOrder extends EventEmitter {
   protected setStatus(status: OrderStatus, reason?: string) {
     this.status = status;
     this.emit(ORDER_STATUS_CHANGED_EVENT, this.status);
-    if (reason) error('order', `Sticky order ${status}: ${reason}`);
-    else info('order', `Sticky order ${status}`);
+    if (reason) error('core', `Sticky order ${status}: ${reason}`);
+    else info('core', `Sticky order ${status}`);
   }
 
   protected orderCanceled(partiallyFilled = false) {

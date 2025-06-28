@@ -1,11 +1,9 @@
-import { InvalidDateRangeError } from '@errors/invalidDateRange.error';
+import { GekkoError } from '@errors/gekko.error';
 import { isDaterangeValid } from '@utils/date/date.utils';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import JSON5 from 'json5';
 import { find } from 'lodash-es';
-import { MalformedConfigurationError } from '../../errors/malformedConfiguration.error';
-import { MissingEnvVarError } from '../../errors/missingEnvVar.error';
 import { Configuration as ConfigurationModel } from '../../models/types/configuration.types';
 import { configurationSchema } from './configuration.schema';
 
@@ -13,7 +11,7 @@ class Configuration {
   private configuration?: ConfigurationModel;
   constructor() {
     const configFilePath = process.env['GEKKO_CONFIG_FILE_PATH'];
-    if (!configFilePath) throw new MissingEnvVarError('GEKKO_CONFIG_FILE_PATH');
+    if (!configFilePath) throw new GekkoError('configuration', 'Missing GEKKO_CONFIG_FILE_PATH environment variable');
     const isJson = configFilePath?.endsWith('json') || configFilePath?.endsWith('json5');
     const isYaml = configFilePath?.endsWith('yml') || configFilePath?.endsWith('yaml');
     const data = readFileSync(configFilePath, 'utf8');
@@ -23,35 +21,35 @@ class Configuration {
   }
 
   public showLogo() {
-    if (!this.configuration) throw new MalformedConfigurationError('Empty configuration file');
+    if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
     return this.configuration.showLogo;
   }
 
   public getPlugins() {
-    if (!this.configuration) throw new MalformedConfigurationError('Empty configuration file');
+    if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
     return this.configuration.plugins;
   }
 
   public getStrategy<T>() {
-    if (!this.configuration) throw new MalformedConfigurationError('Empty configuration file');
+    if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
     return this.configuration.strategy as T & { name: string };
   }
 
   public getWatch() {
-    if (!this.configuration) throw new MalformedConfigurationError('Empty configuration file');
+    if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
     const { daterange, scan, mode } = this.configuration.watch;
 
     if (mode === 'importer' && !isDaterangeValid(daterange.start, daterange.end))
-      throw new InvalidDateRangeError(daterange.start, daterange.end);
+      throw new GekkoError('configuration', `Wrong date range: ${daterange.start} -> ${daterange.end}`);
 
     if (mode === 'backtest' && !scan && !isDaterangeValid(daterange.start, daterange.end))
-      throw new InvalidDateRangeError(daterange.start, daterange.end);
+      throw new GekkoError('configuration', `Wrong date range: ${daterange.start} -> ${daterange.end}`);
 
     return this.configuration.watch;
   }
 
   public getStorage() {
-    if (!this.configuration) throw new MalformedConfigurationError('Empty configuration file');
+    if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
     const { watch, plugins } = this.configuration;
     if (this.configuration.storage && (watch.mode === 'backtest' || find(plugins, { name: 'CandleWriter' }))) {
       return this.configuration.storage;
@@ -59,7 +57,7 @@ class Configuration {
   }
 
   public getBroker() {
-    if (!this.configuration) throw new MalformedConfigurationError('Empty configuration file');
+    if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
     return this.configuration.broker;
   }
 }

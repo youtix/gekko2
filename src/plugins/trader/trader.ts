@@ -1,4 +1,4 @@
-import { PluginError } from '@errors/plugin/plugin.error';
+import { GekkoError } from '@errors/gekko.error';
 import { Action } from '@models/types/action.types';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
@@ -240,7 +240,7 @@ export class Trader extends Plugin {
   }
 
   private async handleOrderCompletedEvent(advice: Advice, id: string) {
-    if (!this.order) throw new PluginError('trader', 'Missing order when handling order completed event');
+    if (!this.order) throw new GekkoError('trader', 'Missing order when handling order completed event');
 
     const summary = await this.order.createSummary();
 
