@@ -12,7 +12,7 @@ import {
   TRADE_INITIATED_EVENT,
 } from '@plugins/plugin.const';
 import { warning } from '@services/logger';
-import Big from 'big.js';
+import { round } from '@utils/math/round.utils';
 import { filter } from 'lodash-es';
 import { paperTraderSchema } from './paperTrader.schema';
 import { PapertraderConfig, Position } from './paperTrader.types';
@@ -34,7 +34,7 @@ export class PaperTrader extends Plugin {
     super(PaperTrader.name);
     this.balance = null;
     this.rawFee = feeUsing === 'maker' ? feeMaker : feeTaker;
-    this.fee = +Big(1).minus(Big(this.rawFee).div(100));
+    this.fee = 1 - this.rawFee / 100;
     this.portfolio = { ...simulationBalance };
     this.exposed = this.portfolio.asset > 0;
     this.price = 0;
@@ -111,31 +111,31 @@ export class PaperTrader extends Plugin {
   }
 
   private getBalance() {
-    return +Big(this.price).mul(this.portfolio.asset).plus(this.portfolio.currency);
+    return this.price * this.portfolio.asset + this.portfolio.currency;
   }
 
   private updatePosition(recommendation: 'short' | 'long') {
     const result: Position = {};
 
     if (recommendation === 'long') {
-      result.cost = +Big(1).minus(this.fee).mul(this.portfolio.currency);
-      this.portfolio.asset += +Big(this.portfolio.currency).div(this.price).mul(this.fee).round(8, Big.roundDown);
+      result.cost = +((1 - this.fee) * this.portfolio.currency);
+      this.portfolio.asset += round((this.portfolio.currency / this.price) * this.fee, 8, 'down');
       result.amount = this.portfolio.asset;
       this.portfolio.currency = 0;
 
       this.exposed = true;
       this.trades++;
     } else if (recommendation === 'short') {
-      result.cost = +Big(1).minus(this.fee).mul(Big(this.portfolio.asset).mul(this.price));
-      this.portfolio.currency += +Big(this.portfolio.asset).mul(this.price).mul(this.fee).round(8, Big.roundDown);
-      result.amount = +Big(this.portfolio.currency).div(this.price);
+      result.cost = +((1 - this.fee) * (this.portfolio.asset * this.price));
+      this.portfolio.currency += round(this.portfolio.asset * this.price * this.fee, 8, 'down');
+      result.amount = this.portfolio.currency / this.price;
       this.portfolio.asset = 0;
 
       this.exposed = false;
       this.trades++;
     }
 
-    result.effectivePrice = +Big(this.price).mul(this.fee);
+    result.effectivePrice = this.price * this.fee;
 
     return result;
   }

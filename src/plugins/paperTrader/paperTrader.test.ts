@@ -288,7 +288,7 @@ describe('PaperTrader', () => {
       // cost = (1 - fee) * portfolio.currency
       // cost = (1 - 0.9975) * 1000 = 0.0025 * 1000 = 2.5
       const { cost } = trader['updatePosition']('long');
-      expect(cost).toBe(2.5);
+      expect(cost).toBeCloseTo(2.5);
     });
 
     it('should return correct amount for a long position', () => {
@@ -340,7 +340,7 @@ describe('PaperTrader', () => {
         // cost = (1 - fee) * (asset * price)
         // = 0.0025 * (9.975 * 100) = 0.0025 * 997.5 ≈ 2.49375.
         const { cost } = trader['updatePosition']('short');
-        expect(cost).toBe(2.49375);
+        expect(cost).toBeCloseTo(2.49375);
       });
 
       it('should return correct amount for a short position', () => {

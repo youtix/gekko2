@@ -2,7 +2,7 @@ import { Report } from '@plugins/performanceAnalyser/performanceAnalyzer.types';
 import { Plugin } from '@plugins/plugin';
 import { error } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import Big from 'big.js';
+import { round } from '@utils/math/round.utils';
 import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'fs';
 import path from 'path';
 import { performanceReporterSchema } from './performanceReporter.schema';
@@ -29,19 +29,19 @@ export class PerformanceReporter extends Plugin {
         toISOString(report.startTime),
         toISOString(report.endTime),
         report.duration,
-        `${+Big(report.exposure).round(2, Big.roundHalfEven)}%`,
+        `${round(report.exposure, 2, 'halfEven')}%`,
         `${this.formater.format(report.startPrice)} ${this.currency}`,
         `${this.formater.format(report.endPrice)} ${this.currency}`,
-        `${+Big(report.market).round(2, Big.roundDown)}%`,
-        `${+Big(report.alpha).round(2, Big.roundDown)}%`,
-        `${this.formater.format(report.yearlyProfit)} ${this.currency} (${+Big(report.relativeYearlyProfit).round(2, Big.roundDown)}%)`,
+        `${round(report.market, 2, 'down')}%`,
+        `${round(report.alpha, 2, 'down')}%`,
+        `${this.formater.format(report.yearlyProfit)} ${this.currency} (${round(report.relativeYearlyProfit, 2, 'down')}%)`,
         report.trades,
         `${this.formater.format(report.startBalance)} ${this.currency}`,
         `${this.formater.format(report.balance)} ${this.currency}`,
         report.sharpe,
-        `${+Big(report.downside).round(2, Big.roundDown)}%`,
-        report.ratioRoundTrips === null ? 'N/A' : `${+Big(report.ratioRoundTrips).round(2, Big.roundDown)}%`,
-        `${+Big(report.worstMaxAdverseExcursion).round(2, Big.roundDown)}%`,
+        `${round(report.downside, 2, 'down')}%`,
+        report.ratioRoundTrips === null ? 'N/A' : `${round(report.ratioRoundTrips, 2, 'down')}%`,
+        `${round(report.worstMaxAdverseExcursion, 2, 'down')}%`,
       ].join(';') + '\n';
 
     try {

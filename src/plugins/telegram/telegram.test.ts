@@ -1,4 +1,3 @@
-import Big from 'big.js';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { upperCase } from 'lodash-es';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +11,7 @@ import {
   TradeInitiated,
 } from '../../models/types/tradeStatus.types';
 import { toISOString, toTimestamp } from '../../utils/date/date.utils';
+import { round } from '../../utils/math/round.utils';
 import { Telegram } from './telegram';
 import { TELEGRAM_API_BASE_URL } from './telegram.const';
 import { telegramSchema } from './telegram.schema';
@@ -210,8 +210,8 @@ describe('Telegram', () => {
         `Roundtrip done from ${toISOString(roundtrip.entryAt)} to ${toISOString(roundtrip.exitAt)}`,
         `Exposed Duration: ${formatDuration(intervalToDuration({ start: 0, end: roundtrip.duration }))}`,
         `Profit & Loss: ${formater.format(roundtrip.pnl)} ${telegram['currency']}`,
-        `Profit percent: ${+Big(roundtrip.profit).round(2, Big.roundDown)}%`,
-        `MAE: ${+Big(roundtrip.maxAdverseExcursion).round(2, Big.roundDown)}%`,
+        `Profit percent: ${round(roundtrip.profit, 2, 'down')}%`,
+        `MAE: ${round(roundtrip.maxAdverseExcursion, 2, 'down')}%`,
       ].join('\n');
       expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
     });
