@@ -39,6 +39,8 @@ export class Trader extends Plugin {
   private exposure: number;
   private exposed: boolean;
   private order?: StickyOrder;
+  // Timer controlling periodic synchronization with the exchange.
+  private syncInterval?: Timer;
 
   constructor() {
     super(Trader.name);
@@ -53,7 +55,7 @@ export class Trader extends Plugin {
 
     bindAll(this, ['synchronize']);
 
-    setInterval(this.synchronize, SYNCHRONIZATION_INTERVAL);
+    this.syncInterval = setInterval(this.synchronize, SYNCHRONIZATION_INTERVAL);
   }
 
   private async synchronize() {
@@ -307,7 +309,10 @@ export class Trader extends Plugin {
   }
 
   protected processFinalize(): void {
-    /* noop */
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = undefined;
+    }
   }
 
   public static getStaticConfiguration() {
