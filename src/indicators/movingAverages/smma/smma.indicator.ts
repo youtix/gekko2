@@ -1,6 +1,5 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { SMA } from '../sma/sma.indicator';
 
 export class SMMA extends Indicator<'SMMA'> {
@@ -29,11 +28,7 @@ export class SMMA extends Indicator<'SMMA'> {
       return;
     }
 
-    this.result = +Big(this.period)
-      .minus(1)
-      .mul(this.result ?? 0)
-      .add(candle.close)
-      .div(this.period);
+    this.result = ((this.period - 1) * (this.result ?? 0) + candle.close) / this.period;
   }
 
   public getResult() {

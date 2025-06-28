@@ -1,6 +1,5 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 
 export class TrueRange extends Indicator<'TrueRange'> {
   private prevCandle?: Candle;
@@ -16,23 +15,22 @@ export class TrueRange extends Indicator<'TrueRange'> {
       return;
     }
 
-    // Convert current high, low and previous close to Big for precise arithmetic.
-    const currentHigh = Big(candle.high);
-    const currentLow = Big(candle.low);
-    const prevClose = Big(this.prevCandle.close);
+    const currentHigh = candle.high;
+    const currentLow = candle.low;
+    const prevClose = this.prevCandle.close;
 
     // Calculate the three components:
-    const range1 = currentHigh.minus(currentLow);
-    const range2 = currentHigh.minus(prevClose).abs();
-    const range3 = currentLow.minus(prevClose).abs();
+    const range1 = currentHigh - currentLow;
+    const range2 = Math.abs(currentHigh - prevClose);
+    const range3 = Math.abs(currentLow - prevClose);
 
     // Determine the true range as the maximum of the three values.
     let greatest = range1;
-    if (range2.gt(greatest)) greatest = range2;
-    if (range3.gt(greatest)) greatest = range3;
+    if (range2 > greatest) greatest = range2;
+    if (range3 > greatest) greatest = range3;
 
     // Set the indicator result.
-    this.result = +greatest;
+    this.result = greatest;
 
     // Update the previous candle for the next computation.
     this.prevCandle = candle;

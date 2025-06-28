@@ -2,7 +2,6 @@ import { Indicator } from '@indicators/indicator';
 import { INPUT_SOURCES } from '@indicators/indicator.const';
 import { WilderSmoothing } from '@indicators/movingAverages/wilderSmoothing/wilderSmoothing.indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { isNil } from 'lodash-es';
 
 export class RSI extends Indicator<'RSI'> {
@@ -25,7 +24,7 @@ export class RSI extends Indicator<'RSI'> {
       return;
     }
 
-    const change = +Big(price).minus(this.prevPrice);
+    const change = price - this.prevPrice;
     const gain = change > 0 ? change : 0;
     const loss = change < 0 ? -change : 0;
 
@@ -36,8 +35,8 @@ export class RSI extends Indicator<'RSI'> {
     const avgLoss = this.wilderLoss.getResult();
 
     if (!isNil(avgGain) && !isNil(avgLoss)) {
-      const total = +Big(avgGain).plus(avgLoss);
-      this.result = total === 0 ? 0 : +Big(avgGain).div(total).times(100);
+      const total = avgGain + avgLoss;
+      this.result = total === 0 ? 0 : (avgGain / total) * 100;
     }
 
     this.prevPrice = price;

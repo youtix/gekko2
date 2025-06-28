@@ -1,5 +1,4 @@
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { isNil } from 'lodash-es';
 import { Indicator } from '../../indicator';
 import { EMA } from '../ema/ema.indicator';
@@ -33,7 +32,7 @@ export class TEMA extends Indicator<'TEMA'> {
     const e3 = this.ema3.getResult();
     if (isNil(e3)) return;
 
-    this.result = +Big(3).times(e1).minus(Big(3).times(e2)).plus(e3);
+    this.result = 3 * e1 - 3 * e2 + e3;
   }
 
   public getResult() {

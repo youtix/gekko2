@@ -1,6 +1,5 @@
 import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { isNil } from 'lodash-es';
 import { Indicator } from '../../indicator';
 
@@ -41,17 +40,17 @@ export class MACD extends Indicator<'MACD'> {
     const slow = this.emaSlow.getResult();
 
     if (isNil(fast) || isNil(slow)) return;
-    const macdLine = Big(fast).minus(slow);
-    this.emaSignal.onNewCandle({ close: +macdLine } as Candle);
+    const macdLine = fast - slow;
+    this.emaSignal.onNewCandle({ close: macdLine } as Candle);
     const signalNum = this.emaSignal.getResult();
 
     if (isNil(signalNum)) return;
-    const hist = macdLine.minus(Big(signalNum));
+    const hist = macdLine - signalNum;
 
     this.result = {
-      macd: +macdLine,
+      macd: macdLine,
       signal: signalNum,
-      hist: +hist,
+      hist,
     };
   }
 

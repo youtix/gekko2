@@ -1,6 +1,5 @@
 import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { isNil } from 'lodash-es';
 import { Indicator } from '../../indicator';
 import { ATR } from '../atr/atr.indicator';
@@ -41,17 +40,17 @@ export class ATRCD extends Indicator<'ATRCD'> {
     const slow = this.emaSlow.getResult();
 
     if (isNil(fast) || isNil(slow)) return;
-    const atrcdLine = Big(fast).minus(slow);
-    this.emaSignal.onNewCandle({ close: +atrcdLine } as Candle);
+    const atrcdLine = fast - slow;
+    this.emaSignal.onNewCandle({ close: atrcdLine } as Candle);
     const signalNum = this.emaSignal.getResult();
 
     if (isNil(signalNum)) return;
-    const hist = atrcdLine.minus(Big(signalNum));
+    const hist = atrcdLine - signalNum;
 
     this.result = {
-      atrcd: +atrcdLine,
+      atrcd: atrcdLine,
       signal: signalNum,
-      hist: +hist,
+      hist,
     };
   }
 

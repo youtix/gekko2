@@ -1,6 +1,5 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { isNil } from 'lodash-es';
 import { EMA } from '../ema/ema.indicator';
 
@@ -21,7 +20,7 @@ export class DEMA extends Indicator<'DEMA'> {
     if (!isNil(innerRes)) {
       this.outer.onNewCandle({ close: innerRes } as Candle);
       const outerRes = this.outer.getResult();
-      if (!isNil(outerRes)) this.result = +Big(2).mul(innerRes).minus(outerRes);
+      if (!isNil(outerRes)) this.result = 2 * innerRes - outerRes;
     }
   }
 

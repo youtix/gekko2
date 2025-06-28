@@ -1,6 +1,5 @@
 import { MinusDM } from '@indicators/directionalMovement/minusDM/minusDM.indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 import { Indicator } from '../../indicator';
 
 export class PSAR extends Indicator<'PSAR'> {
@@ -25,7 +24,7 @@ export class PSAR extends Indicator<'PSAR'> {
   }
 
   private calcSar(sar: number, ep: number, af: number) {
-    return +Big(ep).minus(sar).mul(af).plus(sar);
+    return (ep - sar) * af + sar;
   }
 
   public onNewCandle(candle: Candle) {
@@ -59,7 +58,7 @@ export class PSAR extends Indicator<'PSAR'> {
         this.result = this.sar;
         if (currentHigh > this.ep) {
           this.ep = currentHigh;
-          this.af = Math.min(+Big(this.af).plus(this.acceleration), this.maxAcceleration);
+          this.af = Math.min(this.af + this.acceleration, this.maxAcceleration);
         }
         this.sar = Math.min(this.calcSar(newSar, this.ep, this.af), prevLow, currentLow);
       }
@@ -75,7 +74,7 @@ export class PSAR extends Indicator<'PSAR'> {
         this.result = this.sar;
         if (currentLow < this.ep) {
           this.ep = currentLow;
-          this.af = Math.min(+Big(this.af).plus(this.acceleration), this.maxAcceleration);
+          this.af = Math.min(this.af + this.acceleration, this.maxAcceleration);
         }
         this.sar = Math.max(this.calcSar(newSar, this.ep, this.af), prevHigh, currentHigh);
       }

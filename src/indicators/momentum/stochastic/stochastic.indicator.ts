@@ -5,7 +5,6 @@ import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
 import { WMA } from '@indicators/movingAverages/wma/wma.indicator';
 import { Candle } from '@models/types/candle.types';
-import Big from 'big.js';
 
 const MOVING_AVERAGES = {
   sma: SMA,
@@ -64,12 +63,12 @@ export class Stochastic extends Indicator<'Stochastic'> {
     this.highs[this.idxFast] = candle.high;
     this.lows[this.idxFast] = candle.low;
     this.closes[this.idxFast] = candle.close;
-    this.idxFast = +Big(this.idxFast).plus(1).mod(this.fastKPeriod);
+    this.idxFast = (this.idxFast + 1) % this.fastKPeriod;
 
     const lowest = Math.min(...this.lows);
     const highest = Math.max(...this.highs);
-    const range = Big(highest).minus(lowest);
-    const rawK = range.eq(0) ? 0 : +Big(candle.close).minus(lowest).div(range).times(100);
+    const range = highest - lowest;
+    const rawK = range === 0 ? 0 : ((candle.close - lowest) / range) * 100;
 
     this.maSlowK.onNewCandle({ close: rawK } as Candle);
     const slowK = this.maSlowK.getResult();
