@@ -218,26 +218,26 @@ describe('Telegram', () => {
   });
 
   describe('sendMessage', () => {
-    it('should call getFetcher().post with correct URL and payload', () => {
+    it('should call getFetcher().post with correct URL and payload', async () => {
       const fakeFetcher = { post: vi.fn().mockReturnValue('result') };
       telegram['getFetcher'] = () => fakeFetcher;
       const expectedUrl = `${TELEGRAM_API_BASE_URL}abc/sendMessage`;
       const message = 'Test message';
       const expectedPayload = { chat_id: '123', text: message };
-      const result = telegram['sendMessage']('abc', '123', message);
+      const result = await telegram['sendMessage']('abc', '123', message);
       expect(fakeFetcher.post).toHaveBeenCalledWith({ url: expectedUrl, payload: expectedPayload });
       expect(result).toBe('result');
     });
 
-    it('should catch errors and return undefined', () => {
+    it('should catch errors and return undefined', async () => {
       const fakeFetcher = {
         post: vi.fn().mockImplementation(() => {
           throw new Error('fail');
         }),
       };
       telegram['getFetcher'] = () => fakeFetcher;
-      expect(() => telegram['sendMessage']('abc', '123', 'message')).not.toThrow();
-      expect(telegram['sendMessage']('abc', '123', 'message')).toBeUndefined();
+      expect(async () => await telegram['sendMessage']('abc', '123', 'message')).not.toThrow();
+      expect(await telegram['sendMessage']('abc', '123', 'message')).toBeUndefined();
     });
   });
 

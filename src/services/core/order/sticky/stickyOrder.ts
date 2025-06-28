@@ -5,10 +5,10 @@ import { Order } from '@models/types/order.types';
 import { Broker } from '@services/broker/broker';
 import { debug, warning } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
-import { sumBy, weightedMean } from '@utils/math/math.utils';
+import { weightedMean } from '@utils/math/math.utils';
 import Big from 'big.js';
 import { InvalidOrder, OrderNotFound } from 'ccxt';
-import { bindAll, filter, find, first, isNil, last, map, reject, sortBy } from 'lodash-es';
+import { bindAll, filter, find, first, isNil, last, map, reject, sortBy, sumBy } from 'lodash-es';
 import { BaseOrder } from '../base/baseOrder';
 
 export class StickyOrder extends BaseOrder {

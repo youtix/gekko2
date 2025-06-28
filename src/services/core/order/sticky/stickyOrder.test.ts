@@ -597,14 +597,11 @@ describe('StickyOrder', () => {
       ]);
 
       const summary = await stickyOrder.createSummary();
-
-      expect(summary).toStrictEqual({
-        amount: 5,
-        price: 103,
-        feePercent: 0.013,
-        side: 'buy',
-        date: 1710000100000,
-      });
+      expect(summary.amount).toBe(5);
+      expect(summary.price).toBe(103);
+      expect(summary.feePercent).toBeCloseTo(0.013);
+      expect(summary.side).toBe('buy');
+      expect(summary.date).toBe(1710000100000);
     });
   });
 

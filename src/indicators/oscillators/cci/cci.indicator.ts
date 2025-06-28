@@ -2,8 +2,7 @@ import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/types/candle.types';
 import { RingBuffer } from '@utils/array/ringBuffer';
 import { hlc3 } from '@utils/candle/candle.utils';
-import { sum } from '@utils/math/math.utils';
-import { map } from 'lodash-es';
+import { map, sum } from 'lodash-es';
 
 export class CCI extends Indicator<'CCI'> {
   private ringBuffer: RingBuffer<Candle>;

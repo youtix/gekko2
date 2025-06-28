@@ -1,5 +1,4 @@
-import Big from 'big.js';
-import { isFunction, map, reduce } from 'lodash-es';
+import { add, divide, map, mean, multiply, reduce, sum } from 'lodash-es';
 
 const valuesMinusMeanSquared = (values: number[] = []) => {
   const average = mean(values);
@@ -59,37 +58,24 @@ export const weightedMean = (values: number[], weights: number[]): number => {
 };
 
 /** Least squares linear regression fitting. */
-export const linreg = (valuesX: number[], valuesY: number[]) => {
+export const linreg = (valuesX: number[], valuesY: number[]): [number, number] | [] => {
   if (valuesX.length !== valuesY.length) throw new Error('The parameters valuesX and valuesY need to have same size!');
 
   const n = valuesX.length;
   if (n === 0) return [];
 
-  // Calculate sums using Big.js for high-precision arithmetic.
-  const sumX = reduce(valuesX, (acc, x) => acc.plus(Big(x)), Big(0));
-  const sumY = reduce(valuesY, (acc, y) => acc.plus(Big(y)), Big(0));
-  const sumXX = reduce(valuesX, (acc, x) => acc.plus(Big(x).times(Big(x))), Big(0));
-  const sumXY = reduce(valuesX, (acc, x, i) => acc.plus(Big(x).times(Big(valuesY[i]))), Big(0));
+  const sumX = reduce(valuesX, (acc, x) => acc + x, 0);
+  const sumY = reduce(valuesY, (acc, y) => acc + y, 0);
+  const sumXX = reduce(valuesX, (acc, x) => acc + x * x, 0);
+  const sumXY = reduce(valuesX, (acc, x, i) => acc + x * valuesY[i], 0);
 
-  const count = Big(n);
+  const numerator = n * sumXY - sumX * sumY;
+  const denominator = n * sumXX - sumX * sumX;
 
-  // Calculate slope (m) and intercept (b) with the formulas:
-  // m = (n * sumXY - sumX * sumY) / (n * sumXX - sumX^2)
-  // b = (sumY / n) - m * (sumX / n)
-  const numerator = count.times(sumXY).minus(sumX.times(sumY));
-  const denominator = count.times(sumXX).minus(sumX.times(sumX));
-  const m = numerator.div(denominator);
-  const b = sumY.div(count).minus(m.times(sumX).div(count));
+  if (denominator === 0) return [NaN, NaN]; // Degenerate case (vertical line)
 
-  return [+m, +b];
+  const m = numerator / denominator;
+  const b = sumY / n - m * (sumX / n);
+
+  return [m, b];
 };
-
-export const multiply = (a: number, b: number) => +Big(a).mul(b);
-export const add = (a: number, b: number) => +Big(a).add(b);
-export const divide = (a: number, b: number) => +Big(a).div(b);
-export const sum = (values: number[]) => reduce(values, add, 0);
-export const sumBy = <T>(values: T[], cond: keyof T | ((value: T) => number)) => {
-  if (isFunction(cond)) return reduce(values, (p, c) => add(p, cond(c)), 0);
-  else return reduce(values, (p, c) => add(p, c[cond] as number), 0);
-};
-export const mean = (values: number[] = []) => (!values?.length ? NaN : divide(reduce(values, add, 0), values.length));

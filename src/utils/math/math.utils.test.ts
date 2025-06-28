@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { add, divide, linreg, mean, multiply, percentile, stdev, sum, sumBy, weightedMean } from './math.utils';
+import { linreg, percentile, stdev, weightedMean } from './math.utils';
 
 describe('stdev', () => {
   it.each`
@@ -52,8 +52,8 @@ describe('linreg', () => {
     ({ valuesX, valuesY, expectedM, expectedB }) => {
       const [m, b] = linreg(valuesX, valuesY);
       // Compare the Big numbers by converting them to string.
-      expect(m).toBe(expectedM);
-      expect(b).toBe(expectedB);
+      expect(m).toBeCloseTo(expectedM);
+      expect(b).toBeCloseTo(expectedB);
     },
   );
 
@@ -100,82 +100,5 @@ describe('weightedMean', () => {
 
     expect(values).toEqual(valuesCopy);
     expect(weights).toEqual(weightsCopy);
-  });
-});
-
-describe('multiply', () => {
-  it.each`
-    a      | b      | expected
-    ${2}   | ${3}   | ${6}
-    ${2}   | ${0}   | ${0}
-    ${-2}  | ${3}   | ${-6}
-    ${0.1} | ${0.2} | ${0.02}
-  `('should return $expected when multiplying $a and $b', ({ a, b, expected }) => {
-    expect(multiply(a, b)).toBeCloseTo(expected);
-  });
-});
-
-describe('add', () => {
-  it.each`
-    a      | b      | expected
-    ${1}   | ${2}   | ${3}
-    ${-1}  | ${2}   | ${1}
-    ${1.1} | ${2.2} | ${3.3}
-    ${0}   | ${0}   | ${0}
-  `('should return $expected when adding $a and $b', ({ a, b, expected }) => {
-    expect(add(a, b)).toBeCloseTo(expected);
-  });
-});
-
-describe('divide', () => {
-  it.each`
-    a     | b     | expected
-    ${6}  | ${3}  | ${2}
-    ${1}  | ${2}  | ${0.5}
-    ${10} | ${-2} | ${-5}
-  `('should return $expected when dividing $a by $b', ({ a, b, expected }) => {
-    expect(divide(a, b)).toBeCloseTo(expected);
-  });
-
-  it('should throw an error when dividing by zero', () => {
-    expect(() => divide(1, 0)).toThrow();
-  });
-});
-
-describe('sum', () => {
-  it.each`
-    values        | expected
-    ${[1, 2, 3]}  | ${6}
-    ${[]}         | ${0}
-    ${[-1, 1]}    | ${0}
-    ${[0.1, 0.2]} | ${0.3}
-  `('should return $expected for sum($values)', ({ values, expected }) => {
-    expect(sum(values)).toBeCloseTo(expected);
-  });
-});
-
-describe('sumBy', () => {
-  it('should sum values using a key accessor', () => {
-    const data = [{ value: 1 }, { value: 2 }, { value: 3 }];
-    expect(sumBy(data, 'value')).toBe(6);
-  });
-
-  it('should sum values using a function accessor', () => {
-    const data = [{ a: 1 }, { a: 2 }];
-    expect(sumBy(data, obj => obj.a)).toBe(3);
-  });
-});
-
-describe('mean', () => {
-  it.each`
-    values       | expected
-    ${[1, 2, 3]} | ${2}
-    ${[0]}       | ${0}
-    ${[10, 20]}  | ${15}
-    ${[]}        | ${NaN}
-    ${null}      | ${NaN}
-    ${undefined} | ${NaN}
-  `('should return $expected for $values', ({ values, expected }) => {
-    expect(mean(values)).toBe(expected);
   });
 });
