@@ -4,7 +4,6 @@ import { Trade } from '@models/types/trade.types';
 import { debug } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { filterTradesByTimestamp } from '@utils/trade/trade.utils';
-import Big from 'big.js';
 import { dropRight, each, first, groupBy, last, map, max, mergeWith, min, pick, sortBy } from 'lodash-es';
 
 export class CandleManager {
@@ -57,7 +56,7 @@ export class CandleManager {
     each(trades, ({ price, amount }) => {
       candle.high = max([candle.high, price]) ?? 0;
       candle.low = min([candle.low, price]) ?? 0;
-      candle.volume = +Big(amount).plus(candle.volume);
+      candle.volume += amount;
     });
 
     return candle;

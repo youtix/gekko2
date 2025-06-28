@@ -1,4 +1,3 @@
-import Big from 'big.js';
 import { compact, first, map, max, min } from 'lodash-es';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Candle } from '../../../../models/types/candle.types';
@@ -125,7 +124,7 @@ describe('candleBatcher', () => {
       high: max([firstCandle?.high, secondCandle?.high]),
       low: min([firstCandle?.low, secondCandle?.low]),
       close: secondCandle?.close,
-      volume: +Big(firstCandle?.volume ?? 0).plus(secondCandle?.volume ?? 0),
+      volume: (firstCandle?.volume ?? 0) + (secondCandle?.volume ?? 0),
     };
     const result: (Candle | undefined)[] = [];
     result.push(candleBatcher.addSmallCandle(firstCandle));

@@ -6,7 +6,6 @@ import { Broker } from '@services/broker/broker';
 import { debug, warning } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { weightedMean } from '@utils/math/math.utils';
-import Big from 'big.js';
 import { InvalidOrder, OrderNotFound } from 'ccxt';
 import { bindAll, filter, find, first, isNil, last, map, reject, sortBy, sumBy } from 'lodash-es';
 import { BaseOrder } from '../base/baseOrder';
@@ -30,7 +29,7 @@ export class StickyOrder extends BaseOrder {
 
     // Creating initial order
     const filledAmount = sumBy(this.transactions, 'filled');
-    this.createOrder(action, +Big(amount).minus(filledAmount));
+    this.createOrder(action, amount - filledAmount);
 
     bindAll(this, ['checkOrder']);
 
@@ -108,7 +107,7 @@ export class StickyOrder extends BaseOrder {
     // If order cancelation is a success let's keep going the move
     if (this.getStatus() !== 'error' && !this.isOrderCompleted()) {
       const filledAmount = sumBy(this.transactions, 'filled');
-      await this.createOrder(this.side, +Big(this.amount).minus(filledAmount));
+      await this.createOrder(this.side, this.amount - filledAmount);
     }
     this.moving = false;
   }
@@ -198,7 +197,7 @@ export class StickyOrder extends BaseOrder {
       ].join(' '),
     );
 
-    const totalFilledOfAllTransactions = +Big(sumBy(this.transactions, 'filled')).add(filled ?? 0);
+    const totalFilledOfAllTransactions = sumBy(this.transactions, 'filled') + (filled ?? 0);
     if (remaining === 0 || this.amount === totalFilledOfAllTransactions) {
       clearInterval(this.interval);
       return Promise.resolve(this.orderFilled());
