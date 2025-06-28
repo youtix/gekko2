@@ -215,7 +215,7 @@ export class Trader extends Plugin {
     });
     this.order.on(ORDER_COMPLETED_EVENT, async () => {
       try {
-        this.handleOrderCompletedEvent(advice, id);
+        await this.handleOrderCompletedEvent(advice, id);
       } catch (err) {
         if (err instanceof Error) {
           error('trader', err.message);
