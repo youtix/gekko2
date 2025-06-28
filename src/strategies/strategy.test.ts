@@ -1,6 +1,5 @@
+import { GekkoError } from '@errors/gekko.error';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { IndicatorNotFoundError } from '../errors/indicator/indicatorNotFound.error';
-import { StrategyAlreadyInitializedError } from '../errors/strategy/strategyAlreadyInitialized.error';
 import * as indicators from '../indicators/index';
 import { Indicator } from '../indicators/indicator';
 import { Candle } from '../models/types/candle.types';
@@ -114,13 +113,13 @@ describe('Strategy', () => {
   describe('addIndicator', () => {
     it('should throw an error if the strategy is already initialized', () => {
       strategy['isStartegyInitialized'] = true;
-      expect(() => strategy['addIndicator']('RSI', {})).toThrow(StrategyAlreadyInitializedError);
+      expect(() => strategy['addIndicator']('RSI', {})).toThrow(GekkoError);
     });
 
     it('should throw an error if the indicator is not found', () => {
       strategy['isStartegyInitialized'] = false;
       const nonExistentIndicator = '?' as unknown as keyof IndicatorRegistry;
-      expect(() => strategy['addIndicator'](nonExistentIndicator, {})).toThrow(IndicatorNotFoundError);
+      expect(() => strategy['addIndicator'](nonExistentIndicator, {})).toThrow(GekkoError);
     });
 
     it('should add and return the indicator if valid', () => {

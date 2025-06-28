@@ -1,11 +1,10 @@
 // tradingAdvisor.test.ts
+import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { addMinutes } from 'date-fns';
 import { describe, expect, it, vi } from 'vitest';
-import { PluginError } from '../../errors/plugin/plugin.error';
-import { StrategyNotFoundError } from '../../errors/strategy/strategyNotFound.error';
 import { toTimestamp } from '../../utils/date/date.utils';
 import {
   STRATEGY_ADVICE_EVENT,
@@ -64,7 +63,7 @@ describe('TradingAdvisor', () => {
             name: 'TradingAdvisor',
             strategyName: 'NonExistentStrategy',
           }),
-      ).toThrowError(StrategyNotFoundError);
+      ).toThrowError(GekkoError);
     });
     it('should create a strategy when a valid strategy name is provided', () => {
       expect(advisor.strategy).toBeDefined();
@@ -137,9 +136,9 @@ describe('TradingAdvisor', () => {
       expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_NOTIFICATION_EVENT, payload);
     });
 
-    it('should throw PluginError in relayAdvice if no candle is set', () => {
+    it('should throw GekkoError in relayAdvice if no candle is set', () => {
       advisor.candle = undefined;
-      expect(() => advisor['relayAdvice'](defaultAdvice)).toThrow(PluginError);
+      expect(() => advisor['relayAdvice'](defaultAdvice)).toThrow(GekkoError);
     });
 
     it('should emit STRATEGY_ADVICE_EVENT in relayAdvice when a candle is set', () => {

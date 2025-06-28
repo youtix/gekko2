@@ -1,11 +1,11 @@
-import { PluginError } from './plugin.error';
+import { GekkoError } from '@errors/gekko.error';
 
-export class PluginsEmitSameEventError extends PluginError {
+export class PluginsEmitSameEventError extends GekkoError {
   constructor(pluginNames: string[], events: string[]) {
     const plgNames = pluginNames.join(',');
     const evtNames = events.join(' ');
     super(
-      plgNames,
+      'pipeline',
       `Multiple plugins (${plgNames}) are broadcasting the same event(s) (${evtNames}). This is unsupported`,
     );
     this.name = 'PluginsEmitSameEventError';

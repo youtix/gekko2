@@ -36,10 +36,10 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
   }
 
   try {
-    info('init', logVersion());
+    info('gekko', logVersion());
     await gekkoPipeline(); // Launch bot
   } catch (e) {
-    error('init', e instanceof Error ? e.message : e);
+    error('gekko', e instanceof Error ? e.message : e);
   }
 };
 

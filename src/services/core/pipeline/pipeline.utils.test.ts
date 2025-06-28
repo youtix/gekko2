@@ -1,7 +1,7 @@
+import { GekkoError } from '@errors/gekko.error';
 import inquirer from 'inquirer';
 import { Readable } from 'stream';
 import { describe, expect, it, Mock, vi } from 'vitest';
-import { NoDaterangeFoundError } from '../../../errors/backtest/NoDaterangeFound.error';
 import { inject } from '../../injecter/injecter';
 import { askForDaterange } from './pipeline.utils';
 
@@ -40,7 +40,7 @@ describe('pipeline utils', () => {
 
     it('throws when no dateranges found', async () => {
       (inject.storage as Mock).mockReturnValue({ getCandleDateranges: () => undefined });
-      await expect(askForDaterange()).rejects.toThrow(NoDaterangeFoundError);
+      await expect(askForDaterange()).rejects.toThrow(GekkoError);
     });
 
     it('returns selected daterange', async () => {

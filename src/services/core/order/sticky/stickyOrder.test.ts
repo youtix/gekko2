@@ -1,11 +1,11 @@
+import { GekkoError } from '@errors/gekko.error';
+import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Order } from '@models/types/order.types';
 import { Broker } from '@services/broker/broker';
+import { warning } from '@services/logger';
 import { toTimestamp } from '@utils/date/date.utils';
 import { InvalidOrder, OrderNotFound } from 'ccxt';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { OrderOutOfRangeError } from '../../../../errors/broker/OrderOutRange.error';
-import { OrderError } from '../../../../errors/order/order.error';
-import { warning } from '../../../logger';
 import { StickyOrder } from './stickyOrder';
 
 vi.mock('@services/logger', () => ({
@@ -378,7 +378,7 @@ describe('StickyOrder', () => {
     });
 
     it('should call orderFilled when error is OrderOutOfRangeError and order is partially filled', () => {
-      const error = new OrderOutOfRangeError('amount', 10, 1, 100);
+      const error = new OrderOutOfRangeError('broker', 'amount', 10, 1, 100);
       stickyOrder['isOrderPartiallyFilled'] = vi.fn().mockReturnValue(true);
       stickyOrder['orderFilled'] = vi.fn();
       stickyOrder['handleCreateOrderError'](error);
@@ -386,9 +386,9 @@ describe('StickyOrder', () => {
     });
 
     it.each`
-      errorInstance                                     | isPartiallyFilled
-      ${new OrderOutOfRangeError('amount', 10, 1, 100)} | ${false}
-      ${new InvalidOrder('invalid order')}              | ${false}
+      errorInstance                                               | isPartiallyFilled
+      ${new OrderOutOfRangeError('broker', 'amount', 10, 1, 100)} | ${false}
+      ${new InvalidOrder('invalid order')}                        | ${false}
     `(
       'should emit an invalid event and call orderRejected when error is $errorInstance',
       ({ errorInstance, isPartiallyFilled }) => {
@@ -578,7 +578,7 @@ describe('StickyOrder', () => {
   describe('createSummary', () => {
     it('should throw an error if the order is not completed', async () => {
       stickyOrder['isOrderCompleted'] = vi.fn().mockReturnValue(false);
-      await expect(stickyOrder.createSummary()).rejects.toThrow(OrderError);
+      await expect(stickyOrder.createSummary()).rejects.toThrow(GekkoError);
     });
 
     it('should throw an error if no trades are found', async () => {

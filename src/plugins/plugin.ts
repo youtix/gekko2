@@ -1,4 +1,3 @@
-import { PluginMissingServiceError } from '@errors/plugin/pluginMissingService.error';
 import { Watch } from '@models/types/configuration.types';
 import { Broker } from '@services/broker/broker';
 import { Fetcher } from '@services/fetcher/fetcher.types';
@@ -8,6 +7,7 @@ import EventEmitter from 'node:events';
 import { Candle } from '../models/types/candle.types';
 import { DeffferedEvent } from '../models/types/event.types';
 import { config } from '../services/configuration/configuration';
+import { PluginMissingServiceError } from './plugin.error';
 
 export abstract class Plugin extends EventEmitter {
   private defferedEvents: DeffferedEvent[];

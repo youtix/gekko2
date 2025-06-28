@@ -1,0 +1,17 @@
+export type Tag =
+  | 'broker'
+  | 'configuration'
+  | 'core'
+  | 'fetcher'
+  | 'gekko'
+  | 'injecter'
+  | 'paper trader'
+  | 'performance analyzer'
+  | 'performance reporter'
+  | 'pipeline'
+  | 'storage'
+  | 'strategy'
+  | 'stream'
+  | 'telegram'
+  | 'trader'
+  | 'trading advisor';

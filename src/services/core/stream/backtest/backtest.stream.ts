@@ -1,4 +1,3 @@
-import { MissingCandlesError } from '@errors/backtest/MissingCandles.error';
 import { config } from '@services/configuration/configuration';
 import { inject } from '@services/injecter/injecter';
 import { debug, error, info, warning } from '@services/logger';
@@ -6,6 +5,7 @@ import { Storage } from '@services/storage/storage';
 import { splitIntervals, toISOString } from '@utils/date/date.utils';
 import { differenceInMinutes, Interval } from 'date-fns';
 import { Readable } from 'node:stream';
+import { MissingCandlesError } from './backtest.error';
 
 export class BacktestStream extends Readable {
   private storage: Storage;

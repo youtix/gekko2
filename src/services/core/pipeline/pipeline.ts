@@ -1,6 +1,4 @@
-import { PluginMissingDependencyError } from '@errors/plugin/pluginMissingDependency.error';
-import { PluginsEmitSameEventError } from '@errors/plugin/pluginsEmitSameEvent.error';
-import { PluginUnsupportedModeError } from '@errors/plugin/pluginUnsupportedMode.error';
+import { GekkoError } from '@errors/gekko.error';
 import { PipelineContext } from '@models/types/pipeline.types';
 import * as pluginList from '@plugins/index';
 import { PluginsNames } from '@plugins/plugin.types';
@@ -10,6 +8,7 @@ import { debug } from '@services/logger';
 import { keepDuplicates } from '@utils/array/array.utils';
 import { toCamelCase } from '@utils/string/string.utils';
 import { compact, each, filter, flatMap, map, some } from 'lodash-es';
+import { PluginsEmitSameEventError } from './pipeline.error';
 import { streamPipelines } from './pipeline.utils';
 
 export const launchStream = async (context: PipelineContext) => {
@@ -42,7 +41,7 @@ export const wirePlugins = async (context: PipelineContext) => {
         if (eventsHandlers?.includes(eventHandler)) {
           // @ts-expect-error TODO fix complex typescript error
           emitter?.on(event, handler[eventHandler].bind(handler));
-          debug('init', `When ${emitterName} emit '${event}', ${handlerName}.${eventHandler} will be executed.`);
+          debug('pipeline', `When ${emitterName} emit '${event}', ${handlerName}.${eventHandler} will be executed.`);
         }
       });
     });
@@ -55,7 +54,7 @@ export const createPlugins = async (context: PipelineContext) =>
     const PluginClass = pluginList[name as PluginsNames];
     // @ts-expect-error TODO fix complex typescript error
     const plugin = new PluginClass(parameters);
-    debug('init', `${name} plugin created !`);
+    debug('pipeline', `${name} plugin created !`);
     return { ...pluginCtx, plugin };
   });
 
@@ -65,7 +64,7 @@ export const preloadMarkets = async (context: PipelineContext) => {
     ['realtime', 'importer'].includes(mode) || some(context, plugin => plugin.inject?.includes('broker'));
   if (isPreloadMarketNeeded) {
     const broker = await inject.broker();
-    debug('init', `Preloading Markets data for ${broker.getBrokerName()}`);
+    debug('pipeline', `Preloading Markets data for ${broker.getBrokerName()}`);
     await broker.loadMarkets();
   }
   return context;
@@ -93,7 +92,7 @@ export const checkPluginsDependencies = async (context: PipelineContext) => {
       try {
         await import(dependency);
       } catch {
-        throw new PluginMissingDependencyError(plugin.name, dependency);
+        throw new GekkoError('pipeline', `Dependency ${dependency} not installed for plugin ${plugin.name}`);
       }
     }
   }
@@ -111,7 +110,7 @@ export const validatePluginsSchema = async (context: PipelineContext) => {
 export const checkPluginsModesCompatibility = async (context: PipelineContext) =>
   each(context, ({ name, modes }) => {
     const mode = config.getWatch().mode;
-    if (!modes?.includes(mode)) throw new PluginUnsupportedModeError(name, mode);
+    if (!modes?.includes(mode)) throw new GekkoError('pipeline', `Plugin ${name} does not support ${mode} mode.`);
   });
 
 export const getPluginsStaticConfiguration = async (context: PipelineContext) =>

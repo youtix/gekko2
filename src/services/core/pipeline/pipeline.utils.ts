@@ -1,5 +1,5 @@
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
-import { NoDaterangeFoundError } from '@errors/backtest/NoDaterangeFound.error';
+import { GekkoError } from '@errors/gekko.error';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
 import { inject } from '@services/injecter/injecter';
@@ -11,14 +11,14 @@ import { Interval, subMinutes } from 'date-fns';
 import inquirer from 'inquirer';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
-import { BacktestStream } from '../stream/backtest.stream';
+import { BacktestStream } from '../stream/backtest/backtest.stream';
 import { GapFillerStream } from '../stream/gapFiller/gapFiller.stream';
 import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCandle.stream';
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
 
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
-  info('init', 'Waiting for the end of the minute to synchronize streams');
+  info('pipeline', 'Waiting for the end of the minute to synchronize streams');
   waitSync(getNextMinute() - Date.now());
 
   const { tickrate, timeframe, warmup } = config.getWatch();
@@ -81,7 +81,7 @@ export const mergeSequentialStreams = (...streams: Readable[]) => {
 
 export const askForDaterange = async () => {
   const dateranges = inject.storage().getCandleDateranges();
-  if (!dateranges) throw new NoDaterangeFoundError();
+  if (!dateranges) throw new GekkoError('pipeline', 'No daterange found in database');
   const result = await inquirer.prompt<{ daterange: Interval<EpochTimeStamp, EpochTimeStamp> }>([
     {
       name: 'daterange',

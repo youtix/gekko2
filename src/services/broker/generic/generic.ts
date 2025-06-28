@@ -1,4 +1,4 @@
-import { MissingPropertyError } from '@errors/broker/missingProperty.error';
+import { GekkoError } from '@errors/gekko.error';
 import { candlesSchema } from '@models/schema/candle.schema';
 import { Action } from '@models/types/action.types';
 import { BrokerConfig } from '@models/types/configuration.types';
@@ -18,7 +18,8 @@ export class GenericBroker extends Broker {
 
   protected async fetchTickerOnce() {
     const ticker = await this.broker.fetchTicker(this.symbol);
-    if (isNil(ticker.ask) || isNil(ticker.bid)) throw new MissingPropertyError('ask & bid', 'fetchTicker');
+    if (isNil(ticker.ask) || isNil(ticker.bid))
+      throw new GekkoError('broker', 'Missing ask & bid property in payload after calling fetchTicker function.');
     return { ask: ticker.ask, bid: ticker.bid };
   }
 
@@ -65,7 +66,8 @@ export class GenericBroker extends Broker {
 
   protected async fetchOrderOnce(id: string) {
     const order = await this.broker.fetchOrder(id, this.symbol);
-    if (!isOrderStatus(order.status)) throw new MissingPropertyError('status', 'createLimitOrder');
+    if (!isOrderStatus(order.status))
+      throw new GekkoError('broker', 'Missing status property in payload after calling fetchOrder function.');
     return mapToOrder(order);
   }
 
@@ -74,7 +76,8 @@ export class GenericBroker extends Broker {
     const orderAmount = this.calculateAmount(amount);
     this.checkCost(orderAmount, orderPrice);
     const order = await this.broker.createLimitOrder(this.symbol, side, orderAmount, orderPrice);
-    if (!isOrderStatus(order.status)) throw new MissingPropertyError('status', 'createLimitOrder');
+    if (!isOrderStatus(order.status))
+      throw new GekkoError('broker', 'Missing status property in payload after calling createLimitOrder function.');
     return mapToOrder(order);
   }
 

@@ -1,6 +1,5 @@
+import { GekkoError } from '@errors/gekko.error';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { BrokerError } from '../../errors/broker/broker.error';
-import { StorageError } from '../../errors/storage/storage.error';
 import { config } from '../configuration/configuration';
 import { fetcher } from '../fetcher/fetcher.service';
 import { inject } from './injecter';
@@ -34,9 +33,9 @@ describe('Injecter', () => {
       expect(second).toBe(first);
     });
 
-    it('should throw StorageError if no config returned', () => {
+    it('should throw GekkoError if no config returned', () => {
       getStorageMock.mockReturnValue(undefined);
-      expect(() => inject.storage()).toThrow(StorageError);
+      expect(() => inject.storage()).toThrow(GekkoError);
     });
   });
 
@@ -48,9 +47,9 @@ describe('Injecter', () => {
       expect(second).toBe(first);
     });
 
-    it('should throw BrokerError if no broker config is returned', () => {
+    it('should throw GekkoError if no broker config is returned', () => {
       getBrokerMock.mockReturnValue(undefined as unknown as ReturnType<typeof config.getBroker>);
-      expect(() => inject.broker()).toThrow(BrokerError);
+      expect(() => inject.broker()).toThrow(GekkoError);
     });
   });
 

@@ -1,6 +1,5 @@
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
-import { PluginError } from '@errors/plugin/plugin.error';
-import { StrategyNotFoundError } from '@errors/strategy/strategyNotFound.error';
+import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
@@ -48,7 +47,7 @@ export class TradingAdvisor extends Plugin {
   // --- BEGIN INTERNALS ---
   private setUpStrategy(strategyName: string, candleSize: number, historySize: number) {
     const SelectedStrategy = strategies[strategyName as keyof typeof strategies];
-    if (!SelectedStrategy) throw new StrategyNotFoundError(strategyName);
+    if (!SelectedStrategy) throw new GekkoError('trading advisor', `${strategyName} strategy not found.`);
     this.strategy = new SelectedStrategy(strategyName, candleSize, historySize);
   }
 
@@ -73,7 +72,7 @@ export class TradingAdvisor extends Plugin {
   }
 
   private relayAdvice(advice: Advice) {
-    if (!this.candle) throw new PluginError(this.pluginName, 'No candle when relaying advice');
+    if (!this.candle) throw new GekkoError('trading advisor', 'No candle when relaying advice');
     this.deferredEmit(STRATEGY_ADVICE_EVENT, {
       ...advice,
       date: addMinutes(this.candle.start, 1).getTime(),

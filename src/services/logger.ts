@@ -1,22 +1,8 @@
+import { Tag } from '@models/types/tag.types';
 import { upperCase } from 'lodash-es';
 import { createLogger, format, transports } from 'winston';
 const { combine, timestamp, json } = format;
 
-type Tag =
-  | 'init'
-  | 'core'
-  | 'stream'
-  | 'fetcher'
-  | 'storage'
-  | 'broker'
-  | 'strategy'
-  | 'paper trader'
-  | 'performance analyzer'
-  | 'performance reporter'
-  | 'telegram'
-  | 'trader'
-  | 'trading advisor'
-  | 'order';
 type LogInput = { tag: Tag; message: unknown; level: string };
 
 const logger = createLogger({
