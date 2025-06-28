@@ -11,7 +11,6 @@ import { Trade } from '@models/types/trade.types';
 import { config } from '@services/configuration/configuration';
 import { error } from '@services/logger';
 import { getRetryDelay } from '@utils/fetch/fetch.utils';
-import Big from 'big.js';
 import ccxt, { Exchange, NetworkError } from 'ccxt';
 import { each, isNil } from 'lodash-es';
 import { BROKER_MANDATORY_FEATURES, BROKER_MAX_RETRIES_ON_FAILURE, INTERVAL_BETWEEN_CALLS_IN_MS } from './broker.const';
@@ -120,9 +119,9 @@ export abstract class Broker {
 
     if (isNil(minimalCost) || isNil(maximalCost)) throw new UndefinedLimitsError('cost', minimalCost, maximalCost);
 
-    const cost = Big(amount).mul(price);
-    if (cost.gt(maximalCost) || cost.lt(minimalCost))
-      throw new OrderOutOfRangeError('cost', +cost, minimalCost, maximalCost);
+    const cost = amount * price;
+    if (cost > maximalCost || cost < minimalCost)
+      throw new OrderOutOfRangeError('cost', cost, minimalCost, maximalCost);
   }
 
   protected abstract cancelLimitOrderOnce(id: string): Promise<Order>;
