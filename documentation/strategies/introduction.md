@@ -30,6 +30,7 @@ Gekko currently comes with the following example strategies:
 - [MACD](./macd.md)
 - [TMA](./tma.md)
 - [RSI](./rsi.md)
+- [CCI](./cci.md)
 
 More strategies will be available in future releases.
 
