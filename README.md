@@ -54,6 +54,7 @@ _Use Gekko 2 at your own risk._
   - [MACD](./documentation/strategies/macd.md)
   - [TMA](./documentation/strategies/tma.md)
   - [RSI](./documentation/strategies/rsi.md)
+  - [CCI](./documentation/strategies/cci.md)
 
 This project adheres to a [Code of Conduct](./CODE_OF_CONDUCT.md).
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines.
