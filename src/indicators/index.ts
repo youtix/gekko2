@@ -28,7 +28,7 @@ export * from './volatility/atrcd/atrcd.indicator';
 export * from './volatility/bollingerBands/bollingerBands.indicator';
 export * from './volatility/trueRange/trueRange.indicator';
 export * from './volume/adl/adl.indicator';
-export * from './volume/forceIndex/forceIndex.indicator';
+export * from './volume/efi/efi.indicator';
 export * from './volume/mfi/mfi.indicator';
 export * from './volume/obv/obv.indicator';
 export * from './volume/volumeProfile/volumeProfile.indicator';
