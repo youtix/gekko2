@@ -8,19 +8,12 @@ export class StochasticRSI extends Indicator<'StochasticRSI'> {
   private rsi: RSI;
   private stoch: Stochastic;
 
-  constructor(
-    {
-      period = 14,
-      fastKPeriod = 5,
-      fastDPeriod = 3,
-      slowMaType = 'sma',
-    }: IndicatorRegistry['StochasticRSI']['input'] = {
-      period: 14,
-      fastKPeriod: 5,
-      fastDPeriod: 3,
-      slowMaType: 'sma',
-    },
-  ) {
+  constructor({
+    period = 14,
+    fastKPeriod = 5,
+    fastDPeriod = 3,
+    slowMaType = 'sma',
+  }: IndicatorRegistry['StochasticRSI']['input'] = {}) {
     super('StochasticRSI', { fastK: null, fastD: null });
     this.rsi = new RSI({ period });
     this.stoch = new Stochastic({

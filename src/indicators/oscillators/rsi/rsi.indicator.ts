@@ -10,7 +10,7 @@ export class RSI extends Indicator<'RSI'> {
   private prevPrice?: number;
   private getPrice: (candle: Candle) => number;
 
-  constructor({ period = 14, src = 'close' }: IndicatorRegistry['RSI']['input'] = { period: 14, src: 'close' }) {
+  constructor({ period = 14, src = 'close' }: IndicatorRegistry['RSI']['input'] = {}) {
     super('RSI', null);
     this.wilderGain = new WilderSmoothing({ period });
     this.wilderLoss = new WilderSmoothing({ period });

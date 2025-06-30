@@ -24,21 +24,13 @@ export class Stochastic extends Indicator<'Stochastic'> {
   private maSlowK: MovingAverageClasses;
   private maSlowD: MovingAverageClasses;
 
-  constructor(
-    {
-      fastKPeriod = 5,
-      slowKPeriod = 3,
-      slowKMaType = 'sma',
-      slowDPeriod = 3,
-      slowDMaType = 'sma',
-    }: IndicatorRegistry['Stochastic']['input'] = {
-      fastKPeriod: 5,
-      slowKPeriod: 3,
-      slowKMaType: 'sma',
-      slowDPeriod: 3,
-      slowDMaType: 'sma',
-    },
-  ) {
+  constructor({
+    fastKPeriod = 5,
+    slowKPeriod = 3,
+    slowKMaType = 'sma',
+    slowDPeriod = 3,
+    slowDMaType = 'sma',
+  }: IndicatorRegistry['Stochastic']['input'] = {}) {
     super('Stochastic', { k: null, d: null });
 
     // buffers for raw Fast %K calculation

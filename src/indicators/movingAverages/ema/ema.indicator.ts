@@ -10,7 +10,7 @@ export class EMA extends Indicator<'EMA'> {
   private prevEma: number;
   private getPrice: (candle: Candle) => number;
 
-  constructor({ period = 30, src = 'close' }: IndicatorRegistry['EMA']['input'] = { period: 30, src: 'close' }) {
+  constructor({ period = 30, src = 'close' }: IndicatorRegistry['EMA']['input'] = {}) {
     super('EMA', null);
     this.period = period;
     this.alpha = 2 / (period + 1);

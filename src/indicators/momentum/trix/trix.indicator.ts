@@ -10,7 +10,7 @@ export class TRIX extends Indicator<'TRIX'> {
   private ema3: EMA;
   private roc: ROC;
 
-  constructor({ period }: IndicatorRegistry['TRIX']['input'] = { period: 30 }) {
+  constructor({ period = 30 }: IndicatorRegistry['TRIX']['input'] = {}) {
     super('TRIX', null);
     this.ema1 = new EMA({ period });
     this.ema2 = new EMA({ period });

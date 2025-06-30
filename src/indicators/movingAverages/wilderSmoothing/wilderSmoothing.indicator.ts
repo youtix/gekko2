@@ -7,7 +7,7 @@ export class WilderSmoothing extends Indicator<'WilderSmoothing'> {
   private sum: number;
   private prevSmoothed: number;
 
-  constructor({ period }: IndicatorRegistry['WilderSmoothing']['input'] = { period: 14 }) {
+  constructor({ period = 14 }: IndicatorRegistry['WilderSmoothing']['input'] = {}) {
     super('WilderSmoothing', null);
     this.period = period;
     this.age = 0;

@@ -11,13 +11,7 @@ export class ATRCD extends Indicator<'ATRCD'> {
   private threshold: number;
   private age: number;
 
-  constructor(
-    { short = 12, long = 26, signal = 9 }: IndicatorRegistry['ATRCD']['input'] = {
-      short: 12,
-      long: 26,
-      signal: 9,
-    },
-  ) {
+  constructor({ short = 12, long = 26, signal = 9 }: IndicatorRegistry['ATRCD']['input'] = {}) {
     super('ATRCD', { atrcd: null, signal: null, hist: null });
 
     this.emaFast = new ATR({ period: short });

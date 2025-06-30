@@ -10,14 +10,7 @@ export class MACD extends Indicator<'MACD'> {
   private threshold: number;
   private age: number;
 
-  constructor(
-    { short = 12, long = 26, signal = 9, src = 'close' }: IndicatorRegistry['MACD']['input'] = {
-      short: 12,
-      long: 26,
-      signal: 9,
-      src: 'close',
-    },
-  ) {
+  constructor({ short = 12, long = 26, signal = 9, src = 'close' }: IndicatorRegistry['MACD']['input'] = {}) {
     super('MACD', { macd: null, signal: null, hist: null });
 
     this.emaFast = new EMA({ period: short, src });

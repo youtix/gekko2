@@ -8,7 +8,7 @@ export class CCI extends Indicator<'CCI'> {
   private ringBuffer: RingBuffer<Candle>;
   private period: number;
 
-  constructor({ period }: IndicatorRegistry['CCI']['input'] = { period: 14 }) {
+  constructor({ period = 14 }: IndicatorRegistry['CCI']['input'] = {}) {
     super('CCI', null);
     this.ringBuffer = new RingBuffer(period);
     this.period = period;

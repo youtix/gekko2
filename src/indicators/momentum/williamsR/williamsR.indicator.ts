@@ -7,7 +7,7 @@ export class WilliamsR extends Indicator<'WilliamsR'> {
   private ringBufferLow: RingBuffer<number>;
   private ringBufferClose: RingBuffer<number>;
 
-  constructor({ period }: IndicatorRegistry['WilliamsR']['input'] = { period: 14 }) {
+  constructor({ period = 14 }: IndicatorRegistry['WilliamsR']['input'] = {}) {
     super('WilliamsR', null);
     this.ringBufferHigh = new RingBuffer(period);
     this.ringBufferLow = new RingBuffer(period);
