@@ -8,7 +8,7 @@ import { round } from '@utils/math/round.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
-import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT } from '../plugin.const';
+import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_COMPLETED_EVENT } from '../plugin.const';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 import { DateRange, PerformanceAnalyzerConfig, Report, SingleRoundTrip, Start } from './performanceAnalyzer.types';
 import { logFinalize, logRoundtrip } from './performanceAnalyzer.utils';
@@ -71,7 +71,6 @@ export class PerformanceAnalyzer extends Plugin {
 
   public onTradeCompleted(trade: TradeCompleted): void {
     if (this.trades === 0 && trade.action === 'sell') return;
-    if (trade.portfolio.asset === 0 && trade.portfolio.currency === 0 && trade.action === 'buy') return;
 
     this.trades++;
     this.balance = trade.balance;
@@ -139,7 +138,7 @@ export class PerformanceAnalyzer extends Plugin {
 
     logRoundtrip(roundtrip, this.currency, this.enableConsoleTable);
 
-    this.deferredEmit<RoundTrip>(ROUNDTRIP_EVENT, roundtrip);
+    this.deferredEmit<RoundTrip>(ROUNDTRIP_COMPLETED_EVENT, roundtrip);
 
     // update cached exposure
     this.exposure = this.exposure + roundtrip.duration;
@@ -249,7 +248,7 @@ export class PerformanceAnalyzer extends Plugin {
       dependencies: [],
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(PerformanceAnalyzer.prototype), p => p.startsWith('on')),
-      eventsEmitted: [PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT],
+      eventsEmitted: [PERFORMANCE_REPORT_EVENT, ROUNDTRIP_COMPLETED_EVENT],
       name: 'PerformanceAnalyzer',
     };
   }

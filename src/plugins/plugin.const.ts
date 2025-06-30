@@ -14,4 +14,4 @@ export const STRATEGY_UPDATE_EVENT = 'strategyUpdate';
 export const STRATEGY_WARMUP_COMPLETED_EVENT = 'strategyWarmupCompleted';
 
 export const PERFORMANCE_REPORT_EVENT = 'performanceReport';
-export const ROUNDTRIP_EVENT = 'roundtrip';
+export const ROUNDTRIP_COMPLETED_EVENT = 'roundtripCompleted';

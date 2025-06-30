@@ -1,4 +1,5 @@
 import { GekkoError } from '@errors/gekko.error';
+import { StopGekkoError } from '@errors/stopGekko.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { Nullable } from '@models/types/generic.types';
@@ -50,15 +51,19 @@ export class PaperTrader extends Plugin {
     this.processOneMinuteCandle(this.warmupCandle);
   }
 
+  public onRoundtripCompleted() {
+    if (this.portfolio.asset === 0 && this.portfolio.currency === 0) {
+      warning(
+        'paper trader',
+        'Portfolio is completely empty (no assets, no currency). Initiating the stop of gekko application !',
+      );
+      throw new StopGekkoError();
+    }
+  }
+
   public onStrategyAdvice(advice: Advice) {
     if (!['short', 'long'].includes(advice.recommendation)) {
       warning('paper trader', `Ignoring unknown advice recommendation: ${advice.recommendation}`);
-      return;
-    }
-
-    // Skip long advice if the portfolio is completely empty (no assets and no currency)
-    if (advice.recommendation === 'long' && this.portfolio.asset === 0 && this.portfolio.currency === 0) {
-      warning('paper trader', 'Skipping advice: portfolio is completely empty (no assets, no currency).');
       return;
     }
 
