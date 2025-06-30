@@ -4,10 +4,11 @@ declare global {
       short: number;
       long: number;
       signal: number;
+      macdSrc: 'hist' | 'signal' | 'macd';
       thresholds: {
         up: number;
         down: number;
-        persistence: number; // Emit advice once the signal has persisted for the specified number of consecutive candles.
+        persistence: number;
       };
     };
   }

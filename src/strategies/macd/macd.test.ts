@@ -10,6 +10,7 @@ vi.mock('@services/configuration/configuration', () => {
     short: 12,
     long: 26,
     signal: 9,
+    macdSrc: 'macd',
     thresholds: { up: 0.5, down: -0.5, persistence: 2 },
   }));
   return { config: new Configuration() };
