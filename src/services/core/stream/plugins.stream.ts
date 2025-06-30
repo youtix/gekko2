@@ -1,3 +1,4 @@
+import { StopGekkoError } from '@errors/stopGekko.error';
 import { Candle } from '@models/types/candle.types';
 import { Nullable } from '@models/types/generic.types';
 import { Plugin } from '@plugins/plugin';
@@ -18,7 +19,11 @@ export class PluginsStream extends Writable {
       for (const plugin of this.plugins) await plugin.processInputStream(chunk, flushEvents);
       done();
     } catch (error) {
-      if (error instanceof Error) done(error);
+      if (error instanceof StopGekkoError) {
+        done();
+        return this.end();
+      }
+      done(error as Error);
     }
   }
 

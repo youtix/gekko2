@@ -1,4 +1,5 @@
 import { GekkoError } from '@errors/gekko.error';
+import { StopGekkoError } from '@errors/stopGekko.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,6 +43,16 @@ describe('PaperTrader', () => {
   describe('constructor', () => {
     it('should initialize with correct fee', () => {
       expect(trader['fee']).toBe(0.9975);
+    });
+  });
+  describe('onRoundtripCompleted', () => {
+    it('should throw when portfolio is empty', () => {
+      trader['portfolio'] = { asset: 0, currency: 0 };
+      expect(() => trader.onRoundtripCompleted()).toThrow(StopGekkoError);
+    });
+    it('should NOT throw when portfolio is empty', () => {
+      trader['portfolio'] = { asset: 0, currency: 10 };
+      expect(() => trader.onRoundtripCompleted()).not.toThrow(StopGekkoError);
     });
   });
   describe('onStrategyWarmupCompleted', () => {
@@ -129,25 +140,6 @@ describe('PaperTrader', () => {
         effectivePrice: 99.75,
         feePercent: 0.25,
       });
-    });
-
-    it('should ignore advice when portfolio is empty', () => {
-      trader['portfolio'] = { asset: 0, currency: 0 };
-      trader['price'] = 100;
-      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
-
-      trader.onStrategyAdvice({ ...defaultAdvice, recommendation: 'long' });
-
-      expect(deferredEmitSpy).not.toHaveBeenCalled();
-    });
-    it('should let close the roundtrip when portfolio is empty', () => {
-      trader['portfolio'] = { asset: 0, currency: 0 };
-      trader['price'] = 100;
-      const deferredEmitSpy = vi.spyOn(trader as any, 'deferredEmit');
-
-      trader.onStrategyAdvice(defaultAdvice);
-
-      expect(deferredEmitSpy).toHaveBeenCalled();
     });
   });
   describe('processOneMinuteCandle', () => {

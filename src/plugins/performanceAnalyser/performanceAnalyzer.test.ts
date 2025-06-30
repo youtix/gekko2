@@ -1,6 +1,6 @@
 import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
-import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_EVENT } from '@plugins/plugin.const';
+import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_COMPLETED_EVENT } from '@plugins/plugin.const';
 import { addMinutes } from 'date-fns';
 import { first, isNil } from 'lodash-es';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -131,18 +131,6 @@ describe('PerformanceAnalyzer', () => {
       analyzer['trades'] = 0;
       analyzer.onTradeCompleted(defaultSellTradeEvent);
       expect(analyzer['trades']).toBe(0);
-    });
-    it('should NOT process buy trade if portfolio is empty', () => {
-      analyzer['trades'] = 0;
-      const buyTrade = { ...defaultBuyTradeEvent, portfolio: { asset: 0, currency: 0 } };
-      analyzer.onTradeCompleted(buyTrade);
-      expect(analyzer['trades']).toBe(0);
-    });
-    it('should process the sell trade if portfolio is empty', () => {
-      analyzer['trades'] = 1;
-      const sellTrade = { ...defaultSellTradeEvent, portfolio: { asset: 0, currency: 0 } };
-      analyzer.onTradeCompleted(sellTrade);
-      expect(analyzer['trades']).toBe(2);
     });
     it('should increment trades', () => {
       analyzer.onTradeCompleted(defaultBuyTradeEvent);
@@ -288,7 +276,7 @@ describe('PerformanceAnalyzer', () => {
 
       analyzer['handleCompletedRoundtrip']();
 
-      expect(analyzer['deferredEmit']).toHaveBeenCalledWith(ROUNDTRIP_EVENT, {
+      expect(analyzer['deferredEmit']).toHaveBeenCalledWith(ROUNDTRIP_COMPLETED_EVENT, {
         id: defaultRoundtrip.id,
         entryAt: defaultRoundtrip.entry?.date,
         entryPrice: defaultRoundtrip.entry?.price,
