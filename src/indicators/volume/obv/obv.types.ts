@@ -1,6 +1,6 @@
 declare global {
   interface IndicatorRegistry {
-    OBV: { input: null; output: null };
+    OBV: { input?: null; output: number | null };
   }
 }
 

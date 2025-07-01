@@ -4,6 +4,10 @@ Volume indicators analyze the amount of trading activity over time. They are com
 
 Examples of widely used volume indicators include On-Balance Volume (OBV), Accumulation/Distribution Line (ADL), Money Flow Index (MFI), and Volume Weighted Average Price (VWAP).
 
+## **OBV (On-Balance Volume)**
+
+OBV tracks cumulative buying and selling pressure by adding the volume when the close is higher than the previous close and subtracting it when the close is lower. Rising OBV values help confirm uptrends, while falling values suggest downtrends or distribution.
+
 ## **EFI (Elder Force Index)**
 
 The Elder Force Index (EFI) measures the strength behind price movements by combining price change with trading volume. The raw force value `(close - previous close) * volume` can be smoothed with a moving average (EMA by default) to reduce noise. You can choose `ema`, `sma`, `dema`, or `wma` smoothing. The indicator returns both the raw force index and the smoothed value. Positive EFI values indicate buying pressure, while negative values highlight selling pressure.
