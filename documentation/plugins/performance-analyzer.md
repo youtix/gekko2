@@ -46,6 +46,7 @@ Here are the metrics reported in the `performanceReport` event:
 | `market`                   | Market movement (start price vs end price) in percent.                             |
 | `alpha`                    | Strategy outperformance vs market.                                                 |
 | `sharpe`                   | Sharpe ratio based on return volatility.                                           |
+| `standardDeviation`        | Standard deviation of trade profits, used to measure volatility.                   |
 | `exposure`                 | % of time the strategy was in a trade.                                             |
 | `downside`                 | Measure of downside risk based on losing trades.                                   |
 | `trades`                   | Number of trades executed.                                                         |
