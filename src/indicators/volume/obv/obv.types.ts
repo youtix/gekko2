@@ -1,6 +1,12 @@
+import { MovingAverageTypes } from '@indicators/indicator.types';
+import { Nullable } from '@models/types/generic.types';
+
 declare global {
   interface IndicatorRegistry {
-    OBV: { input?: null; output: number | null };
+    OBV: {
+      input?: { period?: number; stdevUp?: number; stdevDown?: number; maType?: MovingAverageTypes };
+      output: { obv: Nullable<number>; ma: Nullable<number>; upper: Nullable<number>; lower: Nullable<number> };
+    };
   }
 }
 
