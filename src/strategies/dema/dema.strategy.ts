@@ -2,8 +2,9 @@ import { Candle } from '@models/types/candle.types';
 import { debug, info } from '@services/logger';
 import { Strategy } from '@strategies/strategy';
 import { isNumber } from 'lodash-es';
+import { DEMAStrategyParams } from './dema.types';
 
-export class DEMA extends Strategy<'DEMA'> {
+export class DEMA extends Strategy<DEMAStrategyParams> {
   private currentTrend?: 'down' | 'up';
 
   constructor(strategyName: string, candleSize: number, requiredHistory?: number) {

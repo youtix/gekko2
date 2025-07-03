@@ -1,9 +1,9 @@
 import { debug, info } from '@services/logger';
 import { Strategy } from '@strategies/strategy';
 import { isNumber } from 'lodash-es';
-import { RSICurrentTrend } from './rsi.types';
+import { RSICurrentTrend, RSIStrategyParams } from './rsi.types';
 
-export class RSI extends Strategy<'RSI'> {
+export class RSI extends Strategy<RSIStrategyParams> {
   private trend: RSICurrentTrend;
 
   constructor(strategyName: string, candleSize: number, requiredHistory?: number) {

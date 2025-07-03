@@ -1,7 +1,8 @@
 import { debug } from '@services/logger';
 import { Strategy } from '@strategies/strategy';
+import { DebugAdviceParams } from './debugAdvice.types';
 
-export class DebugAdvice extends Strategy<'DebugAdvice'> {
+export class DebugAdvice extends Strategy<DebugAdviceParams> {
   private index = 0;
   protected init(): void {}
   protected onEachCandle(): void {}

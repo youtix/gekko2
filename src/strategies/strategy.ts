@@ -16,9 +16,9 @@ import {
   STRATEGY_UPDATE_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
 } from '../plugins/plugin.const';
-import { Direction, StrategyNames, StrategyParamaters } from './strategy.types';
+import { Direction } from './strategy.types';
 
-export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
+export abstract class Strategy<StrategyParams> extends EventEmitter {
   protected age: number;
   protected candle?: Candle;
   protected candleSize: number;
@@ -29,7 +29,7 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
   protected propogatedAdvices: number;
   protected requiredHistory: number;
   protected strategyName: string;
-  protected strategySettings: StrategyParamaters<T>;
+  protected strategySettings: StrategyParams;
 
   constructor(strategyName: string, candleSize: number, requiredHistory = 0) {
     super();
@@ -41,7 +41,7 @@ export abstract class Strategy<T extends StrategyNames> extends EventEmitter {
     this.propogatedAdvices = 0;
     this.requiredHistory = requiredHistory;
     this.strategyName = strategyName;
-    this.strategySettings = config.getStrategy<StrategyParamaters<T>>();
+    this.strategySettings = config.getStrategy<StrategyParams>();
 
     // Initialize user strategy
     this.init();

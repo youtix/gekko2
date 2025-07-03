@@ -8,7 +8,6 @@ import { CandleBatcher } from '@services/core/batcher/candleBatcher/candleBatche
 import { info } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { Strategy } from '@strategies/strategy';
-import { StrategyNames } from '@strategies/strategy.types';
 import { addMinutes } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
 import {
@@ -24,7 +23,7 @@ import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 export class TradingAdvisor extends Plugin {
   candle?: Candle;
   candleBatcher: CandleBatcher;
-  strategy?: Strategy<StrategyNames>;
+  strategy?: Strategy<unknown>;
 
   constructor({ strategyName }: TradingAdvisorConfiguration) {
     super(TradingAdvisor.name);
