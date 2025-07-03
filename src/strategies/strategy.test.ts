@@ -6,7 +6,7 @@ import { Candle } from '../models/types/candle.types';
 import { TradeCompleted } from '../models/types/tradeStatus.types';
 import { STRATEGY_NOTIFICATION_EVENT, STRATEGY_UPDATE_EVENT } from '../plugins/plugin.const';
 import { toTimestamp } from '../utils/date/date.utils';
-import { Strategy } from './strategy';
+import { StrategyManager } from './strategyManager';
 
 vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
@@ -18,7 +18,7 @@ vi.mock('@services/configuration/configuration', () => {
 });
 vi.mock('@services/storage/stateManager', () => ({ StateManager: vi.fn() }));
 
-class DummyStrategy extends Strategy<'RSI'> {
+class DummyStrategy extends StrategyManager<'RSI'> {
   ended = false;
   init() {}
   onEachCandle() {}

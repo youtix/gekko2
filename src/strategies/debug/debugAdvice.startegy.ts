@@ -1,22 +1,21 @@
-import { debug } from '@services/logger';
-import { Strategy } from '@strategies/strategy';
+import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { DebugAdviceParams } from './debugAdvice.types';
 
-export class DebugAdvice extends Strategy<DebugAdviceParams> {
+export class DebugAdvice implements Strategy<DebugAdviceParams> {
   private index = 0;
-  protected init(): void {}
-  protected onEachCandle(): void {}
-  protected onCandleAfterWarmup(): void {
-    if (this.strategySettings.wait > this.index) return;
+
+  onCandleAfterWarmup({ strategyParams, debug, advice }: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {
+    if (strategyParams.wait > this.index) return;
 
     debug('strategy', `Iteration: ${this.index}`);
 
-    if (this.index % this.strategySettings.each === 0) {
+    if (this.index % strategyParams.each === 0) {
       debug('strategy', 'Trigger SHORT');
-      this.advice('short');
-    } else if (this.index % this.strategySettings.each === this.strategySettings.each / 2) {
+      advice('short');
+    } else if (this.index % strategyParams.each === strategyParams.each / 2) {
       debug('strategy', 'Trigger LONG');
-      this.advice('long');
+      advice('long');
     }
 
     // if(i % 2 === 0)
@@ -26,7 +25,10 @@ export class DebugAdvice extends Strategy<DebugAdviceParams> {
 
     this.index++;
   }
-  protected onTradeExecuted(): void {}
-  protected log(): void {}
-  protected end(): void {}
+
+  init(_addIndicator: AddIndicatorFn, _strategyParams: unknown): void {}
+  onEachCandle(_tools: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {}
+  onTradeCompleted(_trade: TradeCompleted): void {}
+  log(_tools: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {}
+  end(): void {}
 }

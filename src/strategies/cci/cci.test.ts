@@ -19,7 +19,7 @@ describe('CCI Strategy', () => {
   let advices: string[];
 
   beforeEach(() => {
-    strategy = new CCI('CCI', 60, 0);
+    strategy = new CCI();
     cci = { onNewCandle: vi.fn(), getResult: vi.fn() };
     strategy['indicators'] = [cci];
     strategy['isWarmupCompleted'] = true;

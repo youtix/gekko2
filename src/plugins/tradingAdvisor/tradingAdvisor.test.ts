@@ -4,7 +4,7 @@ import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { addMinutes } from 'date-fns';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
 import {
   STRATEGY_ADVICE_EVENT,
@@ -16,7 +16,7 @@ import {
 import { TradingAdvisor } from './tradingAdvisor';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
-vi.mock('../../strategies/index', () => ({
+vi.mock('@strategies/index', () => ({
   DummyStrategy: class {
     onNewCandle = vi.fn();
     onTradeCompleted = vi.fn();
@@ -27,7 +27,7 @@ vi.mock('../../strategies/index', () => ({
   },
   NonExistentStrategy: undefined,
 }));
-vi.mock('../../services/configuration/configuration', () => {
+vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getWatch: vi.fn(() => ({})),
     getStrategy: vi.fn(() => ({})),
@@ -36,7 +36,11 @@ vi.mock('../../services/configuration/configuration', () => {
 });
 
 describe('TradingAdvisor', () => {
-  const config = { name: 'TradingAdvisor', strategyName: 'DummyStrategy' } satisfies TradingAdvisorConfiguration;
+  const config = {
+    name: 'TradingAdvisor',
+    strategyName: 'DummyStrategy',
+    strategyPath: '@strategies/index',
+  } satisfies TradingAdvisorConfiguration;
   const defaultAdvice: Advice = { id: 'advice-100', recommendation: 'short', date: toTimestamp('2020') };
   const defaultCandle: Candle = { close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
   const defaultBuyTradeEvent: TradeCompleted = {
@@ -52,21 +56,33 @@ describe('TradingAdvisor', () => {
     effectivePrice: 31,
     feePercent: 0.33,
   };
-  const advisor = new TradingAdvisor(config);
-  advisor['deferredEmit'] = vi.fn();
+
+  let advisor: TradingAdvisor;
+
+  beforeEach(() => {
+    advisor = new TradingAdvisor(config);
+    advisor['deferredEmit'] = vi.fn();
+  });
 
   describe('processInit', () => {
-    it('should throw StrategyNotFoundError if an invalid strategy name is provided', () => {
-      const badAdvisor = new TradingAdvisor({ name: 'TradingAdvisor', strategyName: 'NonExistentStrategy' });
-      expect(() => badAdvisor['processInit']()).toThrowError(GekkoError);
+    it('should throw StrategyNotFoundError if an invalid strategy name is provided', async () => {
+      const badAdvisor = new TradingAdvisor({
+        name: 'TradingAdvisor',
+        strategyName: 'NonExistentStrategy',
+        strategyPath: '@strategies/index',
+      });
+      await expect(() => badAdvisor['processInit']()).rejects.toThrowError(GekkoError);
     });
-    it('should create a strategy when a valid strategy name is provided', () => {
-      advisor['processInit']();
+    it('should create a strategy when a valid strategy name is provided', async () => {
+      await advisor['processInit']();
       expect(advisor.strategy).toBeDefined();
     });
   });
 
   describe('processOneMinuteCandle', () => {
+    beforeEach(async () => {
+      await advisor['processInit']();
+    });
     it('should update the candle property when processOneMinuteCandle is called', () => {
       advisor['processOneMinuteCandle'](defaultCandle);
       expect(advisor.candle).toEqual(defaultCandle);
@@ -99,6 +115,9 @@ describe('TradingAdvisor', () => {
   });
 
   describe('onTradeCompleted', () => {
+    beforeEach(async () => {
+      await advisor['processInit']();
+    });
     it('should call strategy.onTradeCompleted when onTradeCompleted is called', () => {
       advisor.strategy!.onTradeCompleted = vi.fn();
       advisor.onTradeCompleted(defaultBuyTradeEvent);
@@ -107,6 +126,9 @@ describe('TradingAdvisor', () => {
   });
 
   describe('processFinalize', () => {
+    beforeEach(async () => {
+      await advisor['processInit']();
+    });
     it('should call strategy.finish when processFinalize is called', () => {
       advisor.strategy!.finish = vi.fn();
       advisor['processFinalize']();
@@ -114,6 +136,9 @@ describe('TradingAdvisor', () => {
     });
   });
   describe('relay functions', () => {
+    beforeEach(async () => {
+      await advisor['processInit']();
+    });
     it('should emit STRATEGY_WARMUP_COMPLETED_EVENT in relayStrategyWarmupCompleted', () => {
       const payload = { warmup: true };
       advisor['relayStrategyWarmupCompleted'](payload);

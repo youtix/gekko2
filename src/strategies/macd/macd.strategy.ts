@@ -1,31 +1,26 @@
-import { debug, info } from '@services/logger';
-import { Strategy } from '@strategies/strategy';
-import { isNil, isObject } from 'lodash-es';
+import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import { isNumber, isObject } from 'lodash-es';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
 
-export class MACD extends Strategy<MACDStrategyParams> {
+export class MACD implements Strategy<MACDStrategyParams> {
   private trend?: MACDTrend;
 
-  constructor(strategyName: string, candleSize: number, requiredHistory?: number) {
-    super(strategyName, candleSize, requiredHistory);
-  }
-
-  protected init(): void {
-    this.addIndicator('MACD', {
-      short: this.strategySettings.short,
-      long: this.strategySettings.long,
-      signal: this.strategySettings.signal,
-    });
+  init(addIndicator: AddIndicatorFn, strategyParams: MACDStrategyParams): void {
+    addIndicator('MACD', { short: strategyParams.short, long: strategyParams.long, signal: strategyParams.signal });
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };
   }
 
-  protected onCandleAfterWarmup(): void {
-    const { macdSrc } = this.strategySettings;
-    const [macd] = this.indicators;
-    const macdResult = macd.getResult() as IndicatorRegistry['MACD']['output'];
-    if (isNil(macdResult?.[macdSrc])) return;
+  onCandleAfterWarmup(
+    { strategyParams, advice, debug, info }: Tools<MACDStrategyParams>,
+    ...indicators: unknown[]
+  ): void {
+    const { macdSrc } = strategyParams;
+    const [macd] = indicators;
 
-    if (macdResult[macdSrc] > this.strategySettings.thresholds.up) {
+    if (!this.isMacd(macd)) return;
+
+    if (macd[macdSrc] > strategyParams.thresholds.up) {
       if (this.trend?.direction !== 'up') {
         info('strategy', 'MACD: up trend detected');
         this.trend = { duration: 0, persisted: false, direction: 'up', adviced: false };
@@ -33,13 +28,13 @@ export class MACD extends Strategy<MACDStrategyParams> {
       this.trend.duration++;
       debug('strategy', `In uptrend since ${this.trend.duration} candle(s)`);
 
-      if (this.trend.duration >= this.strategySettings.thresholds.persistence) this.trend.persisted = true;
+      if (this.trend.duration >= strategyParams.thresholds.persistence) this.trend.persisted = true;
 
       if (this.trend.persisted && !this.trend.adviced) {
         this.trend.adviced = true;
-        this.advice('long');
+        advice('long');
       }
-    } else if (macdResult[macdSrc] < this.strategySettings.thresholds.down) {
+    } else if (macd[macdSrc] < strategyParams.thresholds.down) {
       if (this.trend?.direction !== 'down') {
         info('strategy', 'MACD: down trend detected');
         this.trend = { duration: 0, persisted: false, direction: 'down', adviced: false };
@@ -47,29 +42,40 @@ export class MACD extends Strategy<MACDStrategyParams> {
       this.trend.duration++;
       debug('strategy', `In downtrend since ${this.trend.duration} candle(s)`);
 
-      if (this.trend.duration >= this.strategySettings.thresholds.persistence) this.trend.persisted = true;
+      if (this.trend.duration >= strategyParams.thresholds.persistence) this.trend.persisted = true;
 
       if (this.trend.persisted && !this.trend.adviced) {
         this.trend.adviced = true;
-        this.advice('short');
+        advice('short');
       }
     } else {
       debug('strategy', 'MACD: no trend detected');
     }
   }
 
-  protected log(): void {
-    const [macd] = this.indicators;
-    const macdResult = macd.getResult();
-    if (!isObject(macdResult) || !('macd' in macdResult) || isNil(macdResult.macd)) return;
+  log({ debug }: Tools<MACDStrategyParams>, ...indicators: unknown[]): void {
+    const [macd] = indicators;
+    if (!this.isMacd(macd)) return;
 
-    debug('strategy', `macd: ${macdResult.macd.toFixed(8)}`);
-    debug('strategy', `signal: ${macdResult.signal?.toFixed(8)}`);
-    debug('strategy', `hist: ${macdResult.hist?.toFixed(8)}`);
+    debug('strategy', `macd: ${macd.macd.toFixed(8)}`);
+    debug('strategy', `signal: ${macd.signal.toFixed(8)}`);
+    debug('strategy', `hist: ${macd.hist.toFixed(8)}`);
+  }
+
+  private isMacd(data: unknown): data is { macd: number; signal: number; hist: number } {
+    return (
+      isObject(data) &&
+      'macd' in data &&
+      'signal' in data &&
+      'hist' in data &&
+      isNumber(data.macd) &&
+      isNumber(data.signal) &&
+      isNumber(data.hist)
+    );
   }
 
   // NOT USED
-  protected onEachCandle(/* candle: Candle */): void {}
-  protected onTradeExecuted(): void {}
-  protected end(): void {}
+  onEachCandle(_tools: Tools<MACDStrategyParams>, ..._indicators: unknown[]): void {}
+  onTradeCompleted(_trade: TradeCompleted): void {}
+  end(): void {}
 }
