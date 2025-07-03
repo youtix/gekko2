@@ -1,28 +1,24 @@
-import { debug, info } from '@services/logger';
-import { Strategy } from '@strategies/strategy';
+import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { RSICurrentTrend, RSIStrategyParams } from './rsi.types';
 
-export class RSI extends Strategy<RSIStrategyParams> {
+export class RSI implements Strategy<RSIStrategyParams> {
   private trend: RSICurrentTrend;
 
-  constructor(strategyName: string, candleSize: number, requiredHistory?: number) {
-    super(strategyName, candleSize, requiredHistory);
+  constructor() {
     this.trend = { direction: 'none', duration: 0, adviced: false };
   }
 
-  protected init(): void {
-    const { period, src } = this.strategySettings;
-    this.addIndicator('RSI', { period, src });
-  }
+  onCandleAfterWarmup(
+    { strategyParams, advice, debug, info }: Tools<RSIStrategyParams>,
+    ...indicators: unknown[]
+  ): void {
+    const [rsi] = indicators;
+    if (!isNumber(rsi)) return;
+    const { thresholds } = strategyParams;
 
-  protected onCandleAfterWarmup(): void {
-    const [rsi] = this.indicators;
-    const rsiVal = rsi.getResult();
-    if (!isNumber(rsiVal)) return;
-    const { thresholds } = this.strategySettings;
-
-    if (rsiVal > thresholds.high) {
+    if (rsi > thresholds.high) {
       if (this.trend.direction !== 'high') {
         info('strategy', 'RSI: high trend detected');
         this.trend = { duration: 0, direction: 'high', adviced: false };
@@ -32,9 +28,9 @@ export class RSI extends Strategy<RSIStrategyParams> {
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;
-        this.advice('short');
+        advice('short');
       }
-    } else if (rsiVal < thresholds.low) {
+    } else if (rsi < thresholds.low) {
       if (this.trend.direction !== 'low') {
         info('strategy', 'RSI: low trend detected');
         this.trend = { duration: 0, direction: 'low', adviced: false };
@@ -44,14 +40,19 @@ export class RSI extends Strategy<RSIStrategyParams> {
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;
-        this.advice('long');
+        advice('long');
       }
     }
   }
 
+  init(addIndicator: AddIndicatorFn, strategyParams: RSIStrategyParams): void {
+    const { period, src } = strategyParams;
+    addIndicator('RSI', { period, src });
+  }
+
   // NOT USED
-  protected log(): void {}
-  protected onEachCandle(): void {}
-  protected onTradeExecuted(): void {}
-  protected end(): void {}
+  onTradeCompleted(_trade: TradeCompleted): void {}
+  onEachCandle(_tools: Tools<RSIStrategyParams>, ..._indicators: unknown[]): void {}
+  log(_tools: Tools<RSIStrategyParams>, ..._indicators: unknown[]): void {}
+  end(): void {}
 }

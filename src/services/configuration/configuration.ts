@@ -30,9 +30,9 @@ class Configuration {
     return this.configuration.plugins;
   }
 
-  public getStrategy<T>() {
+  public getStrategy() {
     if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
-    return this.configuration.strategy as T & { name: string };
+    return this.configuration.strategy;
   }
 
   public getWatch() {

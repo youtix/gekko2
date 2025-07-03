@@ -1,57 +1,58 @@
-import { debug, info } from '@services/logger';
-import { Strategy } from '@strategies/strategy';
+import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { CCIStrategyParams, CCITrend } from './cci.types';
 
-export class CCI extends Strategy<CCIStrategyParams> {
+export class CCI implements Strategy<CCIStrategyParams> {
   private trend: CCITrend;
 
-  constructor(strategyName: string, candleSize: number, requiredHistory?: number) {
-    super(strategyName, candleSize, requiredHistory);
+  constructor() {
     this.trend = { direction: 'nodirection', duration: 0, persisted: false, adviced: false };
   }
 
-  protected init(): void {
-    this.addIndicator('CCI', { period: this.strategySettings.period });
+  init(addIndicator: AddIndicatorFn, strategySettings: CCIStrategyParams): void {
+    addIndicator('CCI', { period: strategySettings.period });
   }
 
-  protected onCandleAfterWarmup(): void {
-    const [cci] = this.indicators;
-    const cciVal = cci.getResult();
-    if (!isNumber(cciVal)) return;
+  onCandleAfterWarmup(
+    { advice, strategyParams: strategySettings, info, debug }: Tools<CCIStrategyParams>,
+    ...indicators: unknown[]
+  ): void {
+    const [cci] = indicators;
+    if (!isNumber(cci)) return;
 
-    const { up, down, persistence } = this.strategySettings.thresholds;
+    const { up, down, persistence } = strategySettings.thresholds;
 
-    if (cciVal >= up) {
+    if (cci >= up) {
       if (this.trend.direction !== 'overbought') {
         info('strategy', 'CCI: overbought trend detected');
         this.trend = { direction: 'overbought', duration: 1, persisted: persistence === 0, adviced: false };
         if (persistence === 0) {
           this.trend.adviced = true;
-          this.advice('short');
+          advice('short');
         }
       } else {
         this.trend.duration++;
         if (this.trend.duration >= persistence) this.trend.persisted = true;
         if (this.trend.persisted && !this.trend.adviced) {
           this.trend.adviced = true;
-          this.advice('short');
+          advice('short');
         }
       }
-    } else if (cciVal <= down) {
+    } else if (cci <= down) {
       if (this.trend.direction !== 'oversold') {
         info('strategy', 'CCI: oversold trend detected');
         this.trend = { direction: 'oversold', duration: 1, persisted: persistence === 0, adviced: false };
         if (persistence === 0) {
           this.trend.adviced = true;
-          this.advice('long');
+          advice('long');
         }
       } else {
         this.trend.duration++;
         if (this.trend.duration >= persistence) this.trend.persisted = true;
         if (this.trend.persisted && !this.trend.adviced) {
           this.trend.adviced = true;
-          this.advice('long');
+          advice('long');
         }
       }
     } else {
@@ -65,14 +66,13 @@ export class CCI extends Strategy<CCIStrategyParams> {
     debug('strategy', `Trend: ${this.trend.direction} for ${this.trend.duration}`);
   }
 
-  // NOT USED
-  protected log(): void {
-    const [cci] = this.indicators;
-    const cciVal = cci.getResult();
-    if (!isNumber(cciVal)) return;
-    debug('strategy', `CCI: ${cciVal.toFixed(2)}`);
+  log({ debug }: Tools<CCIStrategyParams>, ...indicators: unknown[]): void {
+    const [cci] = indicators;
+    if (!isNumber(cci)) return;
+    debug('strategy', `CCI: ${cci.toFixed(2)}`);
   }
-  protected onEachCandle(): void {}
-  protected onTradeExecuted(): void {}
-  protected end(): void {}
+  // NOT USED
+  onEachCandle(_tools: Tools<CCIStrategyParams>, ..._indicators: unknown[]): void {}
+  onTradeCompleted(_trade: TradeCompleted): void {}
+  end(): void {}
 }

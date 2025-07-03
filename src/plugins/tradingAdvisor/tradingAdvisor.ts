@@ -7,30 +7,26 @@ import { Plugin } from '@plugins/plugin';
 import { CandleBatcher } from '@services/core/batcher/candleBatcher/candleBatcher';
 import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
 import { info } from '@services/logger';
-import * as strategies from '@strategies/index';
-import { Strategy } from '@strategies/strategy';
+import { StrategyManager } from '@strategies/strategyManager';
 import { addMinutes } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
-import {
-  STRATEGY_ADVICE_EVENT,
-  STRATEGY_CANDLE_EVENT,
-  STRATEGY_NOTIFICATION_EVENT,
-  STRATEGY_UPDATE_EVENT,
-  STRATEGY_WARMUP_COMPLETED_EVENT,
-} from '../plugin.const';
+import { isAbsolute, resolve } from 'node:path';
+import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '../plugin.const';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
 export class TradingAdvisor extends Plugin {
-  candle?: Candle;
-  candleBatcher: CandleBatcher;
-  strategy?: Strategy<unknown>;
-  timeframeInMinutes: CandleSize;
-  strategyName: string;
+  private candleBatcher: CandleBatcher;
+  private timeframeInMinutes: CandleSize;
+  private strategyName: string;
+  private strategyPath: string;
+  private candle?: Candle;
+  private strategyManager?: StrategyManager;
 
-  constructor({ name, strategyName }: TradingAdvisorConfiguration) {
+  constructor({ name, strategyName, strategyPath }: TradingAdvisorConfiguration) {
     super(name);
     this.strategyName = strategyName;
+    this.strategyPath = strategyPath;
     this.timeframeInMinutes = TIMEFRAME_TO_MINUTES[this.timeframe];
     this.candleBatcher = new CandleBatcher(this.timeframeInMinutes);
 
@@ -38,37 +34,25 @@ export class TradingAdvisor extends Plugin {
     bindAll(this, [...relayers]);
   }
 
-  // --- BEGIN LISTENERS ---
-  public onTradeCompleted(trade: TradeCompleted) {
-    this.strategy?.onTradeCompleted(trade);
-  }
-  // --- END LISTENERS ---
-
   // --- BEGIN INTERNALS ---
-  private setUpStrategy() {
-    const SelectedStrategy = strategies[this.strategyName as keyof typeof strategies];
-    if (!SelectedStrategy) throw new GekkoError('trading advisor', `${this.strategyName} strategy not found.`);
-    this.strategy = new SelectedStrategy(this.strategyName, this.timeframeInMinutes, this.warmupPeriod);
+  private async setUpStrategy() {
+    const resolvedPath =
+      isAbsolute(this.strategyPath) || this.strategyPath.startsWith('@strategies')
+        ? this.strategyPath
+        : resolve(process.cwd(), this.strategyPath);
+
+    this.strategyManager = new StrategyManager(this.warmupPeriod);
+    await this.strategyManager.createStrategy(resolvedPath, this.strategyName);
   }
 
   private setUpListeners() {
-    this.strategy
+    this.strategyManager
       ?.on(STRATEGY_WARMUP_COMPLETED_EVENT, this.relayStrategyWarmupCompleted)
-      .on(STRATEGY_ADVICE_EVENT, this.relayAdvice)
-      .on(STRATEGY_UPDATE_EVENT, this.relayStrategyUpdate)
-      .on(STRATEGY_NOTIFICATION_EVENT, this.relayStrategyNotification);
+      .on(STRATEGY_ADVICE_EVENT, this.relayAdvice);
   }
 
   private relayStrategyWarmupCompleted(event: unknown) {
     this.deferredEmit(STRATEGY_WARMUP_COMPLETED_EVENT, event);
-  }
-
-  private relayStrategyUpdate(event: unknown) {
-    this.deferredEmit(STRATEGY_UPDATE_EVENT, event);
-  }
-
-  private relayStrategyNotification(event: unknown) {
-    this.deferredEmit(STRATEGY_NOTIFICATION_EVENT, event);
   }
 
   private relayAdvice(advice: Advice) {
@@ -81,11 +65,19 @@ export class TradingAdvisor extends Plugin {
   // --- END INTERNALS ---
 
   // --------------------------------------------------------------------------
+  //                           PLUGIN LISTENERS
+  // --------------------------------------------------------------------------
+
+  public onTradeCompleted(trade: TradeCompleted) {
+    this.strategyManager?.onTradeCompleted(trade);
+  }
+
+  // --------------------------------------------------------------------------
   //                           PLUGIN LIFECYCLE HOOKS
   // --------------------------------------------------------------------------
 
-  protected processInit(): void {
-    this.setUpStrategy();
+  protected async processInit() {
+    await this.setUpStrategy();
     this.setUpListeners();
     info('trading advisor', `Using the strategy: ${this.strategyName}`);
   }
@@ -94,13 +86,12 @@ export class TradingAdvisor extends Plugin {
     this.candle = candle;
     const newCandle = this.candleBatcher.addSmallCandle(candle);
     if (newCandle) {
-      this.deferredEmit(STRATEGY_CANDLE_EVENT, newCandle);
-      this.strategy?.onNewCandle(newCandle);
+      this.strategyManager?.onNewCandle(newCandle);
     }
   }
 
   protected processFinalize() {
-    this.strategy?.finish();
+    this.strategyManager?.finish();
   }
 
   public static getStaticConfiguration() {
@@ -111,13 +102,7 @@ export class TradingAdvisor extends Plugin {
       dependencies: [],
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(TradingAdvisor.prototype), p => p.startsWith('on')),
-      eventsEmitted: [
-        STRATEGY_ADVICE_EVENT,
-        STRATEGY_CANDLE_EVENT,
-        STRATEGY_NOTIFICATION_EVENT,
-        STRATEGY_UPDATE_EVENT,
-        STRATEGY_WARMUP_COMPLETED_EVENT,
-      ],
+      eventsEmitted: [STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT],
     };
   }
 }
