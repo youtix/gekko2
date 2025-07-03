@@ -1,9 +1,9 @@
 import { debug, info } from '@services/logger';
 import { Strategy } from '@strategies/strategy';
 import { isNumber } from 'lodash-es';
-import { CCITrend } from './cci.types';
+import { CCIStrategyParams, CCITrend } from './cci.types';
 
-export class CCI extends Strategy<'CCI'> {
+export class CCI extends Strategy<CCIStrategyParams> {
   private trend: CCITrend;
 
   constructor(strategyName: string, candleSize: number, requiredHistory?: number) {

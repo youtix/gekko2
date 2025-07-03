@@ -1,8 +1,9 @@
 import { debug, info } from '@services/logger';
 import { Strategy } from '@strategies/strategy';
 import { isNumber } from 'lodash-es';
+import { TMAStrategyParams } from './tma.types';
 
-export class TMA extends Strategy<'TMA'> {
+export class TMA extends Strategy<TMAStrategyParams> {
   constructor(strategyName: string, candleSize: number, requiredHistory?: number) {
     super(strategyName, candleSize, requiredHistory);
   }

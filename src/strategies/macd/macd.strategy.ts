@@ -1,9 +1,9 @@
 import { debug, info } from '@services/logger';
 import { Strategy } from '@strategies/strategy';
 import { isNil, isObject } from 'lodash-es';
-import { MACDTrend } from './macd.types';
+import { MACDStrategyParams, MACDTrend } from './macd.types';
 
-export class MACD extends Strategy<'MACD'> {
+export class MACD extends Strategy<MACDStrategyParams> {
   private trend?: MACDTrend;
 
   constructor(strategyName: string, candleSize: number, requiredHistory?: number) {

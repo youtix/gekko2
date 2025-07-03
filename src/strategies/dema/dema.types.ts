@@ -1,7 +1,4 @@
-declare global {
-  interface StrategyRegistry {
-    DEMA: { period: number; thresholds: { up: number; down: number } };
-  }
+export interface DEMAStrategyParams {
+  period: number;
+  thresholds: { up: number; down: number };
 }
-
-export {};
