@@ -6,18 +6,13 @@ import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
-import {
-  STRATEGY_ADVICE_EVENT,
-  STRATEGY_CANDLE_EVENT,
-  STRATEGY_NOTIFICATION_EVENT,
-  STRATEGY_UPDATE_EVENT,
-  STRATEGY_WARMUP_COMPLETED_EVENT,
-} from '../plugin.const';
+import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '../plugin.const';
 import { TradingAdvisor } from './tradingAdvisor';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
 vi.mock('@strategies/index', () => ({
   DummyStrategy: class {
+    init = vi.fn();
     onNewCandle = vi.fn();
     onTradeCompleted = vi.fn();
     finish = vi.fn();
@@ -73,9 +68,9 @@ describe('TradingAdvisor', () => {
       });
       await expect(() => badAdvisor['processInit']()).rejects.toThrowError(GekkoError);
     });
-    it('should create a strategy when a valid strategy name is provided', async () => {
+    it('should create a strategy manager when a valid strategy name is provided', async () => {
       await advisor['processInit']();
-      expect(advisor.strategy).toBeDefined();
+      expect(advisor['strategyManager']).toBeDefined();
     });
   });
 
@@ -85,32 +80,21 @@ describe('TradingAdvisor', () => {
     });
     it('should update the candle property when processOneMinuteCandle is called', () => {
       advisor['processOneMinuteCandle'](defaultCandle);
-      expect(advisor.candle).toEqual(defaultCandle);
+      expect((advisor as any).candle).toEqual(defaultCandle);
     });
 
-    it('should emit STRATEGY_CANDLE_EVENT when addSmallCandle returns a new candle', () => {
-      advisor.candleBatcher['addSmallCandle'] = vi.fn(() => defaultCandle);
+    it('should call strategyManager.onNewCandle when addSmallCandle returns a new candle', () => {
+      (advisor as any).candleBatcher.addSmallCandle = vi.fn(() => defaultCandle);
+      advisor['strategyManager']!.onNewCandle = vi.fn();
       advisor['processOneMinuteCandle'](defaultCandle);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CANDLE_EVENT, defaultCandle);
+      expect(advisor['strategyManager']?.onNewCandle).toHaveBeenCalledWith(defaultCandle);
     });
 
-    it('should call strategy.onNewCandle when addSmallCandle returns a new candle', () => {
-      advisor.candleBatcher.addSmallCandle = vi.fn(() => defaultCandle);
-      advisor.strategy!.onNewCandle = vi.fn();
+    it('should NOT call strategyManager.onNewCandle when addSmallCandle returns a falsy value', () => {
+      (advisor as any).candleBatcher.addSmallCandle = vi.fn(() => undefined);
+      advisor['strategyManager']!.onNewCandle = vi.fn();
       advisor['processOneMinuteCandle'](defaultCandle);
-      expect(advisor.strategy?.onNewCandle).toHaveBeenCalledExactlyOnceWith(defaultCandle);
-    });
-
-    it('should NOT emit any event when addSmallCandle returns a falsy value', () => {
-      advisor.candleBatcher.addSmallCandle = vi.fn(() => undefined);
-      advisor['processOneMinuteCandle'](defaultCandle);
-      expect(advisor['deferredEmit']).not.toHaveBeenCalled();
-    });
-
-    it('should NOT call strategy.onNewCandle when addSmallCandle returns a falsy value', () => {
-      advisor.candleBatcher.addSmallCandle = vi.fn(() => undefined);
-      advisor['processOneMinuteCandle'](defaultCandle);
-      expect(advisor.strategy?.onNewCandle).not.toHaveBeenCalled();
+      expect(advisor['strategyManager']?.onNewCandle).not.toHaveBeenCalled();
     });
   });
 
@@ -118,10 +102,10 @@ describe('TradingAdvisor', () => {
     beforeEach(async () => {
       await advisor['processInit']();
     });
-    it('should call strategy.onTradeCompleted when onTradeCompleted is called', () => {
-      advisor.strategy!.onTradeCompleted = vi.fn();
+    it('should call strategyManager.onTradeCompleted when onTradeCompleted is called', () => {
+      advisor['strategyManager']!.onTradeCompleted = vi.fn();
       advisor.onTradeCompleted(defaultBuyTradeEvent);
-      expect(advisor.strategy?.onTradeCompleted).toHaveBeenCalledExactlyOnceWith(defaultBuyTradeEvent);
+      expect(advisor['strategyManager']?.onTradeCompleted).toHaveBeenCalledExactlyOnceWith(defaultBuyTradeEvent);
     });
   });
 
@@ -129,10 +113,10 @@ describe('TradingAdvisor', () => {
     beforeEach(async () => {
       await advisor['processInit']();
     });
-    it('should call strategy.finish when processFinalize is called', () => {
-      advisor.strategy!.finish = vi.fn();
+    it('should call strategyManager.finish when processFinalize is called', () => {
+      advisor['strategyManager']!.finish = vi.fn();
       advisor['processFinalize']();
-      expect(advisor.strategy?.finish).toHaveBeenCalled();
+      expect(advisor['strategyManager']?.finish).toHaveBeenCalled();
     });
   });
   describe('relay functions', () => {
@@ -145,26 +129,14 @@ describe('TradingAdvisor', () => {
       expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_WARMUP_COMPLETED_EVENT, payload);
     });
 
-    it('should emit STRATEGY_UPDATE_EVENT in relayStrategyUpdate', () => {
-      const payload = { update: true };
-      advisor['relayStrategyUpdate'](payload);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_UPDATE_EVENT, payload);
-    });
-
-    it('should emit STRATEGY_NOTIFICATION_EVENT in relayStrategyNotification', () => {
-      const payload = { notification: true };
-      advisor['relayStrategyNotification'](payload);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_NOTIFICATION_EVENT, payload);
-    });
-
     it('should throw GekkoError in relayAdvice if no candle is set', () => {
-      advisor.candle = undefined;
+      (advisor as any).candle = undefined;
       expect(() => advisor['relayAdvice'](defaultAdvice)).toThrow(GekkoError);
     });
 
     it('should emit STRATEGY_ADVICE_EVENT in relayAdvice when a candle is set', () => {
       const candleStart = toTimestamp('2025-01-01T00:00:00Z');
-      advisor.candle = defaultCandle;
+      (advisor as any).candle = defaultCandle;
       advisor['relayAdvice'](defaultAdvice);
       expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_ADVICE_EVENT, {
         ...defaultAdvice,
