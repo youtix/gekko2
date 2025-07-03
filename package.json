@@ -29,7 +29,8 @@
   "main": "gekko.js",
   "type": "module",
   "scripts": {
-    "build": "bun build src/gekko.ts --compile --outfile dist/gekko",
+    "build:exec": "bun build src/gekko.ts --compile --outfile dist/gekko",
+    "build:js": "bun build ./src/gekko.ts --outdir ./dist --target bun --minify --sourcemap",
     "commit:check": "commitlint --from=HEAD~10",
     "dev": "bun ./src/gekko.ts",
     "format": "bun prettier ./src --write",
