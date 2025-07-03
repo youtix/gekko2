@@ -1,44 +1,36 @@
-import { debug, info } from '@services/logger';
-import { Strategy } from '@strategies/strategy';
+import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { TMAStrategyParams } from './tma.types';
 
-export class TMA extends Strategy<TMAStrategyParams> {
-  constructor(strategyName: string, candleSize: number, requiredHistory?: number) {
-    super(strategyName, candleSize, requiredHistory);
-  }
-
-  protected init(): void {
-    const { long, medium, short, src } = this.strategySettings;
-    this.addIndicator('SMA', { period: short, src });
-    this.addIndicator('SMA', { period: medium, src });
-    this.addIndicator('SMA', { period: long, src });
-  }
-
-  protected onCandleAfterWarmup(): void {
-    const [shortSMA, mediumSMA, longSMA] = this.indicators;
-    const short = shortSMA.getResult();
-    const medium = mediumSMA.getResult();
-    const long = longSMA.getResult();
+export class TMA implements Strategy<TMAStrategyParams> {
+  onCandleAfterWarmup({ advice, debug, info }: Tools<TMAStrategyParams>, ...indicators: unknown[]): void {
+    const [short, medium, long] = indicators;
     if (!isNumber(short) || !isNumber(medium) || !isNumber(long)) return;
 
     if (short > medium && medium > long) {
       info('strategy', `Executing long advice due to detected uptrend: ${short}/${medium}/${long}`);
-      this.advice('long');
+      advice('long');
     } else if (short < medium && medium > long) {
       info('strategy', `Executing short advice due to detected downtrend: ${short}/${medium}/${long}`);
-      this.advice('short');
+      advice('short');
     } else if (short > medium && medium < long) {
       info('strategy', `Executing short advice due to detected downtrend: ${short}/${medium}/${long}`);
-      this.advice('short');
+      advice('short');
     } else {
       debug('strategy', `No clear trend detected: ${short}/${medium}/${long}`);
     }
   }
+  init(addIndicator: AddIndicatorFn, strategyParams: TMAStrategyParams): void {
+    const { long, medium, short, src } = strategyParams;
+    addIndicator('SMA', { period: short, src });
+    addIndicator('SMA', { period: medium, src });
+    addIndicator('SMA', { period: long, src });
+  }
 
   // NOT USED
-  protected onEachCandle(/* candle: Candle */): void {}
-  protected log(): void {}
-  protected onTradeExecuted(): void {}
-  protected end(): void {}
+  onTradeCompleted(_trade: TradeCompleted): void {}
+  onEachCandle(_tools: Tools<TMAStrategyParams>, ..._indicators: unknown[]): void {}
+  log(_tools: Tools<TMAStrategyParams>, ..._indicators: unknown[]): void {}
+  end(): void {}
 }
