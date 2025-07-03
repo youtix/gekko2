@@ -55,17 +55,13 @@ describe('TradingAdvisor', () => {
   const advisor = new TradingAdvisor(config);
   advisor['deferredEmit'] = vi.fn();
 
-  describe('constructor', () => {
+  describe('processInit', () => {
     it('should throw StrategyNotFoundError if an invalid strategy name is provided', () => {
-      expect(
-        () =>
-          new TradingAdvisor({
-            name: 'TradingAdvisor',
-            strategyName: 'NonExistentStrategy',
-          }),
-      ).toThrowError(GekkoError);
+      const badAdvisor = new TradingAdvisor({ name: 'TradingAdvisor', strategyName: 'NonExistentStrategy' });
+      expect(() => badAdvisor['processInit']()).toThrowError(GekkoError);
     });
     it('should create a strategy when a valid strategy name is provided', () => {
+      advisor['processInit']();
       expect(advisor.strategy).toBeDefined();
     });
   });
