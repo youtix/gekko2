@@ -5,6 +5,7 @@ import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
 import { CandleBatcher } from '@services/core/batcher/candleBatcher/candleBatcher';
+import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
 import { info } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { Strategy } from '@strategies/strategy';
@@ -24,17 +25,17 @@ export class TradingAdvisor extends Plugin {
   candle?: Candle;
   candleBatcher: CandleBatcher;
   strategy?: Strategy<unknown>;
+  timeframeInMinutes: CandleSize;
+  strategyName: string;
 
-  constructor({ strategyName }: TradingAdvisorConfiguration) {
-    super(TradingAdvisor.name);
-    this.candleBatcher = new CandleBatcher(TIMEFRAME_TO_MINUTES[this.timeframe]);
+  constructor({ name, strategyName }: TradingAdvisorConfiguration) {
+    super(name);
+    this.strategyName = strategyName;
+    this.timeframeInMinutes = TIMEFRAME_TO_MINUTES[this.timeframe];
+    this.candleBatcher = new CandleBatcher(this.timeframeInMinutes);
 
     const relayers = filter(Object.getOwnPropertyNames(TradingAdvisor.prototype), p => p.startsWith('relay'));
     bindAll(this, [...relayers]);
-
-    this.setUpStrategy(strategyName, TIMEFRAME_TO_MINUTES[this.timeframe], this.warmupPeriod);
-    this.setUpListeners();
-    info('trading advisor', `Using the strategy: ${strategyName}`);
   }
 
   // --- BEGIN LISTENERS ---
@@ -44,10 +45,10 @@ export class TradingAdvisor extends Plugin {
   // --- END LISTENERS ---
 
   // --- BEGIN INTERNALS ---
-  private setUpStrategy(strategyName: string, candleSize: number, historySize: number) {
-    const SelectedStrategy = strategies[strategyName as keyof typeof strategies];
-    if (!SelectedStrategy) throw new GekkoError('trading advisor', `${strategyName} strategy not found.`);
-    this.strategy = new SelectedStrategy(strategyName, candleSize, historySize);
+  private setUpStrategy() {
+    const SelectedStrategy = strategies[this.strategyName as keyof typeof strategies];
+    if (!SelectedStrategy) throw new GekkoError('trading advisor', `${this.strategyName} strategy not found.`);
+    this.strategy = new SelectedStrategy(this.strategyName, this.timeframeInMinutes, this.warmupPeriod);
   }
 
   private setUpListeners() {
@@ -84,7 +85,9 @@ export class TradingAdvisor extends Plugin {
   // --------------------------------------------------------------------------
 
   protected processInit(): void {
-    /* noop */
+    this.setUpStrategy();
+    this.setUpListeners();
+    info('trading advisor', `Using the strategy: ${this.strategyName}`);
   }
 
   protected processOneMinuteCandle(candle: Candle) {
