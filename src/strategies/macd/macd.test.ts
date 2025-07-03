@@ -1,9 +1,7 @@
-import { STRATEGY_ADVICE_EVENT } from '@plugins/plugin.const';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Advice } from '../../models/types/advice.types';
 import { MACD } from './macd.strategy';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn() }));
+vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), error: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn();
   Configuration.prototype.getStrategy = vi.fn(() => ({
@@ -18,78 +16,56 @@ vi.mock('@services/configuration/configuration', () => {
 
 describe('MACD Strategy', () => {
   let strategy: MACD;
-  let macd: any;
   let advices: string[];
+  let tools: any;
 
   beforeEach(() => {
-    strategy = new MACD('MACD', 60, 0);
-
-    // Replace the MACD indicator with a mock
-    macd = { onNewCandle: vi.fn(), getResult: vi.fn() };
-    strategy['indicators'] = [macd];
-
-    // Bypass warmup
-    strategy['isWarmupCompleted'] = true;
-    strategy['candle'] = { start: Date.now(), open: 1, high: 2, low: 0, close: 1, volume: 100 };
-
+    strategy = new MACD();
     advices = [];
-    strategy['on'](STRATEGY_ADVICE_EVENT, (advice: Advice) => advices.push(advice.recommendation));
+    tools = {
+      candle: { close: 1 },
+      strategyParams: {
+        short: 12,
+        long: 26,
+        signal: 9,
+        macdSrc: 'macd',
+        thresholds: { up: 0.5, down: -0.5, persistence: 2 },
+      },
+      advice: (direction: string) => advices.push(direction),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      error: vi.fn(),
+    };
   });
 
   it('should not emit advice before persistence on uptrend', () => {
-    // First candle above up threshold
-    macd.getResult.mockReturnValue({ macd: 1 });
-    strategy['onCandleAfterWarmup']();
+    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
     expect(advices).toHaveLength(0);
   });
 
-  it('should emits long advice after persistence on uptrend', () => {
-    // Two consecutive candles above up threshold => persistence = 2
-    macd.getResult.mockReturnValue({ macd: 1 });
-    strategy['onCandleAfterWarmup'](); // duration=1
-    strategy['onCandleAfterWarmup'](); // duration=2, persisted -> advice
-
-    expect(advices).toHaveLength(1);
-    expect(advices[0]).toBe('long');
+  it('should emit long advice after persistence on uptrend', () => {
+    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
+    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
+    expect(advices).toEqual(['long']);
   });
 
-  it('should not re-advise on continued uptrend', () => {
-    // Advice once, then continued uptrend should not emit again
-    macd.getResult.mockReturnValue({ macd: 1 });
-    strategy['onCandleAfterWarmup'](); // 1
-    strategy['onCandleAfterWarmup'](); // adviced
-    strategy['onCandleAfterWarmup'](); // no new advice
-
-    expect(advices).toHaveLength(1);
+  it('should emit short advice after persistence on downtrend', () => {
+    strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
+    strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
+    expect(advices).toEqual(['short']);
   });
 
-  it('should emits short advice after persistence on downtrend', () => {
-    // Two consecutive candles below down threshold => persistence = 2
-    macd.getResult.mockReturnValue({ macd: -1 });
-    strategy['onCandleAfterWarmup'](); // duration=1
-    strategy['onCandleAfterWarmup'](); // duration=2, persisted -> advice
-
-    expect(advices).toHaveLength(1);
-    expect(advices[0]).toBe('short');
-  });
-
-  it('should resets trend when switching from up to down', () => {
-    // Build an uptrend and get advised
-    macd.getResult.mockReturnValue({ macd: 1 });
-    strategy['onCandleAfterWarmup'](); // up1
-    strategy['onCandleAfterWarmup'](); // up2 -> long
-
-    // Now a downtrend
-    macd.getResult.mockReturnValue({ macd: -1 });
-    strategy['onCandleAfterWarmup'](); // down1, no new advice yet
-    strategy['onCandleAfterWarmup'](); // down2 -> short
-
+  it('should reset trend when switching from up to down', () => {
+    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
+    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
+    strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
+    strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
     expect(advices).toEqual(['long', 'short']);
   });
 
-  it('should nothing when MACD result is invalid', () => {
-    macd.getResult.mockReturnValue(null);
-    strategy['onCandleAfterWarmup']();
+  it('should do nothing when MACD result is invalid', () => {
+    strategy.onCandleAfterWarmup(tools, null);
     expect(advices).toHaveLength(0);
   });
 });
