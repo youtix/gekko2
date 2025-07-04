@@ -44,6 +44,7 @@ Each row in the CSV contains the following metrics:
 | `originalBalance`       | Starting portfolio balance                                                                      |
 | `currentBalance`        | Final portfolio balance                                                                         |
 | `sharpeRatio`           | Risk-adjusted return metric                                                                     |
+| `standardDeviation`     | Standard deviation of trade profits, used to measure volatility                                 |
 | `expectedDownside`      | Worst-case loss estimate                                                                        |
 | `ratioRoundtrip`        | Ratio of trades that completed a full buy/sell cycle                                            |
 | `worstMae`              | Maximum MAE observed across all roundtrips (percentage)                                         |

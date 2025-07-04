@@ -45,6 +45,8 @@ export type Report = {
   startBalance: number;
   exposure: number;
   sharpe: number;
+  /** Standard deviation of roundtrip profits */
+  standardDeviation: number;
   downside: number;
   ratioRoundTrips: Nullable<number>;
   /**

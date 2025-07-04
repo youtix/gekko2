@@ -6,16 +6,12 @@ export type RSICurrentTrend = {
   adviced: boolean;
 };
 
-declare global {
-  interface StrategyRegistry {
-    RSI: {
-      period: number;
-      src: InputSources;
-      thresholds: {
-        high: number;
-        low: number;
-        persistence: number;
-      };
-    };
-  }
+export interface RSIStrategyParams {
+  period: number;
+  src: InputSources;
+  thresholds: {
+    high: number;
+    low: number;
+    persistence: number;
+  };
 }

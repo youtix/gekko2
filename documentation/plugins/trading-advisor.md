@@ -14,6 +14,7 @@ In your configuration file, under the `plugins` section, you can configure the T
 plugins:
   - name: TradingAdvisor # Must be set to TradingAdvisor.
     strategyName: DEMA # Name of the strategy to run (same as strategy section).
+    strategyPath: ./build/strategies.js # Path to the file exporting the strategy
 ```
 
 The candle `timeframe` and optional warm‑up settings are now defined under the `watch` section. `timeframe` defaults to `'1m'` and must be one of the following values:
@@ -26,10 +27,7 @@ The Trading Advisor emits several events, which can be consumed by other plugins
 
 | Event                        | Description                                                                 |
 |------------------------------|-----------------------------------------------------------------------------|
-| `advice`                     | Emitted when the strategy detects a trading signal (e.g., long or short).   |
-| `strategyCandle`             | Emitted when a new aggregated candle is generated and sent to the strategy. |
-| `strategyUpdate`             | Emitted after each candle with current indicator values.                    |
-| `strategyWarmupCompleted`    | Emitted once the strategy has received enough candles to start advising.    |
-| `tradeCompleted`             | Emitted when a trade advice is confirmed and executed.                      |
+| `advice`                     | Emitted when the strategy detects a trading signal (e.g., long or short). |
+| `strategyWarmupCompleted`    | Emitted once the strategy has received enough candles to start advising. |
 
 These events are emitted through a deferred mechanism and then broadcast through Gekko’s main event bus.

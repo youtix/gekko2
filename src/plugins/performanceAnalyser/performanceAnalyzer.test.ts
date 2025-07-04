@@ -412,6 +412,7 @@ describe('PerformanceAnalyzer', () => {
         relativeProfit: 20,
         relativeYearlyProfit: 811.1111111111111,
         sharpe: 230.3174603174603,
+        standardDeviation: 3.5,
         startBalance: 1000,
         startPrice: 100,
         startTime: toTimestamp('2020-01-01T00:00:00Z'),
@@ -474,6 +475,7 @@ describe('PerformanceAnalyzer', () => {
       const report = analyzer['calculateReportStatistics']();
 
       expect(report?.sharpe).toBe(0);
+      expect(report?.standardDeviation).toBe(0);
     });
 
     it('should set sharpe to 0 when there are no roundtrips', () => {
@@ -482,6 +484,7 @@ describe('PerformanceAnalyzer', () => {
       const report = analyzer['calculateReportStatistics']();
 
       expect(report?.sharpe).toBe(0);
+      expect(report?.standardDeviation).toBe(0);
     });
   });
 });

@@ -169,8 +169,8 @@ export class PerformanceAnalyzer extends Plugin {
     const percentExposure = (this.exposure / differenceInMilliseconds(this.dates.end, this.dates.start)) * 100;
 
     const volatility = stdev(this.roundTrips.map(r => r.profit));
-    const sharpe =
-      !volatility || Number.isNaN(volatility) ? 0 : (relativeYearlyProfit - this.riskFreeReturn) / volatility;
+    const standardDeviation = Number.isNaN(volatility) ? 0 : volatility;
+    const sharpe = !standardDeviation ? 0 : (relativeYearlyProfit - this.riskFreeReturn) / standardDeviation;
 
     const tradeCount = this.trades > 2 ? this.trades - 2 : 1;
     const downsideLosses = this.losses.map(r => r.profit);
@@ -200,6 +200,7 @@ export class PerformanceAnalyzer extends Plugin {
       relativeProfit: relativeProfit,
       relativeYearlyProfit,
       sharpe,
+      standardDeviation,
       startBalance: this.start.balance,
       startPrice: this.startPrice,
       startTime: this.dates.start,

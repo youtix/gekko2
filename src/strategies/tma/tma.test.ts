@@ -1,9 +1,7 @@
-import { STRATEGY_ADVICE_EVENT } from '@plugins/plugin.const';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Advice } from '../../models/types/advice.types';
 import { TMA } from './tma.strategy';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn() }));
+vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), error: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn();
   Configuration.prototype.getStrategy = vi.fn(() => ({ short: 3, medium: 5, long: 8 }));
@@ -12,70 +10,40 @@ vi.mock('@services/configuration/configuration', () => {
 
 describe('TMA Strategy', () => {
   let strategy: TMA;
-  let short: any;
-  let medium: any;
-  let long: any;
   let advices: string[];
+  let tools: any;
 
   beforeEach(() => {
-    strategy = new TMA('TMA', 60, 0);
-
-    // Replace indicators with mocks to control their outputs
-    short = { onNewCandle: vi.fn(), getResult: vi.fn(), getName: vi.fn(), name: '', result: 0 };
-    medium = { onNewCandle: vi.fn(), getResult: vi.fn() };
-    long = { onNewCandle: vi.fn(), getResult: vi.fn() };
-    strategy['indicators'] = [short, medium, long];
-    strategy['candle'] = { start: Date.now(), open: 1, high: 2, low: 0, close: 1, volume: 100 };
-
-    // Bypass warmup so onCandleAfterWarmup runs
-    strategy['isWarmupCompleted'] = true;
-
-    // Capture emitted advices
+    strategy = new TMA();
     advices = [];
-
-    strategy['on'](STRATEGY_ADVICE_EVENT, (advice: Advice) => advices.push(advice.recommendation));
+    tools = {
+      candle: { close: 1 },
+      strategyParams: { short: 3, medium: 5, long: 8 },
+      advice: (dir: string) => advices.push(dir),
+      debug: vi.fn(),
+      info: vi.fn(),
+      warning: vi.fn(),
+      error: vi.fn(),
+    };
   });
 
-  it('should emits long advice when short > medium > long', () => {
-    short.getResult.mockReturnValue(10);
-    medium.getResult.mockReturnValue(5);
-    long.getResult.mockReturnValue(2);
-
-    strategy['onCandleAfterWarmup']();
-
-    expect(advices).toHaveLength(1);
-    expect(advices[0]).toBe('long');
+  it('should emit long advice when short > medium > long', () => {
+    strategy.onCandleAfterWarmup(tools, 10, 5, 2);
+    expect(advices).toEqual(['long']);
   });
 
-  it('should emits short advice when short < medium and medium > long', () => {
-    short.getResult.mockReturnValue(3);
-    medium.getResult.mockReturnValue(5);
-    long.getResult.mockReturnValue(2);
-
-    strategy['onCandleAfterWarmup']();
-
-    expect(advices).toHaveLength(1);
-    expect(advices[0]).toBe('short');
+  it('should emit short advice when short < medium and medium > long', () => {
+    strategy.onCandleAfterWarmup(tools, 3, 5, 2);
+    expect(advices).toEqual(['short']);
   });
 
-  it('should emits short advice when short > medium and medium < long', () => {
-    short.getResult.mockReturnValue(5);
-    medium.getResult.mockReturnValue(3);
-    long.getResult.mockReturnValue(7);
-
-    strategy['onCandleAfterWarmup']();
-
-    expect(advices).toHaveLength(1);
-    expect(advices[0]).toBe('short');
+  it('should emit short advice when short > medium and medium < long', () => {
+    strategy.onCandleAfterWarmup(tools, 5, 3, 7);
+    expect(advices).toEqual(['short']);
   });
 
   it('should not emit advice when no clear trend', () => {
-    short.getResult.mockReturnValue(5);
-    medium.getResult.mockReturnValue(5);
-    long.getResult.mockReturnValue(5);
-
-    strategy['onCandleAfterWarmup']();
-
+    strategy.onCandleAfterWarmup(tools, 5, 5, 5);
     expect(advices).toHaveLength(0);
   });
 });

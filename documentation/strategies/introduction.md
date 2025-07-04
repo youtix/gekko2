@@ -34,4 +34,10 @@ Gekko currently comes with the following example strategies:
 
 More strategies will be available in future releases.
 
+## Using External Strategies
+
+Gekko can load strategies from any JavaScript or TypeScript file. Provide the
+`strategyPath` in the Trading Advisor configuration to point to a module that
+exports your strategy class and specify its `strategyName`.
+
 
