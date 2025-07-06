@@ -7,9 +7,11 @@ import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
+import * as strategies from '@strategies/index';
 import { toISOString } from '@utils/date/date.utils';
 import { bindAll } from 'lodash-es';
 import EventEmitter from 'node:events';
+import { isAbsolute, resolve } from 'node:path';
 import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '../plugins/plugin.const';
 import { Direction, Strategy } from './strategy.types';
 
@@ -39,11 +41,18 @@ export class StrategyManager extends EventEmitter {
   }
 
   // ---- Called by trading advisor ----
-  public async createStrategy(strategyPath: string, strategyName: string) {
-    const SelectedStrategy = (await import(strategyPath))[strategyName];
-    if (!SelectedStrategy)
-      throw new GekkoError('trading advisor', `Cannot find ${strategyName} strategy in ${strategyPath}`);
-    this.strategy = new SelectedStrategy();
+  public async createStrategy(strategyName: string, strategyPath?: string) {
+    if (strategyPath) {
+      const resolvedPath = isAbsolute(strategyPath) ? strategyPath : resolve(process.cwd(), strategyPath);
+      const SelectedStrategy = (await import(resolvedPath))[strategyName];
+      if (!SelectedStrategy)
+        throw new GekkoError('trading advisor', `Cannot find external ${strategyName} strategy in ${resolvedPath}`);
+      this.strategy = new SelectedStrategy();
+    } else {
+      const SelectedStrategy = strategies[strategyName as keyof typeof strategies];
+      if (!SelectedStrategy) throw new GekkoError('trading advisor', `Cannot find internal ${strategyName} strategy`);
+      this.strategy = new SelectedStrategy();
+    }
     this.strategy?.init(this.addIndicator, this.strategyParams);
     this.isStartegyInitialized = true;
   }

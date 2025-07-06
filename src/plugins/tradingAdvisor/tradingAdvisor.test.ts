@@ -34,7 +34,6 @@ describe('TradingAdvisor', () => {
   const config = {
     name: 'TradingAdvisor',
     strategyName: 'DummyStrategy',
-    strategyPath: '@strategies/index',
   } satisfies TradingAdvisorConfiguration;
   const defaultAdvice: Advice = { id: 'advice-100', recommendation: 'short', date: toTimestamp('2020') };
   const defaultCandle: Candle = { close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
@@ -64,7 +63,6 @@ describe('TradingAdvisor', () => {
       const badAdvisor = new TradingAdvisor({
         name: 'TradingAdvisor',
         strategyName: 'NonExistentStrategy',
-        strategyPath: '@strategies/index',
       });
       await expect(() => badAdvisor['processInit']()).rejects.toThrowError(GekkoError);
     });
