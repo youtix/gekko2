@@ -10,7 +10,6 @@ import { info } from '@services/logger';
 import { StrategyManager } from '@strategies/strategyManager';
 import { addMinutes } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
-import { isAbsolute, resolve } from 'node:path';
 import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '../plugin.const';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
@@ -19,7 +18,7 @@ export class TradingAdvisor extends Plugin {
   private candleBatcher: CandleBatcher;
   private timeframeInMinutes: CandleSize;
   private strategyName: string;
-  private strategyPath: string;
+  private strategyPath?: string;
   private candle?: Candle;
   private strategyManager?: StrategyManager;
 
@@ -36,13 +35,8 @@ export class TradingAdvisor extends Plugin {
 
   // --- BEGIN INTERNALS ---
   private async setUpStrategy() {
-    const resolvedPath =
-      isAbsolute(this.strategyPath) || this.strategyPath.startsWith('@strategies')
-        ? this.strategyPath
-        : resolve(process.cwd(), this.strategyPath);
-
     this.strategyManager = new StrategyManager(this.warmupPeriod);
-    await this.strategyManager.createStrategy(resolvedPath, this.strategyName);
+    await this.strategyManager.createStrategy(this.strategyName, this.strategyPath);
   }
 
   private setUpListeners() {
