@@ -1,4 +1,5 @@
 import { GekkoError } from '@errors/gekko.error';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '../plugins/plugin.const';
 import { StrategyManager } from './strategyManager';
@@ -26,6 +27,16 @@ vi.mock('@strategies/index', () => ({
   },
   UnknownStrategy: undefined,
 }));
+vi.mock('./debug/debugAdvice.startegy.ts', () => ({
+  DebugAdvice: class {
+    init = vi.fn();
+    onEachCandle = vi.fn();
+    onCandleAfterWarmup = vi.fn();
+    onTradeCompleted = vi.fn();
+    log = vi.fn();
+    end = vi.fn();
+  },
+}));
 
 describe('StrategyManager', () => {
   let manager: StrategyManager;
@@ -45,15 +56,23 @@ describe('StrategyManager', () => {
 
   describe('createStrategy', () => {
     it('should instantiate strategy and mark as initialized', async () => {
-      await manager.createStrategy('@strategies/index', 'DummyStrategy');
+      await manager.createStrategy('DummyStrategy');
       const strategy: any = (manager as any).strategy;
       expect(strategy).toBeDefined();
       expect((manager as any).isStartegyInitialized).toBe(true);
       expect(strategy.init).toHaveBeenCalled();
     });
 
+    it('should load strategy from provided path', async () => {
+      const strategyPath = path.resolve(__dirname, './debug/debugAdvice.startegy.ts');
+      await manager.createStrategy('DebugAdvice', strategyPath);
+      const strategy: any = (manager as any).strategy;
+      expect(strategy).toBeDefined();
+      expect(strategy.init).toHaveBeenCalled();
+    });
+
     it('should throw when strategy does not exist', async () => {
-      await expect(manager.createStrategy('@strategies/index', 'UnknownStrategy')).rejects.toThrow(GekkoError);
+      await expect(manager.createStrategy('UnknownStrategy')).rejects.toThrow(GekkoError);
     });
   });
 
@@ -65,7 +84,7 @@ describe('StrategyManager', () => {
     });
 
     it('should throw when called after initialization', async () => {
-      await manager.createStrategy('@strategies/index', 'DummyStrategy');
+      await manager.createStrategy('DummyStrategy');
       expect(() => (manager as any).addIndicator('SMA', { period: 1 })).toThrow(GekkoError);
     });
   });
