@@ -1,6 +1,7 @@
 import { Report } from '@plugins/performanceAnalyser/performanceAnalyzer.types';
 import { Plugin } from '@plugins/plugin';
-import { lockSync } from '@services/fs/fs.service';
+import { lockSync as defaultLockSync } from '@services/fs/fs.service';
+import { Fs } from '@services/fs/fs.types';
 import { error } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
@@ -13,6 +14,7 @@ import { generateStrategyId } from './performanceReporter.utils';
 export class PerformanceReporter extends Plugin {
   private readonly formater: Intl.NumberFormat;
   private readonly filePath: string;
+  private fs: Fs = { lockSync: defaultLockSync };
   private readonly header =
     'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;standard deviation;expected downside;ratio roundtrip;worst mae\n';
 
@@ -20,6 +22,10 @@ export class PerformanceReporter extends Plugin {
     super(name);
     this.filePath = path.join(filePath, fileName);
     this.formater = new Intl.NumberFormat();
+  }
+
+  public setFs(fs: Fs) {
+    this.fs = fs;
   }
 
   public onPerformanceReport(report: Report) {
@@ -48,7 +54,7 @@ export class PerformanceReporter extends Plugin {
 
     try {
       // Acquire an exclusive lock, append, then release.
-      const release = lockSync(this.filePath, { retries: 5 });
+      const release = this.fs.lockSync(this.filePath, { retries: 5 });
       try {
         appendFileSync(this.filePath, csvLine, 'utf8');
       } finally {
@@ -71,7 +77,7 @@ export class PerformanceReporter extends Plugin {
       // Guard header creation with a lock so only the first process writes it
       const needsHeader = !existsSync(this.filePath) || statSync(this.filePath).size === 0;
       if (needsHeader) {
-        const release = lockSync(this.filePath, { retries: 3 });
+        const release = this.fs.lockSync(this.filePath, { retries: 3 });
         try {
           if (!existsSync(this.filePath) || statSync(this.filePath).size === 0) {
             writeFileSync(this.filePath, this.header, 'utf8');
