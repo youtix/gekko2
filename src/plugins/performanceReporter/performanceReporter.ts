@@ -1,5 +1,6 @@
 import { Report } from '@plugins/performanceAnalyser/performanceAnalyzer.types';
 import { Plugin } from '@plugins/plugin';
+import { lockSync } from '@services/fs/fs.service';
 import { error } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
@@ -47,7 +48,7 @@ export class PerformanceReporter extends Plugin {
 
     try {
       // Acquire an exclusive lock, append, then release.
-      const release = this.getFs().lockSync(this.filePath, { retries: 5 });
+      const release = lockSync(this.filePath, { retries: 5 });
       try {
         appendFileSync(this.filePath, csvLine, 'utf8');
       } finally {
@@ -70,7 +71,7 @@ export class PerformanceReporter extends Plugin {
       // Guard header creation with a lock so only the first process writes it
       const needsHeader = !existsSync(this.filePath) || statSync(this.filePath).size === 0;
       if (needsHeader) {
-        const release = this.getFs().lockSync(this.filePath, { retries: 3 });
+        const release = lockSync(this.filePath, { retries: 3 });
         try {
           if (!existsSync(this.filePath) || statSync(this.filePath).size === 0) {
             writeFileSync(this.filePath, this.header, 'utf8');
@@ -96,7 +97,7 @@ export class PerformanceReporter extends Plugin {
       schema: performanceReporterSchema,
       modes: ['backtest'],
       dependencies: [],
-      inject: ['fs'],
+      inject: [],
       eventsHandlers: [...Object.getOwnPropertyNames(PerformanceReporter.prototype).filter(n => n.startsWith('on'))],
       eventsEmitted: [],
       name: 'PerformanceReporter',

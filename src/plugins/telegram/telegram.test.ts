@@ -219,7 +219,7 @@ describe('Telegram', () => {
 
   describe('sendMessage', () => {
     it('should call getFetcher().post with correct URL and payload', async () => {
-      const fakeFetcher = { post: vi.fn().mockReturnValue('result') };
+      const fakeFetcher = { post: vi.fn().mockReturnValue('result'), get: vi.fn() };
       telegram['getFetcher'] = () => fakeFetcher;
       const expectedUrl = `${TELEGRAM_API_BASE_URL}abc/sendMessage`;
       const message = 'Test message';
@@ -234,6 +234,7 @@ describe('Telegram', () => {
         post: vi.fn().mockImplementation(() => {
           throw new Error('fail');
         }),
+        get: vi.fn(),
       };
       telegram['getFetcher'] = () => fakeFetcher;
       expect(async () => await telegram['sendMessage']('abc', '123', 'message')).not.toThrow();

@@ -9,23 +9,23 @@ import {
   TradeInitiated,
 } from '@models/types/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
+import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { debug } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { filter, upperCase } from 'lodash-es';
-import { TELEGRAM_API_BASE_URL } from './telegram.const';
 import { telegramSchema } from './telegram.schema';
 import { TelegramConfig } from './telegram.types';
 
 export class Telegram extends Plugin {
-  private token: string;
-  private chatId: string;
+  private bot: TelegramBot;
+  private chatId: number;
   private price?: number;
 
-  constructor({ chatId, token }: TelegramConfig) {
-    super(Telegram.name);
-    this.token = token;
+  constructor({ name, chatId, token }: TelegramConfig) {
+    super(name);
+    this.bot = new TelegramBot(token);
     this.chatId = chatId;
   }
 
@@ -36,7 +36,7 @@ export class Telegram extends Plugin {
       `At time: ${toISOString(date)}`,
       `Target price: ${this.price}`,
     ].join('\n');
-    this.sendMessage(this.token, this.chatId, message);
+    this.sendMessage(this.chatId, message);
   }
 
   public onTradeInitiated({ action, balance, date, id, adviceId, portfolio }: TradeInitiated) {
@@ -48,7 +48,7 @@ export class Telegram extends Plugin {
       `At time: ${toISOString(date)}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.token, this.chatId, message);
+    this.sendMessage(this.chatId, message);
   }
 
   public onTradeCanceled({ id, date, adviceId }: TradeCanceled) {
@@ -58,7 +58,7 @@ export class Telegram extends Plugin {
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.token, this.chatId, message);
+    this.sendMessage(this.chatId, message);
   }
 
   public onTradeAborted({ id, action, adviceId, balance, date, portfolio, reason }: TradeAborted) {
@@ -71,7 +71,7 @@ export class Telegram extends Plugin {
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.token, this.chatId, message);
+    this.sendMessage(this.chatId, message);
   }
 
   public onTradeErrored({ adviceId, date, id, reason }: TradeErrored) {
@@ -82,7 +82,7 @@ export class Telegram extends Plugin {
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.token, this.chatId, message);
+    this.sendMessage(this.chatId, message);
   }
 
   public onTradeCompleted({
@@ -108,7 +108,7 @@ export class Telegram extends Plugin {
       `Current balance: ${balance}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.token, this.chatId, message);
+    this.sendMessage(this.chatId, message);
   }
 
   public onRoundtrip({ duration, entryAt, exitAt, pnl, profit, maxAdverseExcursion }: RoundTrip) {
@@ -120,18 +120,15 @@ export class Telegram extends Plugin {
       `Profit percent: ${round(profit, 2, 'down')}%`,
       `MAE: ${round(maxAdverseExcursion, 2, 'down')}%`,
     ].join('\n');
-    this.sendMessage(this.token, this.chatId, message);
+    this.sendMessage(this.chatId, message);
   }
   // --- END LISTENERS ---
 
-  private async sendMessage(token: string, chatId: string, message: string) {
-    const url = `${TELEGRAM_API_BASE_URL}${token}/sendMessage`;
-    const payload = { chat_id: chatId, text: message };
-
-    debug('telegram', `Sending POST HTTP request to ${url} with payload ${JSON.stringify(payload)}`);
+  private async sendMessage(chatId: number, message: string) {
+    debug('telegram', `Sending Message to group ${chatId} via POST HTTP request with text ${message}`);
 
     try {
-      return await this.getFetcher().post({ url, payload });
+      return await this.bot.sendMessage(chatId, message);
     } catch {
       return; // Don't stop the music if we can't send the message
     }
@@ -142,7 +139,7 @@ export class Telegram extends Plugin {
   // --------------------------------------------------------------------------
 
   protected processInit(): void {
-    /* noop */
+    this.bot.listen();
   }
 
   protected processOneMinuteCandle(candle: Candle) {
@@ -150,7 +147,7 @@ export class Telegram extends Plugin {
   }
 
   protected processFinalize() {
-    /* noop */
+    this.bot.close();
   }
 
   public static getStaticConfiguration() {
