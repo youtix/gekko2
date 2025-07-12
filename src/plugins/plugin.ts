@@ -1,7 +1,5 @@
 import { Watch } from '@models/types/configuration.types';
 import { Broker } from '@services/broker/broker';
-import { Fetcher } from '@services/fetcher/fetcher.types';
-import { Fs } from '@services/fs/fs.types';
 import { Storage } from '@services/storage/storage';
 import EventEmitter from 'node:events';
 import { Candle } from '../models/types/candle.types';
@@ -13,8 +11,6 @@ export abstract class Plugin extends EventEmitter {
   private defferedEvents: DeffferedEvent[];
   private storage?: Storage;
   private broker?: Broker;
-  private fetcher?: Fetcher;
-  private fs?: Fs;
 
   protected asset: string;
   protected currency: string;
@@ -48,14 +44,6 @@ export abstract class Plugin extends EventEmitter {
     this.broker = broker;
   }
 
-  public setFetcher(fetcher: Fetcher) {
-    this.fetcher = fetcher;
-  }
-
-  public setFs(fs: Fs) {
-    this.fs = fs;
-  }
-
   public getStorage() {
     if (!this.storage) throw new PluginMissingServiceError(this.pluginName, 'storage');
     return this.storage;
@@ -64,16 +52,6 @@ export abstract class Plugin extends EventEmitter {
   public getBroker() {
     if (!this.broker) throw new PluginMissingServiceError(this.pluginName, 'broker');
     return this.broker;
-  }
-
-  public getFetcher() {
-    if (!this.fetcher) throw new PluginMissingServiceError(this.pluginName, 'fetcher');
-    return this.fetcher;
-  }
-
-  public getFs() {
-    if (!this.fs) throw new PluginMissingServiceError(this.pluginName, 'fs');
-    return this.fs;
   }
 
   // --------------------------------------------------------------------------

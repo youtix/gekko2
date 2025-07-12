@@ -1,5 +1,6 @@
 import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import { pluralize } from '@utils/string/string.utils';
 import { isNumber } from 'lodash-es';
 import { RSICurrentTrend, RSIStrategyParams } from './rsi.types';
 
@@ -24,7 +25,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
         this.trend = { duration: 0, direction: 'high', adviced: false };
       }
       this.trend.duration++;
-      debug('strategy', `In high trend since ${this.trend.duration} candle(s)`);
+      debug('strategy', `In high trend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;
@@ -36,7 +37,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
         this.trend = { duration: 0, direction: 'low', adviced: false };
       }
       this.trend.duration++;
-      debug('strategy', `In low trend since ${this.trend.duration} candle(s)`);
+      debug('strategy', `In low trend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;

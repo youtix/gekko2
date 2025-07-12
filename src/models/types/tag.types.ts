@@ -1,4 +1,5 @@
 export type Tag =
+  | 'bot'
   | 'broker'
   | 'configuration'
   | 'core'
