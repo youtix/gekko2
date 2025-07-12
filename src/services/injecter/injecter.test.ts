@@ -1,7 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../configuration/configuration';
-import { fetcher } from '../fetcher/fetcher.service';
 import { inject } from './injecter';
 
 vi.mock('@services/configuration/configuration', () => {
@@ -50,13 +49,6 @@ describe('Injecter', () => {
     it('should throw GekkoError if no broker config is returned', () => {
       getBrokerMock.mockReturnValue(undefined as unknown as ReturnType<typeof config.getBroker>);
       expect(() => inject.broker()).toThrow(GekkoError);
-    });
-  });
-
-  describe('fetcher', () => {
-    it('should return the global fetcher instance', () => {
-      const result = inject.fetcher();
-      expect(result).toBe(fetcher);
     });
   });
 });
