@@ -1,14 +1,19 @@
 import { error } from '@services/logger';
+import { wait } from '@utils/process/process.utils';
 import { FETCHER_MAX_RETRIES } from './fetcher.const';
-import { Fetcher } from './fetcher.types';
+import { Fetcher, Request } from './fetcher.types';
 
-const post: Fetcher['post'] = async ({ payload, url, attempt = 0, retries = FETCHER_MAX_RETRIES }) => {
+const request: Request = async ({ url, payload, attempt = 0, retries = FETCHER_MAX_RETRIES }) => {
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    const config = payload
+      ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }
+      : undefined;
+
+    const response = await fetch(url, config);
 
     const contentType = response.headers.get('Content-Type');
     const isJson = contentType && contentType.includes('application/json');
@@ -26,9 +31,9 @@ const post: Fetcher['post'] = async ({ payload, url, attempt = 0, retries = FETC
       throw err;
     }
 
-    await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
-    return post({ url, payload, retries, attempt: attempt + 1 });
+    await wait(1000 * (attempt + 1));
+    return request({ url, payload, retries, attempt: attempt + 1 });
   }
 };
 
-export const fetcher = { post };
+export const fetcher: Fetcher = { post: request, get: request };
