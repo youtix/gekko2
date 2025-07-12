@@ -13,7 +13,6 @@ import {
 import { toISOString, toTimestamp } from '../../utils/date/date.utils';
 import { round } from '../../utils/math/round.utils';
 import { Telegram } from './telegram';
-import { TELEGRAM_API_BASE_URL } from './telegram.const';
 import { telegramSchema } from './telegram.schema';
 
 vi.mock('../../services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() }));
@@ -29,7 +28,7 @@ describe('Telegram', () => {
   let telegram: Telegram;
 
   beforeEach(() => {
-    telegram = new Telegram({ name: 'Telegram', chatId: '123', token: 'abc' });
+    telegram = new Telegram({ name: 'Telegram', chatId: 123, token: 'abc' });
     telegram['asset'] = 'BTC';
     telegram['currency'] = 'USD';
   });
@@ -56,7 +55,7 @@ describe('Telegram', () => {
         `At time: ${toISOString(advice.date)}`,
         `Target price: ${telegram['price']}`,
       ].join('\n');
-      expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
+      expect(telegram['sendMessage']).toHaveBeenCalledWith(123, expectedMessage);
     });
   });
 
@@ -81,7 +80,7 @@ describe('Telegram', () => {
         `At time: ${toISOString(tradeInitiated.date)}`,
         `Advice: ${tradeInitiated.adviceId}`,
       ].join('\n');
-      expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
+      expect(telegram['sendMessage']).toHaveBeenCalledWith(123, expectedMessage);
     });
   });
 
@@ -101,7 +100,7 @@ describe('Telegram', () => {
         `Current price: ${telegram['price']} ${telegram['currency']}`,
         `Advice: ${tradeCanceled.adviceId}`,
       ].join('\n');
-      expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
+      expect(telegram['sendMessage']).toHaveBeenCalledWith(123, expectedMessage);
     });
   });
 
@@ -128,7 +127,7 @@ describe('Telegram', () => {
         `Current price: ${telegram['price']} ${telegram['currency']}`,
         `Advice: ${tradeAborted.adviceId}`,
       ].join('\n');
-      expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
+      expect(telegram['sendMessage']).toHaveBeenCalledWith(123, expectedMessage);
     });
   });
 
@@ -150,7 +149,7 @@ describe('Telegram', () => {
         `Current price: ${telegram['price']} ${telegram['currency']}`,
         `Advice: ${tradeErrored.adviceId}`,
       ].join('\n');
-      expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
+      expect(telegram['sendMessage']).toHaveBeenCalledWith(123, expectedMessage);
     });
   });
 
@@ -183,7 +182,7 @@ describe('Telegram', () => {
         `Current balance: ${tradeCompleted.balance}`,
         `Advice: ${tradeCompleted.adviceId}`,
       ].join('\n');
-      expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
+      expect(telegram['sendMessage']).toHaveBeenCalledWith(123, expectedMessage);
     });
   });
 
@@ -213,31 +212,24 @@ describe('Telegram', () => {
         `Profit percent: ${round(roundtrip.profit, 2, 'down')}%`,
         `MAE: ${round(roundtrip.maxAdverseExcursion, 2, 'down')}%`,
       ].join('\n');
-      expect(telegram['sendMessage']).toHaveBeenCalledWith('abc', '123', expectedMessage);
+      expect(telegram['sendMessage']).toHaveBeenCalledWith(123, expectedMessage);
     });
   });
 
   describe('sendMessage', () => {
-    it('should call getFetcher().post with correct URL and payload', async () => {
-      const fakeFetcher = { post: vi.fn().mockReturnValue('result') };
-      telegram['getFetcher'] = () => fakeFetcher;
-      const expectedUrl = `${TELEGRAM_API_BASE_URL}abc/sendMessage`;
+    it('should call bot.sendMessage with correct arguments', async () => {
+      const fakeBot = { sendMessage: vi.fn().mockResolvedValue('result'), listen: vi.fn(), close: vi.fn() };
+      telegram['bot'] = fakeBot as any;
       const message = 'Test message';
-      const expectedPayload = { chat_id: '123', text: message };
-      const result = await telegram['sendMessage']('abc', '123', message);
-      expect(fakeFetcher.post).toHaveBeenCalledWith({ url: expectedUrl, payload: expectedPayload });
+      const result = await telegram['sendMessage'](123, message);
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(123, message);
       expect(result).toBe('result');
     });
 
     it('should catch errors and return undefined', async () => {
-      const fakeFetcher = {
-        post: vi.fn().mockImplementation(() => {
-          throw new Error('fail');
-        }),
-      };
-      telegram['getFetcher'] = () => fakeFetcher;
-      expect(async () => await telegram['sendMessage']('abc', '123', 'message')).not.toThrow();
-      expect(await telegram['sendMessage']('abc', '123', 'message')).toBeUndefined();
+      const fakeBot = { sendMessage: vi.fn().mockRejectedValue(new Error('fail')), listen: vi.fn(), close: vi.fn() };
+      telegram['bot'] = fakeBot as any;
+      expect(await telegram['sendMessage'](123, 'message')).toBeUndefined();
     });
   });
 
@@ -252,8 +244,8 @@ describe('Telegram', () => {
     it('should return dependencies as an empty array', () => {
       expect(config.dependencies).toEqual([]);
     });
-    it('should return inject equal to ["fetcher"]', () => {
-      expect(config.inject).toEqual(['fetcher']);
+    it('should NOT use injecter services', () => {
+      expect(config.inject).toEqual([]);
     });
     it('should return eventsHandlers containing all methods starting with "on"', () => {
       const expectedHandlers = Object.getOwnPropertyNames(Telegram.prototype).filter(p => p.startsWith('on'));

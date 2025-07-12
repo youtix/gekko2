@@ -1,5 +1,6 @@
 import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
 
@@ -26,7 +27,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
         this.trend = { duration: 0, persisted: false, direction: 'up', adviced: false };
       }
       this.trend.duration++;
-      debug('strategy', `In uptrend since ${this.trend.duration} candle(s)`);
+      debug('strategy', `In uptrend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
 
       if (this.trend.duration >= strategyParams.thresholds.persistence) this.trend.persisted = true;
 
@@ -40,7 +41,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
         this.trend = { duration: 0, persisted: false, direction: 'down', adviced: false };
       }
       this.trend.duration++;
-      debug('strategy', `In downtrend since ${this.trend.duration} candle(s)`);
+      debug('strategy', `In downtrend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
 
       if (this.trend.duration >= strategyParams.thresholds.persistence) this.trend.persisted = true;
 
