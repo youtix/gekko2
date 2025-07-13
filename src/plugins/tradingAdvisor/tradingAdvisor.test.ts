@@ -1,4 +1,5 @@
 // tradingAdvisor.test.ts
+import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT, TIMEFRAME_CANDLE_EVENT } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
@@ -6,7 +7,6 @@ import { TradeCompleted } from '@models/types/tradeStatus.types';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
-import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '../plugin.const';
 import { TradingAdvisor } from './tradingAdvisor';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
@@ -78,21 +78,28 @@ describe('TradingAdvisor', () => {
     });
     it('should update the candle property when processOneMinuteCandle is called', () => {
       advisor['processOneMinuteCandle'](defaultCandle);
-      expect((advisor as any).candle).toEqual(defaultCandle);
+      expect(advisor['candle']).toEqual(defaultCandle);
     });
 
     it('should call strategyManager.onNewCandle when addSmallCandle returns a new candle', () => {
-      (advisor as any).candleBatcher.addSmallCandle = vi.fn(() => defaultCandle);
+      advisor['candleBatcher'].addSmallCandle = vi.fn(() => defaultCandle);
       advisor['strategyManager']!.onNewCandle = vi.fn();
       advisor['processOneMinuteCandle'](defaultCandle);
       expect(advisor['strategyManager']?.onNewCandle).toHaveBeenCalledWith(defaultCandle);
     });
 
     it('should NOT call strategyManager.onNewCandle when addSmallCandle returns a falsy value', () => {
-      (advisor as any).candleBatcher.addSmallCandle = vi.fn(() => undefined);
+      advisor['candleBatcher'].addSmallCandle = vi.fn(() => undefined);
       advisor['strategyManager']!.onNewCandle = vi.fn();
       advisor['processOneMinuteCandle'](defaultCandle);
       expect(advisor['strategyManager']?.onNewCandle).not.toHaveBeenCalled();
+    });
+
+    it('should emit STRATEGY_TIMEFRAME_CANDLE_EVENT when addSmallCandle returns a new candle', () => {
+      advisor['candleBatcher']['addSmallCandle'] = vi.fn(() => defaultCandle);
+      advisor['strategyManager']!.onNewCandle = vi.fn();
+      advisor['processOneMinuteCandle'](defaultCandle);
+      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_CANDLE_EVENT, defaultCandle);
     });
   });
 

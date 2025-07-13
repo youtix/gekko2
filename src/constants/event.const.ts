@@ -9,6 +9,7 @@ export const TRADE_COMPLETED_EVENT = 'tradeCompleted';
 
 export const STRATEGY_ADVICE_EVENT = 'strategyAdvice';
 export const STRATEGY_WARMUP_COMPLETED_EVENT = 'strategyWarmupCompleted';
+export const TIMEFRAME_CANDLE_EVENT = 'timeframeCandle';
 
 export const PERFORMANCE_REPORT_EVENT = 'performanceReport';
 export const ROUNDTRIP_COMPLETED_EVENT = 'roundtripCompleted';

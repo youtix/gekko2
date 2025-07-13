@@ -1,3 +1,12 @@
+import {
+  PORTFOLIO_CHANGE_EVENT,
+  PORTFOLIO_VALUE_CHANGE_EVENT,
+  TRADE_ABORTED_EVENT,
+  TRADE_CANCELED_EVENT,
+  TRADE_COMPLETED_EVENT,
+  TRADE_ERRORED_EVENT,
+  TRADE_INITIATED_EVENT,
+} from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Broker } from '@services/broker/broker';
 import { bindAll } from 'lodash-es';
@@ -7,15 +16,6 @@ import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '../../services/core/
 import { StickyOrder } from '../../services/core/order/sticky/stickyOrder';
 import { error, warning } from '../../services/logger';
 import { wait } from '../../utils/process/process.utils';
-import {
-  PORTFOLIO_CHANGE_EVENT,
-  PORTFOLIO_VALUE_CHANGE_EVENT,
-  TRADE_ABORTED_EVENT,
-  TRADE_CANCELED_EVENT,
-  TRADE_COMPLETED_EVENT,
-  TRADE_ERRORED_EVENT,
-  TRADE_INITIATED_EVENT,
-} from '../plugin.const';
 import { Trader } from './trader';
 import { SYNCHRONIZATION_INTERVAL } from './trader.const';
 import { traderSchema } from './trader.schema';
