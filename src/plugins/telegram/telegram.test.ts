@@ -222,7 +222,7 @@ describe('Telegram', () => {
       telegram['bot'] = fakeBot as any;
       const message = 'Test message';
       const result = await telegram['sendMessage'](123, message);
-      expect(fakeBot.sendMessage).toHaveBeenCalledWith(123, message);
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(message, 123);
       expect(result).toBe('result');
     });
 

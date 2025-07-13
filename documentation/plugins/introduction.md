@@ -6,6 +6,7 @@ Gekko currently includes several plugins to extend its functionality:
 - [Paper Trader](./paper-trader.md) – simulates trades using your strategy.
 - [Performance Analyzer](./performance-analyzer.md) – evaluates the performance of your strategy.
 - [Telegram](./trader.md) – sends trading events to a Telegram chat group.
+- [Supervision](./supervision.md) – monitor the bot via Telegram commands.
 - [Trader](./trader.md) – executes advice from the [Trading Advisor](./trading-advisor.md) on a real exchange.
 - [Trading Advisor](./trading-advisor.md) – runs your trading strategy and generates advice.
 
