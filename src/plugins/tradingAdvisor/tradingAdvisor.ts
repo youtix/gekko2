@@ -1,3 +1,4 @@
+import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT, TIMEFRAME_CANDLE_EVENT } from '@constants/event.const';
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/types/advice.types';
@@ -10,7 +11,6 @@ import { info } from '@services/logger';
 import { StrategyManager } from '@strategies/strategyManager';
 import { addMinutes } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
-import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '../plugin.const';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
@@ -80,6 +80,7 @@ export class TradingAdvisor extends Plugin {
     this.candle = candle;
     const newCandle = this.candleBatcher.addSmallCandle(candle);
     if (newCandle) {
+      this.deferredEmit(TIMEFRAME_CANDLE_EVENT, newCandle);
       this.strategyManager?.onNewCandle(newCandle);
     }
   }
@@ -96,7 +97,7 @@ export class TradingAdvisor extends Plugin {
       dependencies: [],
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(TradingAdvisor.prototype), p => p.startsWith('on')),
-      eventsEmitted: [STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT],
+      eventsEmitted: [STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT, TIMEFRAME_CANDLE_EVENT],
     };
   }
 }

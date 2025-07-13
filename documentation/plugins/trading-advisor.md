@@ -27,7 +27,8 @@ The Trading Advisor emits several events, which can be consumed by other plugins
 
 | Event                        | Description                                                                 |
 |------------------------------|-----------------------------------------------------------------------------|
-| `advice`                     | Emitted when the strategy detects a trading signal (e.g., long or short). |
-| `strategyWarmupCompleted`    | Emitted once the strategy has received enough candles to start advising. |
+| `strategyAdvice`             | Emitted when the strategy detects a trading signal (e.g., long or short).   |
+| `strategyWarmupCompleted`    | Emitted once the strategy has received enough candles to start advising.    |
+| `timeframeCandle`            | Emitted once a new timeframe candle is created.                             |
 
 These events are emitted through a deferred mechanism and then broadcast through Gekko’s main event bus.
