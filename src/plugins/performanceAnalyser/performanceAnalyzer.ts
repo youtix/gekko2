@@ -1,3 +1,4 @@
+import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_COMPLETED_EVENT } from '@constants/event.const';
 import { Candle } from '@models/types/candle.types';
 import { Portfolio } from '@models/types/portfolio.types';
 import { RoundTrip } from '@models/types/roundtrip.types';
@@ -8,7 +9,6 @@ import { round } from '@utils/math/round.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
-import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_COMPLETED_EVENT } from '../plugin.const';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 import { DateRange, PerformanceAnalyzerConfig, Report, SingleRoundTrip, Start } from './performanceAnalyzer.types';
 import { logFinalize, logRoundtrip } from './performanceAnalyzer.utils';

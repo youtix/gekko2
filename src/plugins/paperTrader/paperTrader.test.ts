@@ -1,15 +1,15 @@
+import {
+  PORTFOLIO_CHANGE_EVENT,
+  PORTFOLIO_VALUE_CHANGE_EVENT,
+  TRADE_COMPLETED_EVENT,
+  TRADE_INITIATED_EVENT,
+} from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { StopGekkoError } from '@errors/stopGekko.error';
 import { Advice } from '@models/types/advice.types';
 import { Candle } from '@models/types/candle.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
-import {
-  PORTFOLIO_CHANGE_EVENT,
-  PORTFOLIO_VALUE_CHANGE_EVENT,
-  TRADE_COMPLETED_EVENT,
-  TRADE_INITIATED_EVENT,
-} from '../plugin.const';
 import { PaperTrader } from './paperTrader';
 import { PapertraderConfig } from './paperTrader.types';
 

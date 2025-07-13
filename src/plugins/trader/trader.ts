@@ -1,10 +1,3 @@
-import { GekkoError } from '@errors/gekko.error';
-import { Action } from '@models/types/action.types';
-import { Advice } from '@models/types/advice.types';
-import { Candle } from '@models/types/candle.types';
-import { Portfolio } from '@models/types/portfolio.types';
-import { TradeAborted, TradeCanceled, TradeErrored, TradeInitiated } from '@models/types/tradeStatus.types';
-import { Plugin } from '@plugins/plugin';
 import {
   PORTFOLIO_CHANGE_EVENT,
   PORTFOLIO_VALUE_CHANGE_EVENT,
@@ -13,7 +6,14 @@ import {
   TRADE_COMPLETED_EVENT,
   TRADE_ERRORED_EVENT,
   TRADE_INITIATED_EVENT,
-} from '@plugins/plugin.const';
+} from '@constants/event.const';
+import { GekkoError } from '@errors/gekko.error';
+import { Action } from '@models/types/action.types';
+import { Advice } from '@models/types/advice.types';
+import { Candle } from '@models/types/candle.types';
+import { Portfolio } from '@models/types/portfolio.types';
+import { TradeAborted, TradeCanceled, TradeErrored, TradeInitiated } from '@models/types/tradeStatus.types';
+import { Plugin } from '@plugins/plugin';
 import {
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,

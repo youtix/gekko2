@@ -1,7 +1,7 @@
+import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '../plugins/plugin.const';
 import { StrategyManager } from './strategyManager';
 
 vi.mock('@services/logger', () => ({

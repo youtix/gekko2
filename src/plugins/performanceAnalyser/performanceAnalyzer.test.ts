@@ -1,6 +1,6 @@
+import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_COMPLETED_EVENT } from '@constants/event.const';
 import { Candle } from '@models/types/candle.types';
 import { TradeCompleted } from '@models/types/tradeStatus.types';
-import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_COMPLETED_EVENT } from '@plugins/plugin.const';
 import { addMinutes } from 'date-fns';
 import { first, isNil } from 'lodash-es';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
