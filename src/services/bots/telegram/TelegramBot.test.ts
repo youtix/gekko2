@@ -41,7 +41,7 @@ describe('TelegramBot', () => {
 
   it('sendMessage should call fetcher.post with correct args', async () => {
     (fetcher.post as Mock).mockResolvedValue({});
-    await bot.sendMessage(10, 'hello');
+    await bot.sendMessage('hello', 10);
     expect(fetcher.post).toHaveBeenCalledWith({
       url: `https://api.telegram.org/bot${token}/sendMessage`,
       payload: { chat_id: 10, text: 'hello' },
@@ -59,7 +59,7 @@ describe('TelegramBot', () => {
       bot.sendMessage = vi.fn();
       await (bot as any).checkUpdates();
       expect(handle).toHaveBeenCalledWith('/ping');
-      expect(bot.sendMessage).toHaveBeenCalledWith(4, 'pong');
+      expect(bot.sendMessage).toHaveBeenCalledWith('pong');
     });
 
     it('should ignore updates without message text', async () => {
