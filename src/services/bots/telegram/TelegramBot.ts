@@ -9,6 +9,7 @@ import { TelegramUpdate } from './telegram.types';
 export class TelegramBot extends Bot {
   private readonly apiUrl: string;
   private offset = 0;
+  private chatId?: number;
 
   constructor(token: string, handleCommand?: HandleCommand) {
     super(handleCommand);
@@ -24,10 +25,10 @@ export class TelegramBot extends Bot {
     return data.result;
   }
 
-  public async sendMessage(chatId: number, text: string) {
+  public async sendMessage(text: string, chatId?: number) {
     await fetcher.post({
       url: `${this.apiUrl}/sendMessage`,
-      payload: { chat_id: chatId, text },
+      payload: { chat_id: this.chatId ?? chatId, text },
     });
   }
 
@@ -38,8 +39,10 @@ export class TelegramBot extends Bot {
       const message = update.message;
       if (!message || !isString(message.text)) return;
       const { text, chat } = message;
-      debug('bot', `Received command from Telegram Bot: "${text}"`);
-      if (this.handleCommand && text.startsWith('/')) await this.sendMessage(chat.id, this.handleCommand(text));
+      const cmd = text;
+      debug('bot', `Received command from Telegram Bot: "${cmd}"`);
+      this.chatId = chat.id;
+      if (this.handleCommand && cmd.startsWith('/')) await this.sendMessage(this.handleCommand(cmd));
     }
   }
 }

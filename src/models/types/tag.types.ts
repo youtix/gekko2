@@ -14,5 +14,6 @@ export type Tag =
   | 'strategy'
   | 'stream'
   | 'telegram'
+  | 'supervision'
   | 'trader'
   | 'trading advisor';
