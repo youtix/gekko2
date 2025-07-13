@@ -128,7 +128,7 @@ export class Telegram extends Plugin {
     debug('telegram', `Sending Message to group ${chatId} via POST HTTP request with text ${message}`);
 
     try {
-      return await this.bot.sendMessage(chatId, message);
+      return await this.bot.sendMessage(message, chatId);
     } catch {
       return; // Don't stop the music if we can't send the message
     }

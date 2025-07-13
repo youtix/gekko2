@@ -1,0 +1,24 @@
+watch:
+  asset: BTC
+  currency: USDT
+  mode: realtime
+  timeframe: '1d'
+
+broker:
+  name: binance
+
+strategy:
+  name: DebugAdvice
+  each: 4
+  wait: 0
+
+plugins:
+  - name: TradingAdvisor
+    strategyName: DebugAdvice
+
+  - name: Supervision
+    token: <your-telegram-bot-token>
+    cpuThreshold: 80
+    memoryThreshold: 1024
+    cpuCheckInterval: 10000
+    memoryCheckInterval: 10000
