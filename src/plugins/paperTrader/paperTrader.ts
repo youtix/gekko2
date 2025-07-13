@@ -1,3 +1,9 @@
+import {
+  PORTFOLIO_CHANGE_EVENT,
+  PORTFOLIO_VALUE_CHANGE_EVENT,
+  TRADE_COMPLETED_EVENT,
+  TRADE_INITIATED_EVENT,
+} from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { StopGekkoError } from '@errors/stopGekko.error';
 import { Advice } from '@models/types/advice.types';
@@ -6,12 +12,6 @@ import { Nullable } from '@models/types/generic.types';
 import { Portfolio } from '@models/types/portfolio.types';
 import { TradeInitiated } from '@models/types/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
-import {
-  PORTFOLIO_CHANGE_EVENT,
-  PORTFOLIO_VALUE_CHANGE_EVENT,
-  TRADE_COMPLETED_EVENT,
-  TRADE_INITIATED_EVENT,
-} from '@plugins/plugin.const';
 import { warning } from '@services/logger';
 import { round } from '@utils/math/round.utils';
 import { filter } from 'lodash-es';

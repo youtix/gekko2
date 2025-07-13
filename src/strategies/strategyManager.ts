@@ -1,3 +1,4 @@
+import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import * as indicators from '@indicators/index';
 import { Indicator } from '@indicators/indicator';
@@ -12,7 +13,6 @@ import { toISOString } from '@utils/date/date.utils';
 import { bindAll } from 'lodash-es';
 import EventEmitter from 'node:events';
 import { isAbsolute, resolve } from 'node:path';
-import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '../plugins/plugin.const';
 import { Direction, Strategy } from './strategy.types';
 
 export class StrategyManager extends EventEmitter {
