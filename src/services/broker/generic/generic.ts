@@ -23,12 +23,12 @@ export class GenericBroker extends Broker {
     return { ask: ticker.ask, bid: ticker.bid };
   }
 
-  protected async fetchOHLCVOnce(from?: EpochTimeStamp) {
+  protected async fetchOHLCVOnce(from?: EpochTimeStamp, timeframe = '1m', limits = LIMITS[this.brokerName]) {
     const ohlcvList = await this.broker.fetchOHLCV(
       this.symbol,
-      this.broker.timeframes['1m'] as string,
+      this.broker.timeframes[timeframe] as string,
       from,
-      LIMITS[this.brokerName],
+      limits,
     );
     const candles = mapToCandles(ohlcvList);
     candlesSchema.validate(candles);

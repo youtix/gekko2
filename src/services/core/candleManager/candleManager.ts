@@ -3,6 +3,7 @@ import { Candle } from '@models/types/candle.types';
 import { Trade } from '@models/types/trade.types';
 import { debug } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
+import { addPrecise } from '@utils/math/math.utils';
 import { pluralize } from '@utils/string/string.utils';
 import { filterTradesByTimestamp } from '@utils/trade/trade.utils';
 import { dropRight, each, first, groupBy, last, map, max, mergeWith, min, pick, sortBy } from 'lodash-es';
@@ -60,7 +61,8 @@ export class CandleManager {
     each(trades, ({ price, amount }) => {
       candle.high = max([candle.high, price]) ?? 0;
       candle.low = min([candle.low, price]) ?? 0;
-      candle.volume += amount;
+      // Use exact precision to guarantee accurate comparisons during monitoring (supervision plugin)
+      candle.volume = addPrecise(candle.volume, amount);
     });
 
     return candle;

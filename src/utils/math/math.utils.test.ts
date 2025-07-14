@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { linreg, percentile, stdev, weightedMean } from './math.utils';
+import { addPrecise, linreg, percentile, stdev, weightedMean } from './math.utils';
 
 describe('stdev', () => {
   it.each`
@@ -100,5 +100,20 @@ describe('weightedMean', () => {
 
     expect(values).toEqual(valuesCopy);
     expect(weights).toEqual(weightsCopy);
+  });
+});
+
+describe('addPrecise', () => {
+  it.each`
+    a           | b           | expected
+    ${0.1}      | ${0.2}      | ${0.3}
+    ${1.005}    | ${0.005}    | ${1.01}
+    ${123.456}  | ${0.444}    | ${123.9}
+    ${0}        | ${0}        | ${0}
+    ${-1.1}     | ${2.2}      | ${1.1}
+    ${1e-7}     | ${2e-7}     | ${3e-7}
+    ${1.234567} | ${8.765433} | ${10}
+  `('returns $expected for $a + $b', ({ a, b, expected }) => {
+    expect(addPrecise(a, b)).toBe(expected);
   });
 });

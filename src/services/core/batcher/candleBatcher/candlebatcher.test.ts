@@ -124,7 +124,7 @@ describe('candleBatcher', () => {
       high: max([firstCandle?.high, secondCandle?.high]),
       low: min([firstCandle?.low, secondCandle?.low]),
       close: secondCandle?.close,
-      volume: (firstCandle?.volume ?? 0) + (secondCandle?.volume ?? 0),
+      volume: 5.11280845,
     };
     const result: (Candle | undefined)[] = [];
     result.push(candleBatcher.addSmallCandle(firstCandle));

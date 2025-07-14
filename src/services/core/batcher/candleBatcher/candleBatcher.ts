@@ -1,3 +1,4 @@
+import { addPrecise } from '@utils/math/math.utils';
 import { omit } from 'lodash-es';
 import { Candle } from '../../../../models/types/candle.types';
 import { CandleSize } from './candleBatcher.types';
@@ -31,7 +32,8 @@ export class CandleBatcher {
         high: Math.max(acc.high, curr.high),
         low: Math.min(acc.low, curr.low),
         close: curr.close,
-        volume: acc.volume + curr.volume,
+        // Use exact precision to guarantee accurate comparisons during monitoring (supervision plugin)
+        volume: addPrecise(acc.volume, curr.volume),
       }),
       base,
     );

@@ -70,6 +70,31 @@ describe('Supervision', () => {
     expect(plugin['memoryInterval']).toBeUndefined();
   });
 
+  it('should send alert when timeframe candle differs from broker', async () => {
+    const brokerCandle = { open: 1, high: 2, low: 1, close: 2, volume: 10 };
+    const timeframeCandle = { open: 2, high: 3, low: 1, close: 3, volume: 11 };
+    plugin['getBroker'] = vi.fn().mockReturnValue({
+      fetchOHLCV: vi.fn().mockResolvedValue([brokerCandle]),
+    });
+    plugin['handleCommand']('/launchtimeframecandlecheck');
+    await plugin.onTimeframeCandle(timeframeCandle as any);
+    expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('⚠️ Timeframe candle mismatch detected'));
+  });
+
+  it('should stop timeframe candle monitoring on command', async () => {
+    const brokerCandle = { open: 1, high: 2, low: 1, close: 2, volume: 10 };
+    const timeframeCandle = { open: 2, high: 3, low: 1, close: 3, volume: 11 };
+    plugin['getBroker'] = vi.fn().mockReturnValue({
+      fetchOHLCV: vi.fn().mockResolvedValue([brokerCandle]),
+    });
+    plugin['handleCommand']('/launchtimeframecandlecheck');
+    plugin['handleCommand']('/stoptimeframecandlecheck');
+    await plugin.onTimeframeCandle(timeframeCandle as any);
+    expect(fakeBot.sendMessage).not.toHaveBeenCalledWith(
+      expect.stringContaining('⚠️ Timeframe candle mismatch detected'),
+    );
+  });
+
   it('getStaticConfiguration returns expected meta', () => {
     const meta = Supervision.getStaticConfiguration();
     expect(meta).toMatchObject({ name: 'Supervision', modes: ['realtime'] });
