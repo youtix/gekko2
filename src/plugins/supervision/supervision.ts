@@ -1,6 +1,9 @@
+import { Candle } from '@models/types/candle.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { debug } from '@services/logger';
+import { shallowObjectDiff } from '@utils/object/object.utils';
+import { filter, isEmpty } from 'lodash-es';
 import { supervisionSchema } from './supervision.schema';
 import { SupervisionConfig } from './supervision.types';
 
@@ -14,6 +17,8 @@ export class Supervision extends Plugin {
   private memoryInterval?: Timer;
   private lastCpuUsage = process.cpuUsage();
   private lastCpuCheck = Date.now();
+  private timeframeCandleCheck = false;
+  private lastTimeframeCandle?: Candle;
 
   constructor({
     name,
@@ -47,6 +52,12 @@ export class Supervision extends Plugin {
       case '/stopmemorycheck':
         this.stopMemoryCheck();
         return '✅ Memory Check stopped';
+      case '/launchtimeframecandlecheck':
+        this.launchTimeframeCandleCheck();
+        return '✅ Timeframe Candle Check started';
+      case '/stoptimeframecandlecheck':
+        this.stopTimeframeCandleCheck();
+        return '✅ Timeframe Candle Check stopped';
       default:
         return 'Unknown command';
     }
@@ -92,6 +103,27 @@ export class Supervision extends Plugin {
     debug('supervision', 'Stopped Memory monitoring');
   }
 
+  private launchTimeframeCandleCheck() {
+    this.timeframeCandleCheck = true;
+    debug('supervision', 'Starting Timeframe Candle monitoring');
+  }
+
+  private stopTimeframeCandleCheck() {
+    this.timeframeCandleCheck = false;
+    debug('supervision', 'Stopped Timeframe Candle monitoring');
+  }
+
+  private async checkTimeframeCandle() {
+    if (!this.lastTimeframeCandle) return;
+    const candles = await this.getBroker().fetchOHLCV(undefined, this.timeframe, 100);
+    const brokerCandle = candles.filter(candle => this.lastTimeframeCandle?.start === candle.start)[0];
+    if (!brokerCandle) return;
+    const diff = shallowObjectDiff(brokerCandle, this.lastTimeframeCandle);
+    if (!isEmpty(diff)) {
+      this.bot.sendMessage(`⚠️ Timeframe candle mismatch detected: \n${JSON.stringify(diff, null, 2)}`);
+    }
+  }
+
   private getCpuUsage(): number {
     const currentUsage = process.cpuUsage(this.lastCpuUsage);
     const currentTime = Date.now();
@@ -107,6 +139,12 @@ export class Supervision extends Plugin {
     return bytes / (1024 * 1024);
   }
 
+  public async onTimeframeCandle(candle: Candle) {
+    this.lastTimeframeCandle = candle;
+    if (!this.timeframeCandleCheck) return;
+    await this.checkTimeframeCandle();
+  }
+
   protected processInit() {
     debug('supervision', 'Supervision plugin initialized');
     this.bot.listen();
@@ -120,6 +158,7 @@ export class Supervision extends Plugin {
     this.bot.close();
     this.stopCpuCheck();
     this.stopMemoryCheck();
+    this.stopTimeframeCandleCheck();
   }
 
   public static getStaticConfiguration() {
@@ -127,8 +166,8 @@ export class Supervision extends Plugin {
       schema: supervisionSchema,
       modes: ['realtime'],
       dependencies: [],
-      inject: [],
-      eventsHandlers: [],
+      inject: ['broker'],
+      eventsHandlers: filter(Object.getOwnPropertyNames(Supervision.prototype), p => p.startsWith('on')),
       eventsEmitted: [],
       name: 'Supervision',
     } as const;
