@@ -10,16 +10,6 @@ export const stdev = (vals: number[] = []) => {
   return Math.sqrt(mean(valuesMinusMeanSquared(vals)));
 };
 
-/**
- * Linear-interpolated percentile (inclusive-range definition)
- *
- * @param values  data set (numbers only)
- * @param ptile   desired percentile.
- *                • Accepts 0 … 1  (e.g. 0.95)
- *                • or 0 … 100 (e.g. 95).
- *                  Anything > 1 is assumed to be a percentage and is divided by 100.
- * @returns the interpolated value, or NaN if the inputs are invalid
- */
 export const percentile = (values: number[] = [], ptile?: number): number => {
   if (!values?.length || ptile === undefined || ptile < 0) return NaN;
 
@@ -78,4 +68,22 @@ export const linreg = (valuesX: number[], valuesY: number[]): [number, number] |
   const b = sumY / n - m * (sumX / n);
 
   return [m, b];
+};
+
+export const addPrecise = (a: number, b: number) => {
+  const [aDecimals, bDecimals] = [a, b].map(countDecimals);
+  const factor = 10 ** Math.max(aDecimals, bDecimals);
+
+  const result = (Math.round(a * factor) + Math.round(b * factor)) / factor;
+  return result;
+};
+
+const countDecimals = (num: number) => {
+  const s = num.toString();
+  if (s.includes('e')) {
+    // Handle scientific notation like 1e-7
+    const [base, exp] = s.split('e');
+    return Math.max(0, (base.split('.')[1]?.length || 0) - Number(exp));
+  }
+  return s.split('.')[1]?.length || 0;
 };

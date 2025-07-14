@@ -2,7 +2,7 @@ watch:
   asset: BTC
   currency: USDT
   mode: realtime
-  timeframe: '1d'
+  timeframe: 5m
 
 broker:
   name: binance
