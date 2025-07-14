@@ -53,8 +53,8 @@ export abstract class Broker {
   public async fetchTicker() {
     return this.retry<Ticker>(() => this.fetchTickerOnce());
   }
-  public async fetchOHLCV(from?: EpochTimeStamp) {
-    return this.retry<Candle[]>(() => this.fetchOHLCVOnce(from));
+  public async fetchOHLCV(from?: EpochTimeStamp, timeframe?: string, limits?: number) {
+    return this.retry<Candle[]>(() => this.fetchOHLCVOnce(from, timeframe, limits));
   }
   public async fetchTrades() {
     return this.retry<Trade[]>(() => this.fetchTradesOnce());
@@ -127,7 +127,7 @@ export abstract class Broker {
   protected abstract cancelLimitOrderOnce(id: string): Promise<Order>;
   protected abstract createLimitOrderOnce(side: Action, amount: number): Promise<Order>;
   protected abstract fetchMyTradesOnce(from?: EpochTimeStamp): Promise<Trade[]>;
-  protected abstract fetchOHLCVOnce(from?: EpochTimeStamp): Promise<Candle[]>;
+  protected abstract fetchOHLCVOnce(from?: EpochTimeStamp, timeframe?: string, limits?: number): Promise<Candle[]>;
   protected abstract fetchOrderOnce(id: string): Promise<Order>;
   protected abstract fetchPortfolioOnce(): Promise<Portfolio>;
   protected abstract fetchTickerOnce(): Promise<Ticker>;
