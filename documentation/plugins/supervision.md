@@ -11,6 +11,8 @@ It supports a set of commands sent from your configured chat:
 - `/stopMemoryCheck` – stop the memory monitoring loop.
 - `/launchTimeframeCandleCheck` – check each timeframe candle against broker data.
 - `/stopTimeframeCandleCheck` – stop the timeframe candle check loop.
+- `/startLogMonitoring` – send warning and error logs at a set interval.
+- `/stopLogMonitoring` – stop the log monitoring loop.
 
 ``` 
 💡 Note:
@@ -29,6 +31,7 @@ plugins:
     memoryThreshold: 1024                # Memory (MB) above which to alert
     cpuCheckInterval: 10000              # How often to check CPU usage (ms)
     memoryCheckInterval: 10000           # How often to check memory usage (ms)
+    logMonitoringInterval: 60000         # How often to check buffered logs (ms)
 ```
 
 ## Plugin Limitations
