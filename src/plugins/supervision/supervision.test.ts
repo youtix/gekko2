@@ -1,8 +1,9 @@
+import { getBufferedLogs } from '@services/logger';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Supervision } from './supervision';
 import { supervisionSchema } from './supervision.schema';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn() }));
+vi.mock('@services/logger', () => ({ debug: vi.fn(), getBufferedLogs: vi.fn(() => []) }));
 vi.mock('../../services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getWatch: vi.fn(() => ({ mode: 'realtime', warmup: { candleCount: 0 } })),
@@ -22,6 +23,7 @@ describe('Supervision', () => {
     memoryThreshold: 50,
     cpuCheckInterval: 100,
     memoryCheckInterval: 100,
+    logMonitoringInterval: 100,
   };
 
   beforeEach(() => {
@@ -93,6 +95,28 @@ describe('Supervision', () => {
     expect(fakeBot.sendMessage).not.toHaveBeenCalledWith(
       expect.stringContaining('⚠️ Timeframe candle mismatch detected'),
     );
+  });
+
+  it('should start and stop log monitoring on command', () => {
+    plugin['handleCommand']('/startlogmonitoring');
+    expect(plugin['logMonitorInterval']).toBeDefined();
+    plugin['handleCommand']('/stoplogmonitoring');
+    expect(plugin['logMonitorInterval']).toBeUndefined();
+  });
+
+  it('should send warning and error logs from buffer', async () => {
+    const logs = [
+      { timestamp: 1, level: 'info', tag: 'gekko', message: 'm1' },
+      { timestamp: 2, level: 'warning', tag: 'gekko', message: 'm2' },
+    ];
+    vi.mocked(getBufferedLogs).mockReturnValue(logs as any);
+    plugin['handleCommand']('/startlogmonitoring');
+
+    const newLogs = [...logs, { timestamp: 3, level: 'error', tag: 'gekko', message: 'm3' }];
+    vi.mocked(getBufferedLogs).mockReturnValue(newLogs as any);
+
+    await vi.advanceTimersByTimeAsync(100);
+    expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('m3'));
   });
 
   it('getStaticConfiguration returns expected meta', () => {

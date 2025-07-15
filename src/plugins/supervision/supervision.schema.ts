@@ -7,4 +7,5 @@ export const supervisionSchema = object({
   memoryThreshold: number().positive().default(1024),
   cpuCheckInterval: number().positive().default(10000),
   memoryCheckInterval: number().positive().default(10000),
+  logMonitoringInterval: number().positive().default(60000),
 });
