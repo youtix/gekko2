@@ -1,7 +1,8 @@
 import { Candle } from '@models/types/candle.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
-import { debug } from '@services/logger';
+import { debug, getBufferedLogs } from '@services/logger';
+import { toISOString } from '@utils/date/date.utils';
 import { shallowObjectDiff } from '@utils/object/object.utils';
 import { filter, isEmpty } from 'lodash-es';
 import { supervisionSchema } from './supervision.schema';
@@ -15,10 +16,13 @@ export class Supervision extends Plugin {
   private memoryIntervalTime: number;
   private cpuInterval?: Timer;
   private memoryInterval?: Timer;
+  private logMonitorInterval?: Timer;
   private lastCpuUsage = process.cpuUsage();
   private lastCpuCheck = Date.now();
   private timeframeCandleCheck = false;
   private lastTimeframeCandle?: Candle;
+  private logMonitorIntervalTime: number;
+  private lastSentTimestamp = 0;
 
   constructor({
     name,
@@ -27,6 +31,7 @@ export class Supervision extends Plugin {
     memoryThreshold,
     cpuCheckInterval,
     memoryCheckInterval,
+    logMonitoringInterval,
   }: SupervisionConfig) {
     super(name);
     this.bot = new TelegramBot(token, this.handleCommand.bind(this));
@@ -34,6 +39,7 @@ export class Supervision extends Plugin {
     this.memoryThreshold = memoryThreshold;
     this.cpuIntervalTime = cpuCheckInterval;
     this.memoryIntervalTime = memoryCheckInterval;
+    this.logMonitorIntervalTime = logMonitoringInterval;
   }
 
   private handleCommand(command: string): string {
@@ -58,6 +64,12 @@ export class Supervision extends Plugin {
       case '/stoptimeframecandlecheck':
         this.stopTimeframeCandleCheck();
         return '✅ Timeframe Candle Check stopped';
+      case '/startlogmonitoring':
+        this.startLogMonitoring();
+        return '✅ Log Monitoring started';
+      case '/stoplogmonitoring':
+        this.stopLogMonitoring();
+        return '✅ Log Monitoring stopped';
       default:
         return 'Unknown command';
     }
@@ -113,6 +125,31 @@ export class Supervision extends Plugin {
     debug('supervision', 'Stopped Timeframe Candle monitoring');
   }
 
+  private startLogMonitoring() {
+    if (this.logMonitorInterval) return;
+    debug('supervision', 'Starting Log monitoring');
+    this.lastSentTimestamp = getBufferedLogs().at(-1)?.timestamp ?? 0;
+    this.logMonitorInterval = setInterval(() => {
+      const logs = getBufferedLogs().filter(
+        l => l.timestamp > this.lastSentTimestamp && ['warn', 'error'].includes(l.level),
+      );
+      if (logs.length) {
+        this.lastSentTimestamp = logs[logs.length - 1].timestamp;
+        const message = logs
+          .map(l => `• ${toISOString(l.timestamp)} [${l.level.toUpperCase()}] (${l.tag})\n${l.message}`)
+          .join('---\n');
+        this.bot.sendMessage(message);
+      }
+    }, this.logMonitorIntervalTime);
+  }
+
+  private stopLogMonitoring() {
+    if (!this.logMonitorInterval) return;
+    clearInterval(this.logMonitorInterval);
+    this.logMonitorInterval = undefined;
+    debug('supervision', 'Stopped Log monitoring');
+  }
+
   private async checkTimeframeCandle() {
     if (!this.lastTimeframeCandle) return;
     const candles = await this.getBroker().fetchOHLCV(undefined, this.timeframe, 100);
@@ -159,6 +196,7 @@ export class Supervision extends Plugin {
     this.stopCpuCheck();
     this.stopMemoryCheck();
     this.stopTimeframeCandleCheck();
+    this.stopLogMonitoring();
   }
 
   public static getStaticConfiguration() {
