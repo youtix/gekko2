@@ -27,15 +27,6 @@ plugins:
     strategyName: RSI
 
   - name: PaperTrader
-    simulationBalance: # start balance, on what the current balance is compared with
-      # these are in the unit types configured in the watcher.
-      asset: 0
-      currency: 1000
-    # how much fee in % does each trade cost?
-    feeMaker: 0.15
-    feeTaker: 0.25
-    feeUsing: maker
 
   - name: PerformanceAnalyzer
     enableConsoleTable: true
-    riskFreeReturn: 5
