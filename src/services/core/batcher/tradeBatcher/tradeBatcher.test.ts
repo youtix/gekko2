@@ -16,7 +16,10 @@ describe('TradeBatcher', () => {
 
   it('should log and return if batch is empty', () => {
     const result = tradeBatcher.processTrades([]);
-    expect(warning).toHaveBeenCalledWith('core', 'No new trades !');
+    expect(warning).toHaveBeenCalledWith(
+      'core',
+      'No trades filtered — possible data gap or missing trades due to high market activity',
+    );
     expect(result).toBeUndefined();
   });
 

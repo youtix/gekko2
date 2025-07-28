@@ -18,13 +18,14 @@ export class TradeBatcher {
     const filteredTrades = filter(filterTradesByTimestamp(trades, this.threshold), 'amount');
     if (filteredTrades.length !== trades.length) {
       const count = trades.length - filteredTrades.length;
-      debug('core', `Filtered ${count} ${pluralize('trade', count)}`);
-    } else if (this.threshold) warning('core', 'No trade filtred, probably missing trades !');
+      debug('core', `Filtered out ${count} ${pluralize('trade', count)}`);
+    } else if (this.threshold)
+      warning('core', 'No trades filtered — possible data gap or missing trades due to high market activity');
 
     const firstTrade = first(filteredTrades);
     const lastTrade = last(filteredTrades);
 
-    if (!firstTrade?.timestamp || !lastTrade?.timestamp) return warning('core', 'No new trades !');
+    if (!firstTrade || !lastTrade) return debug('core', 'No new trades to process possibly due to low market activity');
 
     debug(
       'core',
