@@ -80,7 +80,12 @@ describe('Supervision', () => {
     });
     plugin['handleCommand']('/launchtimeframecandlecheck');
     await plugin.onTimeframeCandle(timeframeCandle as any);
-    expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('⚠️ Timeframe candle mismatch detected'));
+    const message = (fakeBot.sendMessage as any).mock.calls[0][0];
+    expect(message).toContain('⚠️ Timeframe candle mismatch detected');
+    expect(message).toContain('open: 1 | 2');
+    expect(message).toContain('high: 2 | 3');
+    expect(message).toContain('close: 2 | 3');
+    expect(message).toContain('volume: 10 | 11');
   });
 
   it('should stop timeframe candle monitoring on command', async () => {

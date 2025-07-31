@@ -157,7 +157,13 @@ export class Supervision extends Plugin {
     if (!brokerCandle) return;
     const diff = shallowObjectDiff(brokerCandle, this.lastTimeframeCandle);
     if (!isEmpty(diff)) {
-      this.bot.sendMessage(`⚠️ Timeframe candle mismatch detected: \n${JSON.stringify(diff, null, 2)}`);
+      const diffMsg = Object.keys(diff)
+        .map(key => {
+          const k = key as keyof Candle;
+          return `${key}: ${brokerCandle[k]} | ${this.lastTimeframeCandle![k]}`;
+        })
+        .join('\n');
+      this.bot.sendMessage(`⚠️ Timeframe candle mismatch detected:\n${diffMsg}`);
     }
   }
 
