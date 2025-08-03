@@ -13,14 +13,16 @@ export class RealtimeStream extends Readable {
   broker: Broker;
   candleManager: CandleManager;
   tradeBatcher: TradeBatcher;
+  private isLocked: boolean;
 
-  constructor({ tickrate = 10, threshold = 0 }: RealtimeStreamInput = {}) {
+  constructor({ tickrate, threshold = 0 }: RealtimeStreamInput) {
     super({ objectMode: true });
 
     this.heart = new Heart(tickrate);
     this.broker = inject.broker();
     this.tradeBatcher = new TradeBatcher(threshold);
     this.candleManager = new CandleManager();
+    this.isLocked = false;
 
     bindAll(this, ['pushCandles', 'pushCandle', 'onTick']);
 
@@ -29,11 +31,14 @@ export class RealtimeStream extends Readable {
   }
 
   async onTick() {
+    if (this.isLocked) return;
     const trades = await this.broker.fetchTrades();
     const batch = this.tradeBatcher.processTrades(trades);
-    if (!batch?.data.length) return;
-    const candles = this.candleManager.processBacth(batch);
-    this.pushCandles(candles);
+    if (batch?.data.length) {
+      const candles = this.candleManager.processBacth(batch);
+      this.pushCandles(candles);
+    }
+    this.isLocked = false;
   }
 
   _read(): void {

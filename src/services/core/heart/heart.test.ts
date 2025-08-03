@@ -1,5 +1,4 @@
 import { GekkoError } from '@errors/gekko.error';
-import { getUnixTime } from 'date-fns';
 import { defer } from 'lodash-es';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Heart } from './heart';
@@ -15,7 +14,7 @@ describe('Heart', () => {
   let heart: Heart;
 
   beforeEach(() => {
-    heart = new Heart(5);
+    heart = new Heart(5000);
     vi.useFakeTimers();
     vi.spyOn(global, 'setInterval');
   });
@@ -25,7 +24,7 @@ describe('Heart', () => {
   });
 
   it('should initialize without errors', () => {
-    expect(() => new Heart(5)).not.toThrow();
+    expect(() => new Heart(5000)).not.toThrow();
   });
 
   it('should schedule ticks when pump is called', () => {
@@ -42,27 +41,27 @@ describe('Heart', () => {
   /** Make sure the last tick happened not to lang ago @link https://github.com/askmike/gekko/issues/514 */
   it('should throw if tick is excessively delayed', () => {
     vi.setSystemTime(10000);
-    heart['lastTick'] = getUnixTime(new Date()) - 100;
+    heart['lastTick'] = Date.now() - 15001;
     expect(() => heart.tick()).toThrowError(GekkoError);
   });
 
   it('should update lastTick on every tick', () => {
-    const initialTime = getUnixTime(new Date());
+    const initialTime = Date.now();
     heart.tick();
     expect(heart['lastTick']).toBeGreaterThanOrEqual(initialTime);
   });
 
   it.each`
     tickRate
-    ${1}
-    ${5}
-    ${10}
+    ${1000}
+    ${5000}
+    ${10000}
   `('should handle tick intervals correctly with tickRate = $tickRate', ({ tickRate }) => {
     vi.spyOn(global, 'setInterval');
     vi.spyOn(global, 'setTimeout');
     heart['tickRate'] = tickRate;
     heart.pump();
-    expect(setInterval).toHaveBeenCalledWith(expect.any(Function), tickRate * 1000);
+    expect(setInterval).toHaveBeenCalledWith(expect.any(Function), tickRate);
   });
 
   it('should trigger an immediate tick with defer', () => {

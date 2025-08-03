@@ -1,6 +1,5 @@
 import { GekkoError } from '@errors/gekko.error';
 import { debug } from '@services/logger';
-import { getUnixTime, secondsToMilliseconds } from 'date-fns';
 import { bindAll, defer } from 'lodash-es';
 import EventEmitter from 'node:events';
 
@@ -17,7 +16,7 @@ export class Heart extends EventEmitter {
   }
 
   public tick() {
-    const currentTime = getUnixTime(new Date());
+    const currentTime = Date.now();
     if (this.lastTick && this.lastTick < currentTime - this.tickRate * 3)
       throw new GekkoError('core', 'Failed to tick in time'); // see https://github.com/askmike/gekko/issues/514 for details
 
@@ -27,7 +26,7 @@ export class Heart extends EventEmitter {
 
   public pump() {
     debug('core', 'Starting heartbeat ticks');
-    this.timeout = setInterval(this.tick, secondsToMilliseconds(this.tickRate));
+    this.timeout = setInterval(this.tick, this.tickRate);
     defer(this.tick);
   }
 
