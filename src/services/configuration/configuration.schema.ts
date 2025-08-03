@@ -12,14 +12,14 @@ const daterangeSchema = object({
 });
 
 const warmupSchema = object({
-  tickrate: number().default(1),
+  tickrate: number().default(1000),
   candleCount: number().default(0),
 });
 
 export const watchSchema = object({
   currency: string().required(),
   asset: string().required(),
-  tickrate: number().optional(),
+  tickrate: number().default(1000),
   mode: string().oneOf(['realtime', 'backtest', 'importer']).defined(),
   timeframe: string().oneOf(TIMEFRAMES).default('1m'),
   fillGaps: string().oneOf(['no', 'empty']).default('empty'),

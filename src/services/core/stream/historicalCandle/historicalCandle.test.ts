@@ -32,9 +32,9 @@ describe('HistoricalCandleStream', () => {
   let results: Candle[];
   let isStreamClosed: boolean;
 
-  const launchHistoricalCandleStream = ({ startDate, endDate }: HistoricalCandleStreamInput) => {
+  const launchHistoricalCandleStream = (input: HistoricalCandleStreamInput) => {
     isStreamClosed = false;
-    stream = new HistoricalCandleStream({ startDate, endDate });
+    stream = new HistoricalCandleStream(input);
     results = [];
     stream.on('data', data => results.push(data));
     stream.on('end', () => (isStreamClosed = true));
@@ -48,6 +48,7 @@ describe('HistoricalCandleStream', () => {
     launchHistoricalCandleStream({
       startDate: toTimestamp('2023-01-01T00:00:00Z'),
       endDate: toTimestamp('2023-01-01T00:00:00Z'),
+      tickrate: 1000,
     });
 
     // Wait for any pending data events to be processed.
@@ -64,6 +65,7 @@ describe('HistoricalCandleStream', () => {
     launchHistoricalCandleStream({
       startDate: toTimestamp('2023-01-01T00:00:00Z'),
       endDate: toTimestamp('2023-01-01T00:01:00Z'),
+      tickrate: 1000,
     });
 
     await expect(stream.onTick()).rejects.toThrow(HistoricalCandleError);
@@ -79,6 +81,7 @@ describe('HistoricalCandleStream', () => {
     launchHistoricalCandleStream({
       startDate: toTimestamp('2023-01-01T00:00:00Z'),
       endDate: toTimestamp('2023-01-01T00:02:00Z'),
+      tickrate: 1000,
     });
 
     await stream.onTick();
@@ -97,6 +100,7 @@ describe('HistoricalCandleStream', () => {
     launchHistoricalCandleStream({
       startDate: toTimestamp('2023-01-01T00:00:00Z'),
       endDate: toTimestamp('2023-01-01T00:01:00Z'),
+      tickrate: 1000,
     });
 
     await stream.onTick();

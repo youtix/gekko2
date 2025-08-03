@@ -17,7 +17,7 @@ export class HistoricalCandleStream extends Readable {
   private broker: Broker;
   private isLocked: boolean;
 
-  constructor({ startDate, endDate, tickrate = 1 }: HistoricalCandleStreamInput) {
+  constructor({ startDate, endDate, tickrate }: HistoricalCandleStreamInput) {
     super({ objectMode: true });
 
     this.startDate = resetDateParts(startDate, ['s', 'ms']);
