@@ -592,8 +592,8 @@ describe('StickyOrder', () => {
       stickyOrder['transactions'] = [{ id: 'order-1', timestamp: Date.now() }];
 
       fakeBroker.fetchMyTrades.mockResolvedValue([
-        { order: 'order-1', amount: 2, price: 100, fee: { rate: 0.01 }, timestamp: 1710000000000 },
-        { order: 'order-1', amount: 3, price: 105, fee: { rate: 0.015 }, timestamp: 1710000100000 },
+        { id: 'order-1', amount: 2, price: 100, fee: { rate: 0.01 }, timestamp: 1710000000000 },
+        { id: 'order-1', amount: 3, price: 105, fee: { rate: 0.015 }, timestamp: 1710000100000 },
       ]);
 
       const summary = await stickyOrder.createSummary();

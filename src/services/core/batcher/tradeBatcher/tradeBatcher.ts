@@ -2,25 +2,37 @@ import { Batch } from '@models/types/batch.types';
 import { Trade } from '@models/types/trade.types';
 import { debug, warning } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
+import { processStartTime } from '@utils/process/process.utils';
 import { pluralize } from '@utils/string/string.utils';
 import { filterTradesByTimestamp } from '@utils/trade/trade.utils';
-import { formatDuration, intervalToDuration, subMilliseconds } from 'date-fns';
-import { filter, first, last } from 'lodash-es';
+import { formatDuration, intervalToDuration } from 'date-fns';
+import { differenceBy, first, last } from 'lodash-es';
 
 export class TradeBatcher {
-  threshold: EpochTimeStamp;
+  private processStartDate: EpochTimeStamp;
+  private lastTrades: Trade[];
 
-  constructor(threshold?: number) {
-    this.threshold = threshold ? subMilliseconds(resetDateParts(threshold, ['s', 'ms']), 1).getTime() : 0;
+  constructor() {
+    this.lastTrades = [];
+    this.processStartDate = resetDateParts(processStartTime(), ['s', 'ms']);
   }
 
   processTrades(trades: Trade[]) {
-    const filteredTrades = filter(filterTradesByTimestamp(trades, this.threshold), 'amount');
-    if (filteredTrades.length !== trades.length) {
-      const count = trades.length - filteredTrades.length;
-      debug('core', `Filtered out ${count} ${pluralize('trade', count)}`);
-    } else if (this.threshold)
-      warning('core', 'No trades filtered — possible data gap or missing trades due to high market activity');
+    const filteredTrades = filterTradesByTimestamp(differenceBy(trades, this.lastTrades, 'id'), this.processStartDate);
+
+    const count = trades.length - filteredTrades.length;
+    if (count > 0) debug('core', `Filtered out ${count} ${pluralize('trade', count)}`);
+    else {
+      warning(
+        'core',
+        [
+          '⚠️ Trade filtering warning:',
+          'No trades were filtered — this may indicate a data gap or missing trades due to high market activity.',
+          `Last known trade before gap: ${last(this.lastTrades)?.id ?? 'N/A'}.`,
+          `First trade processed after gap: ${first(filteredTrades)?.id ?? 'N/A'}.`,
+        ].join(' '),
+      );
+    }
 
     const firstTrade = first(filteredTrades);
     const lastTrade = last(filteredTrades);
@@ -46,7 +58,7 @@ export class TradeBatcher {
       data: filteredTrades,
     };
 
-    this.threshold = lastTrade.timestamp;
+    this.lastTrades = trades;
 
     return batch;
   }

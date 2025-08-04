@@ -1,3 +1,4 @@
+import { GekkoError } from '@errors/gekko.error';
 import { describe, expect, it, Mock, vi } from 'vitest';
 import { Candle } from '../../../../models/types/candle.types';
 import { inject } from '../../../injecter/injecter';
@@ -26,9 +27,10 @@ vi.mock('@services/core/candleManager/candleManager', () => ({
 describe('RealtimeStream', () => {
   const candle: Candle = { start: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 };
   const injectBrokerMock = inject.broker as Mock;
+  const fetchTrades = vi.fn();
 
   it('should push candles when trades are available', async () => {
-    const fetchTrades = vi.fn().mockResolvedValue([{ id: 't1' }]);
+    fetchTrades.mockResolvedValue([{ id: 't1' }]);
     injectBrokerMock.mockReturnValue({ fetchTrades });
 
     const processTrades = vi.fn().mockReturnValue({ data: ['t1'] });
@@ -45,5 +47,12 @@ describe('RealtimeStream', () => {
     await new Promise(resolve => process.nextTick(resolve));
 
     expect(results).toEqual([candle]);
+  });
+  it('should throw when there is missing id property in fetched trades', async () => {
+    fetchTrades.mockResolvedValue([{}]);
+    injectBrokerMock.mockReturnValue({ fetchTrades });
+
+    const stream = new RealtimeStream({ tickrate: 1 });
+    await expect(stream.onTick()).rejects.toThrow(GekkoError);
   });
 });

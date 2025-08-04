@@ -5,19 +5,13 @@ import { debug } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { addPrecise } from '@utils/math/math.utils';
 import { pluralize } from '@utils/string/string.utils';
-import { filterTradesByTimestamp } from '@utils/trade/trade.utils';
 import { dropRight, each, first, groupBy, last, map, max, mergeWith, min, pick, sortBy } from 'lodash-es';
 
 export class CandleManager {
-  threshold: EpochTimeStamp;
-  lastMinuteTrades: { [key: string]: Trade[] } = {};
-
-  constructor() {
-    this.threshold = 0;
-  }
+  lastMinuteTrades: Record<string, Trade[]> = {};
 
   public processBacth(batch: Batch): Candle[] {
-    const trades = filterTradesByTimestamp(batch.data, this.threshold);
+    const trades = batch.data;
 
     const buckets = mergeWith(
       groupBy(trades, trade => toISOString(resetDateParts(trade.timestamp, ['ms', 's']))),
@@ -38,7 +32,6 @@ export class CandleManager {
       debug('core', `${count} ${pluralize('candle', count)} (1 min) created from trades.`);
     }
 
-    this.threshold = last(candles)?.start ?? 0;
     return dropRight(candles);
   }
 

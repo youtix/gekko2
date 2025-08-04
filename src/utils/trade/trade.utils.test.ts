@@ -1,15 +1,17 @@
-// Import dependencies
 import { describe, expect, it } from 'vitest';
 import { filterTradesByTimestamp, mapToCandles, mapToTrades } from './trade.utils';
+
+const ts = (timestamp: EpochTimeStamp) => ({ timestamp });
 
 describe('trade.utils', () => {
   describe('filterTradesByTimestamp', () => {
     it.each`
-      trades                                                             | threshold | expected
-      ${[{ timestamp: 1000 }, { timestamp: 2000 }, { timestamp: 3000 }]} | ${1500}   | ${[{ timestamp: 2000 }, { timestamp: 3000 }]}
-      ${[{ timestamp: 1000 }, { timestamp: 2000 }]}                      | ${3000}   | ${[]}
-      ${[{ timestamp: 4000 }, { timestamp: 5000 }]}                      | ${3000}   | ${[{ timestamp: 4000 }, { timestamp: 5000 }]}
-    `('should return $expected for trades=$trades and threshold=$threshold', ({ trades, threshold, expected }) => {
+      description                           | trades                            | threshold    | expected
+      ${'partial trade'}                    | ${[ts(1000), ts(2000), ts(3000)]} | ${1500}      | ${[ts(2000), ts(3000)]}
+      ${'all trades'}                       | ${[ts(1000), ts(2000), ts(3000)]} | ${1000}      | ${[ts(1000), ts(2000), ts(3000)]}
+      ${'partial trade (boundary)'}         | ${[ts(1000), ts(2000), ts(3000)]} | ${1001}      | ${[ts(2000), ts(3000)]}
+      ${'none trade (undefined threshold)'} | ${[ts(1000), ts(2000), ts(3000)]} | ${undefined} | ${[ts(1000), ts(2000), ts(3000)]}
+    `('should filter $description', ({ trades, threshold, expected }) => {
       const result = filterTradesByTimestamp(trades, threshold);
       expect(result).toEqual(expected);
     });
