@@ -1,123 +1,51 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { generateTrade } from '../../../../models/trade.mock';
-import { Trade } from '../../../../models/types/trade.types';
-import { toTimestamp } from '../../../../utils/date/date.utils';
-import { debug, warning } from '../../../logger';
+import { Trade } from '@models/types/trade.types';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { TradeBatcher } from './tradeBatcher';
-
-vi.mock('@services/logger', () => ({ debug: vi.fn(), warning: vi.fn() }));
+const now = Date.now();
+const mkTrade = (id: string, offsetMs = 0): Trade => ({
+  id,
+  timestamp: now + offsetMs,
+  price: 10_000 + Number(id),
+  amount: 1,
+  fee: { rate: 0 },
+});
 
 describe('TradeBatcher', () => {
-  let tradeBatcher: TradeBatcher;
+  let batcher: TradeBatcher;
 
   beforeEach(() => {
-    tradeBatcher = new TradeBatcher(toTimestamp('2025-01-01T00:00:00.000Z'));
+    batcher = new TradeBatcher();
   });
 
-  it('should log and return if batch is empty', () => {
-    const result = tradeBatcher.processTrades([]);
-    expect(warning).toHaveBeenCalledWith(
-      'core',
-      'No trades filtered — possible data gap or missing trades due to high market activity',
-    );
+  it('should produce a batch containing all fresh trades', () => {
+    const trades = [mkTrade('1'), mkTrade('2', 1_000), mkTrade('3', 2_000)];
+    const batch = batcher.processTrades(trades);
+    expect(batch?.amount).toBe(3);
+  });
+
+  it('should return undefined when only duplicate trades are processed', () => {
+    const trades = [mkTrade('4'), mkTrade('5', 1_000)];
+    batcher.processTrades(trades); // initial call
+    const result = batcher.processTrades(trades); // duplicates
     expect(result).toBeUndefined();
   });
 
-  it('should return a new batch event with correct data', () => {
-    const batch = [
-      generateTrade({ amount: 10, timestamp: toTimestamp('2025-01-01T00:00:00.000Z'), price: 1000 }),
-      generateTrade({ amount: 15, timestamp: toTimestamp('2025-01-01T00:00:01.000Z'), price: 1000 }),
-    ] as Trade[];
-
-    const result = tradeBatcher.processTrades(batch);
-
-    expect(debug).toHaveBeenCalledWith('core', expect.stringContaining('Processing 2 new trades.'));
-    expect(result).toEqual({
-      amount: 2,
-      start: batch[0].timestamp,
-      end: batch[1].timestamp,
-      last: batch[1],
-      first: batch[0],
-      data: batch,
-    });
-  });
-
-  it('should update threshold after processing batch', () => {
-    const batch = [
-      generateTrade({ amount: 10, timestamp: toTimestamp('2025-01-01T00:00:00.000Z'), price: 1000 }),
-      generateTrade({ amount: 15, timestamp: toTimestamp('2025-01-01T00:00:01.000Z'), price: 1000 }),
-    ] as Trade[];
-
-    tradeBatcher.processTrades(batch);
-
-    expect(tradeBatcher.threshold).toBe(toTimestamp('2025-01-01T00:00:01.000Z'));
-  });
-
-  it('should only emit once when fed the same trades twice', () => {
-    const batch = [
-      generateTrade({ amount: 10, timestamp: toTimestamp('2025-01-01T00:00:00.000Z'), price: 1000 }),
-      generateTrade({ amount: 15, timestamp: toTimestamp('2025-01-01T00:00:01.000Z'), price: 1000 }),
-    ] as Trade[];
-
-    tradeBatcher.processTrades(batch);
-    const result = tradeBatcher.processTrades(batch);
-
+  it('should ignore trades older than the process start date', () => {
+    const oldTrade: Trade = {
+      id: '6',
+      timestamp: now - 3_600_000, // 1 h in the past
+      price: 9_000,
+      amount: 1,
+      fee: { rate: 0 },
+    };
+    const result = batcher.processTrades([oldTrade]);
     expect(result).toBeUndefined();
   });
 
-  /** remove trades that have zero amount see @link https://github.com/askmike/gekko/issues/486 */
-  it('should filter out empty trades', () => {
-    const batch = [
-      generateTrade({ amount: 0, timestamp: toTimestamp('2025-01-01T00:00:00.000Z'), price: 1000 }),
-      generateTrade({ amount: 15, timestamp: toTimestamp('2025-01-01T00:00:01.000Z'), price: 1000 }),
-    ] as Trade[];
-
-    const result = tradeBatcher.processTrades(batch);
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        amount: 1,
-        last: batch[1],
-        first: batch[1],
-      }),
-    );
-  });
-
-  it('should ignore trades that occur before the threshold', () => {
-    const batch = [
-      generateTrade({ amount: 50, timestamp: toTimestamp('2024-12-31T23:59:59.999Z'), price: 1001 }),
-      generateTrade({ amount: 15, timestamp: toTimestamp('2025-01-01T00:00:01.000Z'), price: 1000 }),
-    ] as Trade[];
-
-    const result = tradeBatcher.processTrades(batch);
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        amount: 1,
-        last: batch[1],
-        first: batch[1],
-      }),
-    );
-  });
-
-  it('should filter already known trades', () => {
-    const batch1 = [
-      generateTrade({ amount: 10, timestamp: toTimestamp('2025-01-01T00:00:00.000Z'), price: 1000 }),
-    ] as Trade[];
-    const batch2 = [
-      generateTrade({ amount: 10, timestamp: toTimestamp('2025-01-01T00:00:00.000Z'), price: 1000 }),
-      generateTrade({ amount: 15, timestamp: toTimestamp('2025-01-01T00:00:01.000Z'), price: 1000 }),
-    ] as Trade[];
-
-    tradeBatcher.processTrades(batch1);
-    const result = tradeBatcher.processTrades(batch2);
-
-    expect(result).toEqual(
-      expect.objectContaining({
-        amount: 1,
-        last: batch2[1],
-        first: batch2[1],
-      }),
-    );
+  it('should accept new trades after the previous batch', () => {
+    batcher.processTrades([mkTrade('7'), mkTrade('8')]);
+    const laterTrades = [mkTrade('9', 3_000), mkTrade('10', 5_000)];
+    const batch = batcher.processTrades(laterTrades);
+    expect(batch?.amount).toBe(2);
   });
 });

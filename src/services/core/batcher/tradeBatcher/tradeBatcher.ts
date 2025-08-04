@@ -2,35 +2,70 @@ import { Batch } from '@models/types/batch.types';
 import { Trade } from '@models/types/trade.types';
 import { debug, warning } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
+import { processStartTime } from '@utils/process/process.utils';
 import { pluralize } from '@utils/string/string.utils';
-import { filterTradesByTimestamp } from '@utils/trade/trade.utils';
-import { formatDuration, intervalToDuration, subMilliseconds } from 'date-fns';
-import { filter, first, last } from 'lodash-es';
+import { formatDuration, intervalToDuration } from 'date-fns';
 
 export class TradeBatcher {
-  threshold: EpochTimeStamp;
+  private readonly processStartDate: EpochTimeStamp;
+  private lastProcessedTs: EpochTimeStamp;
+  private readonly seen: Set<Trade['id']> = new Set();
 
-  constructor(threshold?: number) {
-    this.threshold = threshold ? subMilliseconds(resetDateParts(threshold, ['s', 'ms']), 1).getTime() : 0;
+  constructor() {
+    this.processStartDate = resetDateParts(processStartTime(), ['s', 'ms']);
+    this.lastProcessedTs = this.processStartDate;
   }
 
-  processTrades(trades: Trade[]) {
-    const filteredTrades = filter(filterTradesByTimestamp(trades, this.threshold), 'amount');
-    if (filteredTrades.length !== trades.length) {
-      const count = trades.length - filteredTrades.length;
-      debug('core', `Filtered out ${count} ${pluralize('trade', count)}`);
-    } else if (this.threshold)
-      warning('core', 'No trades filtered — possible data gap or missing trades due to high market activity');
+  processTrades(trades: Trade[]): Batch | void {
+    if (!trades.length) return debug('core', 'No trades received');
 
-    const firstTrade = first(filteredTrades);
-    const lastTrade = last(filteredTrades);
+    const fresh: Trade[] = new Array(trades.length);
+    let tradesToProcess = 0;
 
-    if (!firstTrade || !lastTrade) return debug('core', 'No new trades to process possibly due to low market activity');
+    for (let i = 0; i < trades.length; ++i) {
+      const trade = trades[i];
+
+      if (trade.timestamp <= this.lastProcessedTs || trade.timestamp < this.processStartDate) continue;
+
+      if (this.seen.has(trade.id)) continue;
+
+      if (this.seen.size > 65_536) {
+        let pruned = 0;
+        for (const id of this.seen) {
+          this.seen.delete(id);
+          if (++pruned > 32_768) break;
+        }
+      }
+
+      this.seen.add(trade.id);
+      fresh[tradesToProcess++] = trade;
+    }
+
+    if (tradesToProcess === 0) return debug('core', 'No new trades to process');
+
+    const filteredTrades = fresh.slice(0, tradesToProcess);
+    const firstTrade = filteredTrades[0];
+    const lastTrade = filteredTrades[filteredTrades.length - 1];
+
+    const skipped = trades.length - tradesToProcess;
+    if (skipped > 0) {
+      debug('core', `Filtered out ${skipped} ${pluralize('duplicate trade', skipped)}`);
+    } else {
+      warning(
+        'core',
+        [
+          '⚠️ Trade filtering warning:',
+          'No duplicates filtered — potential gap or burst of new trades.',
+          `First fresh trade: ${firstTrade.id}.`,
+          `Last fresh trade: ${lastTrade.id}.`,
+        ].join(' '),
+      );
+    }
 
     debug(
       'core',
       [
-        `Processing ${filteredTrades.length} new trades.`,
+        `Processing ${tradesToProcess} new trades.`,
         `From ${toISOString(firstTrade.timestamp)}`,
         `to ${toISOString(lastTrade.timestamp)}`,
         `(${formatDuration(intervalToDuration({ start: firstTrade.timestamp, end: lastTrade.timestamp }))})`,
@@ -38,16 +73,15 @@ export class TradeBatcher {
     );
 
     const batch: Batch = {
-      amount: filteredTrades.length,
+      amount: tradesToProcess,
       start: firstTrade.timestamp,
       end: lastTrade.timestamp,
-      last: lastTrade,
       first: firstTrade,
+      last: lastTrade,
       data: filteredTrades,
     };
 
-    this.threshold = lastTrade.timestamp;
-
+    this.lastProcessedTs = lastTrade.timestamp;
     return batch;
   }
 }

@@ -3,10 +3,9 @@ import { GekkoError } from '@errors/gekko.error';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
 import { inject } from '@services/injecter/injecter';
-import { info } from '@services/logger';
 import { getCandleTimeOffset } from '@utils/candle/candle.utils';
-import { getNextMinute, toISOString, toTimestamp } from '@utils/date/date.utils';
-import { waitSync } from '@utils/process/process.utils';
+import { resetDateParts, toISOString, toTimestamp } from '@utils/date/date.utils';
+import { processStartTime } from '@utils/process/process.utils';
 import { Interval, subMinutes } from 'date-fns';
 import inquirer from 'inquirer';
 import { Readable } from 'stream';
@@ -18,18 +17,15 @@ import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
 
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
-  info('pipeline', 'Waiting for the end of the minute to synchronize streams');
-  waitSync(getNextMinute() - Date.now());
-
   const { tickrate, timeframe, warmup } = config.getWatch();
-  const endDate = Date.now();
-  const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe]);
-  const startDate = subMinutes(endDate, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe] + offset).getTime();
+  const now = resetDateParts(processStartTime(), ['s', 'ms']);
+  const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe], now);
+  const startDate = subMinutes(now, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe] + offset).getTime();
 
   await pipeline(
     mergeSequentialStreams(
-      new HistoricalCandleStream({ startDate, endDate, tickrate: warmup.tickrate }),
-      new RealtimeStream({ tickrate, threshold: startDate }),
+      new HistoricalCandleStream({ startDate, endDate: now, tickrate: warmup.tickrate }),
+      new RealtimeStream({ tickrate }),
     ),
     new GapFillerStream(),
     new PluginsStream(plugins),

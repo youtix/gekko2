@@ -1,70 +1,51 @@
 import { Batch } from '@models/types/batch.types';
 import { Candle } from '@models/types/candle.types';
-import { Trade } from '@models/types/trade.types';
 import { debug } from '@services/logger';
-import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { addPrecise } from '@utils/math/math.utils';
 import { pluralize } from '@utils/string/string.utils';
-import { filterTradesByTimestamp } from '@utils/trade/trade.utils';
-import { dropRight, each, first, groupBy, last, map, max, mergeWith, min, pick, sortBy } from 'lodash-es';
 
 export class CandleManager {
-  threshold: EpochTimeStamp;
-  lastMinuteTrades: { [key: string]: Trade[] } = {};
+  private threshold: number = 0;
+  private workingCandle: Candle | null = null;
 
-  constructor() {
-    this.threshold = 0;
-  }
+  public processBatch(batch: Batch): Candle[] {
+    const finished: Candle[] = [];
 
-  public processBacth(batch: Batch): Candle[] {
-    const trades = filterTradesByTimestamp(batch.data, this.threshold);
+    for (const trade of batch.data) {
+      if (trade.timestamp <= this.threshold) continue;
 
-    const buckets = mergeWith(
-      groupBy(trades, trade => toISOString(resetDateParts(trade.timestamp, ['ms', 's']))),
-      this.lastMinuteTrades,
-      (objValue, srcValue) => srcValue?.concat(objValue ?? []),
-    );
+      const minuteStart = trade.timestamp - (trade.timestamp % 60_000);
 
-    const lastTrade = last(trades);
-    this.lastMinuteTrades = lastTrade
-      ? pick(buckets, [toISOString(resetDateParts(lastTrade.timestamp, ['ms', 's']))])
-      : {};
+      if (this.workingCandle && this.workingCandle.start !== minuteStart) {
+        finished.push({ ...this.workingCandle });
+        this.workingCandle = null;
+      }
 
-    const candles = sortBy(map(buckets, this.calculateCandle), 'start');
-    if (!candles?.length) return [];
+      if (!this.workingCandle) {
+        this.workingCandle = {
+          start: minuteStart,
+          open: trade.price,
+          high: trade.price,
+          low: trade.price,
+          close: trade.price,
+          volume: trade.amount,
+        };
+        continue;
+      }
 
-    if (candles && candles.length - 1) {
-      const count = candles.length - 1;
-      debug('core', `${count} ${pluralize('candle', count)} (1 min) created from trades.`);
+      const c = this.workingCandle;
+      if (trade.price > c.high) c.high = trade.price;
+      if (trade.price < c.low) c.low = trade.price;
+      c.close = trade.price;
+      c.volume = addPrecise(c.volume, trade.amount);
     }
 
-    this.threshold = last(candles)?.start ?? 0;
-    return dropRight(candles);
-  }
+    if (finished.length) {
+      const count = finished.length;
+      debug('core', `${count} ${pluralize('candle', count)} (1 min) created from trades.`);
+      this.threshold = finished[finished.length - 1].start;
+    }
 
-  private calculateCandle(trades: Trade[]): Candle {
-    const firstTrade = first(trades);
-    const lastTrade = last(trades);
-
-    const firstTradePrice = firstTrade?.price ?? 0;
-    const lastTradePrice = lastTrade?.price ?? 0;
-
-    const candle: Candle = {
-      start: resetDateParts(firstTrade?.timestamp ?? 0, ['ms', 's']),
-      open: firstTradePrice,
-      high: firstTradePrice,
-      low: firstTradePrice,
-      close: lastTradePrice,
-      volume: 0,
-    };
-
-    each(trades, ({ price, amount }) => {
-      candle.high = max([candle.high, price]) ?? 0;
-      candle.low = min([candle.low, price]) ?? 0;
-      // Use exact precision to guarantee accurate comparisons during monitoring (supervision plugin)
-      candle.volume = addPrecise(candle.volume, amount);
-    });
-
-    return candle;
+    return finished;
   }
 }

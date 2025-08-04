@@ -1,5 +1,5 @@
 import { Candle } from '@models/types/candle.types';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { toTimestamp } from '../date/date.utils';
 import { fillMissingCandles, getCandleTimeOffset, hl2, hlc3, ohlc4 } from './candle.utils';
 
@@ -80,10 +80,6 @@ describe('candle utils', () => {
   });
 
   describe('getCandleTimeOffset', () => {
-    beforeAll(() => {
-      vi.useFakeTimers().setSystemTime(toTimestamp('2025-06-22T19:53:30Z'));
-    });
-
     it.each`
       size     | expected
       ${1}     | ${0}
@@ -93,11 +89,7 @@ describe('candle utils', () => {
       ${10080} | ${((0 + 6) % 7) * 1440 + 19 * 60 + 53}
       ${43200} | ${Math.floor((toTimestamp('2025-06-22T19:53:30Z') - Date.UTC(2025, 5, 1)) / 60000)}
     `('should return $size => $expected', ({ size, expected }) => {
-      expect(getCandleTimeOffset(size)).toBe(expected);
-    });
-
-    afterAll(() => {
-      vi.useRealTimers();
+      expect(getCandleTimeOffset(size, toTimestamp('2025-06-22T19:53:30Z'))).toBe(expected);
     });
   });
 });
