@@ -1,5 +1,5 @@
 export type Trade = {
-  order: string; // order ID
+  id: string; // Trade Id
   amount: number;
   timestamp: EpochTimeStamp;
   price: number;

@@ -32,8 +32,8 @@ export const fillMissingCandles = (candles: Candle[]): Undefined<Candle[]> => {
     });
 };
 
-export const getCandleTimeOffset = (candleSize: number) => {
-  const now = new Date();
+export const getCandleTimeOffset = (candleSize: number, start: EpochTimeStamp) => {
+  const now = new Date(start);
 
   const minute = now.getUTCMinutes();
   const hour = now.getUTCHours();

@@ -51,5 +51,3 @@ export const splitIntervals = (startDate: number, endDate: number, batchSize = 1
     };
   });
 };
-
-export const getNextMinute = () => resetDateParts(addMinutes(Date.now(), 1).getTime(), ['ms', 's']);

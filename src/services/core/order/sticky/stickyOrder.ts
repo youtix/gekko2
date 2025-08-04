@@ -59,7 +59,7 @@ export class StickyOrder extends BaseOrder {
     const myTrades = await this.broker.fetchMyTrades(from);
     const orderIDs = map(this.transactions, 'id');
     const trades = sortBy(
-      filter(myTrades, t => orderIDs.includes(t.order)),
+      filter(myTrades, t => orderIDs.includes(t.id)),
       'timestamp',
     );
 
