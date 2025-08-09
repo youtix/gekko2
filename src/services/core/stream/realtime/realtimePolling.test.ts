@@ -4,11 +4,11 @@ import { Candle } from '../../../../models/types/candle.types';
 import { inject } from '../../../injecter/injecter';
 import { TradeBatcher } from '../../batcher/tradeBatcher/tradeBatcher';
 import { CandleManager } from '../../candleManager/candleManager';
-import { RealtimeStream } from './realtime.stream';
+import { RealtimePollingStream } from './realtimePolling.stream';
 
 vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 vi.mock('@services/injecter/injecter', () => ({
-  inject: { broker: vi.fn() },
+  inject: { exchange: vi.fn() },
 }));
 vi.mock('@services/core/heart/heart', () => ({
   Heart: vi.fn(() => ({
@@ -24,14 +24,14 @@ vi.mock('@services/core/candleManager/candleManager', () => ({
   CandleManager: vi.fn(() => ({ processBatch: vi.fn() })),
 }));
 
-describe('RealtimeStream', () => {
+describe('RealtimePollingStream', () => {
   const candle: Candle = { start: 1, open: 1, high: 1, low: 1, close: 1, volume: 1 };
-  const injectBrokerMock = inject.broker as Mock;
+  const injectExchangeMock = inject.exchange as Mock;
   const fetchTrades = vi.fn();
 
   it('should push candles when trades are available', async () => {
     fetchTrades.mockResolvedValue([{ id: 't1' }]);
-    injectBrokerMock.mockReturnValue({ fetchTrades });
+    injectExchangeMock.mockReturnValue({ fetchTrades });
 
     const processTrades = vi.fn().mockReturnValue({ data: ['t1'] });
     const processBatch = vi.fn().mockReturnValue([candle]);
@@ -39,7 +39,7 @@ describe('RealtimeStream', () => {
     (TradeBatcher as unknown as Mock).mockImplementation(() => ({ processTrades }));
     (CandleManager as unknown as Mock).mockImplementation(() => ({ processBatch }));
 
-    const stream = new RealtimeStream({ tickrate: 1 });
+    const stream = new RealtimePollingStream({ tickrate: 1 });
     const results: Candle[] = [];
     stream.on('data', data => results.push(data));
 
@@ -50,9 +50,9 @@ describe('RealtimeStream', () => {
   });
   it('should throw when there is missing id property in fetched trades', async () => {
     fetchTrades.mockResolvedValue([{}]);
-    injectBrokerMock.mockReturnValue({ fetchTrades });
+    injectExchangeMock.mockReturnValue({ fetchTrades });
 
-    const stream = new RealtimeStream({ tickrate: 1 });
+    const stream = new RealtimePollingStream({ tickrate: 1 });
     await expect(stream.onTick()).rejects.toThrow(GekkoError);
   });
 });

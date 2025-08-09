@@ -2,9 +2,11 @@ watch:
   asset: BTC
   currency: USDT
   mode: realtime
+  stream: websocket # websocket (default) | polling
+  tickrate: 1000 # only used for stream polling
   timeframe: 5m
 
-broker:
+exchange:
   name: binance
 
 strategy:

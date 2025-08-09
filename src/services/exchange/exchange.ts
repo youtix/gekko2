@@ -2,7 +2,7 @@ import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Action } from '@models/types/action.types';
 import { Candle } from '@models/types/candle.types';
-import { BrokerConfig } from '@models/types/configuration.types';
+import { ExchangeConfig } from '@models/types/configuration.types';
 import { Order } from '@models/types/order.types';
 import { Portfolio } from '@models/types/portfolio.types';
 import { Ticker } from '@models/types/ticker.types';
@@ -10,45 +10,50 @@ import { Trade } from '@models/types/trade.types';
 import { config } from '@services/configuration/configuration';
 import { error, warning } from '@services/logger';
 import { getRetryDelay } from '@utils/fetch/fetch.utils';
-import ccxt, { Exchange, NetworkError } from 'ccxt';
+import ccxt, { Exchange as CCXTExchange, NetworkError } from 'ccxt';
 import { each, isNil } from 'lodash-es';
-import { BROKER_MANDATORY_FEATURES, BROKER_MAX_RETRIES_ON_FAILURE, INTERVAL_BETWEEN_CALLS_IN_MS } from './broker.const';
-import { UndefinedLimitsError } from './broker.error';
+import {
+  BROKER_MANDATORY_FEATURES,
+  BROKER_MAX_RETRIES_ON_FAILURE,
+  INTERVAL_BETWEEN_CALLS_IN_MS,
+} from './exchange.const';
+import { UndefinedLimitsError } from './exchange.error';
 
-export abstract class Broker {
-  protected broker: Exchange;
-  protected brokerName: string;
+export abstract class Exchange {
+  protected exchange: CCXTExchange;
+  protected exchangeName: string;
   protected asset: string;
   protected currency: string;
   protected symbol: string;
   protected interval: number;
 
-  constructor({ name, interval, key, secret, sandbox, verbose }: BrokerConfig) {
+  constructor({ name, interval, key, secret, sandbox, verbose }: ExchangeConfig) {
     const { asset, currency } = config.getWatch();
     const ccxtConfig = { ...(key && { apiKey: key }), ...(secret && { secret }), verbose };
-    this.broker = new ccxt[name](ccxtConfig);
+    this.exchange = new ccxt[name](ccxtConfig);
     const mandatoryFeatures = [...BROKER_MANDATORY_FEATURES, ...(sandbox ? ['sandbox'] : [])];
     each(mandatoryFeatures, feature => {
-      if (!this.broker.has[feature]) throw new GekkoError('broker', `Missing ${feature} feature in ${name} broker`);
+      if (!this.exchange.has[feature])
+        throw new GekkoError('exchange', `Missing ${feature} feature in ${name} exchange`);
     });
-    this.broker.setSandboxMode(sandbox ?? false);
-    this.broker.options['maxRetriesOnFailure'] = 0; // we handle it manualy
-    this.brokerName = name;
+    this.exchange.setSandboxMode(sandbox ?? false);
+    this.exchange.options['maxRetriesOnFailure'] = 0; // we handle it manualy
+    this.exchangeName = name;
     this.asset = asset;
     this.currency = currency;
     this.symbol = `${asset}/${currency}`;
     this.interval = interval ?? INTERVAL_BETWEEN_CALLS_IN_MS;
   }
 
-  // Public broker API
-  public getBrokerName() {
-    return this.brokerName;
+  // Public exchange API
+  public getExchangeName() {
+    return this.exchangeName;
   }
   public getInterval() {
     return this.interval;
   }
   public async loadMarkets() {
-    await this.broker.loadMarkets();
+    await this.exchange.loadMarkets();
   }
   public async fetchTicker() {
     return this.retry<Ticker>(() => this.fetchTickerOnce());
@@ -81,48 +86,48 @@ export abstract class Broker {
       return await fn();
     } catch (err) {
       const isRetryableError = err instanceof NetworkError;
-      if (err instanceof Error) error('broker', `${this.brokerName} call failed due to ${err.message}`);
+      if (err instanceof Error) error('exchange', `${this.exchangeName} call failed due to ${err.message}`);
       if (!isRetryableError || currRetry > BROKER_MAX_RETRIES_ON_FAILURE) throw err;
-      await this.broker.sleep(getRetryDelay(currRetry));
-      warning('broker', `Retrying to fetch (attempt ${currRetry})`);
+      await this.exchange.sleep(getRetryDelay(currRetry));
+      warning('exchange', `Retrying to fetch (attempt ${currRetry})`);
       return this.retry(fn, currRetry + 1);
     }
   }
 
   // Protected functions
   protected async calculatePrice(side: Action) {
-    const minimalPrice = this.broker.market(this.symbol).limits.price?.min;
-    const maximalPrice = this.broker.market(this.symbol).limits.price?.max;
+    const minimalPrice = this.exchange.market(this.symbol).limits.price?.min;
+    const maximalPrice = this.exchange.market(this.symbol).limits.price?.max;
     if (isNil(minimalPrice) || isNil(maximalPrice)) throw new UndefinedLimitsError('price', minimalPrice, maximalPrice);
 
     const ticker = await this.fetchTicker();
     const price = side === 'buy' ? ticker.bid + minimalPrice : ticker.ask - minimalPrice;
     if (price > maximalPrice || price < minimalPrice)
-      throw new OrderOutOfRangeError('broker', 'price', price, minimalPrice, maximalPrice);
+      throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
     return price;
   }
 
   protected calculateAmount(amount: number) {
-    const minimalAmount = this.broker.market(this.symbol).limits.amount?.min;
-    const maximalAmount = this.broker.market(this.symbol).limits.amount?.max;
+    const minimalAmount = this.exchange.market(this.symbol).limits.amount?.min;
+    const maximalAmount = this.exchange.market(this.symbol).limits.amount?.max;
 
     if (isNil(minimalAmount) || isNil(maximalAmount))
       throw new UndefinedLimitsError('amount', minimalAmount, maximalAmount);
-    if (amount < minimalAmount) throw new OrderOutOfRangeError('broker', 'amount', amount, minimalAmount);
+    if (amount < minimalAmount) throw new OrderOutOfRangeError('exchange', 'amount', amount, minimalAmount);
 
     if (amount > maximalAmount) return maximalAmount;
     return amount;
   }
 
   protected checkCost(amount: number, price: number) {
-    const minimalCost = this.broker.market(this.symbol).limits.cost?.min;
-    const maximalCost = this.broker.market(this.symbol).limits.cost?.max;
+    const minimalCost = this.exchange.market(this.symbol).limits.cost?.min;
+    const maximalCost = this.exchange.market(this.symbol).limits.cost?.max;
 
     if (isNil(minimalCost) || isNil(maximalCost)) throw new UndefinedLimitsError('cost', minimalCost, maximalCost);
 
     const cost = amount * price;
     if (cost > maximalCost || cost < minimalCost)
-      throw new OrderOutOfRangeError('broker', 'cost', cost, minimalCost, maximalCost);
+      throw new OrderOutOfRangeError('exchange', 'cost', cost, minimalCost, maximalCost);
   }
 
   protected abstract cancelLimitOrderOnce(id: string): Promise<Order>;
@@ -133,4 +138,5 @@ export abstract class Broker {
   protected abstract fetchPortfolioOnce(): Promise<Portfolio>;
   protected abstract fetchTickerOnce(): Promise<Ticker>;
   protected abstract fetchTradesOnce(): Promise<Trade[]>;
+  public abstract onTrade(onTrade: (trade: Trade) => void): () => void;
 }

@@ -30,10 +30,10 @@ plugins:
   - name: Trader # Must be set to Trader. This enables automated order execution based on strategy advice.
 ```
 
-The Trader plugin does not require any additional custom parameters in the plugin block itself, but it relies on a properly configured broker section to place real trades:
+The Trader plugin does not require any additional custom parameters in the plugin block itself, but it relies on a properly configured exchange section to place real trades:
 
 ```yaml
-broker:
+exchange:
   name: binance # Name of the exchange.
   key: <your_api_key> # Your exchange API key.
   secret: <your_api_secret> # Your exchange API secret.

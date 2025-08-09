@@ -2,11 +2,13 @@ watch:
   asset: BTC
   currency: USDT
   mode: realtime # backtest | importer | realtime
-  timeframe: '1d'
+  stream: websocket # websocket (default) | polling
+  # tickrate: 1000 # only used for stream polling
+  timeframe: 4h
   warmup:
     candleCount: 365
 
-broker:
+exchange:
   name: binance
 
 strategy:
@@ -18,6 +20,6 @@ plugins:
   - name: TradingAdvisor
     strategyName: DebugAdvice
 
-  - name: Telegram
-    token: # Your Telegram bot token
-    chatId: # Your Telegram chat id
+  # - name: Telegram
+  #   token: # Your Telegram bot token
+  #   chatId: # Your Telegram chat id

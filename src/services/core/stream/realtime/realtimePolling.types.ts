@@ -1,4 +1,4 @@
-export type RealtimeStreamInput = {
+export type RealtimePollingStreamInput = {
   /** The tickrate in milliseconds, which determines how often the stream should emit events. Default is 10 seconds if not provided. */
   tickrate: number;
 };

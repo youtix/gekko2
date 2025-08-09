@@ -12,8 +12,8 @@ vi.mock('@services/configuration/configuration', () => {
 });
 vi.mock('@services/storage/injecter/injecter', () => ({
   inject: {
-    secondaryBroker: vi.fn(() => ({
-      getBrokerName: () => 'binance',
+    secondaryExchange: vi.fn(() => ({
+      getExchangeName: () => 'binance',
       fetchOHLCV: vi.fn(),
     })),
   },
@@ -90,11 +90,11 @@ describe('GapFillerStream', () => {
     expect(results).toEqual([startCandle, candle2, candle4, endCandle]);
   });
 
-  // it('should fill gaps with broker candles when mode is "broker"', async () => {
+  // it('should fill gaps with exchange candles when mode is "exchange"', async () => {
   //   const candle2 = candleFactory(2000, 100, 100, 110, 90, 0);
   //   const candle3 = candleFactory(3000, 100, 100, 110, 90, 0);
   //   bridgeCandleGapMock.mockReturnValue([candle2, candle3]);
-  //   getWatchMock.mockReturnValue({ fillGaps: 'broker', mode: 'importer' });
+  //   getWatchMock.mockReturnValue({ fillGaps: 'exchange', mode: 'importer' });
   //   const results = await resetStream();
   //   expect(results).toEqual([startCandle, candle2, candle3, endCandle]);
   // });

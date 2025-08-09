@@ -2,11 +2,13 @@ watch:
   asset: BTC
   currency: USDT
   mode: realtime # backtest | importer | realtime
+  stream: websocket # websocket (default) | polling
+  tickrate: 1000 # only used for stream polling
   timeframe: '1d'
   warmup:
     candleCount: 365
 
-broker:
+exchange:
   name: binance
 
 strategy:

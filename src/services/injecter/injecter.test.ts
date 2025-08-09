@@ -4,24 +4,24 @@ import { config } from '../configuration/configuration';
 import { inject } from './injecter';
 
 vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({ getStorage: vi.fn(), getBroker: vi.fn() }));
+  const Configuration = vi.fn(() => ({ getStorage: vi.fn(), getExchange: vi.fn() }));
   return { config: new Configuration() };
 });
 vi.mock('@services/storage/sqlite.storage', () => ({
   SQLiteStorage: vi.fn(() => ({})),
 }));
-vi.mock('@services/broker/generic/generic', () => ({
-  GenericBroker: vi.fn(({ name }) => ({ brokerName: name })),
+vi.mock('@services/exchange/binance/binance', () => ({
+  BinanceExchange: vi.fn(({ name }) => ({ exchangeName: name })),
 }));
 
 describe('Injecter', () => {
   const getStorageMock = vi.spyOn(config, 'getStorage');
-  const getBrokerMock = vi.spyOn(config, 'getBroker');
+  const getExchangeMock = vi.spyOn(config, 'getExchange');
 
   beforeEach(() => {
     inject['storageInstance'] = undefined;
-    inject['brokerInstance'] = undefined;
-    // inject['secondaryBrokerInstance'] = undefined;
+    inject['exchangeInstance'] = undefined;
+    // inject['secondaryExchangeInstance'] = undefined;
   });
 
   describe('storage', () => {
@@ -38,17 +38,17 @@ describe('Injecter', () => {
     });
   });
 
-  describe('broker', () => {
-    it('should cache the broker instance and return the same object on multiple calls', () => {
-      getBrokerMock.mockReturnValue({ name: 'binance', verbose: false, sandbox: false });
-      const first = inject.broker();
-      const second = inject.broker();
+  describe('exchange', () => {
+    it('should cache the exchange instance and return the same object on multiple calls', () => {
+      getExchangeMock.mockReturnValue({ name: 'binance', verbose: false, sandbox: false });
+      const first = inject.exchange();
+      const second = inject.exchange();
       expect(second).toBe(first);
     });
 
-    it('should throw GekkoError if no broker config is returned', () => {
-      getBrokerMock.mockReturnValue(undefined as unknown as ReturnType<typeof config.getBroker>);
-      expect(() => inject.broker()).toThrow(GekkoError);
+    it('should throw GekkoError if no exchange config is returned', () => {
+      getExchangeMock.mockReturnValue(undefined as unknown as ReturnType<typeof config.getExchange>);
+      expect(() => inject.exchange()).toThrow(GekkoError);
     });
   });
 });

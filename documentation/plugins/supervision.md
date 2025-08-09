@@ -9,7 +9,7 @@ It supports a set of commands sent from your configured chat:
 - `/launchMemoryCheck` – start periodic memory usage monitoring. When usage exceeds the threshold, an alert is sent.
 - `/stopCpuCheck` – stop the CPU monitoring loop.
 - `/stopMemoryCheck` – stop the memory monitoring loop.
-- `/launchTimeframeCandleCheck` – check each timeframe candle against broker data.
+- `/launchTimeframeCandleCheck` – check each timeframe candle against exchange data.
 - `/stopTimeframeCandleCheck` – stop the timeframe candle check loop.
 - `/startLogMonitoring` – send warning and error logs at a set interval.
 - `/stopLogMonitoring` – stop the log monitoring loop.

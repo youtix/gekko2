@@ -2,7 +2,7 @@ import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Action } from '@models/types/action.types';
 import { Order } from '@models/types/order.types';
-import { Broker } from '@services/broker/broker';
+import { Exchange } from '@services/exchange/exchange';
 import { debug, warning } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { weightedMean } from '@utils/math/math.utils';
@@ -19,8 +19,8 @@ export class StickyOrder extends BaseOrder {
   private id?: string;
   private interval?: Timer;
 
-  constructor(action: Action, amount: number, broker: Broker) {
-    super(broker);
+  constructor(action: Action, amount: number, exchange: Exchange) {
+    super(exchange);
     this.completing = false;
     this.moving = false;
     this.checking = false;
@@ -33,7 +33,7 @@ export class StickyOrder extends BaseOrder {
 
     bindAll(this, ['checkOrder']);
 
-    this.interval = setInterval(this.checkOrder, this.broker.getInterval());
+    this.interval = setInterval(this.checkOrder, this.exchange.getInterval());
   }
 
   public getSide() {
@@ -56,7 +56,7 @@ export class StickyOrder extends BaseOrder {
     if (!this.isOrderCompleted()) throw new GekkoError('core', 'Order is not completed');
 
     const from = resetDateParts(first(this.transactions)?.timestamp, ['ms']);
-    const myTrades = await this.broker.fetchMyTrades(from);
+    const myTrades = await this.exchange.fetchMyTrades(from);
     const orderIDs = map(this.transactions, 'id');
     const trades = sortBy(
       filter(myTrades, t => orderIDs.includes(t.id)),
@@ -247,7 +247,7 @@ export class StickyOrder extends BaseOrder {
 
     if (status === 'open') {
       try {
-        const ticker = await this.broker.fetchTicker();
+        const ticker = await this.exchange.fetchTicker();
         const bookSide = this.side === 'buy' ? 'bid' : 'ask';
         debug('core', `Moving order ${id} to ${bookSide} side ${ticker[bookSide]}. Old price: ${price}.`);
 

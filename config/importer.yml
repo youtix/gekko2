@@ -7,7 +7,7 @@ watch:
     start: '2018-01-01T00:00:00.000Z'
     end: '2019-01-02T00:00:00.000Z'
 
-broker:
+exchange:
   name: binance
 
 storage:

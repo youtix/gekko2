@@ -1,5 +1,5 @@
 import { Order } from '@models/types/order.types';
-import { Broker } from '@services/broker/broker';
+import { Exchange } from '@services/exchange/exchange';
 import { toTimestamp } from '@utils/date/date.utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { BaseOrder } from './baseOrder';
@@ -25,7 +25,7 @@ class TestOrder extends BaseOrder {
   public handleFetchOrderSuccess = vi.fn();
   public handleFetchOrderError = vi.fn();
 }
-const fakeBroker = {
+const fakeExchange = {
   createLimitOrder: vi.fn(),
   cancelLimitOrder: vi.fn(),
   fetchOrder: vi.fn(),
@@ -38,7 +38,7 @@ describe('BaseOrder', () => {
   let testOrder: TestOrder;
 
   beforeEach(() => {
-    testOrder = new TestOrder(fakeBroker as unknown as Broker);
+    testOrder = new TestOrder(fakeExchange as unknown as Exchange);
   });
 
   it('should have status "initializing" upon creation', () => {
@@ -118,48 +118,48 @@ describe('BaseOrder', () => {
   });
 
   describe('createOrder', () => {
-    it('should call broker.createLimitOrder and then handleCreateOrderSuccess on success', async () => {
+    it('should call exchange.createLimitOrder and then handleCreateOrderSuccess on success', async () => {
       const orderResponse = { id: 'order1', status: 'open', filled: 0, price: 100 };
-      fakeBroker.createLimitOrder.mockResolvedValue(orderResponse);
+      fakeExchange.createLimitOrder.mockResolvedValue(orderResponse);
       await testOrder['createOrder']('buy', 10);
       expect(testOrder.handleCreateOrderSuccess).toHaveBeenCalledWith(orderResponse);
     });
 
-    it('should call handleCreateOrderError when broker.createLimitOrder rejects', async () => {
+    it('should call handleCreateOrderError when exchange.createLimitOrder rejects', async () => {
       const error = new Error('create failed');
-      fakeBroker.createLimitOrder.mockRejectedValue(error);
+      fakeExchange.createLimitOrder.mockRejectedValue(error);
       await testOrder['createOrder']('buy', 10);
       expect(testOrder.handleCreateOrderError).toHaveBeenCalledWith(error);
     });
   });
 
   describe('cancelOrder', () => {
-    it('should call broker.cancelLimitOrder and then handleCancelOrderSuccess on success', async () => {
+    it('should call exchange.cancelLimitOrder and then handleCancelOrderSuccess on success', async () => {
       const orderResponse = { id: 'order1', filled: 0, remaining: 10 };
-      fakeBroker.cancelLimitOrder.mockResolvedValue(orderResponse);
+      fakeExchange.cancelLimitOrder.mockResolvedValue(orderResponse);
       await testOrder['cancelOrder']('order1');
       expect(testOrder.handleCancelOrderSuccess).toHaveBeenCalledWith(orderResponse);
     });
 
-    it('should call handleCancelOrderError when broker.cancelLimitOrder rejects', async () => {
+    it('should call handleCancelOrderError when exchange.cancelLimitOrder rejects', async () => {
       const error = new Error('cancel failed');
-      fakeBroker.cancelLimitOrder.mockRejectedValue(error);
+      fakeExchange.cancelLimitOrder.mockRejectedValue(error);
       await testOrder['cancelOrder']('order1');
       expect(testOrder.handleCancelOrderError).toHaveBeenCalledWith(error);
     });
   });
 
   describe('fetchOrder', () => {
-    it('should call broker.fetchOrder and then handleFetchOrderSuccess on success', async () => {
+    it('should call exchange.fetchOrder and then handleFetchOrderSuccess on success', async () => {
       const orderResponse = { id: 'order1', status: 'open', filled: 0, price: 100 };
-      fakeBroker.fetchOrder.mockResolvedValue(orderResponse);
+      fakeExchange.fetchOrder.mockResolvedValue(orderResponse);
       await testOrder['fetchOrder']('order1');
       expect(testOrder.handleFetchOrderSuccess).toHaveBeenCalledWith(orderResponse);
     });
 
-    it('should call handleFetchOrderError when broker.fetchOrder rejects', async () => {
+    it('should call handleFetchOrderError when exchange.fetchOrder rejects', async () => {
       const error = new Error('fetch failed');
-      fakeBroker.fetchOrder.mockRejectedValue(error);
+      fakeExchange.fetchOrder.mockRejectedValue(error);
       await testOrder['fetchOrder']('order1');
       expect(testOrder.handleFetchOrderError).toHaveBeenCalledWith(error);
     });

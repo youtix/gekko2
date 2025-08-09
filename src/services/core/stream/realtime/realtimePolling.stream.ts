@@ -1,26 +1,26 @@
 import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/types/candle.types';
-import { Broker } from '@services/broker/broker';
 import { TradeBatcher } from '@services/core/batcher/tradeBatcher/tradeBatcher';
 import { CandleManager } from '@services/core/candleManager/candleManager';
 import { Heart } from '@services/core/heart/heart';
+import { Exchange } from '@services/exchange/exchange';
 import { inject } from '@services/injecter/injecter';
 import { bindAll, each, every } from 'lodash-es';
 import { Readable } from 'node:stream';
-import { RealtimeStreamInput } from './realtime.types';
+import { RealtimePollingStreamInput } from './realtimePolling.types';
 
-export class RealtimeStream extends Readable {
+export class RealtimePollingStream extends Readable {
   heart: Heart;
-  broker: Broker;
+  exchange: Exchange;
   candleManager: CandleManager;
   tradeBatcher: TradeBatcher;
   private isLocked: boolean;
 
-  constructor({ tickrate }: RealtimeStreamInput) {
+  constructor({ tickrate }: RealtimePollingStreamInput) {
     super({ objectMode: true });
 
     this.heart = new Heart(tickrate);
-    this.broker = inject.broker();
+    this.exchange = inject.exchange();
     this.tradeBatcher = new TradeBatcher();
     this.candleManager = new CandleManager();
 
@@ -34,7 +34,7 @@ export class RealtimeStream extends Readable {
 
   async onTick() {
     if (this.isLocked) return;
-    const trades = await this.broker.fetchTrades();
+    const trades = await this.exchange.fetchTrades();
     if (!every(trades, 'id'))
       throw new GekkoError('stream', 'One or more trade objects are missing the mandatory property id.');
     const batch = this.tradeBatcher.processTrades(trades);

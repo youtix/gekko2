@@ -21,6 +21,7 @@ export const watchSchema = object({
   asset: string().required(),
   tickrate: number().default(1000),
   mode: string().oneOf(['realtime', 'backtest', 'importer']).defined(),
+  stream: string().oneOf(['websocket', 'polling']).default('websocket'),
   timeframe: string().oneOf(TIMEFRAMES).default('1m'),
   fillGaps: string().oneOf(['no', 'empty']).default('empty'),
   warmup: warmupSchema,
@@ -29,8 +30,8 @@ export const watchSchema = object({
   batchSize: number().notRequired(),
 });
 
-export const brokerSchema = object({
-  name: string().oneOf(['binance', 'bitfinex']).required(),
+export const exchangeSchema = object({
+  name: string().oneOf(['binance']).required(),
   interval: number().positive().notRequired(),
   sandbox: boolean().default(false),
   key: string().notRequired(),
@@ -57,7 +58,7 @@ const disclaimerSchema = boolean().when(['plugins'], {
 export const configurationSchema = object({
   showLogo: boolean().default(true),
   watch: watchSchema,
-  broker: brokerSchema.default(null).notRequired(),
+  exchange: exchangeSchema.default(null).notRequired(),
   storage: storageSchema.default(null).notRequired(),
   plugins: array().of(pluginSchema).required(),
   strategy: object({ name: string().notRequired() }),

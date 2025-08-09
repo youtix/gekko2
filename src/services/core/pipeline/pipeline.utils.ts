@@ -14,10 +14,11 @@ import { BacktestStream } from '../stream/backtest/backtest.stream';
 import { GapFillerStream } from '../stream/gapFiller/gapFiller.stream';
 import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCandle.stream';
 import { PluginsStream } from '../stream/plugins.stream';
-import { RealtimeStream } from '../stream/realtime/realtime.stream';
+import { RealtimePollingStream } from '../stream/realtime/realtimePolling.stream';
+import { RealtimeWebsocketStream } from '../stream/realtime/realtimeWebsocket.stream';
 
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
-  const { tickrate, timeframe, warmup } = config.getWatch();
+  const { tickrate, timeframe, warmup, stream } = config.getWatch();
   const now = resetDateParts(processStartTime(), ['s', 'ms']);
   const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe], now);
   const startDate = subMinutes(now, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe] + offset).getTime();
@@ -25,7 +26,7 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
   await pipeline(
     mergeSequentialStreams(
       new HistoricalCandleStream({ startDate, endDate: now, tickrate: warmup.tickrate }),
-      new RealtimeStream({ tickrate }),
+      stream === 'polling' ? new RealtimePollingStream({ tickrate }) : new RealtimeWebsocketStream(),
     ),
     new GapFillerStream(),
     new PluginsStream(plugins),

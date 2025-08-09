@@ -58,16 +58,16 @@ export class Trader extends Plugin {
   }
 
   private async synchronize() {
-    const broker = this.getBroker();
-    debug('trader', `Synchronizing data with ${broker.getBrokerName()}`);
+    const exchange = this.getExchange();
+    debug('trader', `Synchronizing data with ${exchange.getExchangeName()}`);
     if (!this.price) {
-      const sleepInterval = broker.getInterval();
-      const ticker = await broker.fetchTicker();
+      const sleepInterval = exchange.getInterval();
+      const ticker = await exchange.fetchTicker();
       this.price = ticker.bid;
       await wait(sleepInterval);
     }
     const oldPortfolio = this.portfolio;
-    this.portfolio = await broker.fetchPortfolio();
+    this.portfolio = await exchange.fetchPortfolio();
     debug(
       'trader',
       `Current portfolio: ${this.portfolio.asset} ${this.asset} / ${this.portfolio.currency} ${this.currency}`,
@@ -199,7 +199,7 @@ export class Trader extends Plugin {
       balance: this.balance,
       date: advice.date,
     });
-    this.order = new StickyOrder(side, amount, this.getBroker());
+    this.order = new StickyOrder(side, amount, this.getExchange());
 
     this.order.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
       info('trader', `Partial ${side} fill, total filled: ${filled}`),
@@ -319,7 +319,7 @@ export class Trader extends Plugin {
       schema: traderSchema,
       modes: ['realtime'],
       dependencies: [],
-      inject: ['broker'],
+      inject: ['exchange'],
       eventsHandlers: filter(Object.getOwnPropertyNames(Trader.prototype), p => p.startsWith('on')),
       eventsEmitted: [
         PORTFOLIO_CHANGE_EVENT,

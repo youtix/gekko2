@@ -6,3 +6,5 @@ export const dateFnsMapper = {
   s: setSeconds,
   ms: setMilliseconds,
 } as const;
+
+export const MINUTE_MS = 60_000;

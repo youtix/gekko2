@@ -1,6 +1,6 @@
 export type Tag =
   | 'bot'
-  | 'broker'
+  | 'exchange'
   | 'configuration'
   | 'core'
   | 'fetcher'

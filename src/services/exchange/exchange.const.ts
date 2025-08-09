@@ -10,3 +10,6 @@ export const BROKER_MANDATORY_FEATURES = [
   'fetchTicker',
   'fetchTrades',
 ];
+export const LIMITS: Record<string, number> = {
+  binance: 1000,
+};

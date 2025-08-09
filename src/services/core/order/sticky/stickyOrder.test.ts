@@ -1,7 +1,7 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Order } from '@models/types/order.types';
-import { Broker } from '@services/broker/broker';
+import { Exchange } from '@services/exchange/exchange';
 import { warning } from '@services/logger';
 import { toTimestamp } from '@utils/date/date.utils';
 import { InvalidOrder, OrderNotFound } from 'ccxt';
@@ -15,7 +15,7 @@ vi.mock('@services/logger', () => ({
   error: vi.fn(),
 }));
 
-const fakeBroker = {
+const fakeExchange = {
   createLimitOrder: vi.fn(),
   cancelLimitOrder: vi.fn(),
   fetchOrder: vi.fn(),
@@ -31,8 +31,8 @@ describe('StickyOrder', () => {
   const defaultOrder: Order = { id: 'new-id', status: 'open', filled: 0, price: 100, timestamp: toTimestamp('2025') };
 
   beforeEach(() => {
-    fakeBroker.createLimitOrder.mockResolvedValue(defaultOrder);
-    stickyOrder = new StickyOrder('buy', 10, fakeBroker as unknown as Broker);
+    fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
+    stickyOrder = new StickyOrder('buy', 10, fakeExchange as unknown as Exchange);
   });
 
   afterAll(() => {
@@ -41,7 +41,7 @@ describe('StickyOrder', () => {
 
   describe('constructor', () => {
     it('should create an initial order', async () => {
-      expect(fakeBroker.createLimitOrder).toHaveBeenCalledWith('buy', 10);
+      expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('buy', 10);
     });
     it('should set an interval', async () => {
       expect(stickyOrder['interval']).toBeDefined();
@@ -378,7 +378,7 @@ describe('StickyOrder', () => {
     });
 
     it('should call orderFilled when error is OrderOutOfRangeError and order is partially filled', () => {
-      const error = new OrderOutOfRangeError('broker', 'amount', 10, 1, 100);
+      const error = new OrderOutOfRangeError('exchange', 'amount', 10, 1, 100);
       stickyOrder['isOrderPartiallyFilled'] = vi.fn().mockReturnValue(true);
       stickyOrder['orderFilled'] = vi.fn();
       stickyOrder['handleCreateOrderError'](error);
@@ -386,9 +386,9 @@ describe('StickyOrder', () => {
     });
 
     it.each`
-      errorInstance                                               | isPartiallyFilled
-      ${new OrderOutOfRangeError('broker', 'amount', 10, 1, 100)} | ${false}
-      ${new InvalidOrder('invalid order')}                        | ${false}
+      errorInstance                                                 | isPartiallyFilled
+      ${new OrderOutOfRangeError('exchange', 'amount', 10, 1, 100)} | ${false}
+      ${new InvalidOrder('invalid order')}                          | ${false}
     `(
       'should emit an invalid event and call orderRejected when error is $errorInstance',
       ({ errorInstance, isPartiallyFilled }) => {
@@ -538,7 +538,7 @@ describe('StickyOrder', () => {
     it('should call move when status is "open" and ticker price mismatches order price', async () => {
       stickyOrder['move'] = vi.fn();
       stickyOrder['transactions'] = [{ id: 'test-id', filled: 5, timestamp: 1710000000000 }];
-      fakeBroker.fetchTicker.mockResolvedValue({ bid: 101, ask: 99 });
+      fakeExchange.fetchTicker.mockResolvedValue({ bid: 101, ask: 99 });
       await stickyOrder['handleFetchOrderSuccess']({
         ...defaultOrder,
         status: 'open',
@@ -551,21 +551,21 @@ describe('StickyOrder', () => {
     it('should NOT call move when status is "open" and ticker price matches order price', async () => {
       stickyOrder['move'] = vi.fn();
       stickyOrder['transactions'] = [{ id: 'test-id', filled: 5, timestamp: 1710000000000 }];
-      fakeBroker.fetchTicker.mockResolvedValue({ bid: 100, ask: 99 });
+      fakeExchange.fetchTicker.mockResolvedValue({ bid: 100, ask: 99 });
       await stickyOrder['handleFetchOrderSuccess']({ ...defaultOrder, status: 'open', price: 100 });
       expect(stickyOrder['move']).not.toHaveBeenCalled();
     });
 
     it('should rethrow error when fetchTicker fails', async () => {
       const testError = new Error('Ticker fetch failed');
-      fakeBroker.fetchTicker.mockRejectedValue(testError);
+      fakeExchange.fetchTicker.mockRejectedValue(testError);
       await expect(stickyOrder['handleFetchOrderSuccess'](defaultOrder)).rejects.toThrow('Ticker fetch failed');
     });
 
     it('should call orderErrored when fetchTicker fails', async () => {
       stickyOrder['orderErrored'] = vi.fn();
       const testError = new Error('Ticker fetch failed');
-      fakeBroker.fetchTicker.mockRejectedValue(testError);
+      fakeExchange.fetchTicker.mockRejectedValue(testError);
       try {
         await stickyOrder['handleFetchOrderSuccess'](defaultOrder);
       } catch {
@@ -583,7 +583,7 @@ describe('StickyOrder', () => {
 
     it('should throw an error if no trades are found', async () => {
       stickyOrder['isOrderCompleted'] = vi.fn().mockReturnValue(true);
-      fakeBroker.fetchMyTrades.mockResolvedValue([]);
+      fakeExchange.fetchMyTrades.mockResolvedValue([]);
       await expect(stickyOrder.createSummary()).rejects.toThrow('No trades found in order');
     });
 
@@ -591,7 +591,7 @@ describe('StickyOrder', () => {
       stickyOrder['isOrderCompleted'] = vi.fn().mockReturnValue(true);
       stickyOrder['transactions'] = [{ id: 'order-1', timestamp: Date.now() }];
 
-      fakeBroker.fetchMyTrades.mockResolvedValue([
+      fakeExchange.fetchMyTrades.mockResolvedValue([
         { id: 'order-1', amount: 2, price: 100, fee: { rate: 0.01 }, timestamp: 1710000000000 },
         { id: 'order-1', amount: 3, price: 105, fee: { rate: 0.015 }, timestamp: 1710000100000 },
       ]);
