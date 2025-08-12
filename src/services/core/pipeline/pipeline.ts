@@ -61,11 +61,11 @@ export const createPlugins = async (context: PipelineContext) =>
 export const preloadMarkets = async (context: PipelineContext) => {
   const { mode } = config.getWatch();
   const isPreloadMarketNeeded =
-    ['realtime', 'importer'].includes(mode) || some(context, plugin => plugin.inject?.includes('broker'));
+    ['realtime', 'importer'].includes(mode) || some(context, plugin => plugin.inject?.includes('exchange'));
   if (isPreloadMarketNeeded) {
-    const broker = await inject.broker();
-    debug('pipeline', `Preloading Markets data for ${broker.getBrokerName()}`);
-    await broker.loadMarkets();
+    const exchange = await inject.exchange();
+    debug('pipeline', `Preloading Markets data for ${exchange.getExchangeName()}`);
+    await exchange.loadMarkets();
   }
   return context;
 };

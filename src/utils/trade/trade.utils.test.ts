@@ -1,20 +1,7 @@
-// Import dependencies
 import { describe, expect, it } from 'vitest';
-import { filterTradesByTimestamp, mapToCandles, mapToTrades } from './trade.utils';
+import { mapToCandles, mapToTrades } from './trade.utils';
 
 describe('trade.utils', () => {
-  describe('filterTradesByTimestamp', () => {
-    it.each`
-      trades                                                             | threshold | expected
-      ${[{ timestamp: 1000 }, { timestamp: 2000 }, { timestamp: 3000 }]} | ${1500}   | ${[{ timestamp: 2000 }, { timestamp: 3000 }]}
-      ${[{ timestamp: 1000 }, { timestamp: 2000 }]}                      | ${3000}   | ${[]}
-      ${[{ timestamp: 4000 }, { timestamp: 5000 }]}                      | ${3000}   | ${[{ timestamp: 4000 }, { timestamp: 5000 }]}
-    `('should return $expected for trades=$trades and threshold=$threshold', ({ trades, threshold, expected }) => {
-      const result = filterTradesByTimestamp(trades, threshold);
-      expect(result).toEqual(expected);
-    });
-  });
-
   describe('mapToTrades', () => {
     it.each`
       trades                                                                                                           | expected

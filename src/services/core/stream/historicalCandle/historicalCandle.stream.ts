@@ -1,7 +1,7 @@
 import { Candle } from '@models/types/candle.types';
-import { Broker } from '@services/broker/broker';
 import { Heart } from '@services/core/heart/heart';
 import { HistoricalCandleError } from '@services/core/stream/historicalCandle/historicalCandle.error';
+import { Exchange } from '@services/exchange/exchange';
 import { inject } from '@services/injecter/injecter';
 import { info } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
@@ -14,7 +14,7 @@ export class HistoricalCandleStream extends Readable {
   private startDate: EpochTimeStamp;
   private endDate: EpochTimeStamp;
   private heart: Heart;
-  private broker: Broker;
+  private exchange: Exchange;
   private isLocked: boolean;
 
   constructor({ startDate, endDate, tickrate }: HistoricalCandleStreamInput) {
@@ -24,7 +24,7 @@ export class HistoricalCandleStream extends Readable {
     this.endDate = resetDateParts(endDate, ['s', 'ms']);
 
     this.heart = new Heart(tickrate);
-    this.broker = inject.broker();
+    this.exchange = inject.exchange();
     this.isLocked = false;
 
     bindAll(this, ['pushCandles', 'pushCandle', 'onTick']);
@@ -51,7 +51,7 @@ export class HistoricalCandleStream extends Readable {
   async onTick() {
     if (this.isLocked) return;
     this.isLocked = true;
-    const candles = await this.broker.fetchOHLCV(this.startDate);
+    const candles = await this.exchange.fetchOHLCV(this.startDate);
     if (!candles?.length) throw new HistoricalCandleError('No candle data was fetched.');
     this.startDate = last(candles)?.start ?? Number.MAX_SAFE_INTEGER;
     this.startDate++;

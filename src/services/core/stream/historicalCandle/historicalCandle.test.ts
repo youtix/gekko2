@@ -16,7 +16,7 @@ const candleFactory = (time: string, value: number) => ({
 
 vi.mock('@services/logger', () => ({ info: vi.fn() }));
 vi.mock('@services/injecter/injecter', () => ({
-  inject: { broker: vi.fn() },
+  inject: { exchange: vi.fn() },
 }));
 vi.mock('@services/core/heart/heart', () => ({
   Heart: vi.fn(() => ({
@@ -27,7 +27,7 @@ vi.mock('@services/core/heart/heart', () => ({
 }));
 
 describe('HistoricalCandleStream', () => {
-  const injectBrokerMock = inject.broker as Mock;
+  const injectExchangeMock = inject.exchange as Mock;
   let stream: HistoricalCandleStream;
   let results: Candle[];
   let isStreamClosed: boolean;
@@ -41,7 +41,7 @@ describe('HistoricalCandleStream', () => {
   };
 
   it('should close the stream if start date is NOT before end date', async () => {
-    injectBrokerMock.mockReturnValue({
+    injectExchangeMock.mockReturnValue({
       fetchOHLCV: vi.fn().mockResolvedValue([]),
     });
 
@@ -58,7 +58,7 @@ describe('HistoricalCandleStream', () => {
   });
 
   it('should throw HistoricalCandleError when no candle data is fetched', async () => {
-    injectBrokerMock.mockReturnValue({
+    injectExchangeMock.mockReturnValue({
       fetchOHLCV: vi.fn().mockResolvedValue([]),
     });
 
@@ -74,7 +74,7 @@ describe('HistoricalCandleStream', () => {
   it('should push candles and not end stream when fetched candles do not reach end', async () => {
     const candle1 = candleFactory('2023-01-01T00:00:00Z', 100);
     const candle2 = candleFactory('2023-01-01T00:01:0Z', 101);
-    injectBrokerMock.mockReturnValue({
+    injectExchangeMock.mockReturnValue({
       fetchOHLCV: vi.fn().mockResolvedValue([candle1, candle2]),
     });
 
@@ -93,7 +93,7 @@ describe('HistoricalCandleStream', () => {
 
   it('should push candles and end stream when fetched candles meet or exceed end', async () => {
     const candle1 = candleFactory('2023-01-01T00:00:00Z', 100);
-    injectBrokerMock.mockReturnValue({
+    injectExchangeMock.mockReturnValue({
       fetchOHLCV: vi.fn().mockResolvedValue([candle1]),
     });
 

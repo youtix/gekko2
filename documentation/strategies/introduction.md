@@ -12,7 +12,7 @@ At its core, a strategy:
 - Runs indicators to interpret the market.
 - Makes decisions based on predefined logic.
 - Emits advice (`long`, `short`).
-- Reacts to trades once they’re executed (via broker or simulation).
+- Reacts to trades once they’re executed (via exchange or simulation).
 - Optionally logs or notifies events for debugging or visualization.
 
 ```

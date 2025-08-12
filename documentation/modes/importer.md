@@ -12,7 +12,7 @@ To import data, you should [enable and configure](../plugins/introduction.md) th
 
 - [Candle Writer](../plugins/candle-writer.md) – stores the imported data into a database.
 
-In addition, make sure to properly configure the `watch`, `broker`, and `storage` properties.
+In addition, make sure to properly configure the `watch`, `exchange`, and `storage` properties.
 
 Specify the date range you want to import using the `watch.daterange` property:
 
@@ -65,7 +65,7 @@ watch:
     start: '2024-01-01T00:00:00.000Z'
     end: '2024-02-01T00:00:00.000Z'
 
-broker:
+exchange:
   name: binance
 
 storage:

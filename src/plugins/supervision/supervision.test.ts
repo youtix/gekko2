@@ -72,11 +72,11 @@ describe('Supervision', () => {
     expect(plugin['memoryInterval']).toBeUndefined();
   });
 
-  it('should send alert when timeframe candle differs from broker', async () => {
-    const brokerCandle = { open: 1, high: 2, low: 1, close: 2, volume: 10 };
+  it('should send alert when timeframe candle differs from exchange', async () => {
+    const exchangeCandle = { open: 1, high: 2, low: 1, close: 2, volume: 10 };
     const timeframeCandle = { open: 2, high: 3, low: 1, close: 3, volume: 11 };
-    plugin['getBroker'] = vi.fn().mockReturnValue({
-      fetchOHLCV: vi.fn().mockResolvedValue([brokerCandle]),
+    plugin['getExchange'] = vi.fn().mockReturnValue({
+      fetchOHLCV: vi.fn().mockResolvedValue([exchangeCandle]),
     });
     plugin['handleCommand']('/launchtimeframecandlecheck');
     await plugin.onTimeframeCandle(timeframeCandle as any);
@@ -89,10 +89,10 @@ describe('Supervision', () => {
   });
 
   it('should stop timeframe candle monitoring on command', async () => {
-    const brokerCandle = { open: 1, high: 2, low: 1, close: 2, volume: 10 };
+    const exchangeCandle = { open: 1, high: 2, low: 1, close: 2, volume: 10 };
     const timeframeCandle = { open: 2, high: 3, low: 1, close: 3, volume: 11 };
-    plugin['getBroker'] = vi.fn().mockReturnValue({
-      fetchOHLCV: vi.fn().mockResolvedValue([brokerCandle]),
+    plugin['getExchange'] = vi.fn().mockReturnValue({
+      fetchOHLCV: vi.fn().mockResolvedValue([exchangeCandle]),
     });
     plugin['handleCommand']('/launchtimeframecandlecheck');
     plugin['handleCommand']('/stoptimeframecandlecheck');

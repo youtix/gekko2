@@ -73,6 +73,7 @@
   },
   "dependencies": {
     "@date-fns/tz": "^1.2.0",
+    "binance": "^3.0.4",
     "ccxt": "^4.4.78",
     "date-fns": "^4.1.0",
     "inquirer": "^12.6.0",

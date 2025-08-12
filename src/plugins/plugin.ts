@@ -1,5 +1,5 @@
 import { Watch } from '@models/types/configuration.types';
-import { Broker } from '@services/broker/broker';
+import { Exchange } from '@services/exchange/exchange';
 import { Storage } from '@services/storage/storage';
 import EventEmitter from 'node:events';
 import { Candle } from '../models/types/candle.types';
@@ -10,7 +10,7 @@ import { PluginMissingServiceError } from './plugin.error';
 export abstract class Plugin extends EventEmitter {
   private defferedEvents: DeffferedEvent[];
   private storage?: Storage;
-  private broker?: Broker;
+  private exchange?: Exchange;
 
   protected asset: string;
   protected currency: string;
@@ -40,8 +40,8 @@ export abstract class Plugin extends EventEmitter {
     this.storage = storage;
   }
 
-  public setBroker(broker: Broker) {
-    this.broker = broker;
+  public setExchange(exchange: Exchange) {
+    this.exchange = exchange;
   }
 
   public getStorage() {
@@ -49,9 +49,9 @@ export abstract class Plugin extends EventEmitter {
     return this.storage;
   }
 
-  public getBroker() {
-    if (!this.broker) throw new PluginMissingServiceError(this.pluginName, 'broker');
-    return this.broker;
+  public getExchange() {
+    if (!this.exchange) throw new PluginMissingServiceError(this.pluginName, 'exchange');
+    return this.exchange;
   }
 
   // --------------------------------------------------------------------------

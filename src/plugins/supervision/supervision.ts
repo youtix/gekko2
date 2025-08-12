@@ -152,15 +152,15 @@ export class Supervision extends Plugin {
 
   private async checkTimeframeCandle() {
     if (!this.lastTimeframeCandle) return;
-    const candles = await this.getBroker().fetchOHLCV(undefined, this.timeframe, 100);
-    const brokerCandle = candles.filter(candle => this.lastTimeframeCandle?.start === candle.start)[0];
-    if (!brokerCandle) return;
-    const diff = shallowObjectDiff(brokerCandle, this.lastTimeframeCandle);
+    const candles = await this.getExchange().fetchOHLCV(undefined, this.timeframe, 100);
+    const exchangeCandle = candles.filter(candle => this.lastTimeframeCandle?.start === candle.start)[0];
+    if (!exchangeCandle) return;
+    const diff = shallowObjectDiff(exchangeCandle, this.lastTimeframeCandle);
     if (!isEmpty(diff)) {
       const diffMsg = Object.keys(diff)
         .map(key => {
           const k = key as keyof Candle;
-          return `${key}: ${brokerCandle[k]} | ${this.lastTimeframeCandle![k]}`;
+          return `${key}: ${exchangeCandle[k]} | ${this.lastTimeframeCandle![k]}`;
         })
         .join('\n');
       this.bot.sendMessage(`⚠️ Timeframe candle mismatch detected:\n${diffMsg}`);
@@ -210,7 +210,7 @@ export class Supervision extends Plugin {
       schema: supervisionSchema,
       modes: ['realtime'],
       dependencies: [],
-      inject: ['broker'],
+      inject: ['exchange'],
       eventsHandlers: filter(Object.getOwnPropertyNames(Supervision.prototype), p => p.startsWith('on')),
       eventsEmitted: [],
       name: 'Supervision',

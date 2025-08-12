@@ -56,9 +56,9 @@ class Configuration {
     }
   }
 
-  public getBroker() {
+  public getExchange() {
     if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
-    return this.configuration.broker;
+    return this.configuration.exchange;
   }
 }
 

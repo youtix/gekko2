@@ -8,7 +8,7 @@ import {
   TRADE_INITIATED_EVENT,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
-import { Broker } from '@services/broker/broker';
+import { Exchange } from '@services/exchange/exchange';
 import { bindAll } from 'lodash-es';
 import EventEmitter from 'node:events';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
@@ -45,8 +45,8 @@ describe('Trader', () => {
   let onceEventCallback: () => Promise<void> = () => Promise.resolve();
   const setIntervalSpy = vi.spyOn(global, 'setInterval');
   let trader: any;
-  let fakeBroker: {
-    getBrokerName: Mock;
+  let fakeExchange: {
+    getExchangeName: Mock;
     getInterval: Mock;
     fetchTicker: Mock;
     fetchPortfolio: Mock;
@@ -66,8 +66,8 @@ describe('Trader', () => {
   };
 
   beforeEach(() => {
-    fakeBroker = {
-      getBrokerName: vi.fn().mockReturnValue('FakeBroker'),
+    fakeExchange = {
+      getExchangeName: vi.fn().mockReturnValue('FakeExchange'),
       getInterval: vi.fn().mockReturnValue(50),
       fetchTicker: vi.fn().mockResolvedValue({ bid: 100 }),
       fetchPortfolio: vi.fn().mockResolvedValue({ asset: 1, currency: 50 }),
@@ -81,7 +81,7 @@ describe('Trader', () => {
       }),
     };
     trader = new Trader();
-    trader['getBroker'] = vi.fn().mockReturnValue(fakeBroker);
+    trader['getExchange'] = vi.fn().mockReturnValue(fakeExchange);
     trader['deferredEmit'] = vi.fn();
     trader['order'] = fakeOrder;
   });
@@ -117,7 +117,7 @@ describe('Trader', () => {
       expect(trader['price']).toBe(100);
     });
 
-    it('should call wait with the broker interval when price is 0', async () => {
+    it('should call wait with the exchange interval when price is 0', async () => {
       trader['price'] = 0;
       await trader['synchronize']();
       expect(wait).toHaveBeenCalledWith(50);
@@ -126,12 +126,12 @@ describe('Trader', () => {
     it('should NOT call fetchTicker if price is non-zero', async () => {
       trader['price'] = 200; // non-zero price bypasses ticker fetching
       await trader['synchronize']();
-      expect(fakeBroker.fetchTicker).not.toHaveBeenCalled();
+      expect(fakeExchange.fetchTicker).not.toHaveBeenCalled();
     });
 
-    it('should update portfolio from broker', async () => {
+    it('should update portfolio from exchange', async () => {
       const newPortfolio = { asset: 2, currency: 100 };
-      fakeBroker.fetchPortfolio.mockResolvedValue(newPortfolio);
+      fakeExchange.fetchPortfolio.mockResolvedValue(newPortfolio);
       await trader['synchronize']();
       expect(trader['portfolio']).toEqual(newPortfolio);
     });
@@ -146,7 +146,7 @@ describe('Trader', () => {
       trader['sendInitialPortfolio'] = true;
       trader['portfolio'] = { asset: 1, currency: 50 };
       const updatedPortfolio = { asset: 2, currency: 100 };
-      fakeBroker.fetchPortfolio.mockResolvedValue(updatedPortfolio);
+      fakeExchange.fetchPortfolio.mockResolvedValue(updatedPortfolio);
       trader['emitPortfolioChangeEvent'] = vi.fn();
       await trader['synchronize']();
       expect(trader['emitPortfolioChangeEvent']).toHaveBeenCalled();
@@ -155,7 +155,7 @@ describe('Trader', () => {
     it('should not emit portfolio change event if sendInitialPortfolio is true but portfolio is unchanged', async () => {
       trader['sendInitialPortfolio'] = true;
       trader['portfolio'] = { asset: 1, currency: 50 };
-      fakeBroker.fetchPortfolio.mockResolvedValue({ asset: 1, currency: 50 });
+      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 1, currency: 50 });
       trader['emitPortfolioChangeEvent'] = vi.fn();
       await trader['synchronize']();
       expect(trader['emitPortfolioChangeEvent']).not.toHaveBeenCalled();
@@ -453,7 +453,7 @@ describe('Trader', () => {
     const amount = 2;
 
     beforeEach(() => {
-      trader['order'] = new StickyOrder('buy', 0, fakeBroker as unknown as Broker);
+      trader['order'] = new StickyOrder('buy', 0, fakeExchange as unknown as Exchange);
     });
 
     it('should emit TRADE_INITIATED_EVENT with correct payload', async () => {
@@ -674,9 +674,9 @@ describe('Trader', () => {
       expect(config.dependencies).toEqual([]);
     });
 
-    it('should return a configuration object with inject equal to ["broker"]', () => {
+    it('should return a configuration object with inject equal to ["exchange"]', () => {
       const config = Trader.getStaticConfiguration();
-      expect(config.inject).toEqual(['broker']);
+      expect(config.inject).toEqual(['exchange']);
     });
 
     it('should return a configuration object with all eventsHandlers', () => {
