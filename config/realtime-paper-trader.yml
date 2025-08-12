@@ -6,7 +6,7 @@ watch:
   warmup:
     candleCount: 365
 
-broker:
+exchange:
   name: binance
 
 strategy:

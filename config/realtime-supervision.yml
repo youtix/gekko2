@@ -4,7 +4,7 @@ watch:
   mode: realtime
   timeframe: 5m
 
-broker:
+exchange:
   name: binance
 
 strategy:

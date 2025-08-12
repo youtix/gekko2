@@ -1,6 +1,6 @@
 import { Plugin } from '@plugins/plugin';
 import { Schema } from 'yup';
-import { Nullable } from './generic.types';
+import { Nullable } from './utility.types';
 
 export type PipelineContext = {
   name: string;

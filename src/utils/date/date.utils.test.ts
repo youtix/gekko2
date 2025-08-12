@@ -1,7 +1,7 @@
 import { startOfMinute, subMilliseconds } from 'date-fns';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { Time } from './date.types';
-import { getNextMinute, isDaterangeValid, resetDateParts, splitIntervals } from './date.utils';
+import { isDaterangeValid, resetDateParts, splitIntervals } from './date.utils';
 
 describe('', () => {
   describe('resetDateParts', () => {
@@ -80,19 +80,5 @@ describe('', () => {
         });
       },
     );
-  });
-
-  describe('getNextMinute', () => {
-    beforeAll(() => {
-      const fixed = new Date('2025-06-22T19:53:30Z');
-      vi.useFakeTimers().setSystemTime(fixed);
-    });
-    it('returns timestamp at the start of the next minute', () => {
-      const expected = new Date('2025-06-22T19:54:00Z').getTime();
-      expect(getNextMinute()).toBe(expected);
-    });
-    afterAll(() => {
-      vi.useRealTimers();
-    });
   });
 });

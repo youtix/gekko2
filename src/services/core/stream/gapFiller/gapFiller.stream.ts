@@ -12,12 +12,10 @@ import { FILL_GAPS_MODE } from './gapFiller.const';
 export class GapFillerStream extends Transform {
   private lastCandle?: Candle;
   private fillGaps: Configuration['watch']['fillGaps'];
-  // private broker: Broker;
 
   constructor() {
     super({ objectMode: true });
     const { fillGaps, mode } = config.getWatch();
-    // this.broker = inject.secondaryBroker();
     this.fillGaps = FILL_GAPS_MODE[mode as string] ?? fillGaps;
     bindAll(this, ['pushCandle']);
   }
@@ -37,7 +35,6 @@ export class GapFillerStream extends Transform {
           ].join(' '),
         );
         if (this.fillGaps === 'empty' && this.lastCandle) this.fillWithEmptyCandles(this.lastCandle, candle);
-        // if (this.fillGaps === 'broker') await this.fillWithBrokerCandles(this.lastCandle, candle);
       }
       if (isCandleAlreadyProceed) {
         warning(
@@ -63,21 +60,6 @@ export class GapFillerStream extends Transform {
     const [, ...emptyCandles] = fillMissingCandles([before, after]) ?? [];
     each(dropRight(emptyCandles), this.pushCandle);
   }
-
-  // async fillWithBrokerCandles(before: Candle, after: Candle) {
-  //   warning('stream', `Filling gap using broker data from ${this.broker.getBrokerName()}.`);
-  //   const from = addMinutes(before.start, 1).getTime();
-  //   const fetchedCandles = await this.broker.fetchOHLCV(from);
-  //   const candles = bridgeCandleGap(fetchedCandles, before, after);
-  //   if (!candles.length) {
-  //     warning('stream',
-  //       'No valid candles returned by broker for the missing gap. Falling back to synthetic (empty) candles.',
-  //     );
-  //     this.fillWithEmptyCandles(before, after);
-  //   } else {
-  //     candles.forEach(this.pushCandle);
-  //   }
-  // }
 
   pushCandle(candle: Candle) {
     this.push(candle);

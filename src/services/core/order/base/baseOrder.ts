@@ -1,6 +1,6 @@
 import { Action } from '@models/types/action.types';
 import { Order } from '@models/types/order.types';
-import { Broker } from '@services/broker/broker';
+import { Exchange } from '@services/exchange/exchange';
 import { debug, error, info } from '@services/logger';
 import EventEmitter from 'node:events';
 import {
@@ -14,12 +14,12 @@ import { OrderStatus, Transaction } from './baseOrder.types';
 
 export abstract class BaseOrder extends EventEmitter {
   private status: OrderStatus;
-  protected broker: Broker;
+  protected exchange: Exchange;
   protected transactions: Transaction[];
 
-  constructor(broker: Broker) {
+  constructor(exchange: Exchange) {
     super();
-    this.broker = broker;
+    this.exchange = exchange;
     this.status = 'initializing';
     this.transactions = [];
   }
@@ -27,7 +27,7 @@ export abstract class BaseOrder extends EventEmitter {
   protected async createOrder(action: Action, amount: number) {
     try {
       debug('core', `Creating ${action} limit order with amount: ${amount}`);
-      const order = await this.broker.createLimitOrder(action, amount);
+      const order = await this.exchange.createLimitOrder(action, amount);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
       await this.handleCreateOrderError(error);
@@ -37,7 +37,7 @@ export abstract class BaseOrder extends EventEmitter {
   protected async cancelOrder(id: string) {
     try {
       debug('core', `Canceling order with ID: ${id}`);
-      const order = await this.broker.cancelLimitOrder(id);
+      const order = await this.exchange.cancelLimitOrder(id);
       await this.handleCancelOrderSuccess(order);
     } catch (error) {
       await this.handleCancelOrderError(error);
@@ -47,7 +47,7 @@ export abstract class BaseOrder extends EventEmitter {
   protected async fetchOrder(id: string) {
     try {
       debug('core', `Fetching order with ID: ${id}`);
-      const order = await this.broker.fetchOrder(id);
+      const order = await this.exchange.fetchOrder(id);
       await this.handleFetchOrderSuccess(order);
     } catch (error) {
       await this.handleFetchOrderError(error);
