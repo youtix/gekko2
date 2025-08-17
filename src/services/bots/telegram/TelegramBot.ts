@@ -37,7 +37,7 @@ export class TelegramBot extends Bot {
     debug('bot', `Received ${updates.length} ${pluralize('update', updates.length)} from Telegram Bot`);
     for (const update of updates) {
       const message = update.message;
-      if (!message || !isString(message.text)) return;
+      if (!message || !isString(message.text)) continue;
       const { text, chat } = message;
       const cmd = text;
       debug('bot', `Received command from Telegram Bot: "${cmd}"`);

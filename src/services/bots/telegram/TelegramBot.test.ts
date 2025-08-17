@@ -68,6 +68,19 @@ describe('TelegramBot', () => {
       await (bot as any).checkUpdates();
       expect(bot.sendMessage).not.toHaveBeenCalled();
     });
+
+    it('should continue processing updates after one without text', async () => {
+      const handle = vi.fn().mockReturnValue('pong');
+      bot = new TelegramBot(token, handle);
+      (fetcher.get as Mock).mockResolvedValue({
+        ok: true,
+        result: [{ update_id: 1 }, { update_id: 2, message: { text: '/ping', chat: { id: 7 } } }],
+      });
+      bot.sendMessage = vi.fn();
+      await (bot as any).checkUpdates();
+      expect(handle).toHaveBeenCalledWith('/ping');
+      expect(bot.sendMessage).toHaveBeenCalledWith('pong');
+    });
     it('should ignore updates without command', async () => {
       (fetcher.get as Mock).mockResolvedValue({
         ok: true,
