@@ -66,7 +66,7 @@ export class SQLiteStorage extends Storage {
   public getCandles({ start, end }: Interval<EpochTimeStamp, EpochTimeStamp>): Candle[] {
     const query = this.db.query<Candle, SQLQueryBindings[]>(`
       SELECT * FROM ${this.table}
-      WHERE start BETWEEN $start AND $end;
+      WHERE start BETWEEN $start AND $end
       ORDER BY start ASC
     `);
     return query.all({ $start: start, $end: end });
