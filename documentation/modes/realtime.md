@@ -35,7 +35,7 @@ It sends orders to the exchange API using fake money accounts, which mimic real-
 - `TradingAdvisor` – to run the strategy.
 - `Trader` – configure with sandbox/testnet API credentials.
 - `PerformanceAnalyzer` – to monitor profitability.
-- *(optional)* `CandleWriter`, `Telegram`, etc.
+- *(optional)* `CandleWriter`, `EventSubscriber`, etc.
 
 ❗ Not all exchanges support sandbox/testnet environments.
 
@@ -51,7 +51,7 @@ It connects directly to your exchange account, places actual orders based on you
 - `TradingAdvisor` – to run the strategy.
 - `Trader` – with real API credentials.
 - `PerformanceAnalyzer` – to monitor performance.
-- *(optional)* `CandleWriter`, `Telegram`, etc.
+- *(optional)* `CandleWriter`, `EventSubscriber`, etc.
 
 ❗ High risk: Make sure your strategy has been tested thoroughly.  
 Gekko only executes what your strategy tells it to do.

@@ -5,8 +5,8 @@ Gekko currently includes several plugins to extend its functionality:
 - [Candle Writer](./candle-writer.md) – writes candle data to the database.
 - [Paper Trader](./paper-trader.md) – simulates trades using your strategy.
 - [Performance Analyzer](./performance-analyzer.md) – evaluates the performance of your strategy.
-- [Telegram](./trader.md) – sends trading events to a Telegram chat group.
-- [Supervision](./supervision.md) – monitor the bot via Telegram commands.
+- [EventSubscriber](./event-subscriber.md) – subscibe to Gekko events and send them to a Telegram chat group.
+- [Supervision](./supervision.md) – monitor Gekko via Telegram commands.
 - [Trader](./trader.md) – executes advice from the [Trading Advisor](./trading-advisor.md) on a real exchange.
 - [Trading Advisor](./trading-advisor.md) – runs your trading strategy and generates advice.
 
@@ -24,7 +24,6 @@ plugins:
   - name: 'PerformanceAnalyzer'
     riskFreeReturn: 5
 
-  - name: Telegram
+  - name: EventSubscriber
     token: # Your telgram token
-    chatId: # Your telegram chat id
 ```

@@ -1,7 +1,7 @@
 import { number, object, string } from 'yup';
 
-export const telegramSchema = object({
+export const eventSubscriberSchema = object({
   name: string().required(),
   token: string().required(),
-  chatId: number().required(),
+  strategyLogLimit: number().default(50),
 });

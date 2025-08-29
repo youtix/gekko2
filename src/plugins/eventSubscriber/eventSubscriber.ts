@@ -10,36 +10,84 @@ import {
 } from '@models/types/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
-import { debug } from '@services/logger';
+import { getBufferedLogs } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
 import { formatDuration, intervalToDuration } from 'date-fns';
-import { filter, upperCase } from 'lodash-es';
-import { telegramSchema } from './telegram.schema';
-import { TelegramConfig } from './telegram.types';
+import { bindAll, filter, upperCase } from 'lodash-es';
+import { eventSubscriberSchema } from './eventSubscriber.schema';
+import { Event, EVENT_NAMES, EventSubscriberConfig } from './eventSubscriber.types';
 
-export class Telegram extends Plugin {
+export class EventSubscriber extends Plugin {
   private bot: TelegramBot;
-  private chatId: number;
   private price?: number;
+  private subscriptions = new Set<Event>();
+  private strategyLogLimit: number;
 
-  constructor({ name, chatId, token }: TelegramConfig) {
+  constructor({ name, token, strategyLogLimit }: EventSubscriberConfig) {
     super(name);
-    this.bot = new TelegramBot(token);
-    this.chatId = chatId;
+    bindAll(this, ['handleCommand']);
+    this.bot = new TelegramBot(token, this.handleCommand);
+    this.strategyLogLimit = strategyLogLimit;
+  }
+
+  private handleCommand(command: string): string {
+    switch (command) {
+      case '/help':
+        return [
+          'Available commands:',
+          ...EVENT_NAMES.map(e => `/subscribe_to_${e}`),
+          '/subscribe_to_all',
+          '/unsubscribe_from_all',
+          '/subscriptions',
+          '/strategy_logs',
+          '/help',
+        ].join('\n');
+      case '/subscribe_to_all':
+        EVENT_NAMES.forEach(e => this.subscriptions.add(e));
+        return 'Subscribed to all events';
+      case '/unsubscribe_from_all':
+        this.subscriptions.clear();
+        return 'Unsubscribed from all events';
+      case '/subscriptions':
+        return this.subscriptions.size ? [...this.subscriptions].join('\n') : 'No subscriptions';
+      case '/strategy_logs': {
+        const logs = getBufferedLogs()
+          .filter(l => l.tag.toLowerCase() === 'strategy' && l.level === 'info')
+          .slice(-this.strategyLogLimit);
+        if (!logs.length) return 'No strategy logs available';
+        return logs
+          .map(l => `• ${toISOString(l.timestamp)} [${l.level.toUpperCase()}] (${l.tag})\n${l.message}`)
+          .join('---\n');
+      }
+      default:
+        if (command.startsWith('/subscribe_to_')) {
+          const event = command.replace('/subscribe_to_', '') as Event;
+          if (!EVENT_NAMES.includes(event)) return 'Unknown command';
+          if (this.subscriptions.has(event)) {
+            this.subscriptions.delete(event);
+            return `Unsubscribed from ${event}`;
+          }
+          this.subscriptions.add(event);
+          return `Subscribed to ${event}`;
+        }
+        return 'Unknown command';
+    }
   }
 
   // --- BEGIN LISTENERS ---
   public onStrategyAdvice({ recommendation, date }: Advice) {
+    if (!this.subscriptions.has('strategy_advice')) return;
     const message = [
       `Received advice to go ${recommendation}`,
       `At time: ${toISOString(date)}`,
       `Target price: ${this.price}`,
     ].join('\n');
-    this.sendMessage(this.chatId, message);
+    void this.bot.sendMessage(message);
   }
 
   public onTradeInitiated({ action, balance, date, id, adviceId, portfolio }: TradeInitiated) {
+    if (!this.subscriptions.has('trade_initiated')) return;
     const message = [
       `${upperCase(action)} sticky order created (${id})`,
       `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
@@ -48,20 +96,22 @@ export class Telegram extends Plugin {
       `At time: ${toISOString(date)}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.chatId, message);
+    void this.bot.sendMessage(message);
   }
 
   public onTradeCanceled({ id, date, adviceId }: TradeCanceled) {
+    if (!this.subscriptions.has('trade_canceled')) return;
     const message = [
       `Sticky order canceled (${id})`,
       `At time: ${toISOString(date)}`,
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.chatId, message);
+    void this.bot.sendMessage(message);
   }
 
   public onTradeAborted({ id, action, adviceId, balance, date, portfolio, reason }: TradeAborted) {
+    if (!this.subscriptions.has('trade_aborted')) return;
     const message = [
       `${upperCase(action)} sticky order aborted (${id})`,
       `Due to ${reason}`,
@@ -71,10 +121,11 @@ export class Telegram extends Plugin {
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.chatId, message);
+    void this.bot.sendMessage(message);
   }
 
   public onTradeErrored({ adviceId, date, id, reason }: TradeErrored) {
+    if (!this.subscriptions.has('trade_errored')) return;
     const message = [
       `Sticky order errored (${id})`,
       `Due to ${reason}`,
@@ -82,7 +133,7 @@ export class Telegram extends Plugin {
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.chatId, message);
+    void this.bot.sendMessage(message);
   }
 
   public onTradeCompleted({
@@ -97,6 +148,7 @@ export class Telegram extends Plugin {
     id,
     portfolio,
   }: TradeCompleted) {
+    if (!this.subscriptions.has('trade_completed')) return;
     const message = [
       `${upperCase(action)} sticky order completed (${id})`,
       `Amount: ${amount} ${this.asset}`,
@@ -108,11 +160,12 @@ export class Telegram extends Plugin {
       `Current balance: ${balance}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    this.sendMessage(this.chatId, message);
+    void this.bot.sendMessage(message);
   }
 
   public onRoundtrip({ duration, entryAt, exitAt, pnl, profit, maxAdverseExcursion }: RoundTrip) {
     const formater = new Intl.NumberFormat();
+    if (!this.subscriptions.has('roundtrip')) return;
     const message = [
       `Roundtrip done from ${toISOString(entryAt)} to ${toISOString(exitAt)}`,
       `Exposed Duration: ${formatDuration(intervalToDuration({ start: 0, end: duration }))}`,
@@ -120,26 +173,16 @@ export class Telegram extends Plugin {
       `Profit percent: ${round(profit, 2, 'down')}%`,
       `MAE: ${round(maxAdverseExcursion, 2, 'down')}%`,
     ].join('\n');
-    this.sendMessage(this.chatId, message);
+    void this.bot.sendMessage(message);
   }
   // --- END LISTENERS ---
-
-  private async sendMessage(chatId: number, message: string) {
-    debug('telegram', `Sending Message to group ${chatId} via POST HTTP request with text ${message}`);
-
-    try {
-      return await this.bot.sendMessage(message, chatId);
-    } catch {
-      return; // Don't stop the music if we can't send the message
-    }
-  }
 
   // --------------------------------------------------------------------------
   //                           PLUGIN LIFECYCLE HOOKS
   // --------------------------------------------------------------------------
 
   protected processInit(): void {
-    /** Nothing to do */
+    this.bot.listen();
   }
 
   protected processOneMinuteCandle(candle: Candle) {
@@ -147,18 +190,18 @@ export class Telegram extends Plugin {
   }
 
   protected processFinalize() {
-    /** Nothing to do */
+    this.bot.close();
   }
 
   public static getStaticConfiguration() {
     return {
-      schema: telegramSchema,
+      schema: eventSubscriberSchema,
       modes: ['realtime'],
       dependencies: [],
       inject: [],
-      eventsHandlers: filter(Object.getOwnPropertyNames(Telegram.prototype), p => p.startsWith('on')),
+      eventsHandlers: filter(Object.getOwnPropertyNames(EventSubscriber.prototype), p => p.startsWith('on')),
       eventsEmitted: [],
-      name: 'Telegram',
+      name: 'EventSubscriber',
     };
   }
 }

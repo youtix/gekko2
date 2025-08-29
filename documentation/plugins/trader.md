@@ -49,7 +49,7 @@ Without this line, Gekko will not activate the `Trader` plugin in realtime mode.
 
 ## Events Emitted
 
-The **Trader** plugin emits a number of events during live trading. These events are consumed by other parts of the Gekko system (e.g. Telegram, UI, logger, analytics).
+The **Trader** plugin emits a number of events during live trading. These events are consumed by other parts of the Gekko system (e.g. EventSubscriber, UI, logger, analytics).
 
 | Event                          | Description                                                                 |
 |--------------------------------|-----------------------------------------------------------------------------|
