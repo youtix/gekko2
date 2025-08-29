@@ -20,9 +20,9 @@ export class BinanceExchange extends Exchange {
     this.ws = new WebsocketClient(
       { beautify: true },
       {
-        trace: params => debug('exchange', params),
-        info: params => info('exchange', params),
-        error: params => error('exchange', params),
+        trace: (params: unknown) => debug('exchange', params),
+        info: (params: unknown) => info('exchange', params),
+        error: (params: unknown) => error('exchange', params),
       },
     );
   }

@@ -13,7 +13,7 @@ export type Tag =
   | 'storage'
   | 'strategy'
   | 'stream'
-  | 'telegram'
+  | 'event subscriber'
   | 'supervision'
   | 'trader'
   | 'trading advisor';

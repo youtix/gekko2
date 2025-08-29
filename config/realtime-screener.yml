@@ -18,6 +18,5 @@ plugins:
   - name: TradingAdvisor
     strategyName: DebugAdvice
 
-  # - name: Telegram
-  #   token: # Your Telegram bot token
-  #   chatId: # Your Telegram chat id
+  - name: EventSubscriber
+    token: # Your Telegram bot token
