@@ -44,7 +44,7 @@ _Use Gekko 2 at your own risk._
   - [Candle Writer](./documentation/plugins/candle-writer.md)
   - [Paper Trader](./documentation/plugins/paper-trader.md)
   - [Performance Analyzer](./documentation/plugins/performance-analyzer.md)
-  - [Telegram](./documentation/plugins/telegram.md)
+  - [EventSubscriber](./documentation/plugins/event-subscriber.md)
   - [Supervision](./documentation/plugins/supervision.md)
   - [Trader](./documentation/plugins/trader.md)
   - [Trading Advisor](./documentation/plugins/trading-advisor.md)
