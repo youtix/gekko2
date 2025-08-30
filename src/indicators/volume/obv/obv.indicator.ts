@@ -1,5 +1,5 @@
 import { BollingerBands } from '@indicators/volatility/bollingerBands/bollingerBands.indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 import { Indicator } from '../../indicator';
 

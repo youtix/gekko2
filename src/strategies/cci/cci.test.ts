@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CCI } from './cci.strategy';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), error: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn();
   Configuration.prototype.getStrategy = vi.fn(() => ({
@@ -23,10 +22,7 @@ describe('CCI Strategy', () => {
       candle: { start: Date.now(), open: 1, high: 2, low: 0, close: 1, volume: 100 },
       strategyParams: { period: 14, thresholds: { up: 100, down: -100, persistence: 2 } },
       advice: (direction: string) => advices.push(direction),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warning: vi.fn(),
-      error: vi.fn(),
+      log: vi.fn(),
     };
   });
 

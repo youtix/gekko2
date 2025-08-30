@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RSI } from './rsi.strategy';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), error: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn();
   Configuration.prototype.getStrategy = vi.fn(() => ({
@@ -24,10 +23,7 @@ describe('RSI Strategy', () => {
       candle: { close: 1 },
       strategyParams: { period: 14, src: 'close', thresholds: { high: 70, low: 30, persistence: 2 } },
       advice: (direction: string) => advices.push(direction),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warning: vi.fn(),
-      error: vi.fn(),
+      log: vi.fn(),
     };
   });
 

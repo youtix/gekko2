@@ -1,6 +1,6 @@
 import { Indicator } from '@indicators/indicator';
 import { TrueRange } from '@indicators/volatility/trueRange/trueRange.indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { MinusDM } from '../minusDM/minusDM.indicator';
 
 export class MinusDI extends Indicator<'MinusDI'> {

@@ -1,20 +1,19 @@
-import { getBufferedLogs } from '@services/logger';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Advice } from '../../models/types/advice.types';
-import { RoundTrip } from '../../models/types/roundtrip.types';
+import { Advice } from '../../models/advice.types';
+import { RoundTrip } from '../../models/roundtrip.types';
 import {
   TradeAborted,
   TradeCanceled,
   TradeCompleted,
   TradeErrored,
   TradeInitiated,
-} from '../../models/types/tradeStatus.types';
-import { toISOString, toTimestamp } from '../../utils/date/date.utils';
+} from '../../models/tradeStatus.types';
+import { toTimestamp } from '../../utils/date/date.utils';
 import { EventSubscriber } from './eventSubscriber';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
 import { EVENT_NAMES } from './eventSubscriber.types';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn(), getBufferedLogs: vi.fn(() => []) }));
+vi.mock('@services/logger', () => ({ debug: vi.fn() }));
 vi.mock('../../services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getWatch: vi.fn(() => ({ mode: 'realtime' })),
@@ -29,8 +28,7 @@ describe('EventSubscriber', () => {
   let plugin: EventSubscriber;
 
   beforeEach(() => {
-    vi.mocked(getBufferedLogs).mockReturnValue([]);
-    plugin = new EventSubscriber({ name: 'EventSubscriber', token: 't', strategyLogLimit: 2 });
+    plugin = new EventSubscriber({ name: 'EventSubscriber', token: 't' });
     plugin['bot'] = fakeBot as any;
     plugin['asset'] = 'BTC';
     plugin['currency'] = 'USD';
@@ -55,6 +53,8 @@ describe('EventSubscriber', () => {
   });
 
   describe('event notifications', () => {
+    const onStrategyInfo = (p: EventSubscriber) =>
+      p.onStrategyInfo({ timestamp: 1, level: 'debug', message: 'M', tag: 'strategy' });
     const onStrategyAdvice = (p: EventSubscriber) =>
       p.onStrategyAdvice({ recommendation: 'long', date: toTimestamp('2022-01-01T00:00:00Z') } as Advice);
     const onTradeInitiated = (p: EventSubscriber) =>
@@ -114,6 +114,7 @@ describe('EventSubscriber', () => {
 
     it.each`
       name                 | handler
+      ${'strategy_info'}   | ${onStrategyInfo}
       ${'strategy_advice'} | ${onStrategyAdvice}
       ${'trade_initiated'} | ${onTradeInitiated}
       ${'trade_canceled'}  | ${onTradeCanceled}
@@ -167,24 +168,21 @@ describe('EventSubscriber', () => {
       expect(plugin['subscriptions'].size).toBe(size);
     });
 
-    it('returns strategy logs', () => {
-      const logs = [
-        { timestamp: 1, level: 'info', tag: 'Strategy', message: 'm1' },
-        { timestamp: 2, level: 'info', tag: 'Strategy', message: 'm2' },
-      ];
-      vi.mocked(getBufferedLogs).mockReturnValue(logs as any);
-      const expected = logs
-        .map(l => `• ${toISOString(l.timestamp)} [${l.level.toUpperCase()}] (${l.tag})\n${l.message}`)
-        .join('---\n');
-      expect(plugin['handleCommand']('/strategy_logs')).toBe(expected);
-    });
-
-    it.each`
-      command    | substring
-      ${'/help'} | ${'/subscriptions'}
-    `('returns help', ({ command, substring }) => {
-      const res = plugin['handleCommand'](command);
-      expect(res).toContain(substring);
+    it('returns help', () => {
+      const res = plugin['handleCommand']('/help');
+      expect(res).toBe(`Available commands:
+/subscribe_to_strategy_info
+/subscribe_to_strategy_advice
+/subscribe_to_trade_initiated
+/subscribe_to_trade_canceled
+/subscribe_to_trade_aborted
+/subscribe_to_trade_errored
+/subscribe_to_trade_completed
+/subscribe_to_roundtrip
+/subscribe_to_all
+/unsubscribe_from_all
+/subscriptions
+/help`);
     });
   });
 

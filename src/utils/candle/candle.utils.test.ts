@@ -1,4 +1,4 @@
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { describe, expect, it } from 'vitest';
 import { toTimestamp } from '../date/date.utils';
 import { fillMissingCandles, getCandleTimeOffset, hl2, hlc3, ohlc4 } from './candle.utils';

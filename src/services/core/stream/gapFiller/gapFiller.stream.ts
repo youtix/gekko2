@@ -1,5 +1,5 @@
-import { Candle } from '@models/types/candle.types';
-import { Configuration } from '@models/types/configuration.types';
+import { Candle } from '@models/candle.types';
+import { Configuration } from '@models/configuration.types';
 import { config } from '@services/configuration/configuration';
 import { warning } from '@services/logger';
 import { fillMissingCandles } from '@utils/candle/candle.utils';

@@ -1,11 +1,13 @@
-import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '@constants/event.const';
+import { STRATEGY_ADVICE_EVENT, STRATEGY_INFO_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import * as indicators from '@indicators/index';
 import { Indicator } from '@indicators/indicator';
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
-import { Advice } from '@models/types/advice.types';
-import { Candle } from '@models/types/candle.types';
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { Advice } from '@models/advice.types';
+import { Candle } from '@models/candle.types';
+import { LogLevel } from '@models/logLevel.types';
+import { StrategyInfo } from '@models/strategyInfo.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
@@ -37,7 +39,7 @@ export class StrategyManager extends EventEmitter {
     this.propogatedAdvices = 0;
     this.strategyParams = config.getStrategy();
 
-    bindAll(this, [this.addIndicator.name, this.advice.name]);
+    bindAll(this, [this.addIndicator.name, this.advice.name, this.log.name]);
   }
 
   // ---- Called by trading advisor ----
@@ -62,7 +64,7 @@ export class StrategyManager extends EventEmitter {
       indicator.onNewCandle(candle);
       return indicator.getResult();
     });
-    const tools = { candle, advice: this.advice, debug, info, warning, error, strategyParams: this.strategyParams };
+    const tools = { candle, advice: this.advice, log: this.log, strategyParams: this.strategyParams };
     this.strategy?.onEachCandle(tools, ...results);
     if (!this.isWarmupCompleted) this.warmup(candle);
     if (this.isWarmupCompleted) {
@@ -109,6 +111,29 @@ export class StrategyManager extends EventEmitter {
 
     this.currentDirection = newDirection;
     return this.propogatedAdvices;
+  }
+
+  private log(level: LogLevel, message: string) {
+    switch (level) {
+      case 'debug':
+        debug('strategy', message);
+        break;
+      case 'info':
+        info('strategy', message);
+        break;
+      case 'warn':
+        warning('strategy', message);
+        break;
+      case 'error':
+        error('strategy', message);
+        break;
+    }
+    this.emit<StrategyInfo>(STRATEGY_INFO_EVENT, {
+      timestamp: Date.now(),
+      level,
+      tag: 'strategy',
+      message,
+    });
   }
   // -------------------------------
 

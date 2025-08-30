@@ -4,7 +4,7 @@ import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import JSON5 from 'json5';
 import { find } from 'lodash-es';
-import { Configuration as ConfigurationModel } from '../../models/types/configuration.types';
+import { Configuration as ConfigurationModel } from '../../models/configuration.types';
 import { configurationSchema } from './configuration.schema';
 
 class Configuration {

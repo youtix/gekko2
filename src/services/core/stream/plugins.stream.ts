@@ -1,6 +1,6 @@
 import { StopGekkoError } from '@errors/stopGekko.error';
-import { Candle } from '@models/types/candle.types';
-import { Nullable } from '@models/types/utility.types';
+import { Candle } from '@models/candle.types';
+import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { info } from '@services/logger';
 import { after, find } from 'lodash-es';

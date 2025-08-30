@@ -1,7 +1,7 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
-import { Action } from '@models/types/action.types';
-import { Order } from '@models/types/order.types';
+import { Action } from '@models/action.types';
+import { Order } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { debug, warning } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';

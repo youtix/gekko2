@@ -1,4 +1,4 @@
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { config } from '@services/configuration/configuration';
 import { debug } from '@services/logger';
 import { pluralize } from '@utils/string/string.utils';

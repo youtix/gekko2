@@ -20,13 +20,12 @@ Learn how to create a Telegram bot [here](https://core.telegram.org/bots).
 
 ## Configuration
 
-To enable the **Telegram** plugin, add it to your `plugins` section in the config file:
+To enable the **EventSubscriber** plugin, add it to your `plugins` section in the config file:
 
 ```yaml
 plugins:
   - name: EventSubscriber               # Must be set to "EventSubscriber"
     token: "<your-telegram-bot-token>"  # Your Telegram bot token
-    strategyLogLimit: 50                # (optional) Number of strategy logs to return
 ```
 ## Events Emitted
 
@@ -38,11 +37,12 @@ It acts purely as a consumer of events and never produces new ones within the Ge
 
 ## Events Handled
 
-The **Telegram** plugin listens to a variety of events in order to send notifications directly to your Telegram chat.
+The **EventSubscriber** plugin listens to a variety of events in order to send notifications directly to your Telegram chat.
 
 | Event                    | Description                                                                |
 |--------------------------|----------------------------------------------------------------------------|
 | `processOneMinuteCandle` | Updates the current price based on incoming candle data.                   |
+| `onStrategyInfo`         | Sends a message with logs from a strategy.                                 |
 | `onStrategyAdvice`       | Sends a message when new advice is received from a strategy.               |
 | `onTradeInitiated`       | Notifies when a trade is about to be placed.                               |
 | `onTradeCompleted`       | Sends detailed info once a trade is successfully executed.                 |
@@ -59,6 +59,7 @@ All commands use underscores. Subscriptions are reset when the process restarts.
 
 Each event can be toggled with `/subscribe_to_<event>`:
 
+- `/subscribe_to_strategy_info`
 - `/subscribe_to_strategy_advice`
 - `/subscribe_to_trade_initiated`
 - `/subscribe_to_trade_canceled`
@@ -77,7 +78,6 @@ Sending the same command again unsubscribes from that event.
 
 ### Other commands
 
-- `/strategy_logs` – return the latest strategy logs (limited by `strategyLogLimit`).
 - `/help` – list all available commands.
 
 ## Plugin Limitations

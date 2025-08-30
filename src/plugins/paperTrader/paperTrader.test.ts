@@ -6,8 +6,8 @@ import {
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { StopGekkoError } from '@errors/stopGekko.error';
-import { Advice } from '@models/types/advice.types';
-import { Candle } from '@models/types/candle.types';
+import { Advice } from '@models/advice.types';
+import { Candle } from '@models/candle.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { PaperTrader } from './paperTrader';

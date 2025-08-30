@@ -1,19 +1,16 @@
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
-import { Candle } from '@models/types/candle.types';
-import { Tag } from '@models/types/tag.types';
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { Candle } from '@models/candle.types';
+import { LogLevel } from '@models/logLevel.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 
 export type Direction = 'short' | 'long';
 export type AddIndicatorFn = <T extends IndicatorNames>(name: T, parameters: IndicatorParamaters<T>) => void;
-export type LoggerFn = (tag: Tag, message: unknown) => void;
+export type LoggerFn = (level: LogLevel, msg: string) => void;
 export type AdviceFn = (newDirection: Direction) => number | undefined;
 export type Tools<T> = {
   candle: Candle;
   strategyParams: T;
-  debug: LoggerFn;
-  info: LoggerFn;
-  warning: LoggerFn;
-  error: LoggerFn;
+  log: LoggerFn;
   advice: AdviceFn;
 };
 export interface Strategy<T> {

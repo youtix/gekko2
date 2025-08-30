@@ -1,6 +1,6 @@
 import { compact, first, map, max, min } from 'lodash-es';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { Candle } from '../../../../models/types/candle.types';
+import { Candle } from '../../../../models/candle.types';
 import { toTimestamp } from '../../../../utils/date/date.utils';
 import { CandleBatcher } from './candleBatcher';
 

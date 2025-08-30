@@ -1,5 +1,5 @@
 import { describe, expect, it, Mock, vi } from 'vitest';
-import { Candle } from '../../../../models/types/candle.types';
+import { Candle } from '../../../../models/candle.types';
 import { toTimestamp } from '../../../../utils/date/date.utils';
 import { inject } from '../../../injecter/injecter';
 import { HistoricalCandleError } from './historicalCandle.error';

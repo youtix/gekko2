@@ -1,4 +1,4 @@
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { DEMAStrategyParams } from './dema.types';
@@ -12,7 +12,7 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
   }
 
   onCandleAfterWarmup(
-    { candle, strategyParams, advice, debug, info }: Tools<DEMAStrategyParams>,
+    { candle, strategyParams, advice, log }: Tools<DEMAStrategyParams>,
     ...indicators: unknown[]
   ): void {
     const [dema, sma] = indicators;
@@ -24,34 +24,34 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
     const message = '@ ' + price.toFixed(8) + ' (' + dema.toFixed(5) + '/' + diff.toFixed(5) + ')';
 
     if (diff > strategyParams.thresholds.up) {
-      debug('strategy', `We are currently in uptrend: ${message}`);
+      log('debug', `We are currently in uptrend: ${message}`);
 
       if (this.currentTrend !== 'up') {
         this.currentTrend = 'up';
-        info('strategy', `Executing long advice due to detected uptrend: ${message}`);
+        log('info', `Executing long advice due to detected uptrend: ${message}`);
         advice('long');
       }
     } else if (diff < strategyParams.thresholds.down) {
-      debug('strategy', `We are currently in a downtrend: ${message}`);
+      log('debug', `We are currently in a downtrend: ${message}`);
 
       if (this.currentTrend !== 'down') {
         this.currentTrend = 'down';
-        info('strategy', `Executing short advice due to detected downtrend: ${message}`);
+        log('info', `Executing short advice due to detected downtrend: ${message}`);
         advice('short');
       }
     } else {
-      debug('strategy', `We are currently not in an up or down trend: ${message}`);
+      log('debug', `We are currently not in an up or down trend: ${message}`);
     }
   }
   onTradeCompleted(_trade: TradeCompleted): void {
     throw new Error('Method not implemented.');
   }
-  log({ debug }: Tools<DEMAStrategyParams>, ...indicators: unknown[]): void {
+  log({ log }: Tools<DEMAStrategyParams>, ...indicators: unknown[]): void {
     const [dema, sma] = indicators;
     if (!isNumber(sma) || !isNumber(dema)) return;
 
-    debug(
-      'strategy',
+    log(
+      'debug',
       ['Calculated DEMA and SMA properties for candle:', `DEMA: ${dema.toFixed(5)}`, `SMA: ${sma.toFixed(5)}`].join(
         ' ',
       ),

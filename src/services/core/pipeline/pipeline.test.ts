@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { PipelineContext } from '../../../models/types/pipeline.types';
+import type { PipelineContext } from '../../../models/pipeline.types';
 import * as allPlugin from '../../../plugins/index';
 import {
   checkPluginsDependencies,

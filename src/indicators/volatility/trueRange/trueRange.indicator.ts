@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 
 export class TrueRange extends Indicator<'TrueRange'> {
   private prevCandle?: Candle;

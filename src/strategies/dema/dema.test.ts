@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEMA } from './dema.strategy';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), error: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn();
   Configuration.prototype.getStrategy = vi.fn(() => ({
@@ -23,10 +22,7 @@ describe('DEMA Strategy', () => {
       candle: { close: 1 },
       strategyParams: { period: 14, thresholds: { up: 0.5, down: -0.5 } },
       advice: (direction: string) => advices.push(direction),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warning: vi.fn(),
-      error: vi.fn(),
+      log: vi.fn(),
     };
   });
 

@@ -1,6 +1,6 @@
 import { Indicator } from '@indicators/indicator';
 import { RSI } from '@indicators/oscillators/rsi/rsi.indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 import { Stochastic } from '../stochastic/stochastic.indicator';
 

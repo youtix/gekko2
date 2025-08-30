@@ -1,20 +1,20 @@
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { DebugAdviceParams } from './debugAdvice.types';
 
 export class DebugAdvice implements Strategy<DebugAdviceParams> {
   private index = 0;
 
-  onCandleAfterWarmup({ strategyParams, debug, advice }: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {
+  onCandleAfterWarmup({ strategyParams, log, advice }: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {
     if (strategyParams.wait > this.index) return;
 
-    debug('strategy', `Iteration: ${this.index}`);
+    log('debug', `Iteration: ${this.index}`);
 
     if (this.index % strategyParams.each === 0) {
-      debug('strategy', 'Trigger SHORT');
+      log('debug', 'Trigger SHORT');
       advice('short');
     } else if (this.index % strategyParams.each === strategyParams.each / 2) {
-      debug('strategy', 'Trigger LONG');
+      log('debug', 'Trigger LONG');
       advice('long');
     }
 

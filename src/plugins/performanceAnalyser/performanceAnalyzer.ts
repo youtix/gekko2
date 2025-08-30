@@ -1,8 +1,8 @@
 import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_COMPLETED_EVENT } from '@constants/event.const';
-import { Candle } from '@models/types/candle.types';
-import { Portfolio } from '@models/types/portfolio.types';
-import { RoundTrip } from '@models/types/roundtrip.types';
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { Candle } from '@models/candle.types';
+import { Portfolio } from '@models/portfolio.types';
+import { RoundTrip } from '@models/roundtrip.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { warning } from '@services/logger';
 import { percentile, stdev } from '@utils/math/math.utils';
 import { round } from '@utils/math/round.utils';

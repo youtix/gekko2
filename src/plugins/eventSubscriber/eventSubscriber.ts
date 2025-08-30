@@ -1,16 +1,10 @@
-import { Advice } from '@models/types/advice.types';
-import { Candle } from '@models/types/candle.types';
-import { RoundTrip } from '@models/types/roundtrip.types';
-import {
-  TradeAborted,
-  TradeCanceled,
-  TradeCompleted,
-  TradeErrored,
-  TradeInitiated,
-} from '@models/types/tradeStatus.types';
+import { Advice } from '@models/advice.types';
+import { Candle } from '@models/candle.types';
+import { RoundTrip } from '@models/roundtrip.types';
+import { StrategyInfo } from '@models/strategyInfo.types';
+import { TradeAborted, TradeCanceled, TradeCompleted, TradeErrored, TradeInitiated } from '@models/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
-import { getBufferedLogs } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
 import { formatDuration, intervalToDuration } from 'date-fns';
@@ -22,13 +16,11 @@ export class EventSubscriber extends Plugin {
   private bot: TelegramBot;
   private price?: number;
   private subscriptions = new Set<Event>();
-  private strategyLogLimit: number;
 
-  constructor({ name, token, strategyLogLimit }: EventSubscriberConfig) {
+  constructor({ name, token }: EventSubscriberConfig) {
     super(name);
     bindAll(this, ['handleCommand']);
     this.bot = new TelegramBot(token, this.handleCommand);
-    this.strategyLogLimit = strategyLogLimit;
   }
 
   private handleCommand(command: string): string {
@@ -40,7 +32,6 @@ export class EventSubscriber extends Plugin {
           '/subscribe_to_all',
           '/unsubscribe_from_all',
           '/subscriptions',
-          '/strategy_logs',
           '/help',
         ].join('\n');
       case '/subscribe_to_all':
@@ -51,15 +42,6 @@ export class EventSubscriber extends Plugin {
         return 'Unsubscribed from all events';
       case '/subscriptions':
         return this.subscriptions.size ? [...this.subscriptions].join('\n') : 'No subscriptions';
-      case '/strategy_logs': {
-        const logs = getBufferedLogs()
-          .filter(l => l.tag.toLowerCase() === 'strategy' && l.level === 'info')
-          .slice(-this.strategyLogLimit);
-        if (!logs.length) return 'No strategy logs available';
-        return logs
-          .map(l => `• ${toISOString(l.timestamp)} [${l.level.toUpperCase()}] (${l.tag})\n${l.message}`)
-          .join('---\n');
-      }
       default:
         if (command.startsWith('/subscribe_to_')) {
           const event = command.replace('/subscribe_to_', '') as Event;
@@ -76,6 +58,12 @@ export class EventSubscriber extends Plugin {
   }
 
   // --- BEGIN LISTENERS ---
+  public onStrategyInfo({ timestamp, level, tag, message }: StrategyInfo) {
+    if (!this.subscriptions.has('strategy_info')) return;
+    const msg = `• ${toISOString(timestamp)} [${level.toUpperCase()}] (${tag})\n${message}\n------\n`;
+    this.bot.sendMessage(msg);
+  }
+
   public onStrategyAdvice({ recommendation, date }: Advice) {
     if (!this.subscriptions.has('strategy_advice')) return;
     const message = [
@@ -83,7 +71,7 @@ export class EventSubscriber extends Plugin {
       `At time: ${toISOString(date)}`,
       `Target price: ${this.price}`,
     ].join('\n');
-    void this.bot.sendMessage(message);
+    this.bot.sendMessage(message);
   }
 
   public onTradeInitiated({ action, balance, date, id, adviceId, portfolio }: TradeInitiated) {
@@ -96,7 +84,7 @@ export class EventSubscriber extends Plugin {
       `At time: ${toISOString(date)}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    void this.bot.sendMessage(message);
+    this.bot.sendMessage(message);
   }
 
   public onTradeCanceled({ id, date, adviceId }: TradeCanceled) {
@@ -107,7 +95,7 @@ export class EventSubscriber extends Plugin {
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    void this.bot.sendMessage(message);
+    this.bot.sendMessage(message);
   }
 
   public onTradeAborted({ id, action, adviceId, balance, date, portfolio, reason }: TradeAborted) {
@@ -121,7 +109,7 @@ export class EventSubscriber extends Plugin {
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    void this.bot.sendMessage(message);
+    this.bot.sendMessage(message);
   }
 
   public onTradeErrored({ adviceId, date, id, reason }: TradeErrored) {
@@ -133,7 +121,7 @@ export class EventSubscriber extends Plugin {
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    void this.bot.sendMessage(message);
+    this.bot.sendMessage(message);
   }
 
   public onTradeCompleted({
@@ -160,7 +148,7 @@ export class EventSubscriber extends Plugin {
       `Current balance: ${balance}`,
       `Advice: ${adviceId}`,
     ].join('\n');
-    void this.bot.sendMessage(message);
+    this.bot.sendMessage(message);
   }
 
   public onRoundtrip({ duration, entryAt, exitAt, pnl, profit, maxAdverseExcursion }: RoundTrip) {
@@ -173,7 +161,7 @@ export class EventSubscriber extends Plugin {
       `Profit percent: ${round(profit, 2, 'down')}%`,
       `MAE: ${round(maxAdverseExcursion, 2, 'down')}%`,
     ].join('\n');
-    void this.bot.sendMessage(message);
+    this.bot.sendMessage(message);
   }
   // --- END LISTENERS ---
 

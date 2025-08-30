@@ -1,5 +1,5 @@
 import { GekkoError } from '@errors/gekko.error';
-import { PipelineContext } from '@models/types/pipeline.types';
+import { PipelineContext } from '@models/pipeline.types';
 import * as pluginList from '@plugins/index';
 import { PluginsNames } from '@plugins/plugin.types';
 import { config } from '@services/configuration/configuration';

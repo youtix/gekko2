@@ -1,5 +1,5 @@
-import { Candle } from '@models/types/candle.types';
-import { Undefined } from '@models/types/utility.types';
+import { Candle } from '@models/candle.types';
+import { Undefined } from '@models/utility.types';
 import { addMinutes, differenceInMinutes, isBefore } from 'date-fns';
 import { filter, first, last, map } from 'lodash-es';
 

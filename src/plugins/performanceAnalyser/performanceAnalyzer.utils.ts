@@ -1,5 +1,5 @@
-import { RoundTrip } from '@models/types/roundtrip.types';
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { RoundTrip } from '@models/roundtrip.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { debug, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';

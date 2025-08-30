@@ -1,4 +1,4 @@
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { IndicatorNames } from './indicator.types';
 
 export abstract class Indicator<T extends IndicatorNames = IndicatorNames> {

@@ -8,11 +8,11 @@ import {
   TRADE_INITIATED_EVENT,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
-import { Action } from '@models/types/action.types';
-import { Advice } from '@models/types/advice.types';
-import { Candle } from '@models/types/candle.types';
-import { Portfolio } from '@models/types/portfolio.types';
-import { TradeAborted, TradeCanceled, TradeErrored, TradeInitiated } from '@models/types/tradeStatus.types';
+import { Action } from '@models/action.types';
+import { Advice } from '@models/advice.types';
+import { Candle } from '@models/candle.types';
+import { Portfolio } from '@models/portfolio.types';
+import { TradeAborted, TradeCanceled, TradeErrored, TradeInitiated } from '@models/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
 import {
   ORDER_COMPLETED_EVENT,

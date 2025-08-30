@@ -1,6 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
-import { Order } from '@models/types/order.types';
+import { Order } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { warning } from '@services/logger';
 import { toTimestamp } from '@utils/date/date.utils';

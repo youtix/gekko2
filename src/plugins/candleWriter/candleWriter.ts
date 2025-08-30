@@ -1,4 +1,4 @@
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { Plugin } from '@plugins/plugin';
 import { candleWriterSchema } from './candleWriter.schema';
 import { CandleWriterConfig } from './candleWriter.types';

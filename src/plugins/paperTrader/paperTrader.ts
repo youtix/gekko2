@@ -6,11 +6,11 @@ import {
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { StopGekkoError } from '@errors/stopGekko.error';
-import { Advice } from '@models/types/advice.types';
-import { Candle } from '@models/types/candle.types';
-import { Portfolio } from '@models/types/portfolio.types';
-import { TradeInitiated } from '@models/types/tradeStatus.types';
-import { Nullable } from '@models/types/utility.types';
+import { Advice } from '@models/advice.types';
+import { Candle } from '@models/candle.types';
+import { Portfolio } from '@models/portfolio.types';
+import { TradeInitiated } from '@models/tradeStatus.types';
+import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { warning } from '@services/logger';
 import { round } from '@utils/math/round.utils';

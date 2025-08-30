@@ -2,6 +2,7 @@ import Yup from 'yup';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
 
 export const EVENT_NAMES = [
+  'strategy_info',
   'strategy_advice',
   'trade_initiated',
   'trade_canceled',

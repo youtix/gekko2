@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { MinusDI } from '../minusDI/minusDI.indicator';
 import { PlusDI } from '../plusDI/plusDI.indicator';
 

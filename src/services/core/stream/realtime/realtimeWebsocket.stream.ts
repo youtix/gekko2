@@ -1,5 +1,5 @@
+import { Candle } from '@models/candle.types';
 import { candleSchema } from '@models/schema/candle.schema';
-import { Candle } from '@models/types/candle.types';
 import { Exchange } from '@services/exchange/exchange';
 import { inject } from '@services/injecter/injecter';
 import { debug } from '@services/logger';
