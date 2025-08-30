@@ -1,9 +1,9 @@
-import { Watch } from '@models/types/configuration.types';
+import { Watch } from '@models/configuration.types';
 import { Exchange } from '@services/exchange/exchange';
 import { Storage } from '@services/storage/storage';
 import EventEmitter from 'node:events';
-import { Candle } from '../models/types/candle.types';
-import { DeffferedEvent } from '../models/types/event.types';
+import { Candle } from '../models/candle.types';
+import { DeffferedEvent } from '../models/event.types';
 import { config } from '../services/configuration/configuration';
 import { PluginMissingServiceError } from './plugin.error';
 

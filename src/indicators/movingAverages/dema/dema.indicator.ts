@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 import { EMA } from '../ema/ema.indicator';
 

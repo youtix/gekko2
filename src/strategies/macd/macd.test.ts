@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MACD } from './macd.strategy';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), error: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn();
   Configuration.prototype.getStrategy = vi.fn(() => ({
@@ -32,10 +31,7 @@ describe('MACD Strategy', () => {
         thresholds: { up: 0.5, down: -0.5, persistence: 2 },
       },
       advice: (direction: string) => advices.push(direction),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warning: vi.fn(),
-      error: vi.fn(),
+      log: vi.fn(),
     };
   });
 

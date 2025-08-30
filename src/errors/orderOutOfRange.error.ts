@@ -1,4 +1,4 @@
-import { Tag } from '@models/types/tag.types';
+import { Tag } from '@models/tag.types';
 import { isNil } from 'lodash-es';
 import { GekkoError } from './gekko.error';
 

@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 
 export class PlusDM extends Indicator<'PlusDM'> {
   private period: number;

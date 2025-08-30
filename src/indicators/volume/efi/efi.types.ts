@@ -1,6 +1,6 @@
 import { MovingAverageTypes } from '@indicators/indicator.types';
-import { InputSources } from '@models/types/inputSources.types';
-import { Nullable } from '@models/types/utility.types';
+import { InputSources } from '@models/inputSources.types';
+import { Nullable } from '@models/utility.types';
 
 declare global {
   interface IndicatorRegistry {

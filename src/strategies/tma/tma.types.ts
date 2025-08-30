@@ -1,4 +1,4 @@
-import { InputSources } from '@models/types/inputSources.types';
+import { InputSources } from '@models/inputSources.types';
 
 export interface TMAStrategyParams {
   short: number;

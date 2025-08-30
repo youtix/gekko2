@@ -1,4 +1,4 @@
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { CCIStrategyParams, CCITrend } from './cci.types';
@@ -15,7 +15,7 @@ export class CCI implements Strategy<CCIStrategyParams> {
   }
 
   onCandleAfterWarmup(
-    { advice, strategyParams: strategySettings, info, debug }: Tools<CCIStrategyParams>,
+    { advice, strategyParams: strategySettings, log }: Tools<CCIStrategyParams>,
     ...indicators: unknown[]
   ): void {
     const [cci] = indicators;
@@ -25,7 +25,7 @@ export class CCI implements Strategy<CCIStrategyParams> {
 
     if (cci >= up) {
       if (this.trend.direction !== 'overbought') {
-        info('strategy', 'CCI: overbought trend detected');
+        log('info', 'CCI: overbought trend detected');
         this.trend = { direction: 'overbought', duration: 1, persisted: persistence === 0, adviced: false };
         if (persistence === 0) {
           this.trend.adviced = true;
@@ -41,7 +41,7 @@ export class CCI implements Strategy<CCIStrategyParams> {
       }
     } else if (cci <= down) {
       if (this.trend.direction !== 'oversold') {
-        info('strategy', 'CCI: oversold trend detected');
+        log('info', 'CCI: oversold trend detected');
         this.trend = { direction: 'oversold', duration: 1, persisted: persistence === 0, adviced: false };
         if (persistence === 0) {
           this.trend.adviced = true;
@@ -63,13 +63,13 @@ export class CCI implements Strategy<CCIStrategyParams> {
       }
     }
 
-    debug('strategy', `Trend: ${this.trend.direction} for ${this.trend.duration}`);
+    log('debug', `Trend: ${this.trend.direction} for ${this.trend.duration}`);
   }
 
-  log({ debug }: Tools<CCIStrategyParams>, ...indicators: unknown[]): void {
+  log({ log }: Tools<CCIStrategyParams>, ...indicators: unknown[]): void {
     const [cci] = indicators;
     if (!isNumber(cci)) return;
-    debug('strategy', `CCI: ${cci.toFixed(2)}`);
+    log('debug', `CCI: ${cci.toFixed(2)}`);
   }
   // NOT USED
   onEachCandle(_tools: Tools<CCIStrategyParams>, ..._indicators: unknown[]): void {}

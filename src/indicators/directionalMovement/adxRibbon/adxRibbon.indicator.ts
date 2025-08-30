@@ -1,4 +1,4 @@
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { isNumber } from 'lodash-es';
 import { Indicator } from '../../indicator';
 import { ADX } from '../adx/adx.indicator';

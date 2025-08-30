@@ -1,5 +1,5 @@
-import { Candle } from '@models/types/candle.types';
-import { Nullable } from '@models/types/utility.types';
+import { Candle } from '@models/candle.types';
+import { Nullable } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Interval } from 'date-fns';
 import { upperCase } from 'lodash-es';

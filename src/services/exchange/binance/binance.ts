@@ -1,8 +1,8 @@
 import { GekkoError } from '@errors/gekko.error';
-import { Action } from '@models/types/action.types';
-import { Candle } from '@models/types/candle.types';
-import { ExchangeConfig } from '@models/types/configuration.types';
-import { isOrderStatus, Order } from '@models/types/order.types';
+import { Action } from '@models/action.types';
+import { Candle } from '@models/candle.types';
+import { ExchangeConfig } from '@models/configuration.types';
+import { isOrderStatus, Order } from '@models/order.types';
 import { debug, error, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { mapToCandles, mapToOrder, mapToTrades } from '@utils/trade/trade.utils';

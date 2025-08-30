@@ -1,6 +1,6 @@
 import { Indicator } from '@indicators/indicator';
 import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 
 export class AO extends Indicator<'AO'> {

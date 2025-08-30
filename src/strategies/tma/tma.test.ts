@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TMA } from './tma.strategy';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), error: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn();
   Configuration.prototype.getStrategy = vi.fn(() => ({ short: 3, medium: 5, long: 8 }));
@@ -20,10 +19,7 @@ describe('TMA Strategy', () => {
       candle: { close: 1 },
       strategyParams: { short: 3, medium: 5, long: 8 },
       advice: (dir: string) => advices.push(dir),
-      debug: vi.fn(),
-      info: vi.fn(),
-      warning: vi.fn(),
-      error: vi.fn(),
+      log: vi.fn(),
     };
   });
 

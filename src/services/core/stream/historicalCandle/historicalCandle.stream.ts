@@ -1,4 +1,4 @@
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { Heart } from '@services/core/heart/heart';
 import { HistoricalCandleError } from '@services/core/stream/historicalCandle/historicalCandle.error';
 import { Exchange } from '@services/exchange/exchange';

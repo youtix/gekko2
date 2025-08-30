@@ -1,6 +1,6 @@
 import { addPrecise } from '@utils/math/math.utils';
 import { omit } from 'lodash-es';
-import { Candle } from '../../../../models/types/candle.types';
+import { Candle } from '../../../../models/candle.types';
 import { CandleSize } from './candleBatcher.types';
 
 export class CandleBatcher {

@@ -1,4 +1,4 @@
-import { Order } from '@models/types/order.types';
+import { Order } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { toTimestamp } from '@utils/date/date.utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

@@ -4,7 +4,7 @@ import { DEMA } from '@indicators/movingAverages/dema/dema.indicator';
 import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
 import { WMA } from '@indicators/movingAverages/wma/wma.indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 
 const MOVING_AVERAGES = {
   sma: SMA,

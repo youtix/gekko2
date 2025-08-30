@@ -1,5 +1,5 @@
-import { Portfolio } from '@models/types/portfolio.types';
-import { Nullable } from '@models/types/utility.types';
+import { Portfolio } from '@models/portfolio.types';
+import { Nullable } from '@models/utility.types';
 import Yup from 'yup';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 

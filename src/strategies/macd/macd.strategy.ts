@@ -1,4 +1,4 @@
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
@@ -12,10 +12,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };
   }
 
-  onCandleAfterWarmup(
-    { strategyParams, advice, debug, info }: Tools<MACDStrategyParams>,
-    ...indicators: unknown[]
-  ): void {
+  onCandleAfterWarmup({ strategyParams, advice, log }: Tools<MACDStrategyParams>, ...indicators: unknown[]): void {
     const { macdSrc } = strategyParams;
     const [macd] = indicators;
 
@@ -23,11 +20,11 @@ export class MACD implements Strategy<MACDStrategyParams> {
 
     if (macd[macdSrc] > strategyParams.thresholds.up) {
       if (this.trend?.direction !== 'up') {
-        info('strategy', 'MACD: up trend detected');
+        log('info', 'MACD: up trend detected');
         this.trend = { duration: 0, persisted: false, direction: 'up', adviced: false };
       }
       this.trend.duration++;
-      debug('strategy', `In uptrend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
+      log('debug', `In uptrend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
 
       if (this.trend.duration >= strategyParams.thresholds.persistence) this.trend.persisted = true;
 
@@ -37,11 +34,11 @@ export class MACD implements Strategy<MACDStrategyParams> {
       }
     } else if (macd[macdSrc] < strategyParams.thresholds.down) {
       if (this.trend?.direction !== 'down') {
-        info('strategy', 'MACD: down trend detected');
+        log('info', 'MACD: down trend detected');
         this.trend = { duration: 0, persisted: false, direction: 'down', adviced: false };
       }
       this.trend.duration++;
-      debug('strategy', `In downtrend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
+      log('debug', `In downtrend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
 
       if (this.trend.duration >= strategyParams.thresholds.persistence) this.trend.persisted = true;
 
@@ -50,17 +47,17 @@ export class MACD implements Strategy<MACDStrategyParams> {
         advice('short');
       }
     } else {
-      debug('strategy', 'MACD: no trend detected');
+      log('debug', 'MACD: no trend detected');
     }
   }
 
-  log({ debug }: Tools<MACDStrategyParams>, ...indicators: unknown[]): void {
+  log({ log }: Tools<MACDStrategyParams>, ...indicators: unknown[]): void {
     const [macd] = indicators;
     if (!this.isMacd(macd)) return;
 
-    debug('strategy', `macd: ${macd.macd.toFixed(8)}`);
-    debug('strategy', `signal: ${macd.signal.toFixed(8)}`);
-    debug('strategy', `hist: ${macd.hist.toFixed(8)}`);
+    log('debug', `macd: ${macd.macd.toFixed(8)}`);
+    log('debug', `signal: ${macd.signal.toFixed(8)}`);
+    log('debug', `hist: ${macd.hist.toFixed(8)}`);
   }
 
   private isMacd(data: unknown): data is { macd: number; signal: number; hist: number } {

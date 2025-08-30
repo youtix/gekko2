@@ -1,7 +1,7 @@
 import { Indicator } from '@indicators/indicator';
 import { INPUT_SOURCES } from '@indicators/indicator.const';
 import { WilderSmoothing } from '@indicators/movingAverages/wilderSmoothing/wilderSmoothing.indicator';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 
 export class RSI extends Indicator<'RSI'> {

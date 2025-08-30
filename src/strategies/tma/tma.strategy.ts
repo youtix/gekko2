@@ -1,24 +1,24 @@
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { TMAStrategyParams } from './tma.types';
 
 export class TMA implements Strategy<TMAStrategyParams> {
-  onCandleAfterWarmup({ advice, debug, info }: Tools<TMAStrategyParams>, ...indicators: unknown[]): void {
+  onCandleAfterWarmup({ advice, log }: Tools<TMAStrategyParams>, ...indicators: unknown[]): void {
     const [short, medium, long] = indicators;
     if (!isNumber(short) || !isNumber(medium) || !isNumber(long)) return;
 
     if (short > medium && medium > long) {
-      info('strategy', `Executing long advice due to detected uptrend: ${short}/${medium}/${long}`);
+      log('info', `Executing long advice due to detected uptrend: ${short}/${medium}/${long}`);
       advice('long');
     } else if (short < medium && medium > long) {
-      info('strategy', `Executing short advice due to detected downtrend: ${short}/${medium}/${long}`);
+      log('info', `Executing short advice due to detected downtrend: ${short}/${medium}/${long}`);
       advice('short');
     } else if (short > medium && medium < long) {
-      info('strategy', `Executing short advice due to detected downtrend: ${short}/${medium}/${long}`);
+      log('info', `Executing short advice due to detected downtrend: ${short}/${medium}/${long}`);
       advice('short');
     } else {
-      debug('strategy', `No clear trend detected: ${short}/${medium}/${long}`);
+      log('debug', `No clear trend detected: ${short}/${medium}/${long}`);
     }
   }
   init(addIndicator: AddIndicatorFn, strategyParams: TMAStrategyParams): void {

@@ -1,4 +1,4 @@
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber } from 'lodash-es';
@@ -11,21 +11,18 @@ export class RSI implements Strategy<RSIStrategyParams> {
     this.trend = { direction: 'none', duration: 0, adviced: false };
   }
 
-  onCandleAfterWarmup(
-    { strategyParams, advice, debug, info }: Tools<RSIStrategyParams>,
-    ...indicators: unknown[]
-  ): void {
+  onCandleAfterWarmup({ strategyParams, advice, log }: Tools<RSIStrategyParams>, ...indicators: unknown[]): void {
     const [rsi] = indicators;
     if (!isNumber(rsi)) return;
     const { thresholds } = strategyParams;
 
     if (rsi > thresholds.high) {
       if (this.trend.direction !== 'high') {
-        info('strategy', 'RSI: high trend detected');
+        log('info', 'RSI: high trend detected');
         this.trend = { duration: 0, direction: 'high', adviced: false };
       }
       this.trend.duration++;
-      debug('strategy', `In high trend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
+      log('debug', `In high trend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;
@@ -33,11 +30,11 @@ export class RSI implements Strategy<RSIStrategyParams> {
       }
     } else if (rsi < thresholds.low) {
       if (this.trend.direction !== 'low') {
-        info('strategy', 'RSI: low trend detected');
+        log('info', 'RSI: low trend detected');
         this.trend = { duration: 0, direction: 'low', adviced: false };
       }
       this.trend.duration++;
-      debug('strategy', `In low trend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
+      log('debug', `In low trend since ${this.trend.duration} ${pluralize('candle', this.trend.duration)}`);
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;

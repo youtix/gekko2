@@ -1,4 +1,4 @@
-import { Configuration } from '@models/types/configuration.types';
+import { Configuration } from '@models/configuration.types';
 
 export const FILL_GAPS_MODE: Record<string, Configuration['watch']['fillGaps']> = {
   realtime: 'empty',

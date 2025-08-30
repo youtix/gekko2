@@ -1,9 +1,15 @@
-import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT, TIMEFRAME_CANDLE_EVENT } from '@constants/event.const';
+import {
+  STRATEGY_ADVICE_EVENT,
+  STRATEGY_INFO_EVENT,
+  STRATEGY_WARMUP_COMPLETED_EVENT,
+  TIMEFRAME_CANDLE_EVENT,
+} from '@constants/event.const';
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { GekkoError } from '@errors/gekko.error';
-import { Advice } from '@models/types/advice.types';
-import { Candle } from '@models/types/candle.types';
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { Advice } from '@models/advice.types';
+import { Candle } from '@models/candle.types';
+import { StrategyInfo } from '@models/strategyInfo.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
 import { CandleBatcher } from '@services/core/batcher/candleBatcher/candleBatcher';
 import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
@@ -42,7 +48,8 @@ export class TradingAdvisor extends Plugin {
   private setUpListeners() {
     this.strategyManager
       ?.on(STRATEGY_WARMUP_COMPLETED_EVENT, this.relayStrategyWarmupCompleted)
-      .on(STRATEGY_ADVICE_EVENT, this.relayAdvice);
+      .on(STRATEGY_ADVICE_EVENT, this.relayAdvice)
+      .on(STRATEGY_INFO_EVENT, this.relayStrategyInfo);
   }
 
   private relayStrategyWarmupCompleted(event: unknown) {
@@ -55,6 +62,10 @@ export class TradingAdvisor extends Plugin {
       ...advice,
       date: addMinutes(this.candle.start, 1).getTime(),
     });
+  }
+
+  private relayStrategyInfo(strategyInfo: StrategyInfo) {
+    this.deferredEmit(STRATEGY_INFO_EVENT, strategyInfo);
   }
   // --- END INTERNALS ---
 
@@ -97,7 +108,12 @@ export class TradingAdvisor extends Plugin {
       dependencies: [],
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(TradingAdvisor.prototype), p => p.startsWith('on')),
-      eventsEmitted: [STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT, TIMEFRAME_CANDLE_EVENT],
+      eventsEmitted: [
+        STRATEGY_INFO_EVENT,
+        STRATEGY_ADVICE_EVENT,
+        STRATEGY_WARMUP_COMPLETED_EVENT,
+        TIMEFRAME_CANDLE_EVENT,
+      ],
     };
   }
 }

@@ -1,5 +1,5 @@
 import { INPUT_SOURCES } from '@indicators/indicator.const';
-import { Candle } from '@models/types/candle.types';
+import { Candle } from '@models/candle.types';
 import { Indicator } from '../../indicator';
 
 export class SMA extends Indicator<'SMA'> {

@@ -1,5 +1,5 @@
-import { Action } from '@models/types/action.types';
-import { Order } from '@models/types/order.types';
+import { Action } from '@models/action.types';
+import { Order } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { debug, error, info } from '@services/logger';
 import EventEmitter from 'node:events';

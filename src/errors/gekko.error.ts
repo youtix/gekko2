@@ -1,4 +1,4 @@
-import { Tag } from '@models/types/tag.types';
+import { Tag } from '@models/tag.types';
 import { upperCase } from 'lodash-es';
 
 export class GekkoError extends Error {

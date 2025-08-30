@@ -1,5 +1,6 @@
-import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '@constants/event.const';
+import { STRATEGY_ADVICE_EVENT, STRATEGY_INFO_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
+import { debug, error, info, warning } from '@services/logger';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrategyManager } from './strategyManager';
@@ -107,6 +108,26 @@ describe('StrategyManager', () => {
       (manager as any).advice('long');
       const id = (manager as any).advice('long');
       expect(id).toBeUndefined();
+      expect(listener).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('log', () => {
+    it.each`
+      logFn      | level
+      ${debug}   | ${'debug'}
+      ${info}    | ${'info'}
+      ${warning} | ${'warn'}
+      ${error}   | ${'error'}
+    `('should call $level log function', ({ logFn, level }) => {
+      manager['log'](level, 'Hello World !');
+      expect(logFn).toHaveBeenCalledTimes(1);
+    });
+
+    it('should emit strategy info event', () => {
+      const listener = vi.fn();
+      manager.on(STRATEGY_INFO_EVENT, listener);
+      (manager as any).log('error', 'Hello World !');
       expect(listener).toHaveBeenCalledTimes(1);
     });
   });

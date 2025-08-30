@@ -1,9 +1,15 @@
 // tradingAdvisor.test.ts
-import { STRATEGY_ADVICE_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT, TIMEFRAME_CANDLE_EVENT } from '@constants/event.const';
+import {
+  STRATEGY_ADVICE_EVENT,
+  STRATEGY_INFO_EVENT,
+  STRATEGY_WARMUP_COMPLETED_EVENT,
+  TIMEFRAME_CANDLE_EVENT,
+} from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
-import { Advice } from '@models/types/advice.types';
-import { Candle } from '@models/types/candle.types';
-import { TradeCompleted } from '@models/types/tradeStatus.types';
+import { Advice } from '@models/advice.types';
+import { Candle } from '@models/candle.types';
+import { StrategyInfo } from '@models/strategyInfo.types';
+import { TradeCompleted } from '@models/tradeStatus.types';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
@@ -147,6 +153,17 @@ describe('TradingAdvisor', () => {
         ...defaultAdvice,
         date: addMinutes(candleStart, 1).getTime(),
       });
+    });
+
+    it('should emit STRATEGY_INFO_EVENT in relayStrategyinfo when strategy logs are emited', () => {
+      const strategyInfoPayload: StrategyInfo = {
+        level: 'debug',
+        message: 'Hello World !',
+        tag: 'strategy',
+        timestamp: 123456789,
+      };
+      advisor['relayStrategyInfo'](strategyInfoPayload);
+      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_INFO_EVENT, strategyInfoPayload);
     });
   });
 });

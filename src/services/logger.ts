@@ -1,4 +1,4 @@
-import { Tag } from '@models/types/tag.types';
+import { Tag } from '@models/tag.types';
 import { RingBuffer } from '@utils/array/ringBuffer';
 import { isString, upperCase } from 'lodash-es';
 import { createLogger, format, transports } from 'winston';
