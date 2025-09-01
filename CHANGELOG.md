@@ -1,3 +1,31 @@
+# [1.1.0](https://github.com/youtix/gekko2/compare/v1.0.0...v1.1.0) (2025-09-01)
+
+### Bug Fixes
+
+- internal strategy import ([13b65ef](https://github.com/youtix/gekko2/commit/13b65ef7892f3ee39b43ce21c82ce84d2c5f42ef))
+- process remaining Telegram updates ([555aff8](https://github.com/youtix/gekko2/commit/555aff80d4ae413b726e643a1e96e56a2ac7fbbd))
+- **services:** stringify json object in logs ([6062ff0](https://github.com/youtix/gekko2/commit/6062ff0ac0d5555332f7cb1d487f22bb1e7ca205))
+- sort candles in ascending order ([28fce22](https://github.com/youtix/gekko2/commit/28fce22167ca5a12274b5f6108967ad5e010d623))
+
+### Features
+
+- add strategy info event ([dbb2588](https://github.com/youtix/gekko2/commit/dbb2588ddf024a62d7fb59b144bba71c9acbd902))
+- **broker:** log retry attempts ([7e3bd7a](https://github.com/youtix/gekko2/commit/7e3bd7ab13c84a22cef43f6ecdb919cd9aa6ad79))
+- **core:** switch tickrate to use milliseconds for improved precision ([159d68d](https://github.com/youtix/gekko2/commit/159d68d20ff6176863a6d721d1c3aff3d961dbe1))
+- execute external strategy during runtime ([4621dc8](https://github.com/youtix/gekko2/commit/4621dc8eb3950a72a6aeb6b3be21c5d23454b68f))
+- **indicators:** add bollinger bands inside obv results ([e15f7ab](https://github.com/youtix/gekko2/commit/e15f7ab6da68eda1f5ab5383c278823e8e550319))
+- **indicators:** implement OBV indicator ([2b817c5](https://github.com/youtix/gekko2/commit/2b817c5f6d101fadc2d793094049a8cf39a29494))
+- **plugins:** add default values for paper trader & performance analyzer plugin ([1aec928](https://github.com/youtix/gekko2/commit/1aec9283228be48d101a3048919abe6c8296195a))
+- **plugins:** add log monitoring command to supervision ([a506724](https://github.com/youtix/gekko2/commit/a50672451c5777d75f2ff932f9368035e83020bd))
+- **plugins:** add supervision plugin ([d413876](https://github.com/youtix/gekko2/commit/d4138765e85e956fc559b7257879e6750b686c12))
+- **plugins:** add timeframe candle check ([8f7d2a8](https://github.com/youtix/gekko2/commit/8f7d2a81e79f53f210da0af572a0b60f80d085f1))
+- **plugins:** implement standard deviation metric ([0c29007](https://github.com/youtix/gekko2/commit/0c2900773d3a9e4b182f67375458bea74ac60216))
+- **plugins:** trading advisor emit new timeframe candle event ([c3bef9e](https://github.com/youtix/gekko2/commit/c3bef9e407a2f723b99a4aee6dfe6b38bba4564c))
+- rename and update telgram plugin ([615d1be](https://github.com/youtix/gekko2/commit/615d1be5f525507f69e0882a6c5f9d16a64dfaa4))
+- **services:** add abstract bot service & create telegram bot ([b2df92a](https://github.com/youtix/gekko2/commit/b2df92a1fafdd7d6b8f81d810b8d6ed6041b4a98))
+- **supervision:** detail candle diff ([1f7ca7f](https://github.com/youtix/gekko2/commit/1f7ca7f84407c5a5d79c9226b5cb9dc39360405c))
+- switch to websocket mode ([091a664](https://github.com/youtix/gekko2/commit/091a664ee520327344ac03486ad1bae51e759661))
+
 # 1.0.0 (2025-06-30)
 
 ### Bug Fixes
