@@ -24,14 +24,6 @@ Before you begin, ensure you have the following installed:
    bun install
    ```
 
-3. Verify the installation:
-
-   ```bash
-   bun run gekko --version
-   ```
-
-   You should see the Gekko version output.
-
 ## Importing Data
 
 To import historical market data for backtesting:
