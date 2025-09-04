@@ -52,7 +52,7 @@ GEKKO_LOG_LEVEL=info
 GEKKO_CONFIG_FILE_PATH=./config/importer.yml
 ```
 
-## Configuartion file example
+## Configuration file example
 
 ```yaml
 # ./config/importer.yml
