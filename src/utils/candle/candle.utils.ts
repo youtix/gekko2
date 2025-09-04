@@ -27,7 +27,10 @@ export const fillMissingCandles = (candles: Candle[]): Undefined<Candle[]> => {
         high: lastCandlePrice,
         low: lastCandlePrice,
         close: lastCandlePrice,
-        volume: 0,
+        volume: lastCandle?.volume ?? 0,
+        volumeActive: lastCandle?.volumeActive ?? 0,
+        quoteVolume: lastCandle?.quoteVolume ?? 0,
+        quoteVolumeActive: lastCandle?.quoteVolumeActive ?? 0,
       };
     });
 };
