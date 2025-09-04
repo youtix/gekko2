@@ -34,6 +34,9 @@ export class CandleBatcher {
         close: curr.close,
         // Use exact precision to guarantee accurate comparisons during monitoring (supervision plugin)
         volume: addPrecise(acc.volume, curr.volume),
+        quoteVolume: addPrecise(acc.quoteVolume ?? 0, curr.quoteVolume ?? 0),
+        volumeActive: addPrecise(acc.volumeActive ?? 0, curr.volumeActive ?? 0),
+        quoteVolumeActive: addPrecise(acc.quoteVolumeActive ?? 0, curr.quoteVolumeActive ?? 0),
       }),
       base,
     );

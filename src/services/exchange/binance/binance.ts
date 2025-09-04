@@ -39,6 +39,9 @@ export class BinanceExchange extends Exchange {
           high: msg.kline.high,
           low: msg.kline.low,
           volume: msg.kline.volume,
+          volumeActive: msg.kline.volumeActive,
+          quoteVolume: msg.kline.quoteVolume,
+          quoteVolumeActive: msg.kline.quoteVolumeActive,
         });
       }
     };
