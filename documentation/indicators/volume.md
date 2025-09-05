@@ -12,6 +12,10 @@ OBV tracks cumulative buying and selling pressure by adding the volume when the 
 
 The Elder Force Index (EFI) measures the strength behind price movements by combining price change with trading volume. The raw force value `(close - previous close) * volume` can be smoothed with a moving average (EMA by default) to reduce noise. You can choose `ema`, `sma`, `dema`, or `wma` smoothing. The indicator returns both the raw force index and the smoothed value. Positive EFI values indicate buying pressure, while negative values highlight selling pressure.
 
+## **CVD (Cumulative Volume Delta)**
+
+CVD compares aggressive buying and selling volume on each candle. For every update, `delta = active - (total - active)` and the indicator returns this delta for the most recent candle without accumulation. The `source` parameter selects 'quote' (default) or 'base' volumes, using `quoteVolume`/`quoteVolumeActive` or `volume`/`volumeActive`. Missing values are treated as `0`.
+
 ---
 
 More volume indicators will be introduced in future releases.

@@ -31,5 +31,6 @@ export * from './volume/adl/adl.indicator';
 export * from './volume/efi/efi.indicator';
 export * from './volume/mfi/mfi.indicator';
 export * from './volume/obv/obv.indicator';
+export * from './volume/cvd/cvd.indicator';
 export * from './volume/volumeProfile/volumeProfile.indicator';
 export * from './volume/vwap/vwap.indicator';
