@@ -5,8 +5,8 @@ import { ExchangeConfig } from '@models/configuration.types';
 import { isOrderStatus, Order } from '@models/order.types';
 import { debug, error, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { mapToCandles, mapToOrder, mapToTrades } from '@utils/trade/trade.utils';
-import { WebsocketClient, WsFormattedMessage } from 'binance';
+import { mapKlinesToCandles, mapToOrder, mapToTrades } from '@utils/trade/trade.utils';
+import { KlineInterval, MainClient, WebsocketClient, WsFormattedMessage } from 'binance';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { first, isNil, last } from 'lodash-es';
 import { Exchange } from '../exchange';
@@ -14,9 +14,11 @@ import { LIMITS } from '../exchange.const';
 
 export class BinanceExchange extends Exchange {
   private ws: WebsocketClient;
+  private client: MainClient;
 
   constructor(exchangeConfig: ExchangeConfig) {
     super(exchangeConfig);
+    this.client = new MainClient({ beautifyResponses: true });
     this.ws = new WebsocketClient(
       { beautify: true },
       {
@@ -64,14 +66,14 @@ export class BinanceExchange extends Exchange {
     return { ask: ticker.ask, bid: ticker.bid };
   }
 
-  protected async fetchOHLCVOnce(from?: EpochTimeStamp, timeframe = '1m', limits = LIMITS[this.exchangeName]) {
-    const ohlcvList = await this.exchange.fetchOHLCV(
-      this.symbol,
-      this.exchange.timeframes[timeframe] as string,
-      from,
-      limits,
-    );
-    const candles = mapToCandles(ohlcvList);
+  protected async getKlinesOnce(
+    startTime?: EpochTimeStamp,
+    interval: KlineInterval = '1m',
+    limit = LIMITS[this.exchangeName],
+  ) {
+    const symbol = `${this.asset}${this.currency}`;
+    const ohlcvList = await this.client.getKlines({ symbol, interval, startTime, limit });
+    const candles = mapKlinesToCandles(ohlcvList);
 
     debug(
       'exchange',
