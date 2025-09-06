@@ -22,10 +22,21 @@ export class SQLiteStorage extends Storage {
   }
 
   public insertCandles(): void {
-    const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${this.table} VALUES (?,?,?,?,?,?,?)`);
+    const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${this.table} VALUES (?,?,?,?,?,?,?,?,?,?)`);
     const insertCandles = this.db.transaction((candles: Candle[]) => {
-      each(candles, candle =>
-        stmt.run(null, candle.start, candle.open, candle.high, candle.low, candle.close, candle.volume),
+      each(candles, ({ start, open, high, low, close, volume, volumeActive, quoteVolume, quoteVolumeActive }) =>
+        stmt.run(
+          null,
+          start,
+          open,
+          high,
+          low,
+          close,
+          volume,
+          volumeActive ?? 0,
+          quoteVolume ?? 0,
+          quoteVolumeActive ?? 0,
+        ),
       );
       return candles.length;
     });
@@ -43,7 +54,10 @@ export class SQLiteStorage extends Storage {
         high REAL NOT NULL,
         low REAL NOT NULL,
         close REAL NOT NULL,
-        volume REAL NOT NULL
+        volume REAL NOT NULL,
+        volume_active REAL NOT NULL,
+        quote_volume REAL NOT NULL,
+        quote_volume_active REAL NOT NULL
       );
     `;
     this.db.run(query);
@@ -65,7 +79,8 @@ export class SQLiteStorage extends Storage {
 
   public getCandles({ start, end }: Interval<EpochTimeStamp, EpochTimeStamp>): Candle[] {
     const query = this.db.query<Candle, SQLQueryBindings[]>(`
-      SELECT * FROM ${this.table}
+      SELECT id,start,open,high,low,close,volume,volume_active AS volumeActive,quote_volume AS quoteVolume,quote_volume_active AS quoteVolumeActive
+      FROM ${this.table}
       WHERE start BETWEEN $start AND $end
       ORDER BY start ASC
     `);

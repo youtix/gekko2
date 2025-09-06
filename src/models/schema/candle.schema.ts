@@ -8,6 +8,9 @@ export const candleSchema = object({
   low: number().min(0).required(),
   close: number().min(0).required(),
   volume: number().min(0).required(),
+  volumeActive: number().min(0).optional(),
+  quoteVolume: number().min(0).optional(),
+  quoteVolumeActive: number().min(0).optional(),
 });
 
 export const candlesSchema = array().of(candleSchema);

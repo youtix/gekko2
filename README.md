@@ -12,26 +12,23 @@ _The most valuable commodity I know of is information._
 
 -Gordon Gekko
 
-Gekko 2 is a modular crypto trading bot framework supporting backtesting, real-time trading, and custom strategies. It is written in Typescript and runs on [Bun](https://bun.sh/).
+Gekko 2 is a modular crypto trading bot framework supporting backtesting, real-time trading, and custom strategies. It is written in TypeScript and runs on [Bun](https://bun.sh/).
 
 _Use Gekko 2 at your own risk._
 
 ## 📚 Summary
 
 - [Introduction](./documentation/introduction/about-gekko.md)
-
   - [Getting Started](./documentation/introduction/getting-started.md)
   - [Supported Exchanges](./documentation/introduction/supported-exchanges.md)
   - [Supporting The Project](./documentation/introduction/supporting-project.md)
 
 - [Modes](./documentation/modes/introduction.md)
-
   - [Backtest](./documentation/modes/backtest.md)
   - [Importer](./documentation/modes/importer.md)
   - [Realtime](./documentation/modes/realtime.md)
 
 - [Indicators](./documentation/indicators/introduction.md)
-
   - [Directional Movement](./documentation/indicators/directional-movement.md)
   - [Momentum](./documentation/indicators/momentum.md)
   - [Moving Averages](./documentation/indicators/moving-averages.md)
@@ -40,7 +37,6 @@ _Use Gekko 2 at your own risk._
   - [Volume](./documentation/indicators/volume.md)
 
 - [Plugins](./documentation/plugins/introduction.md)
-
   - [Candle Writer](./documentation/plugins/candle-writer.md)
   - [Paper Trader](./documentation/plugins/paper-trader.md)
   - [Performance Analyzer](./documentation/plugins/performance-analyzer.md)
@@ -50,7 +46,6 @@ _Use Gekko 2 at your own risk._
   - [Trading Advisor](./documentation/plugins/trading-advisor.md)
 
 - [Strategies](./documentation/strategies/introduction.md)
-
   - [DEMA](./documentation/strategies/dema.md)
   - [MACD](./documentation/strategies/macd.md)
   - [TMA](./documentation/strategies/tma.md)

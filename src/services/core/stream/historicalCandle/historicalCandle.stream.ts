@@ -51,7 +51,7 @@ export class HistoricalCandleStream extends Readable {
   async onTick() {
     if (this.isLocked) return;
     this.isLocked = true;
-    const candles = await this.exchange.fetchOHLCV(this.startDate);
+    const candles = await this.exchange.getKlines(this.startDate);
     if (!candles?.length) throw new HistoricalCandleError('No candle data was fetched.');
     this.startDate = last(candles)?.start ?? Number.MAX_SAFE_INTEGER;
     this.startDate++;

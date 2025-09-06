@@ -13,6 +13,9 @@ const candles = [
     low: 257.18,
     close: 257.18,
     volume: 0.97206065,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
   {
     id: 2,
@@ -22,6 +25,9 @@ const candles = [
     low: 256.98,
     close: 256.98,
     volume: 4.1407478,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
   {
     id: 3,
@@ -31,6 +37,9 @@ const candles = [
     low: 256.85,
     close: 256.99,
     volume: 6,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
   {
     id: 4,
@@ -40,6 +49,9 @@ const candles = [
     low: 256.81,
     close: 256.82,
     volume: 4,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
   {
     id: 5,
@@ -49,6 +61,9 @@ const candles = [
     low: 256.81,
     close: 257.01,
     volume: 6,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
   {
     id: 6,
@@ -58,6 +73,9 @@ const candles = [
     low: 256.33,
     close: 256.33,
     volume: 6.7551178,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
   {
     id: 7,
@@ -67,6 +85,9 @@ const candles = [
     low: 257.02,
     close: 257.47,
     volume: 3.7384995300000003,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
   {
     id: 8,
@@ -76,6 +97,9 @@ const candles = [
     low: 257.37,
     close: 257.38,
     volume: 8,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
   {
     id: 9,
@@ -85,6 +109,9 @@ const candles = [
     low: 257.38,
     close: 257.45,
     volume: 7.97062564,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
   {
     id: 10,
@@ -94,6 +121,9 @@ const candles = [
     low: 257.46,
     close: 257.48,
     volume: 7.5,
+    volumeActive: 0,
+    quoteVolume: 0,
+    quoteVolumeActive: 0,
   },
 ];
 describe('candleBatcher', () => {
@@ -125,6 +155,9 @@ describe('candleBatcher', () => {
       low: min([firstCandle?.low, secondCandle?.low]),
       close: secondCandle?.close,
       volume: 5.11280845,
+      volumeActive: 0,
+      quoteVolume: 0,
+      quoteVolumeActive: 0,
     };
     const result: (Candle | undefined)[] = [];
     result.push(candleBatcher.addSmallCandle(firstCandle));

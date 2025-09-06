@@ -42,7 +42,7 @@ describe('HistoricalCandleStream', () => {
 
   it('should close the stream if start date is NOT before end date', async () => {
     injectExchangeMock.mockReturnValue({
-      fetchOHLCV: vi.fn().mockResolvedValue([]),
+      getKlines: vi.fn().mockResolvedValue([]),
     });
 
     launchHistoricalCandleStream({
@@ -59,7 +59,7 @@ describe('HistoricalCandleStream', () => {
 
   it('should throw HistoricalCandleError when no candle data is fetched', async () => {
     injectExchangeMock.mockReturnValue({
-      fetchOHLCV: vi.fn().mockResolvedValue([]),
+      getKlines: vi.fn().mockResolvedValue([]),
     });
 
     launchHistoricalCandleStream({
@@ -75,7 +75,7 @@ describe('HistoricalCandleStream', () => {
     const candle1 = candleFactory('2023-01-01T00:00:00Z', 100);
     const candle2 = candleFactory('2023-01-01T00:01:0Z', 101);
     injectExchangeMock.mockReturnValue({
-      fetchOHLCV: vi.fn().mockResolvedValue([candle1, candle2]),
+      getKlines: vi.fn().mockResolvedValue([candle1, candle2]),
     });
 
     launchHistoricalCandleStream({
@@ -94,7 +94,7 @@ describe('HistoricalCandleStream', () => {
   it('should push candles and end stream when fetched candles meet or exceed end', async () => {
     const candle1 = candleFactory('2023-01-01T00:00:00Z', 100);
     injectExchangeMock.mockReturnValue({
-      fetchOHLCV: vi.fn().mockResolvedValue([candle1]),
+      getKlines: vi.fn().mockResolvedValue([candle1]),
     });
 
     launchHistoricalCandleStream({
