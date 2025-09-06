@@ -4,9 +4,11 @@ import { RingBuffer } from './ringBuffer';
 describe('RingBuffer', () => {
   it('should store values in insertion order until full', () => {
     const rb = new RingBuffer<number>(5);
+    expect(rb.length).toBe(0);
     [1, 2, 3].forEach(v => rb.push(v));
 
     expect(rb.isFull()).toBe(false);
+    expect(rb.length).toBe(3);
     expect(rb.toArray()).toEqual([1, 2, 3]);
   });
 
@@ -15,6 +17,7 @@ describe('RingBuffer', () => {
     [10, 20, 30].forEach(v => rb.push(v));
 
     expect(rb.isFull()).toBe(true);
+    expect(rb.length).toBe(3);
     expect(rb.toArray()).toEqual([10, 20, 30]);
   });
 
@@ -24,6 +27,7 @@ describe('RingBuffer', () => {
 
     expect(rb.toArray()).toEqual([3, 4, 5, 6]);
     expect(rb.isFull()).toBe(true);
+    expect(rb.length).toBe(4);
   });
 
   it('should work correctly with a buffer size of 1', () => {
@@ -31,11 +35,13 @@ describe('RingBuffer', () => {
     rb.push('A');
 
     expect(rb.toArray()).toEqual(['A']);
+    expect(rb.length).toBe(1);
 
     rb.push('B');
 
     expect(rb.toArray()).toEqual(['B']);
     expect(rb.isFull()).toBe(true);
+    expect(rb.length).toBe(1);
   });
 
   it('should return a defensive copy from toArray()', () => {

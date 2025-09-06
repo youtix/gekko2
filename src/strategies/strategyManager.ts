@@ -87,10 +87,10 @@ export class StrategyManager extends EventEmitter {
     if (this.isStartegyInitialized)
       throw new GekkoError('strategy', `Can only add indicators (${name}) in init function of the strategy.`);
 
+    // @ts-expect-error TODO fix complex typescript error
     const Indicator = indicators[name];
     if (!Indicator) throw new GekkoError('strategy', `${name} indicator not found.`);
 
-    // @ts-expect-error TODO fix complex typescript error
     const indicator = new Indicator(parameters);
     this.indicators.push(indicator);
 
