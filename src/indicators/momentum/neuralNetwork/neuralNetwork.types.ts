@@ -1,20 +1,17 @@
-import { LayerDef } from '@models/layer.types';
-
 declare global {
   interface IndicatorRegistry {
     neuralNetwork: {
       input: {
-        layers?: LayerDef[];
+        hiddenLayers?: number[];
         training?: {
-          learningRate: number;
-          momentum: number;
-          batchSize: number;
-          l2Decay: number;
+          learningRate?: number;
+          batchSize?: number;
+          epochs?: number;
         };
         smoothPeriod?: number;
         isRehearse?: boolean;
       };
-      output: number | null; // predicted next price (or null until ready)
+      output: number | null;
     };
   }
 }
