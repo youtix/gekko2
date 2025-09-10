@@ -1,12 +1,14 @@
+import * as tf from '@tensorflow/tfjs-node';
+tf.setBackend('tensorflow');
+
 import { SMMA } from '@indicators/movingAverages/smma/smma.indicator';
 import { Candle } from '@models/candle.types';
 import { Nullable } from '@models/utility.types';
-import { Net } from '@services/learning/network/net';
-import { Trainer } from '@services/learning/training/trainer';
-import { Vol } from '@services/learning/volume/vol';
 import { RingBuffer } from '@utils/array/ringBuffer';
 import { ohlc4 } from '@utils/candle/candle.utils';
+
 import { Indicator } from '../../indicator';
+
 import {
   CLIP,
   EPSILON,
@@ -17,28 +19,29 @@ import {
 } from './neuronalNetwork.const';
 
 export class NeuralNetwork extends Indicator<'neuralNetwork'> {
-  // ---- State
   private smma: SMMA;
   private buffer: RingBuffer<number>;
-  private net: Net;
-  private trainer: Trainer;
-  private lastSmoothRes: Nullable<number>;
   private trainCache: RingBuffer<number>;
+  private lastSmoothRes: Nullable<number>;
   private tick: number;
   private inputDepth: number;
   private isRehearse: boolean;
 
+  private model: tf.Sequential;
+  private optimizer: tf.Optimizer;
+  private epochs: number;
+
   constructor({
-    layers = [],
+    hiddenLayers = [],
     training,
     smoothPeriod = 5,
     isRehearse = false,
   }: IndicatorRegistry['neuralNetwork']['input'] = {}) {
     super('neuralNetwork', null);
 
-    const input = layers[0];
-    if (!input?.out_depth) throw new Error('Input layer out_depth must be defined');
-    this.inputDepth = input.out_depth;
+    if (hiddenLayers.length === 0) throw new Error('hiddenLayers must be defined');
+
+    this.inputDepth = hiddenLayers[0];
 
     this.smma = new SMMA({ period: smoothPeriod });
     this.buffer = new RingBuffer(this.inputDepth + 1);
@@ -47,20 +50,32 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     this.isRehearse = isRehearse;
     this.tick = 0;
 
-    // Build the network
-    const trainingDefaults = { learningRate: 0.001, momentum: 0, batchSize: 1, l2Decay: 0.0001 };
+    const trainingDefaults = {
+      learningRate: 0.001,
+      batchSize: 1,
+      epochs: TRAINING_EPOCHS,
+    };
     const trainingCfg = { ...trainingDefaults, ...(training ?? {}) };
-    this.net = new Net();
-    this.net.makeLayers(layers);
-    this.trainer = new Trainer(this.net, trainingCfg);
+
+    this.model = tf.sequential();
+    this.model.add(
+      tf.layers.dense({
+        inputShape: [this.inputDepth],
+        units: hiddenLayers[0],
+        activation: 'relu',
+      }),
+    );
+    hiddenLayers.slice(1).forEach(units => this.model.add(tf.layers.dense({ units, activation: 'relu' })));
+    this.model.add(tf.layers.dense({ units: 1, activation: 'linear' }));
+
+    this.optimizer = tf.train.adam(trainingCfg.learningRate);
+    this.epochs = trainingCfg.epochs;
   }
 
   public onNewCandle(candle: Candle) {
-    // Smoothing data
     this.smma.onNewCandle({ close: ohlc4(candle) } as Candle);
     const smmaRes = this.smma.getResult();
 
-    // Training Neural Network
     if (Number.isFinite(smmaRes) && Number.isFinite(this.lastSmoothRes)) {
       const rawRt = Math.log(smmaRes! / (this.lastSmoothRes! + EPSILON));
       const r_t = Number.isFinite(rawRt) ? this.clip(rawRt, -CLIP, CLIP) : 0;
@@ -69,8 +84,9 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
       this.learn();
       this.result = this.predictCandle(smmaRes!) ?? null;
     }
-    // Updating state
+
     this.lastSmoothRes = smmaRes;
+
     if (this.isRehearse) {
       this.tick++;
       if (this.tick >= REHEARSE_INTERVAL) {
@@ -87,21 +103,31 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   private learn() {
     if (!this.buffer.isFull()) return;
 
-    const buf = this.buffer.toArray(); // length = N+1
-    const x = buf.slice(0, -1); // N inputs: r_{t-N+1..t}
-    const y = [buf[buf.length - 1]]; // label: r_{t+1}
-    const vol = new Vol(x);
+    const buf = this.buffer.toArray();
+    const x = buf.slice(0, -1);
+    const y = buf[buf.length - 1];
 
-    for (let i = 0; i < TRAINING_EPOCHS; i++) this.trainer.train(vol, y);
+    for (let i = 0; i < this.epochs; i++) {
+      tf.tidy(() => {
+        const xs = tf.tensor2d([x]);
+        const ys = tf.tensor2d([[y]]);
+        this.optimizer.minimize(() => {
+          const preds = this.model.predict(xs) as tf.Tensor;
+          return preds.sub(ys).square().mean();
+        });
+      });
+    }
   }
 
   private predictCandle(currentSmma: number) {
     if (!this.buffer.isFull() || !Number.isFinite(currentSmma)) return;
 
-    const x = this.buffer.toArray().slice(1); // last N returns
-    const vol = new Vol(x);
-    const pred = this.net.forward(vol);
-    const r_next = pred.w[0];
+    const x = this.buffer.toArray().slice(1);
+    const r_next = tf.tidy(() => {
+      const xs = tf.tensor2d([x]);
+      const out = this.model.predict(xs) as tf.Tensor;
+      return out.dataSync()[0];
+    });
 
     if (!Number.isFinite(r_next)) return;
     return currentSmma * Math.exp(r_next);
@@ -115,16 +141,22 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     const all = this.trainCache.toArray();
     if (all.length < this.inputDepth + 1) return;
 
-    // take the last `span + inputDepth` returns to build sliding pairs
     const start = Math.max(0, all.length - (span + this.inputDepth));
-    const window = all.slice(start); // length >= inputDepth+1
+    const window = all.slice(start);
 
-    // slide and train
     for (let i = this.inputDepth; i < window.length; i++) {
-      const x = window.slice(i - this.inputDepth, i); // N inputs
-      const y = [window[i]]; // 1 label
-      const vol = new Vol(x);
-      for (let e = 0; e < epochs; e++) this.trainer.train(vol, y);
+      const x = window.slice(i - this.inputDepth, i);
+      const y = window[i];
+      for (let e = 0; e < epochs; e++) {
+        tf.tidy(() => {
+          const xs = tf.tensor2d([x]);
+          const ys = tf.tensor2d([[y]]);
+          this.optimizer.minimize(() => {
+            const preds = this.model.predict(xs) as tf.Tensor;
+            return preds.sub(ys).square().mean();
+          });
+        });
+      }
     }
   }
 }

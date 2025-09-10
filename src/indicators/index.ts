@@ -6,6 +6,7 @@ export * from './directionalMovement/minusDM/minusDM.indicator';
 export * from './directionalMovement/plusDI/plusDI.indicator';
 export * from './directionalMovement/plusDM/plusDM.indicator';
 export * from './momentum/macd/macd.indicator';
+export * from './momentum/neuralNetwork/neuralNetwork.indicator';
 export * from './momentum/psar/psar.indicator';
 export * from './momentum/roc/roc.indicator';
 export * from './momentum/stochastic/stochastic.indicator';
