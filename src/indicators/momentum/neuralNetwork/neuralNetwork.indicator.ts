@@ -63,7 +63,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     this.training = training;
   }
 
-  public onNewCandle(candle: Candle) {
+  public async onNewCandle(candle: Candle) {
     this.smma.onNewCandle({ close: ohlc4(candle) } as Candle);
     const smmaRes = this.smma.getResult();
 
@@ -72,7 +72,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
       const r_t = Number.isFinite(rawRt) ? this.clip(rawRt, -CLIP, CLIP) : 0;
       this.buffer.push(r_t);
       this.trainBuffer.push(r_t);
-      this.learn();
+      await this.learn();
       this.result = this.predictCandle(smmaRes!) ?? null;
     }
 
@@ -81,7 +81,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     if (this.isRehearse) {
       this.tick++;
       if (this.tick >= REHEARSE_INTERVAL) {
-        this.rehearse(REHEARSE_WINDOW_SIZE, REHEARSE_TRAINING_EPOCHS);
+        await this.rehearse(REHEARSE_WINDOW_SIZE, REHEARSE_TRAINING_EPOCHS);
         this.tick = 0;
       }
     }
@@ -130,12 +130,24 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     const start = Math.max(0, all.length - (span + this.inputDepth));
     const window = all.slice(start);
 
-    for (let i = this.inputDepth; i < window.length; i++) {
-      const x = window.slice(i - this.inputDepth, i);
-      const y = window[i];
-      const xs = tf.tensor2d([x]);
-      const ys = tf.tensor2d([[y]]);
+    const { xs, ys } = tf.tidy(() => {
+      const xsTensors: tf.Tensor1D[] = [];
+      const ysTensors: tf.Tensor1D[] = [];
+
+      for (let i = this.inputDepth; i < window.length; i++) {
+        xsTensors.push(tf.tensor1d(window.slice(i - this.inputDepth, i)));
+        ysTensors.push(tf.tensor1d([window[i]]));
+      }
+
+      return {
+        xs: tf.stack(xsTensors) as tf.Tensor2D,
+        ys: tf.stack(ysTensors) as tf.Tensor2D,
+      };
+    });
+
+    try {
       await this.model.fit(xs, ys, { epochs, verbose: this.training.verbose });
+    } finally {
       xs.dispose();
       ys.dispose();
     }
