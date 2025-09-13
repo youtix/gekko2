@@ -73,7 +73,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
       this.buffer.push(r_t);
       this.trainBuffer.push(r_t);
       await this.learn();
-      this.result = this.predictCandle(smmaRes!) ?? null;
+      this.result = (await this.predictCandle(smmaRes!)) ?? null;
     }
 
     this.lastSmoothRes = smmaRes;
@@ -105,18 +105,23 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     ys.dispose();
   }
 
-  private predictCandle(currentSmma: number) {
+  private async predictCandle(currentSmma: number) {
     if (!this.buffer.isFull() || !Number.isFinite(currentSmma)) return;
 
     const x = this.buffer.toArray().slice(1);
-    const r_next = tf.tidy(() => {
+    const out = tf.tidy(() => {
       const xs = tf.tensor2d([x]);
-      const out = this.model.predict(xs) as tf.Tensor;
-      return out.dataSync()[0];
+      return this.model.predict(xs) as tf.Tensor;
     });
 
-    if (!Number.isFinite(r_next)) return;
-    return currentSmma * Math.exp(r_next);
+    try {
+      const data = await out.data();
+      const r_next = data[0];
+      if (!Number.isFinite(r_next)) return;
+      return currentSmma * Math.exp(r_next);
+    } finally {
+      out.dispose();
+    }
   }
 
   private clip(x: number, lo: number, hi: number) {
