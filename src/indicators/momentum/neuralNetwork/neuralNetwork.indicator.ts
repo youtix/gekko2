@@ -1,6 +1,4 @@
 import * as tf from '@tensorflow/tfjs-node';
-await tf.setBackend('tensorflow');
-await tf.ready();
 
 import { SMMA } from '@indicators/movingAverages/smma/smma.indicator';
 import { Candle } from '@models/candle.types';
@@ -11,6 +9,7 @@ import { ohlc4 } from '@utils/candle/candle.utils';
 import { Indicator } from '../../indicator';
 
 import { warning } from '@services/logger';
+import { isNumber } from 'lodash-es';
 import { CLIP, EPSILON } from './neuralNetwork.const';
 import { LayerConfig, TrainingConfig } from './neuralNetwork.types';
 
@@ -26,25 +25,17 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   private optimizer: tf.Optimizer;
   private training: TrainingConfig;
 
-  constructor({
-    inputDepth = 1,
-    layers = [],
-    training,
-    smoothPeriod = 5,
-  }: IndicatorRegistry['neuralNetwork']['input'] = {}) {
+  constructor({ layers, training, smoothPeriod }: IndicatorRegistry['neuralNetwork']['input']) {
     super('neuralNetwork', null);
 
     this.assertValidLayers(layers);
     this.assertValidTraining(training);
 
-    if (!(inputDepth > 0)) {
-      throw new Error('inputDepth must be > 0');
-    }
-    if (!(smoothPeriod > 0)) {
+    if (!(Number.isInteger(smoothPeriod) && smoothPeriod > 0)) {
       throw new Error('smoothPeriod must be > 0');
     }
 
-    this.inputDepth = inputDepth;
+    this.inputDepth = layers[0].inputShape;
     this.smma = new SMMA({ period: smoothPeriod });
     this.buffer = new RingBuffer(this.inputDepth + 1);
     this.trainingBuffer = new RingBuffer(this.inputDepth * 5);
@@ -63,6 +54,11 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     this.training = training;
   }
 
+  public async init() {
+    await tf.setBackend('tensorflow');
+    await tf.ready();
+  }
+
   public async onNewCandle(candle: Candle) {
     this.smma.onNewCandle({ close: ohlc4(candle) } as Candle);
     const smmaRes = this.smma.getResult();
@@ -77,8 +73,12 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
 
     this.tick++;
     if (this.tick >= this.training.interval) {
-      await this.train();
-      this.tick = 0;
+      try {
+        await this.train();
+        this.tick = 0;
+      } catch {
+        warning('indicator', '[NeuralNetwork] model failed training');
+      }
     }
 
     this.lastSmoothRes = smmaRes;
@@ -92,9 +92,9 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     if (!this.trainingBuffer.isFull()) return;
 
     // Prepare training data efficiently using typed arrays
-    const data = this.trainingBuffer.toArray();
+    const series = this.trainingBuffer.toArray();
     const depth = this.inputDepth;
-    const total = data.length;
+    const total = series.length;
     if (total <= depth) return;
 
     const samples = total - depth; // number of (x,y) pairs
@@ -105,9 +105,9 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     for (let i = 0; i < samples; i++) {
       const base = i * depth;
       for (let j = 0; j < depth; j++) {
-        xsArr[base + j] = data[i + j];
+        xsArr[base + j] = series[i + j];
       }
-      ysArr[i] = data[i + depth];
+      ysArr[i] = series[i + depth];
     }
 
     const xs = tf.tensor2d(xsArr, [samples, depth]);
@@ -120,8 +120,6 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
         shuffle: false,
         verbose: this.training.verbose,
       });
-    } catch {
-      warning('indicator', '[NeuralNetwork] model failed during training');
     } finally {
       xs.dispose();
       ys.dispose();
@@ -133,7 +131,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
 
     const x = this.buffer.toArray().slice(1);
     const out = tf.tidy(() => {
-      const xs = tf.tensor2d([x]);
+      const xs = tf.tensor2d([x]); // Shape: [buffer-1, 1]
       return this.model.predict(xs) as tf.Tensor;
     });
 
@@ -154,6 +152,9 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   private assertValidLayers(layers: LayerConfig[]): asserts layers is LayerConfig[] {
     if (!Array.isArray(layers) || layers.length === 0) {
       throw new Error('layers must be defined');
+    }
+    if (!('inputShape' in layers[0]) || !isNumber(layers[0].inputShape)) {
+      throw new Error('inputShape must be defined in the first layer');
     }
 
     layers.forEach(layer => {

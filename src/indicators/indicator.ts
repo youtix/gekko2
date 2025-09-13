@@ -14,6 +14,7 @@ export abstract class Indicator<T extends IndicatorNames = IndicatorNames> {
     return this.name;
   }
 
-  public abstract onNewCandle(candle: Candle): void;
+  public init(): void | Promise<void> {}
+  public abstract onNewCandle(candle: Candle): void | Promise<void>;
   public abstract getResult(): IndicatorRegistry[T]['output'];
 }

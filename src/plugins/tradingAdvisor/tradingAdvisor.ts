@@ -40,18 +40,6 @@ export class TradingAdvisor extends Plugin {
   }
 
   // --- BEGIN INTERNALS ---
-  private async setUpStrategy() {
-    this.strategyManager = new StrategyManager(this.warmupPeriod);
-    await this.strategyManager.createStrategy(this.strategyName, this.strategyPath);
-  }
-
-  private setUpListeners() {
-    this.strategyManager
-      ?.on(STRATEGY_WARMUP_COMPLETED_EVENT, this.relayStrategyWarmupCompleted)
-      .on(STRATEGY_ADVICE_EVENT, this.relayAdvice)
-      .on(STRATEGY_INFO_EVENT, this.relayStrategyInfo);
-  }
-
   private relayStrategyWarmupCompleted(event: unknown) {
     this.deferredEmit(STRATEGY_WARMUP_COMPLETED_EVENT, event);
   }
@@ -82,9 +70,17 @@ export class TradingAdvisor extends Plugin {
   // --------------------------------------------------------------------------
 
   protected async processInit() {
-    await this.setUpStrategy();
-    this.setUpListeners();
-    info('trading advisor', `Using the strategy: ${this.strategyName}`);
+    // Setup strategy manager
+    this.strategyManager = new StrategyManager(this.warmupPeriod);
+    await this.strategyManager.createStrategy(this.strategyName, this.strategyPath);
+
+    // Setup strategy manager listeners
+    this.strategyManager
+      ?.on(STRATEGY_WARMUP_COMPLETED_EVENT, this.relayStrategyWarmupCompleted)
+      .on(STRATEGY_ADVICE_EVENT, this.relayAdvice)
+      .on(STRATEGY_INFO_EVENT, this.relayStrategyInfo);
+
+    info('trading advisor', `Startegy initialized, using the strategy: ${this.strategyName}`);
   }
 
   protected async processOneMinuteCandle(candle: Candle) {

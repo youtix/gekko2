@@ -60,6 +60,12 @@ describe('RingBuffer', () => {
     expect(rb.toArray()).toEqual([8, 9, 10]);
   });
   describe('min & max', () => {
+    it('should return NaN when buffer is empty', () => {
+      const rb = new RingBuffer<number>(3);
+      expect(rb.max()).toBeNaN();
+      expect(rb.min()).toBeNaN();
+    });
+
     it('should return correct values when buffer not full', () => {
       const rb = new RingBuffer<number>(5);
       [4, 1, 7].forEach(v => rb.push(v));

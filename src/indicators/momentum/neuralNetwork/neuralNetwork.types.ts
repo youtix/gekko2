@@ -4,10 +4,9 @@ declare global {
   interface IndicatorRegistry {
     neuralNetwork: {
       input: {
-        inputDepth?: number;
-        layers?: LayerConfig[];
-        training?: TrainingConfig;
-        smoothPeriod?: number;
+        layers: [FirstLayer, ...LayerConfig[]];
+        training: TrainingConfig;
+        smoothPeriod: number;
       };
       output: number | null;
     };
@@ -26,4 +25,5 @@ export type TrainingConfig = {
   loss: string;
   verbose: number;
 };
+type FirstLayer = Layers & { name: LayersKeys; inputShape: number };
 export type LayerConfig = Layers & { name: LayersKeys };
