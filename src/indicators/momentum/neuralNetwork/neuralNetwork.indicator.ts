@@ -18,6 +18,27 @@ import {
   TRAINING_EPOCHS,
 } from './neuronalNetwork.const';
 
+type LayerConfig = { name: keyof typeof tf.layers; [key: string]: unknown };
+
+function assertValidLayers(
+  layers: LayerConfig[],
+): asserts layers is [LayerConfig & { inputShape: number[] }, ...LayerConfig[]] {
+  if (!Array.isArray(layers) || layers.length === 0) {
+    throw new Error('layers must be defined');
+  }
+
+  layers.forEach(layer => {
+    if (!(layer.name in tf.layers)) {
+      throw new Error(`Layer name "${layer.name}" is not valid`);
+    }
+  });
+
+  const inputShape = (layers[0] as Record<string, unknown>).inputShape;
+  if (!Array.isArray(inputShape) || inputShape.length === 0) {
+    throw new Error('First layer must define inputShape');
+  }
+}
+
 export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   private smma: SMMA;
   private buffer: RingBuffer<number>;
@@ -32,16 +53,15 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   private epochs: number;
 
   constructor({
-    hiddenLayers = [],
+    layers = [],
     training,
     smoothPeriod = 5,
     isRehearse = false,
   }: IndicatorRegistry['neuralNetwork']['input'] = {}) {
     super('neuralNetwork', null);
 
-    if (hiddenLayers.length === 0) throw new Error('hiddenLayers must be defined');
-
-    this.inputDepth = hiddenLayers[0];
+    assertValidLayers(layers);
+    this.inputDepth = layers[0].inputShape[0];
 
     this.smma = new SMMA({ period: smoothPeriod });
     this.buffer = new RingBuffer(this.inputDepth + 1);
@@ -58,15 +78,10 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     const trainingCfg = { ...trainingDefaults, ...(training ?? {}) };
 
     this.model = tf.sequential();
-    this.model.add(
-      tf.layers.dense({
-        inputShape: [this.inputDepth],
-        units: hiddenLayers[0],
-        activation: 'relu',
-      }),
-    );
-    hiddenLayers.slice(1).forEach(units => this.model.add(tf.layers.dense({ units, activation: 'relu' })));
-    this.model.add(tf.layers.dense({ units: 1, activation: 'linear' }));
+    layers.forEach(({ name, ...cfg }) => {
+      const layerFn = (tf.layers as unknown as Record<keyof typeof tf.layers, (cfg: unknown) => tf.layers.Layer>)[name];
+      this.model.add(layerFn(cfg));
+    });
 
     this.optimizer = tf.train.adam(trainingCfg.learningRate);
     this.epochs = trainingCfg.epochs;
