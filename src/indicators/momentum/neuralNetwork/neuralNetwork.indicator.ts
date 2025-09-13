@@ -37,6 +37,13 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     this.assertValidLayers(layers);
     this.assertValidTraining(training);
 
+    if (!(inputDepth > 0)) {
+      throw new Error('inputDepth must be > 0');
+    }
+    if (!(smoothPeriod > 0)) {
+      throw new Error('smoothPeriod must be > 0');
+    }
+
     this.inputDepth = inputDepth;
     this.smma = new SMMA({ period: smoothPeriod });
     this.buffer = new RingBuffer(this.inputDepth + 1);
@@ -70,7 +77,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
 
     this.tick++;
     if (this.tick >= this.training.interval) {
-      this.train();
+      await this.train();
       this.tick = 0;
     }
 
@@ -163,8 +170,12 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
       throw new Error('optimizerName must be a known optimizer');
 
     if (!(training.learningRate > 0)) throw new Error('learningRate must be > 0');
-    if (!(training.epochs > 0)) throw new Error('epochs must be > 0');
-    if (!(training.interval > 0)) throw new Error('interval must be > 0');
+    if (!(Number.isInteger(training.epochs) && training.epochs > 0))
+      throw new Error('epochs must be a positive integer');
+    if (!(Number.isInteger(training.interval) && training.interval > 0))
+      throw new Error('interval must be a positive integer');
+    if (!(Number.isInteger(training.batchSize) && training.batchSize > 0))
+      throw new Error('batchSize must be a positive integer');
 
     if (!(training.verbose === 0 || training.verbose === 1)) throw new Error('verbose must be 0 or 1');
 
