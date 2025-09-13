@@ -18,27 +18,6 @@ import {
   REHEARSE_WINDOW_SIZE,
 } from './neuronalNetwork.const';
 
-type LayerConfig = { name: keyof typeof tf.layers; [key: string]: unknown };
-
-function assertValidLayers(
-  layers: LayerConfig[],
-): asserts layers is [LayerConfig & { inputShape: number[] }, ...LayerConfig[]] {
-  if (!Array.isArray(layers) || layers.length === 0) {
-    throw new Error('layers must be defined');
-  }
-
-  layers.forEach(layer => {
-    if (!(layer.name in tf.layers)) {
-      throw new Error(`Layer name "${layer.name}" is not valid`);
-    }
-  });
-
-  const inputShape = (layers[0] as Record<string, unknown>).inputShape;
-  if (!Array.isArray(inputShape) || inputShape.length === 0) {
-    throw new Error('First layer must define inputShape');
-  }
-}
-
 export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   private smma: SMMA;
   private buffer: RingBuffer<number>;
@@ -50,7 +29,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
 
   private model: tf.Sequential;
   private optimizer: tf.Optimizer;
-  private epochs: number;
+  private training: TrainingConfig;
 
   constructor({
     inputDepth = 1,
@@ -80,7 +59,8 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
 
     // @ts-expect-error Complex typescript error
     this.optimizer = tf.train[training.optimizerName](training.learningRate);
-    this.epochs = training.epochs;
+    this.model.compile({ optimizer: this.optimizer, loss: training.loss });
+    this.training = training;
   }
 
   public onNewCandle(candle: Candle) {
@@ -111,23 +91,18 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     return this.result;
   }
 
-  private learn() {
+  private async learn() {
     if (!this.buffer.isFull()) return;
 
     const buf = this.buffer.toArray();
     const x = buf.slice(0, -1);
     const y = buf[buf.length - 1];
 
-    for (let i = 0; i < this.epochs; i++) {
-      tf.tidy(() => {
-        const xs = tf.tensor2d([x]);
-        const ys = tf.tensor2d([[y]]);
-        this.optimizer.minimize(() => {
-          const preds = this.model.predict(xs) as tf.Tensor;
-          return preds.sub(ys).square().mean();
-        });
-      });
-    }
+    const xs = tf.tensor2d([x]);
+    const ys = tf.tensor2d([[y]]);
+    await this.model.fit(xs, ys, { epochs: this.training.epochs, verbose: this.training.verbose });
+    xs.dispose();
+    ys.dispose();
   }
 
   private predictCandle(currentSmma: number) {
@@ -148,7 +123,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     return Math.max(lo, Math.min(hi, x));
   }
 
-  private rehearse(span: number, epochs: number) {
+  private async rehearse(span: number, epochs: number) {
     const all = this.trainBuffer.toArray();
     if (all.length < this.inputDepth + 1) return;
 
@@ -158,16 +133,11 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
     for (let i = this.inputDepth; i < window.length; i++) {
       const x = window.slice(i - this.inputDepth, i);
       const y = window[i];
-      for (let e = 0; e < epochs; e++) {
-        tf.tidy(() => {
-          const xs = tf.tensor2d([x]);
-          const ys = tf.tensor2d([[y]]);
-          this.optimizer.minimize(() => {
-            const preds = this.model.predict(xs) as tf.Tensor;
-            return preds.sub(ys).square().mean();
-          });
-        });
-      }
+      const xs = tf.tensor2d([x]);
+      const ys = tf.tensor2d([[y]]);
+      await this.model.fit(xs, ys, { epochs, verbose: this.training.verbose });
+      xs.dispose();
+      ys.dispose();
     }
   }
 
@@ -184,7 +154,10 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   }
 
   private assertValidTraining(training?: TrainingConfig): asserts training is TrainingConfig {
-    if (!training?.epochs || !training.learningRate || !training.optimizerName)
-      throw new Error('training must have the following properties: epochs, learningRate, optimizerName');
+    if (!training?.optimizerName) throw new Error('optimizerName must be a string');
+    if (!training.learningRate) throw new Error('learningRate must be positive');
+    if (!training.epochs) throw new Error('epochs must be positive');
+    if (!training.verbose) throw new Error('verbose must be 0 or 1');
+    if (!training.loss) throw new Error('loss must be a string');
   }
 }

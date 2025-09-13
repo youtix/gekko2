@@ -22,5 +22,7 @@ export type TrainingConfig = {
   optimizerName: keyof Train;
   learningRate: number;
   epochs: number;
+  loss: string;
+  verbose: number;
 };
 export type LayerConfig = Layers & { name: LayersKeys };
