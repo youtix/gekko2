@@ -1,15 +1,12 @@
-import type * as tf from '@tensorflow/tfjs-node';
+import { layers, train } from '@tensorflow/tfjs-node';
 
 declare global {
   interface IndicatorRegistry {
     neuralNetwork: {
       input: {
-        layers?: Array<{ name: keyof typeof tf.layers; [key: string]: unknown }>;
-        training?: {
-          learningRate?: number;
-          batchSize?: number;
-          epochs?: number;
-        };
+        inputDepth?: number;
+        layers?: LayerConfig[];
+        training?: TrainingConfig;
         smoothPeriod?: number;
         isRehearse?: boolean;
       };
@@ -18,4 +15,12 @@ declare global {
   }
 }
 
-export {};
+type Train = typeof train;
+type Layers = typeof layers;
+type LayersKeys = keyof Layers;
+export type TrainingConfig = {
+  optimizerName: keyof Train;
+  learningRate: number;
+  epochs: number;
+};
+export type LayerConfig = Layers & { name: LayersKeys };

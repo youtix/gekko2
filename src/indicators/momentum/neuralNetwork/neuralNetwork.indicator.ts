@@ -9,13 +9,13 @@ import { ohlc4 } from '@utils/candle/candle.utils';
 
 import { Indicator } from '../../indicator';
 
+import { LayerConfig, TrainingConfig } from './neuralNetwork.types';
 import {
   CLIP,
   EPSILON,
   REHEARSE_INTERVAL,
   REHEARSE_TRAINING_EPOCHS,
   REHEARSE_WINDOW_SIZE,
-  TRAINING_EPOCHS,
 } from './neuronalNetwork.const';
 
 type LayerConfig = { name: keyof typeof tf.layers; [key: string]: unknown };
@@ -42,7 +42,7 @@ function assertValidLayers(
 export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   private smma: SMMA;
   private buffer: RingBuffer<number>;
-  private trainCache: RingBuffer<number>;
+  private trainBuffer: RingBuffer<number>;
   private lastSmoothRes: Nullable<number>;
   private tick: number;
   private inputDepth: number;
@@ -53,6 +53,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   private epochs: number;
 
   constructor({
+    inputDepth = 1,
     layers = [],
     training,
     smoothPeriod = 5,
@@ -60,31 +61,26 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   }: IndicatorRegistry['neuralNetwork']['input'] = {}) {
     super('neuralNetwork', null);
 
-    assertValidLayers(layers);
-    this.inputDepth = layers[0].inputShape[0];
+    this.assertValidLayers(layers);
+    this.assertValidTraining(training);
 
+    this.inputDepth = inputDepth;
     this.smma = new SMMA({ period: smoothPeriod });
     this.buffer = new RingBuffer(this.inputDepth + 1);
-    this.trainCache = new RingBuffer(Math.max(this.inputDepth * 3, REHEARSE_WINDOW_SIZE + this.inputDepth));
+    this.trainBuffer = new RingBuffer(Math.max(this.inputDepth * 3, REHEARSE_WINDOW_SIZE + this.inputDepth));
     this.lastSmoothRes = null;
     this.isRehearse = isRehearse;
     this.tick = 0;
 
-    const trainingDefaults = {
-      learningRate: 0.001,
-      batchSize: 1,
-      epochs: TRAINING_EPOCHS,
-    };
-    const trainingCfg = { ...trainingDefaults, ...(training ?? {}) };
-
     this.model = tf.sequential();
     layers.forEach(({ name, ...cfg }) => {
-      const layerFn = (tf.layers as unknown as Record<keyof typeof tf.layers, (cfg: unknown) => tf.layers.Layer>)[name];
-      this.model.add(layerFn(cfg));
+      // @ts-expect-error Complex typescript error
+      this.model.add(tf.layers[name](cfg));
     });
 
-    this.optimizer = tf.train.adam(trainingCfg.learningRate);
-    this.epochs = trainingCfg.epochs;
+    // @ts-expect-error Complex typescript error
+    this.optimizer = tf.train[training.optimizerName](training.learningRate);
+    this.epochs = training.epochs;
   }
 
   public onNewCandle(candle: Candle) {
@@ -95,7 +91,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
       const rawRt = Math.log(smmaRes! / (this.lastSmoothRes! + EPSILON));
       const r_t = Number.isFinite(rawRt) ? this.clip(rawRt, -CLIP, CLIP) : 0;
       this.buffer.push(r_t);
-      this.trainCache.push(r_t);
+      this.trainBuffer.push(r_t);
       this.learn();
       this.result = this.predictCandle(smmaRes!) ?? null;
     }
@@ -153,7 +149,7 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
   }
 
   private rehearse(span: number, epochs: number) {
-    const all = this.trainCache.toArray();
+    const all = this.trainBuffer.toArray();
     if (all.length < this.inputDepth + 1) return;
 
     const start = Math.max(0, all.length - (span + this.inputDepth));
@@ -173,5 +169,22 @@ export class NeuralNetwork extends Indicator<'neuralNetwork'> {
         });
       }
     }
+  }
+
+  private assertValidLayers(layers: LayerConfig[]): asserts layers is LayerConfig[] {
+    if (!Array.isArray(layers) || layers.length === 0) {
+      throw new Error('layers must be defined');
+    }
+
+    layers.forEach(layer => {
+      if (!(layer.name in tf.layers)) {
+        throw new Error(`Layer name "${layer.name}" is not valid`);
+      }
+    });
+  }
+
+  private assertValidTraining(training?: TrainingConfig): asserts training is TrainingConfig {
+    if (!training?.epochs || !training.learningRate || !training.optimizerName)
+      throw new Error('training must have the following properties: epochs, learningRate, optimizerName');
   }
 }
