@@ -8,7 +8,6 @@ declare global {
         layers?: LayerConfig[];
         training?: TrainingConfig;
         smoothPeriod?: number;
-        isRehearse?: boolean;
       };
       output: number | null;
     };
@@ -19,9 +18,11 @@ type Train = typeof train;
 type Layers = typeof layers;
 type LayersKeys = keyof Layers;
 export type TrainingConfig = {
+  interval: number;
   optimizerName: keyof Train;
   learningRate: number;
   epochs: number;
+  batchSize: number;
   loss: string;
   verbose: number;
 };

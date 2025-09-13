@@ -5,6 +5,7 @@ export type Tag =
   | 'core'
   | 'fetcher'
   | 'gekko'
+  | 'indicator'
   | 'injecter'
   | 'paper trader'
   | 'performance analyzer'
