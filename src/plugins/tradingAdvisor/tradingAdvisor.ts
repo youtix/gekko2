@@ -87,12 +87,12 @@ export class TradingAdvisor extends Plugin {
     info('trading advisor', `Using the strategy: ${this.strategyName}`);
   }
 
-  protected processOneMinuteCandle(candle: Candle) {
+  protected async processOneMinuteCandle(candle: Candle) {
     this.candle = candle;
     const newCandle = this.candleBatcher.addSmallCandle(candle);
     if (newCandle) {
       this.deferredEmit(TIMEFRAME_CANDLE_EVENT, newCandle);
-      this.strategyManager?.onNewCandle(newCandle);
+      await this.strategyManager?.onNewCandle(newCandle);
     }
   }
 

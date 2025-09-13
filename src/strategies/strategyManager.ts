@@ -59,11 +59,9 @@ export class StrategyManager extends EventEmitter {
     this.isStartegyInitialized = true;
   }
 
-  public onNewCandle(candle: Candle) {
-    const results = this.indicators.map(indicator => {
-      indicator.onNewCandle(candle);
-      return indicator.getResult();
-    });
+  public async onNewCandle(candle: Candle) {
+    await Promise.allSettled(this.indicators.map(indicator => indicator.onNewCandle(candle)));
+    const results = this.indicators.map(indicator => indicator.getResult());
     const tools = { candle, advice: this.advice, log: this.log, strategyParams: this.strategyParams };
     this.strategy?.onEachCandle(tools, ...results);
     if (!this.isWarmupCompleted) this.warmup(candle);
