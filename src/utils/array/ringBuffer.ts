@@ -44,7 +44,8 @@ export class RingBuffer<T> {
    * @returns The maximum number or `NaN` if T is not number or buffer is empty.
    */
   max() {
-    return isNumberArray(this.buffer) ? Math.max(...this.buffer) : NaN;
+    if (!isNumberArray(this.buffer) || this.buffer.length === 0) return NaN;
+    return Math.max(...this.buffer);
   }
 
   /**
@@ -52,7 +53,8 @@ export class RingBuffer<T> {
    * @returns The minimum number or `NaN` if T is not number or buffer is empty.
    */
   min() {
-    return isNumberArray(this.buffer) ? Math.min(...this.buffer) : NaN;
+    if (!isNumberArray(this.buffer) || this.buffer.length === 0) return NaN;
+    return Math.min(...this.buffer);
   }
 
   /**
