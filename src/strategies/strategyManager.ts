@@ -56,14 +56,18 @@ export class StrategyManager extends EventEmitter {
       this.strategy = new SelectedStrategy();
     }
     this.strategy?.init(this.addIndicator, this.strategyParams);
+
+    // init indicators
+    await Promise.allSettled(this.indicators.map(indicator => indicator.init()));
+
     this.isStartegyInitialized = true;
   }
 
-  public onNewCandle(candle: Candle) {
-    const results = this.indicators.map(indicator => {
-      indicator.onNewCandle(candle);
-      return indicator.getResult();
-    });
+  public async onNewCandle(candle: Candle) {
+    // Update indicators
+    await Promise.allSettled(this.indicators.map(indicator => indicator.onNewCandle(candle)));
+    const results = this.indicators.map(indicator => indicator.getResult());
+
     const tools = { candle, advice: this.advice, log: this.log, strategyParams: this.strategyParams };
     this.strategy?.onEachCandle(tools, ...results);
     if (!this.isWarmupCompleted) this.warmup(candle);
@@ -87,10 +91,10 @@ export class StrategyManager extends EventEmitter {
     if (this.isStartegyInitialized)
       throw new GekkoError('strategy', `Can only add indicators (${name}) in init function of the strategy.`);
 
+    // @ts-expect-error TODO fix complex typescript error
     const Indicator = indicators[name];
     if (!Indicator) throw new GekkoError('strategy', `${name} indicator not found.`);
 
-    // @ts-expect-error TODO fix complex typescript error
     const indicator = new Indicator(parameters);
     this.indicators.push(indicator);
 

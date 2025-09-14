@@ -145,7 +145,7 @@ describe('StrategyManager', () => {
   });
 
   describe('onNewCandle', () => {
-    it('should call indicator and strategy functions', () => {
+    it('should call indicator and strategy functions', async () => {
       const indicator = { onNewCandle: vi.fn(), getResult: vi.fn(() => 42) };
       (manager as any).indicators.push(indicator);
       const strategy: any = {
@@ -154,13 +154,13 @@ describe('StrategyManager', () => {
         log: vi.fn(),
       };
       (manager as any).strategy = strategy;
-      manager.onNewCandle(candle);
+      await manager.onNewCandle(candle);
       expect(indicator.onNewCandle).toHaveBeenCalledWith(candle);
       expect(indicator.getResult).toHaveBeenCalled();
       expect(strategy.onEachCandle).toHaveBeenCalled();
       expect(strategy.log).not.toHaveBeenCalled();
       expect(strategy.onCandleAfterWarmup).not.toHaveBeenCalled();
-      manager.onNewCandle(candle);
+      await manager.onNewCandle(candle);
       expect(strategy.log).toHaveBeenCalled();
       expect(strategy.onCandleAfterWarmup).toHaveBeenCalled();
     });
