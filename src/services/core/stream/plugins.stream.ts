@@ -8,6 +8,7 @@ import { Writable } from 'node:stream';
 
 export class PluginsStream extends Writable {
   plugins: Plugin[];
+  private hasClosed = false;
   constructor(plugins: Plugin[]) {
     super({ objectMode: true });
     this.plugins = plugins;
@@ -20,8 +21,14 @@ export class PluginsStream extends Writable {
       done();
     } catch (error) {
       if (error instanceof StopGekkoError) {
-        done();
-        return this.end();
+        try {
+          await this.closePlugins();
+        } catch (closeError) {
+          done(closeError as Error);
+          return;
+        }
+        done(error);
+        return;
       }
       done(error as Error);
     }
@@ -29,8 +36,7 @@ export class PluginsStream extends Writable {
 
   public async _final(done: (error?: Nullable<Error>) => void) {
     try {
-      for (const plugin of this.plugins) await plugin.processCloseStream();
-      info('stream', 'Gekko is closing the application !');
+      await this.closePlugins();
       done();
     } catch (error) {
       if (error instanceof Error) done(error);
@@ -47,5 +53,12 @@ export class PluginsStream extends Writable {
     while (find(this.plugins, p => p.broadcastDeferredEmit())) {
       // continue looping while at least one plugin emitted an event
     }
+  }
+
+  private async closePlugins() {
+    if (this.hasClosed) return;
+    this.hasClosed = true;
+    for (const plugin of this.plugins) await plugin.processCloseStream();
+    info('stream', 'Gekko is closing the application !');
   }
 }

@@ -14,6 +14,7 @@
 
 */
 
+import { StopGekkoError } from '@errors/stopGekko.error';
 import { config } from '@services/configuration/configuration';
 import { gekkoPipeline } from '@services/core/pipeline/pipeline';
 import { error, info } from '@services/logger';
@@ -39,6 +40,10 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
     info('gekko', logVersion());
     await gekkoPipeline(); // Launch bot
   } catch (e) {
+    if (e instanceof StopGekkoError) {
+      info('gekko', 'Stopping Gekko Application');
+      return;
+    }
     error('gekko', e instanceof Error ? e.message : e);
   }
 };
