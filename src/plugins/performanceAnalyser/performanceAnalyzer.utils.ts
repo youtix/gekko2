@@ -45,7 +45,7 @@ export const logFinalize = (report: Report, currency: string, enableConsoleTable
       currentbalance: `${formater.format(report.balance)} ${currency}`,
       sharpeRatio: formatRatio(report.sharpe),
       sortinoRatio: formatRatio(report.sortino),
-      standardDeviation: report.standardDeviation,
+      standardDeviation: formatRatio(report.standardDeviation),
       expectedDownside: `${round(report.downside, 2, 'down')}%`,
       ratioRoundtrip: report.ratioRoundTrips === null ? 'N/A' : `${round(report.ratioRoundTrips, 2)}%`,
       worstMAE: `${round(report.worstMaxAdverseExcursion, 2, 'down')}%`,

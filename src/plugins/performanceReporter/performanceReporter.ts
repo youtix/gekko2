@@ -48,7 +48,7 @@ export class PerformanceReporter extends Plugin {
         `${this.formater.format(report.balance)} ${this.currency}`,
         formatRatio(report.sharpe),
         formatRatio(report.sortino),
-        report.standardDeviation,
+        formatRatio(report.standardDeviation),
         `${round(report.downside, 2, 'down')}%`,
         report.ratioRoundTrips === null ? 'N/A' : `${round(report.ratioRoundTrips, 2, 'down')}%`,
         `${round(report.worstMaxAdverseExcursion, 2, 'down')}%`,
