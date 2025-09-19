@@ -176,6 +176,8 @@ export class PerformanceAnalyzer extends Plugin {
     const downsideLosses = this.losses.map(r => r.profit);
     const downside =
       downsideLosses.length > 0 ? Math.sqrt(this.trades / tradeCount) * percentile(downsideLosses, 0.25) : 0;
+    const downsideDeviation = downsideLosses.length ? stdev(downsideLosses) : 0;
+    const sortino = !downsideDeviation ? 0 : (relativeYearlyProfit - this.riskFreeReturn) / Math.abs(downsideDeviation);
 
     const positiveRoundtrips = this.roundTrips.filter(roundTrip => roundTrip.pnl > 0);
 
@@ -200,6 +202,7 @@ export class PerformanceAnalyzer extends Plugin {
       relativeProfit: relativeProfit,
       relativeYearlyProfit,
       sharpe,
+      sortino,
       standardDeviation,
       startBalance: this.start.balance,
       startPrice: this.startPrice,

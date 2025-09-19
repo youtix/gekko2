@@ -25,7 +25,7 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 
 const HEADER =
-  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;standard deviation;expected downside;ratio roundtrip;worst mae\n';
+  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;expected downside;ratio roundtrip;worst mae\n';
 
 const baseConfig = {
   name: 'PerformanceReporter',
@@ -48,6 +48,7 @@ const sampleReport: Report = {
   startBalance: 1000,
   balance: 1320,
   sharpe: 1.25,
+  sortino: 1.1,
   standardDeviation: 2.5,
   downside: 0.08,
   ratioRoundTrips: 0.9,
@@ -117,6 +118,7 @@ describe('PerformanceReporter', () => {
           '1,000 USDT',
           '1,320 USDT',
           '1.25',
+          '1.10',
           '2.5',
           '0.08%',
           '0.9%',
