@@ -1,7 +1,7 @@
 # PerformanceReporter Plugin
 
-The **PerformanceReporter** plugin saves a structured CSV log of each completed backtest run's performance report.  
-It is ideal for strategy researchers and quant developers who want to automatically collect key backtest metrics over time, such as profit, Sharpe ratio, number of trades, etc.
+The **PerformanceReporter** plugin saves a structured CSV log of each completed backtest run's performance report.
+It is ideal for strategy researchers and quant developers who want to automatically collect key backtest metrics over time, such as profit, Sharpe ratio, Sortino ratio, number of trades, etc.
 
 By storing the results in a single CSV file, it enables batch testing and comparison workflows without needing manual copy-paste or screenshotting Gekko outputs.
 
@@ -43,7 +43,8 @@ Each row in the CSV contains the following metrics:
 | `amountOfTrades`        | Number of trades executed                                                                       |
 | `originalBalance`       | Starting portfolio balance                                                                      |
 | `currentBalance`        | Final portfolio balance                                                                         |
-| `sharpeRatio`           | Risk-adjusted return metric                                                                     |
+| `sharpeRatio`           | Risk-adjusted return metric that considers both upside and downside volatility                  |
+| `sortinoRatio`          | Risk-adjusted return metric that only considers downside volatility                             |
 | `standardDeviation`     | Standard deviation of trade profits, used to measure volatility                                 |
 | `expectedDownside`      | Worst-case loss estimate                                                                        |
 | `ratioRoundtrip`        | Ratio of trades that completed a full buy/sell cycle                                            |

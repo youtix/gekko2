@@ -5,6 +5,7 @@ import { Fs } from '@services/fs/fs.types';
 import { error } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
+import { formatRatio } from '@utils/string/string.utils';
 import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'fs';
 import path from 'path';
 import { performanceReporterSchema } from './performanceReporter.schema';
@@ -16,7 +17,7 @@ export class PerformanceReporter extends Plugin {
   private readonly filePath: string;
   private fs: Fs = { lockSync: defaultLockSync };
   private readonly header =
-    'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;standard deviation;expected downside;ratio roundtrip;worst mae\n';
+    'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;expected downside;ratio roundtrip;worst mae\n';
 
   constructor({ name, filePath, fileName }: PerformanceReporterConfig) {
     super(name);
@@ -45,7 +46,8 @@ export class PerformanceReporter extends Plugin {
         report.trades,
         `${this.formater.format(report.startBalance)} ${this.currency}`,
         `${this.formater.format(report.balance)} ${this.currency}`,
-        report.sharpe,
+        formatRatio(report.sharpe),
+        formatRatio(report.sortino),
         report.standardDeviation,
         `${round(report.downside, 2, 'down')}%`,
         report.ratioRoundTrips === null ? 'N/A' : `${round(report.ratioRoundTrips, 2, 'down')}%`,

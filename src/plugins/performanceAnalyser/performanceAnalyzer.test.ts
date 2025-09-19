@@ -412,6 +412,7 @@ describe('PerformanceAnalyzer', () => {
         relativeProfit: 20,
         relativeYearlyProfit: 811.1111111111111,
         sharpe: 230.3174603174603,
+        sortino: 0,
         standardDeviation: 3.5,
         startBalance: 1000,
         startPrice: 100,
@@ -476,6 +477,7 @@ describe('PerformanceAnalyzer', () => {
 
       expect(report?.sharpe).toBe(0);
       expect(report?.standardDeviation).toBe(0);
+      expect(report?.sortino).toBe(0);
     });
 
     it('should set sharpe to 0 when there are no roundtrips', () => {
@@ -485,6 +487,108 @@ describe('PerformanceAnalyzer', () => {
 
       expect(report?.sharpe).toBe(0);
       expect(report?.standardDeviation).toBe(0);
+      expect(report?.sortino).toBe(0);
+    });
+
+    it('should calculate sortino ratio from downside deviation of losses', () => {
+      analyzer['roundTrips'] = [
+        {
+          id: 1,
+          pnl: 50,
+          profit: 5,
+          maxAdverseExcursion: 0,
+          entryAt: 0,
+          entryPrice: 0,
+          entryBalance: 0,
+          exitAt: 0,
+          exitPrice: 0,
+          exitBalance: 0,
+          duration: 0,
+        },
+        {
+          id: 2,
+          pnl: -20,
+          profit: -2,
+          maxAdverseExcursion: 0,
+          entryAt: 0,
+          entryPrice: 0,
+          entryBalance: 0,
+          exitAt: 0,
+          exitPrice: 0,
+          exitBalance: 0,
+          duration: 0,
+        },
+        {
+          id: 3,
+          pnl: -60,
+          profit: -6,
+          maxAdverseExcursion: 0,
+          entryAt: 0,
+          entryPrice: 0,
+          entryBalance: 0,
+          exitAt: 0,
+          exitPrice: 0,
+          exitBalance: 0,
+          duration: 0,
+        },
+      ];
+
+      analyzer['losses'] = [
+        {
+          id: 2,
+          profit: -2,
+          duration: 0,
+          entryAt: 0,
+          entryBalance: 0,
+          entryPrice: 0,
+          exitAt: 0,
+          exitBalance: 0,
+          exitPrice: 0,
+          maxAdverseExcursion: 0,
+          pnl: -2,
+        },
+        {
+          id: 3,
+          profit: -6,
+          duration: 0,
+          entryAt: 0,
+          entryBalance: 0,
+          entryPrice: 0,
+          exitAt: 0,
+          exitBalance: 0,
+          exitPrice: 0,
+          maxAdverseExcursion: 0,
+          pnl: -6,
+        },
+      ];
+
+      const report = analyzer['calculateReportStatistics']();
+
+      expect(report?.sortino).toBeCloseTo(403.05555555555554);
+    });
+
+    it('should set sortino to 0 when no losses are recorded', () => {
+      analyzer['roundTrips'] = [
+        {
+          id: 1,
+          pnl: 50,
+          profit: 5,
+          maxAdverseExcursion: 0,
+          entryAt: 0,
+          entryPrice: 0,
+          entryBalance: 0,
+          exitAt: 0,
+          exitPrice: 0,
+          exitBalance: 0,
+          duration: 0,
+        },
+      ];
+
+      analyzer['losses'] = [];
+
+      const report = analyzer['calculateReportStatistics']();
+
+      expect(report?.sortino).toBe(0);
     });
   });
 });

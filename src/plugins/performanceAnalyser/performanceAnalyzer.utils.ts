@@ -3,6 +3,7 @@ import { TradeCompleted } from '@models/tradeStatus.types';
 import { debug, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
+import { formatRatio } from '@utils/string/string.utils';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { ROUND } from './performanceAnalyzer.const';
 import { Report } from './performanceAnalyzer.types';
@@ -42,7 +43,8 @@ export const logFinalize = (report: Report, currency: string, enableConsoleTable
       amountOfTrades: report.trades,
       originalBalance: `${formater.format(report.startBalance)} ${currency}`,
       currentbalance: `${formater.format(report.balance)} ${currency}`,
-      sharpeRatio: report.sharpe,
+      sharpeRatio: formatRatio(report.sharpe),
+      sortinoRatio: formatRatio(report.sortino),
       standardDeviation: report.standardDeviation,
       expectedDownside: `${round(report.downside, 2, 'down')}%`,
       ratioRoundtrip: report.ratioRoundTrips === null ? 'N/A' : `${round(report.ratioRoundTrips, 2)}%`,
