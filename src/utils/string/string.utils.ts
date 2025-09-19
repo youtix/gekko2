@@ -23,3 +23,15 @@ export function pluralize(word: string, count: number, pluralForm?: string): str
   // default: just add “s”  (“cat” → “cats”)
   return `${word}s`;
 }
+
+const ratioFormatter = new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+  useGrouping: false,
+});
+
+export function formatRatio(x: number | null | undefined): string {
+  if (x === null || x === undefined || Number.isNaN(x)) return '';
+  const rounded = Math.abs(x) < 0.005 ? 0 : x;
+  return ratioFormatter.format(rounded);
+}

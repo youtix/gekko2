@@ -1,6 +1,6 @@
 # Performance Analyzer Plugin
 
-The **PerformanceAnalyzer** plugin is responsible for tracking and reporting the performance of a trading strategy over time. It listens to portfolio value changes and executed trades, calculates advanced performance metrics (Sharpe ratio, alpha, etc.), and emits performance reports after every trade and at the end of the run.
+The **PerformanceAnalyzer** plugin is responsible for tracking and reporting the performance of a trading strategy over time. It listens to portfolio value changes and executed trades, calculates advanced performance metrics (Sharpe ratio, Sortino ratio, alpha, etc.), and emits performance reports after every trade and at the end of the run.
 
 This plugin is useful for both backtests and live runs to evaluate how profitable and stable a strategy is.
 
@@ -45,7 +45,8 @@ Here are the metrics reported in the `performanceReport` event:
 | `relativeYearlyProfit`     | Projected yearly profit in percent.                                                |
 | `market`                   | Market movement (start price vs end price) in percent.                             |
 | `alpha`                    | Strategy outperformance vs market.                                                 |
-| `sharpe`                   | Sharpe ratio based on return volatility.                                           |
+| `sharpe`                   | Sharpe ratio based on total return volatility.                                     |
+| `sortino`                  | Sortino ratio, which only penalizes downside volatility from losing trades.        |
 | `standardDeviation`        | Standard deviation of trade profits, used to measure volatility.                   |
 | `exposure`                 | % of time the strategy was in a trade.                                             |
 | `downside`                 | Measure of downside risk based on losing trades.                                   |
