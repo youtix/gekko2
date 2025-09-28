@@ -52,7 +52,7 @@ Here are the metrics reported in the `performanceReport` event:
 | `downside`                 | Measure of downside risk based on losing trades.                                   |
 | `trades`                   | Number of trades executed.                                                         |
 | `ratioRoundTrips`          | % of roundtrips that were profitable. Returns `null` when no roundtrips occurred.  |
-| `worstMaxAdverseExcursion` | Largest MAE encountered among all roundtrips (percentage).                         |
+| `topMaxAdverseExcursions`  | Top ten MAE values in descending order. Exposed as a bracketed list of percentages.|
 | `startTime` / `endTime`    | Start and end timestamps of the session.                                           |
 | `startPrice` / `endPrice`  | Asset price at session start and end.                                              |
 | `duration`                 | Duration of the session in human-readable format.                                  |

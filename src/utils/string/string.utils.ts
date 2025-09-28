@@ -1,4 +1,5 @@
 import { camelCase } from 'lodash-es';
+import { round } from '../math/round.utils';
 import { END_Y_WORDS, IRREGULAR } from './string.const';
 
 export const toCamelCase = (...args: string[]) => {
@@ -35,3 +36,7 @@ export function formatRatio(x: number | null | undefined): string {
   const rounded = Math.abs(x) < 0.005 ? 0 : x;
   return ratioFormatter.format(rounded);
 }
+
+export const formatPercentageList = (values: ReadonlyArray<number> | undefined): string => {
+  return values?.length ? `[${values.map(value => `${round(value, 2, 'down')}%`).join(', ')}]` : '[]';
+};

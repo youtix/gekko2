@@ -186,7 +186,11 @@ export class PerformanceAnalyzer extends Plugin {
 
     const market = ((this.endPrice - this.startPrice) / this.startPrice) * 100;
 
-    const worstMaxAdverseExcursion = Math.max(0, ...this.roundTrips.map(r => r.maxAdverseExcursion));
+    const topMaxAdverseExcursions = this.roundTrips
+      .map(roundTrip => roundTrip.maxAdverseExcursion)
+      .filter((value): value is number => Number.isFinite(value) && value >= 0)
+      .sort((left, right) => right - left)
+      .slice(0, 10);
 
     const report: Report = {
       alpha: relativeProfit - market,
@@ -198,7 +202,7 @@ export class PerformanceAnalyzer extends Plugin {
       market,
       profit,
       ratioRoundTrips,
-      worstMaxAdverseExcursion,
+      topMaxAdverseExcursions,
       relativeProfit: relativeProfit,
       relativeYearlyProfit,
       sharpe,

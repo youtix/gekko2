@@ -48,7 +48,7 @@ Each row in the CSV contains the following metrics:
 | `standardDeviation`     | Standard deviation of trade profits, used to measure volatility                                 |
 | `expectedDownside`      | Worst-case loss estimate                                                                        |
 | `ratioRoundtrip`        | Ratio of trades that completed a full buy/sell cycle                                            |
-| `worstMae`              | Maximum MAE observed across all roundtrips (percentage)                                         |
+| `topMaeList`            | Bracketed list string of up to ten worst MAE percentages (descending order)                     |
 
 ## Events Emitted
 

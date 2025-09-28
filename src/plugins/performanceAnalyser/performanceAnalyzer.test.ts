@@ -327,6 +327,20 @@ describe('PerformanceAnalyzer', () => {
     });
   });
   describe('calculateReportStatistics', () => {
+    const createRoundTrip = (id: number, maxAdverseExcursion: number) => ({
+      id,
+      pnl: 0,
+      profit: 0,
+      maxAdverseExcursion,
+      entryAt: 0,
+      entryPrice: 0,
+      entryBalance: 0,
+      exitAt: 0,
+      exitPrice: 0,
+      exitBalance: 0,
+      duration: 0,
+    });
+
     beforeEach(() => {
       // Setup the initial state expected by calculateReportStatistics
       analyzer['start'] = { balance: 1000, portfolio: { asset: 0, currency: 1000 } };
@@ -408,7 +422,7 @@ describe('PerformanceAnalyzer', () => {
         market: 30,
         profit: 200,
         ratioRoundTrips: 50,
-        worstMaxAdverseExcursion: 0,
+        topMaxAdverseExcursions: [0, 0],
         relativeProfit: 20,
         relativeYearlyProfit: 811.1111111111111,
         sharpe: 230.3174603174603,
@@ -432,15 +446,36 @@ describe('PerformanceAnalyzer', () => {
       const report = analyzer['calculateReportStatistics']();
 
       expect(report?.ratioRoundTrips).toBeNull();
+      expect(report?.topMaxAdverseExcursions).toEqual([]);
     });
 
-    it('should report the worst MAE across roundtrips', () => {
+    it('should list the worst MAE first when values vary across roundtrips', () => {
       analyzer['roundTrips'][0].maxAdverseExcursion = 5;
       analyzer['roundTrips'][1].maxAdverseExcursion = 12;
 
       const report = analyzer['calculateReportStatistics']();
 
-      expect(report?.worstMaxAdverseExcursion).toBe(12);
+      expect(report?.topMaxAdverseExcursions).toEqual([12, 5]);
+    });
+
+    it('should list MAE values in descending order when fewer than ten roundtrips exist', () => {
+      analyzer['roundTrips'] = [createRoundTrip(1, 4.5), createRoundTrip(2, 2.1), createRoundTrip(3, 9.2)];
+      analyzer['losses'] = [];
+
+      const report = analyzer['calculateReportStatistics']();
+
+      expect(report?.topMaxAdverseExcursions).toEqual([9.2, 4.5, 2.1]);
+    });
+
+    it('should cap the MAE list at ten entries when more roundtrips are present', () => {
+      const maes = [1.1, 9.5, 3.3, 7.7, 5.5, 12.2, 4.4, 8.8, 6.6, 2.2, 10.1, 11.5];
+      analyzer['roundTrips'] = maes.map((mae, index) => createRoundTrip(index + 1, mae));
+      analyzer['losses'] = [];
+
+      const report = analyzer['calculateReportStatistics']();
+
+      expect(report?.topMaxAdverseExcursions).toEqual([12.2, 11.5, 10.1, 9.5, 8.8, 7.7, 6.6, 5.5, 4.4, 3.3]);
+      expect(report?.topMaxAdverseExcursions).toHaveLength(10);
     });
 
     it('should set sharpe to 0 when there is no volatility', () => {
