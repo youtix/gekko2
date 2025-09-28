@@ -51,9 +51,9 @@ export type Report = {
   downside: number;
   ratioRoundTrips: Nullable<number>;
   /**
-   * Maximum adverse excursion observed across all closed roundtrips.
-   * Expressed as a percentage.
+   * Descending list of up to ten of the worst adverse excursions observed.
+   * Values are expressed as percentages.
    */
-  worstMaxAdverseExcursion: number;
+  topMaxAdverseExcursions: number[];
   alpha: number;
 };

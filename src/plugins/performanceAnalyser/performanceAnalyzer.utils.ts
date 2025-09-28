@@ -3,7 +3,7 @@ import { TradeCompleted } from '@models/tradeStatus.types';
 import { debug, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
-import { formatRatio } from '@utils/string/string.utils';
+import { formatPercentageList, formatRatio } from '@utils/string/string.utils';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { ROUND } from './performanceAnalyzer.const';
 import { Report } from './performanceAnalyzer.types';
@@ -48,7 +48,7 @@ export const logFinalize = (report: Report, currency: string, enableConsoleTable
       standardDeviation: formatRatio(report.standardDeviation),
       expectedDownside: `${round(report.downside, 2, 'down')}%`,
       ratioRoundtrip: report.ratioRoundTrips === null ? 'N/A' : `${round(report.ratioRoundTrips, 2)}%`,
-      worstMAE: `${round(report.worstMaxAdverseExcursion, 2, 'down')}%`,
+      topMAEList: formatPercentageList(report.topMaxAdverseExcursions),
     });
   }
   info('performance analyzer', report);
