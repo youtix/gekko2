@@ -18,6 +18,7 @@ describe('Supervision', () => {
   const baseConfig = {
     name: 'Supervision',
     token: 't',
+    botUsername: 'bot-name',
     chatId: 1,
     cpuThreshold: 50,
     memoryThreshold: 50,

@@ -27,6 +27,7 @@ export class Supervision extends Plugin {
   constructor({
     name,
     token,
+    botUsername,
     cpuThreshold,
     memoryThreshold,
     cpuCheckInterval,
@@ -34,7 +35,7 @@ export class Supervision extends Plugin {
     logMonitoringInterval,
   }: SupervisionConfig) {
     super(name);
-    this.bot = new TelegramBot(token, this.handleCommand.bind(this));
+    this.bot = new TelegramBot(token, botUsername, this.handleCommand.bind(this));
     this.cpuThreshold = cpuThreshold;
     this.memoryThreshold = memoryThreshold;
     this.cpuIntervalTime = cpuCheckInterval;

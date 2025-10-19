@@ -28,7 +28,7 @@ describe('EventSubscriber', () => {
   let plugin: EventSubscriber;
 
   beforeEach(() => {
-    plugin = new EventSubscriber({ name: 'EventSubscriber', token: 't' });
+    plugin = new EventSubscriber({ name: 'EventSubscriber', botUsername: 'bot_name', token: 't' });
     plugin['bot'] = fakeBot as any;
     plugin['asset'] = 'BTC';
     plugin['currency'] = 'USD';

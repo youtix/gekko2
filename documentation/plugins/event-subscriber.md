@@ -24,8 +24,9 @@ To enable the **EventSubscriber** plugin, add it to your `plugins` section in th
 
 ```yaml
 plugins:
-  - name: EventSubscriber               # Must be set to "EventSubscriber"
-    token: "<your-telegram-bot-token>"  # Your Telegram bot token
+  - name: EventSubscriber                     # Must be set to "EventSubscriber"
+    token: <your-telegram-bot-token>          # Your Telegram bot token
+    botUsername: <your-telegram-bot-username> # Your telegram bot username
 ```
 ## Events Emitted
 
@@ -84,6 +85,7 @@ Sending the same command again unsubscribes from that event.
 
 - The EventSubscriber plugin is **read-only**: it does not influence or control trades, it only reports events.
 - It requires a **valid bot token** from Telegram. If the bot never receives a command, it cannot detect the chat to send messages to.
+- It requires a **valid bot username** from Telegram. Thus the bot will know that the command is for it.
 - Message delivery depends on Telegram's API availability. Network issues or API limits may prevent some messages from being sent.
 - Subscriptions are kept in memory and are lost when the process restarts.
 - The plugin assumes a **realtime mode**; it is not designed for use in importer or backtest modes.

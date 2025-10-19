@@ -17,7 +17,8 @@ plugins:
     strategyName: DebugAdvice
 
   - name: Supervision
-    token: <your-telegram-bot-token>
+    token: # Your telegram bot token>
+    botUsername: # Your telegram bot username
     cpuThreshold: 80
     memoryThreshold: 1024
     cpuCheckInterval: 10000

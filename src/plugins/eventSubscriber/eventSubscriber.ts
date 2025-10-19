@@ -17,10 +17,10 @@ export class EventSubscriber extends Plugin {
   private price?: number;
   private subscriptions = new Set<Event>();
 
-  constructor({ name, token }: EventSubscriberConfig) {
+  constructor({ name, token, botUsername }: EventSubscriberConfig) {
     super(name);
     bindAll(this, ['handleCommand']);
-    this.bot = new TelegramBot(token, this.handleCommand);
+    this.bot = new TelegramBot(token, botUsername, this.handleCommand);
   }
 
   private handleCommand(command: string): string {
