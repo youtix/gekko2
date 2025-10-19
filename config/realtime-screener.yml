@@ -20,3 +20,4 @@ plugins:
 
   - name: EventSubscriber
     token: # Your Telegram bot token
+    botUsername: # Your telegram bot username

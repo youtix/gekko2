@@ -13,9 +13,10 @@ const { fetcher } = await import('@services/fetcher/fetcher.service');
 describe('TelegramBot', () => {
   let bot: TelegramBot;
   const token = 'test-token';
+  const username = 'bot_name';
 
   beforeEach(() => {
-    bot = new TelegramBot(token);
+    bot = new TelegramBot(token, username);
     vi.clearAllMocks();
   });
 
@@ -51,10 +52,18 @@ describe('TelegramBot', () => {
   describe('checkUpdates', () => {
     it('should process commands via handleCommand', async () => {
       const handle = vi.fn().mockReturnValue('pong');
-      bot = new TelegramBot(token, handle);
+      bot = new TelegramBot(token, username, handle);
       (fetcher.get as Mock).mockResolvedValue({
         ok: true,
-        result: [{ update_id: 1, message: { text: '/ping', chat: { id: 4 } } }],
+        result: [
+          {
+            update_id: 1,
+            message: {
+              text: '/ping@bot_name',
+              chat: { id: 4 },
+            },
+          },
+        ],
       });
       bot.sendMessage = vi.fn();
       await (bot as any).checkUpdates();
@@ -71,10 +80,19 @@ describe('TelegramBot', () => {
 
     it('should continue processing updates after one without text', async () => {
       const handle = vi.fn().mockReturnValue('pong');
-      bot = new TelegramBot(token, handle);
+      bot = new TelegramBot(token, username, handle);
       (fetcher.get as Mock).mockResolvedValue({
         ok: true,
-        result: [{ update_id: 1 }, { update_id: 2, message: { text: '/ping', chat: { id: 7 } } }],
+        result: [
+          { update_id: 1 },
+          {
+            update_id: 2,
+            message: {
+              text: '/ping@bot_name',
+              chat: { id: 7 },
+            },
+          },
+        ],
       });
       bot.sendMessage = vi.fn();
       await (bot as any).checkUpdates();

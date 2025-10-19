@@ -26,4 +26,5 @@ plugins:
 
   - name: EventSubscriber
     token: # Your telgram token
+    botUsername: # Your telegram bot username
 ```

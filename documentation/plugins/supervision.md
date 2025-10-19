@@ -25,13 +25,14 @@ Add the **Supervision** plugin to the `plugins` section of your config file:
 
 ```yaml
 plugins:
-  - name: Supervision                    # Must be set to "Supervision"
-    token: <your-telegram-bot-token>     # Telegram bot token
-    cpuThreshold: 80                     # CPU percent above which to alert
-    memoryThreshold: 1024                # Memory (MB) above which to alert
-    cpuCheckInterval: 10000              # How often to check CPU usage (ms)
-    memoryCheckInterval: 10000           # How often to check memory usage (ms)
-    logMonitoringInterval: 60000         # How often to check buffered logs (ms)
+  - name: Supervision                         # Must be set to "Supervision"
+    token: <your-telegram-bot-token>          # Telegram bot token
+    botUsername: <your-telegram-bot-username> # Telegram bot username
+    cpuThreshold: 80                          # CPU percent above which to alert
+    memoryThreshold: 1024                     # Memory (MB) above which to alert
+    cpuCheckInterval: 10000                   # How often to check CPU usage (ms)
+    memoryCheckInterval: 10000                # How often to check memory usage (ms)
+    logMonitoringInterval: 60000              # How often to check buffered logs (ms)
 ```
 
 ## Plugin Limitations

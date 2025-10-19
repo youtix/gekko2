@@ -10,10 +10,12 @@ export class TelegramBot extends Bot {
   private readonly apiUrl: string;
   private offset = 0;
   private chatId?: number;
+  private readonly botUsername: string;
 
-  constructor(token: string, handleCommand?: HandleCommand) {
+  constructor(token: string, botUsername: string, handleCommand?: HandleCommand) {
     super(handleCommand);
     this.apiUrl = `https://api.telegram.org/bot${token}`;
+    this.botUsername = botUsername;
   }
 
   private async fetchUpdates(): Promise<TelegramUpdate[]> {
@@ -39,10 +41,14 @@ export class TelegramBot extends Bot {
       const message = update.message;
       if (!message || !isString(message.text)) continue;
       const { text, chat } = message;
-      const cmd = text;
-      debug('bot', `Received command from Telegram Bot: "${cmd}"`);
       this.chatId = chat.id;
-      if (this.handleCommand && cmd.startsWith('/')) await this.sendMessage(this.handleCommand(cmd));
+      // Expect format: /cmd@botUsername
+      const [cmd, botName] = text.split('@');
+      if (!botName || !cmd || botName !== this.botUsername) continue;
+      if (this.handleCommand) {
+        const response = this.handleCommand(cmd);
+        await this.sendMessage(response);
+      }
     }
   }
 }
