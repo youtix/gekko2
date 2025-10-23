@@ -4,7 +4,7 @@ import { Order } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { warning } from '@services/logger';
 import { toTimestamp } from '@utils/date/date.utils';
-import { InvalidOrder, OrderNotFound } from 'ccxt';
+import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StickyOrder } from './stickyOrder';
 
