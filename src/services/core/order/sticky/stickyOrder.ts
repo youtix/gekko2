@@ -6,7 +6,7 @@ import { Exchange } from '@services/exchange/exchange';
 import { debug, warning } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { weightedMean } from '@utils/math/math.utils';
-import { InvalidOrder, OrderNotFound } from 'ccxt';
+import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { bindAll, filter, find, first, isNil, last, map, reject, sortBy, sumBy } from 'lodash-es';
 import { BaseOrder } from '../base/baseOrder';
 

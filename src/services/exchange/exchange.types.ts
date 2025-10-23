@@ -1,3 +1,3 @@
-import ccxt from 'ccxt';
+import { ExchangeConfig } from '@models/configuration.types';
 
-export type ExchangeNames = keyof (typeof ccxt)['pro'];
+export type ExchangeNames = ExchangeConfig['name'];
