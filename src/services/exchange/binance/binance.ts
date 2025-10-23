@@ -2,17 +2,19 @@ import { GekkoError } from '@errors/gekko.error';
 import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
 import { ExchangeConfig } from '@models/configuration.types';
-import { Order } from '@models/order.types';
-import { Trade } from '@models/trade.types';
 import { debug, error, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { mapKlinesToCandles } from '@utils/trade/trade.utils';
+import {
+  BinanceSpotOrder,
+  mapAccountTradeToTrade,
+  mapKlinesToCandles,
+  mapPublicTradeToTrade,
+  mapSpotOrderToOrder,
+} from './binance.utils';
 import type { AxiosError } from 'axios';
 import {
   KlineInterval,
   MainClient,
-  RawAccountTrade,
-  RawTrade,
   SymbolFilter,
   SymbolLotSizeFilter,
   SymbolMinNotionalFilter,
@@ -25,21 +27,6 @@ import { first, isNil, last } from 'lodash-es';
 import { Exchange, MarketLimits } from '../exchange';
 import { LIMITS } from '../exchange.const';
 import { InvalidOrder, OrderNotFound } from '../exchange.error';
-
-type SpotOrderLike = Partial<{
-  orderId: number;
-  id: number;
-  clientOrderId: string;
-  origClientOrderId: string;
-  status: string;
-  executedQty: string | number;
-  origQty: string | number;
-  cummulativeQuoteQty: string | number;
-  price: string | number;
-  updateTime: number;
-  transactTime: number;
-  time: number;
-}>;
 
 export class BinanceExchange extends Exchange {
   private ws: WebsocketClient;
@@ -156,7 +143,7 @@ export class BinanceExchange extends Exchange {
         symbol,
         ...(limit ? { limit } : {}),
       });
-      return trades.map(trade => this.mapPublicTrade(trade));
+      return trades.map(mapPublicTradeToTrade);
     } catch (error) {
       throw this.toError(error);
     }
@@ -171,7 +158,7 @@ export class BinanceExchange extends Exchange {
         startTime: from,
         ...(limit ? { limit } : {}),
       });
-      return trades.map(trade => this.mapAccountTrade(trade));
+      return trades.map(mapAccountTradeToTrade);
     } catch (error) {
       throw this.toError(error);
     }
@@ -196,7 +183,7 @@ export class BinanceExchange extends Exchange {
     const symbol = this.getRestSymbol();
     try {
       const order = await this.client.getOrder({ symbol, ...this.buildOrderIdentifier(id) });
-      return this.mapOrder(order);
+      return mapSpotOrderToOrder(order as BinanceSpotOrder);
     } catch (error) {
       throw this.transformOrderError(error);
     }
@@ -217,7 +204,7 @@ export class BinanceExchange extends Exchange {
         quantity: orderAmount,
         price: orderPrice,
       });
-      return this.mapOrder(order);
+      return mapSpotOrderToOrder(order as BinanceSpotOrder);
     } catch (error) {
       throw this.transformOrderError(error);
     }
@@ -227,7 +214,7 @@ export class BinanceExchange extends Exchange {
     const symbol = this.getRestSymbol();
     try {
       const order = await this.client.cancelOrder({ symbol, ...this.buildOrderIdentifier(id) });
-      return this.mapOrder(order);
+      return mapSpotOrderToOrder(order as BinanceSpotOrder);
     } catch (error) {
       throw this.transformOrderError(error);
     }
@@ -238,17 +225,10 @@ export class BinanceExchange extends Exchange {
   }
 
   protected isRetryableError(error: unknown): boolean {
-    if (this.isAxiosError(error)) {
-      const status = error.response?.status;
-      return !status || status >= 500;
-    }
+    if (!this.isAxiosError(error)) return false;
 
-    if (this.isBinanceError(error)) {
-      const retryableCodes = new Set([-1001, -1003, -1015, -1021]);
-      return error.code !== undefined && retryableCodes.has(error.code);
-    }
-
-    return false;
+    const status = error.response?.status;
+    return !status || status >= 500;
   }
 
   private getRestSymbol() {
@@ -273,63 +253,6 @@ export class BinanceExchange extends Exchange {
         ? { min: this.parseMin(notionalFilter.minNotional), max: this.parseMax(notionalFilter.maxNotional) }
         : undefined,
     };
-  }
-
-  private mapPublicTrade(trade: RawTrade): Trade {
-    return {
-      id: String(trade.id),
-      amount: this.parseNumber(trade.qty) ?? 0,
-      price: this.parseNumber(trade.price) ?? 0,
-      timestamp: trade.time,
-      fee: { rate: 0 },
-    };
-  }
-
-  private mapAccountTrade(trade: RawAccountTrade): Trade {
-    const amount = this.parseNumber(trade.qty) ?? 0;
-    const price = this.parseNumber(trade.price) ?? 0;
-    const quoteQuantity = this.parseNumber(trade.quoteQty) ?? amount * price;
-    const commission = this.parseNumber(trade.commission) ?? 0;
-    const feeRate = quoteQuantity ? commission / quoteQuantity : 0;
-
-    return {
-      id: String(trade.orderId ?? trade.id),
-      amount,
-      price,
-      timestamp: trade.time,
-      fee: { rate: feeRate },
-    };
-  }
-
-  private mapOrder(data: SpotOrderLike): Order {
-    const filled = this.parseNumber(data.executedQty) ?? 0;
-    const original = this.parseNumber(data.origQty) ?? filled;
-    const cumulativeQuote = this.parseNumber(data.cummulativeQuoteQty);
-    const price =
-      this.parseNumber(data.price) ??
-      (cumulativeQuote !== undefined && original ? cumulativeQuote / original : undefined);
-
-    return {
-      id: String(data.orderId ?? data.id ?? data.clientOrderId ?? data.origClientOrderId ?? ''),
-      status: this.mapOrderStatus(data.status),
-      filled,
-      remaining: Math.max(original - filled, 0),
-      price,
-      timestamp: data.updateTime ?? data.transactTime ?? data.time ?? Date.now(),
-    };
-  }
-
-  private mapOrderStatus(status?: string): Order['status'] {
-    switch (status) {
-      case 'FILLED':
-        return 'closed';
-      case 'CANCELED':
-      case 'EXPIRED':
-      case 'REJECTED':
-        return 'canceled';
-      default:
-        return 'open';
-    }
   }
 
   private buildOrderIdentifier(id: string) {
