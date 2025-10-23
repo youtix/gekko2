@@ -2,25 +2,60 @@ import { GekkoError } from '@errors/gekko.error';
 import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
 import { ExchangeConfig } from '@models/configuration.types';
-import { isOrderStatus, Order } from '@models/order.types';
+import { Order } from '@models/order.types';
+import { Trade } from '@models/trade.types';
 import { debug, error, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { mapKlinesToCandles, mapToOrder, mapToTrades } from '@utils/trade/trade.utils';
-import { KlineInterval, MainClient, WebsocketClient, WsFormattedMessage } from 'binance';
+import { mapKlinesToCandles } from '@utils/trade/trade.utils';
+import type { AxiosError } from 'axios';
+import {
+  KlineInterval,
+  MainClient,
+  RawAccountTrade,
+  RawTrade,
+  SymbolFilter,
+  SymbolLotSizeFilter,
+  SymbolMinNotionalFilter,
+  SymbolPriceFilter,
+  WebsocketClient,
+  WsFormattedMessage,
+} from 'binance';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { first, isNil, last } from 'lodash-es';
-import { Exchange } from '../exchange';
+import { Exchange, MarketLimits } from '../exchange';
 import { LIMITS } from '../exchange.const';
+import { InvalidOrder, OrderNotFound } from '../exchange.error';
+
+type SpotOrderLike = Partial<{
+  orderId: number;
+  id: number;
+  clientOrderId: string;
+  origClientOrderId: string;
+  status: string;
+  executedQty: string | number;
+  origQty: string | number;
+  cummulativeQuoteQty: string | number;
+  price: string | number;
+  updateTime: number;
+  transactTime: number;
+  time: number;
+}>;
 
 export class BinanceExchange extends Exchange {
   private ws: WebsocketClient;
   private client: MainClient;
+  private marketLimits?: MarketLimits;
 
   constructor(exchangeConfig: ExchangeConfig) {
     super(exchangeConfig);
-    this.client = new MainClient({ beautifyResponses: true });
+    this.client = new MainClient({
+      api_key: this.apiKey,
+      api_secret: this.apiSecret,
+      beautifyResponses: true,
+      testnet: this.sandbox,
+    });
     this.ws = new WebsocketClient(
-      { beautify: true },
+      { beautify: true, testnet: this.sandbox, api_key: this.apiKey, api_secret: this.apiSecret },
       {
         trace: (params: unknown) => debug('exchange', params),
         info: (params: unknown) => info('exchange', params),
@@ -59,72 +94,297 @@ export class BinanceExchange extends Exchange {
     };
   }
 
-  protected async fetchTickerOnce() {
-    const ticker = await this.exchange.fetchTicker(this.symbol);
-    if (isNil(ticker.ask) || isNil(ticker.bid))
-      throw new GekkoError('exchange', 'Missing ask & bid property in payload after calling fetchTicker function.');
-    return { ask: ticker.ask, bid: ticker.bid };
+  protected async loadMarketsImpl() {
+    const symbol = this.getRestSymbol();
+    try {
+      const { symbols } = await this.client.getExchangeInfo({ symbol });
+      const [market] = symbols ?? [];
+      if (!market)
+        throw new GekkoError('exchange', `Missing market information for ${symbol} on ${this.getExchangeName()}.`);
+      this.marketLimits = this.extractMarketLimits(market.filters ?? []);
+    } catch (error) {
+      throw this.toError(error);
+    }
   }
 
-  protected async getKlinesOnce(
+  protected async fetchTickerImpl() {
+    const symbol = this.getRestSymbol();
+    try {
+      const ticker = await this.client.getSymbolOrderBookTicker({ symbol });
+      const payload = Array.isArray(ticker) ? ticker[0] : ticker;
+      const ask = this.parseNumber(payload?.askPrice);
+      const bid = this.parseNumber(payload?.bidPrice);
+      if (isNil(ask) || isNil(bid))
+        throw new GekkoError('exchange', 'Missing ask & bid property in payload after calling fetchTicker function.');
+      return { ask, bid };
+    } catch (error) {
+      throw this.toError(error);
+    }
+  }
+
+  protected async getKlinesImpl(
     startTime?: EpochTimeStamp,
     interval: KlineInterval = '1m',
     limit = LIMITS[this.exchangeName],
   ) {
-    const symbol = `${this.asset}${this.currency}`;
-    const ohlcvList = await this.client.getKlines({ symbol, interval, startTime, limit });
-    const candles = mapKlinesToCandles(ohlcvList);
+    const symbol = this.getRestSymbol();
+    try {
+      const ohlcvList = await this.client.getKlines({ symbol, interval, startTime, limit });
+      const candles = mapKlinesToCandles(ohlcvList);
 
-    debug(
-      'exchange',
-      [
-        `Fetched candles from ${this.exchangeName}.`,
-        `From ${toISOString(first(candles)?.start)}`,
-        `to ${toISOString(last(candles)?.start)}`,
-        `(${formatDuration(intervalToDuration({ start: first(candles)?.start ?? 0, end: last(candles)?.start ?? 0 }))})`,
-      ].join(' '),
-    );
+      debug(
+        'exchange',
+        [
+          `Fetched candles from ${this.exchangeName}.`,
+          `From ${toISOString(first(candles)?.start)}`,
+          `to ${toISOString(last(candles)?.start)}`,
+          `(${formatDuration(intervalToDuration({ start: first(candles)?.start ?? 0, end: last(candles)?.start ?? 0 }))})`,
+        ].join(' '),
+      );
 
-    return candles;
+      return candles;
+    } catch (error) {
+      throw this.toError(error);
+    }
   }
 
-  protected async fetchTradesOnce() {
-    const trades = await this.exchange.fetchTrades(this.symbol, undefined, LIMITS[this.exchangeName]);
-    return mapToTrades(trades);
+  protected async fetchTradesImpl() {
+    const symbol = this.getRestSymbol();
+    const limit = LIMITS[this.exchangeName];
+    try {
+      const trades = await this.client.getRecentTrades({
+        symbol,
+        ...(limit ? { limit } : {}),
+      });
+      return trades.map(trade => this.mapPublicTrade(trade));
+    } catch (error) {
+      throw this.toError(error);
+    }
   }
 
-  protected async fetchMyTradesOnce(from?: EpochTimeStamp) {
-    const trades = await this.exchange.fetchMyTrades(this.symbol, from, LIMITS[this.exchangeName]);
-    return mapToTrades(trades);
+  protected async fetchMyTradesImpl(from?: EpochTimeStamp) {
+    const symbol = this.getRestSymbol();
+    const limit = LIMITS[this.exchangeName];
+    try {
+      const trades = await this.client.getAccountTradeList({
+        symbol,
+        startTime: from,
+        ...(limit ? { limit } : {}),
+      });
+      return trades.map(trade => this.mapAccountTrade(trade));
+    } catch (error) {
+      throw this.toError(error);
+    }
   }
 
-  protected async fetchPortfolioOnce() {
-    const balance = await this.exchange.fetchBalance();
-    return {
-      asset: balance[this.asset]?.free ?? 0,
-      currency: balance[this.currency]?.free ?? 0,
-    };
+  protected async fetchPortfolioImpl() {
+    try {
+      const account = await this.client.getAccountInformation();
+      const balances = account.balances ?? [];
+      const assetBalance = balances.find(balance => balance.asset === this.asset);
+      const currencyBalance = balances.find(balance => balance.asset === this.currency);
+      return {
+        asset: this.parseNumber(assetBalance?.free) ?? 0,
+        currency: this.parseNumber(currencyBalance?.free) ?? 0,
+      };
+    } catch (error) {
+      throw this.toError(error);
+    }
   }
 
-  protected async fetchOrderOnce(id: string) {
-    const order = await this.exchange.fetchOrder(id, this.symbol);
-    if (!isOrderStatus(order.status))
-      throw new GekkoError('exchange', 'Missing status property in payload after calling fetchOrder function.');
-    return mapToOrder(order);
+  protected async fetchOrderImpl(id: string) {
+    const symbol = this.getRestSymbol();
+    try {
+      const order = await this.client.getOrder({ symbol, ...this.buildOrderIdentifier(id) });
+      return this.mapOrder(order);
+    } catch (error) {
+      throw this.transformOrderError(error);
+    }
   }
 
-  protected async createLimitOrderOnce(side: Action, amount: number) {
+  protected async createLimitOrderImpl(side: Action, amount: number) {
     const orderPrice = await this.calculatePrice(side);
     const orderAmount = this.calculateAmount(amount);
     this.checkCost(orderAmount, orderPrice);
-    const order = await this.exchange.createLimitOrder(this.symbol, side, orderAmount, orderPrice);
-    if (!isOrderStatus(order.status))
-      throw new GekkoError('exchange', 'Missing status property in payload after calling createLimitOrder function.');
-    return mapToOrder(order);
+
+    const symbol = this.getRestSymbol();
+    try {
+      const order = await this.client.submitNewOrder({
+        symbol,
+        side: side.toUpperCase() as 'BUY' | 'SELL',
+        type: 'LIMIT',
+        timeInForce: 'GTC',
+        quantity: orderAmount,
+        price: orderPrice,
+      });
+      return this.mapOrder(order);
+    } catch (error) {
+      throw this.transformOrderError(error);
+    }
   }
 
-  protected async cancelLimitOrderOnce(id: string) {
-    const order = (await this.exchange.cancelOrder(id, this.symbol)) as Order;
-    return { ...order };
+  protected async cancelLimitOrderImpl(id: string) {
+    const symbol = this.getRestSymbol();
+    try {
+      const order = await this.client.cancelOrder({ symbol, ...this.buildOrderIdentifier(id) });
+      return this.mapOrder(order);
+    } catch (error) {
+      throw this.transformOrderError(error);
+    }
+  }
+
+  protected getMarketLimits() {
+    return this.marketLimits;
+  }
+
+  protected isRetryableError(error: unknown): boolean {
+    if (this.isAxiosError(error)) {
+      const status = error.response?.status;
+      return !status || status >= 500;
+    }
+
+    if (this.isBinanceError(error)) {
+      const retryableCodes = new Set([-1001, -1003, -1015, -1021]);
+      return error.code !== undefined && retryableCodes.has(error.code);
+    }
+
+    return false;
+  }
+
+  private getRestSymbol() {
+    return `${this.asset}${this.currency}`;
+  }
+
+  private extractMarketLimits(filters: SymbolFilter[]): MarketLimits {
+    const priceFilter = filters.find((filter): filter is SymbolPriceFilter => filter.filterType === 'PRICE_FILTER');
+    const amountFilter = filters.find((filter): filter is SymbolLotSizeFilter => filter.filterType === 'LOT_SIZE');
+    const notionalFilter = filters.find(
+      (filter): filter is SymbolMinNotionalFilter => filter.filterType === 'NOTIONAL',
+    );
+
+    return {
+      price: priceFilter
+        ? { min: this.parseMin(priceFilter.minPrice), max: this.parseMax(priceFilter.maxPrice) }
+        : undefined,
+      amount: amountFilter
+        ? { min: this.parseMin(amountFilter.minQty), max: this.parseMax(amountFilter.maxQty) }
+        : undefined,
+      cost: notionalFilter
+        ? { min: this.parseMin(notionalFilter.minNotional), max: this.parseMax(notionalFilter.maxNotional) }
+        : undefined,
+    };
+  }
+
+  private mapPublicTrade(trade: RawTrade): Trade {
+    return {
+      id: String(trade.id),
+      amount: this.parseNumber(trade.qty) ?? 0,
+      price: this.parseNumber(trade.price) ?? 0,
+      timestamp: trade.time,
+      fee: { rate: 0 },
+    };
+  }
+
+  private mapAccountTrade(trade: RawAccountTrade): Trade {
+    const amount = this.parseNumber(trade.qty) ?? 0;
+    const price = this.parseNumber(trade.price) ?? 0;
+    const quoteQuantity = this.parseNumber(trade.quoteQty) ?? amount * price;
+    const commission = this.parseNumber(trade.commission) ?? 0;
+    const feeRate = quoteQuantity ? commission / quoteQuantity : 0;
+
+    return {
+      id: String(trade.orderId ?? trade.id),
+      amount,
+      price,
+      timestamp: trade.time,
+      fee: { rate: feeRate },
+    };
+  }
+
+  private mapOrder(data: SpotOrderLike): Order {
+    const filled = this.parseNumber(data.executedQty) ?? 0;
+    const original = this.parseNumber(data.origQty) ?? filled;
+    const cumulativeQuote = this.parseNumber(data.cummulativeQuoteQty);
+    const price =
+      this.parseNumber(data.price) ??
+      (cumulativeQuote !== undefined && original ? cumulativeQuote / original : undefined);
+
+    return {
+      id: String(data.orderId ?? data.id ?? data.clientOrderId ?? data.origClientOrderId ?? ''),
+      status: this.mapOrderStatus(data.status),
+      filled,
+      remaining: Math.max(original - filled, 0),
+      price,
+      timestamp: data.updateTime ?? data.transactTime ?? data.time ?? Date.now(),
+    };
+  }
+
+  private mapOrderStatus(status?: string): Order['status'] {
+    switch (status) {
+      case 'FILLED':
+        return 'closed';
+      case 'CANCELED':
+      case 'EXPIRED':
+      case 'REJECTED':
+        return 'canceled';
+      default:
+        return 'open';
+    }
+  }
+
+  private buildOrderIdentifier(id: string) {
+    const orderId = Number(id);
+    if (Number.isFinite(orderId)) {
+      return { orderId };
+    }
+
+    return { origClientOrderId: id };
+  }
+
+  private transformOrderError(error: unknown): never {
+    if (this.isBinanceError(error)) {
+      if (error.code !== undefined) {
+        if ([-2013, -2011].includes(error.code)) throw new OrderNotFound(error.message ?? 'Order not found');
+        if ([-2010, -1013, -1011, -1100, -1102].includes(error.code))
+          throw new InvalidOrder(error.message ?? 'Invalid order');
+      }
+    }
+
+    throw this.toError(error);
+  }
+
+  private toError(error: unknown): Error {
+    if (error instanceof Error) return error;
+    if (this.isBinanceError(error)) return new GekkoError('exchange', error.message ?? `Binance error ${error.code}`);
+    return new GekkoError('exchange', String(error));
+  }
+
+  private isAxiosError(error: unknown): error is AxiosError {
+    return typeof error === 'object' && error !== null && (error as AxiosError).isAxiosError === true;
+  }
+
+  private isBinanceError(error: unknown): error is { code?: number; message?: string } {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      typeof (error as { code?: unknown }).code === 'number'
+    );
+  }
+
+  private parseNumber(value?: string | number) {
+    if (isNil(value)) return undefined;
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private parseMin(value?: string | number) {
+    return this.parseNumber(value);
+  }
+
+  private parseMax(value?: string | number) {
+    const parsed = this.parseNumber(value);
+    if (parsed === undefined || parsed === 0) return undefined;
+    return parsed;
   }
 }
