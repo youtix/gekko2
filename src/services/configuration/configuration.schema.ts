@@ -30,7 +30,7 @@ export const watchSchema = object({
 });
 
 export const exchangeSchema = object({
-  name: string().oneOf(['binance']).required(),
+  name: string().oneOf(['binance', 'dummyDEX']).required(),
   interval: number().positive().notRequired(),
   sandbox: boolean().default(false),
   key: string().notRequired(),
