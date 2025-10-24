@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../configuration/configuration';
 import { inject } from './injecter';
 
-const { BinanceExchangeMock, DummyExchangeMock } = vi.hoisted(() => ({
+const { BinanceExchangeMock, DummyDecentralizedExchangeMock } = vi.hoisted(() => ({
   BinanceExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'binance' })),
-  DummyExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'dummy' })),
+  DummyDecentralizedExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'dummy' })),
 }));
 
 vi.mock('@services/configuration/configuration', () => {
@@ -18,8 +18,8 @@ vi.mock('@services/storage/sqlite.storage', () => ({
 vi.mock('@services/exchange/centralized/binance/binance', () => ({
   BinanceExchange: BinanceExchangeMock,
 }));
-vi.mock('@services/exchange/decentralized/dummy/dummy', () => ({
-  DummyExchange: DummyExchangeMock,
+vi.mock('@services/exchange/decentralized/dummy/dummy-decentralized-exchange', () => ({
+  DummyDecentralizedExchange: DummyDecentralizedExchangeMock,
 }));
 
 describe('Injecter', () => {
@@ -30,7 +30,7 @@ describe('Injecter', () => {
     inject['storageInstance'] = undefined;
     inject['exchangeInstance'] = undefined;
     BinanceExchangeMock.mockClear();
-    DummyExchangeMock.mockClear();
+    DummyDecentralizedExchangeMock.mockClear();
   });
 
   describe('storage', () => {
@@ -66,8 +66,12 @@ describe('Injecter', () => {
       getExchangeMock.mockReturnValue({ name: 'dummy-dex', verbose: false, sandbox: false });
       const exchange = inject.exchange();
       expect(exchange).toMatchObject({ exchangeName: 'dummy-dex', type: 'dummy' });
-      expect(DummyExchangeMock).toHaveBeenCalledTimes(1);
-      expect(DummyExchangeMock).toHaveBeenCalledWith({ name: 'dummy-dex', verbose: false, sandbox: false });
+      expect(DummyDecentralizedExchangeMock).toHaveBeenCalledTimes(1);
+      expect(DummyDecentralizedExchangeMock).toHaveBeenCalledWith({
+        name: 'dummy-dex',
+        verbose: false,
+        sandbox: false,
+      });
     });
   });
 });

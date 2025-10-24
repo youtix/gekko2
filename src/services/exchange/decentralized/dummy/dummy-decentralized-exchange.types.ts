@@ -6,7 +6,7 @@ import { Ticker } from '@models/ticker.types';
 import { MarketLimits } from '../../exchange';
 import { NetworkConfiguration } from '../dex';
 
-export interface DummyExchangeConfig extends ExchangeConfig {
+export interface DummyDecentralizedExchangeConfig extends ExchangeConfig {
   limits?: MarketLimits;
   portfolio?: Portfolio;
   initialTicker?: Ticker;
