@@ -1,6 +1,8 @@
 import { GekkoError } from '@errors/gekko.error';
+import { ExchangeConfig } from '@models/configuration.types';
 import { config } from '@services/configuration/configuration';
 import { BinanceExchange } from '@services/exchange/centralized/binance/binance';
+import { DummyExchange } from '@services/exchange/decentralized/dummy/dummy';
 import { Exchange } from '@services/exchange/exchange';
 import { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { Storage } from '@services/storage/storage';
@@ -8,6 +10,11 @@ import { Storage } from '@services/storage/storage';
 class Injecter {
   private storageInstance?: Storage;
   private exchangeInstance?: Exchange;
+
+  private readonly exchangeFactories: Record<string, new (config: ExchangeConfig) => Exchange> = {
+    binance: BinanceExchange,
+    'dummy-dex': DummyExchange,
+  };
 
   public storage() {
     if (this.storageInstance) return this.storageInstance;
@@ -21,7 +28,9 @@ class Injecter {
     if (this.exchangeInstance) return this.exchangeInstance;
     const exchangeConfig = config.getExchange();
     if (!exchangeConfig?.name) throw new GekkoError('injecter', 'Missing or unknown exchange.');
-    this.exchangeInstance = new BinanceExchange(exchangeConfig);
+    const ExchangeFactory = this.exchangeFactories[exchangeConfig.name];
+    if (!ExchangeFactory) throw new GekkoError('injecter', 'Missing or unknown exchange.');
+    this.exchangeInstance = new ExchangeFactory(exchangeConfig);
     return this.exchangeInstance;
   }
 }
