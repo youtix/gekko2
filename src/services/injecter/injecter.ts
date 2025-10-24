@@ -1,6 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import { config } from '@services/configuration/configuration';
-import { BinanceExchange } from '@services/exchange/binance/binance';
+import { BinanceExchange } from '@services/exchange/centralized/binance/binance';
 import { Exchange } from '@services/exchange/exchange';
 import { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { Storage } from '@services/storage/storage';
