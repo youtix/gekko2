@@ -2,7 +2,7 @@ import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Candle } from '@models/candle.types';
 import { Portfolio } from '@models/portfolio.types';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { DummyExchange, DummyExchangeConfig } from './dummy';
+import { DummyDecentralizedExchange, DummyDecentralizedExchangeConfig } from './dummy-decentralized-exchange';
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
@@ -10,8 +10,8 @@ vi.mock('@services/configuration/configuration', () => ({
   },
 }));
 
-describe('DummyExchange', () => {
-  const baseConfig: DummyExchangeConfig = {
+describe('DummyDecentralizedExchange', () => {
+  const baseConfig: DummyDecentralizedExchangeConfig = {
     name: 'dummy-dex',
     interval: 200,
     sandbox: false,
@@ -26,8 +26,8 @@ describe('DummyExchange', () => {
     candleTimeframe: '1m',
   };
 
-  const createExchange = (overrides: Partial<DummyExchangeConfig> = {}) =>
-    new DummyExchange({ ...baseConfig, ...overrides });
+  const createExchange = (overrides: Partial<DummyDecentralizedExchangeConfig> = {}) =>
+    new DummyDecentralizedExchange({ ...baseConfig, ...overrides });
 
   const sampleCandle = (start: number, overrides: Partial<Candle> = {}): Candle => ({
     start,

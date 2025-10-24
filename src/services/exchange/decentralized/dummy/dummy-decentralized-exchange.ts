@@ -6,11 +6,15 @@ import { Trade } from '@models/trade.types';
 import { cloneDeep, isNil } from 'lodash-es';
 import { DecentralizedExchange, NetworkConfiguration } from '../dex';
 import { MarketLimits } from '../../exchange';
-import { DummyExchangeConfig, DummyInternalOrder, DummyOrderSide } from './dummy.types';
+import {
+  DummyDecentralizedExchangeConfig,
+  DummyInternalOrder,
+  DummyOrderSide,
+} from './dummy-decentralized-exchange.types';
 import { DUMMY_DEFAULT_LIMITS, DUMMY_DEFAULT_PORTFOLIO, DUMMY_DEFAULT_TICKER } from './dummy.const';
 
-export class DummyExchange extends DecentralizedExchange<DummyExchangeConfig> {
-  private readonly config: DummyExchangeConfig;
+export class DummyDecentralizedExchange extends DecentralizedExchange<DummyDecentralizedExchangeConfig> {
+  private readonly config: DummyDecentralizedExchangeConfig;
   private readonly orders = new Map<string, DummyInternalOrder>();
   private readonly trades: Trade[] = [];
   private readonly candlesByTimeframe = new Map<string, Candle[]>();
@@ -27,7 +31,7 @@ export class DummyExchange extends DecentralizedExchange<DummyExchangeConfig> {
   private lastEmittedTradeIndex = 0;
   private readonly defaultTimeframe: string;
 
-  constructor(config: DummyExchangeConfig) {
+  constructor(config: DummyDecentralizedExchangeConfig) {
     super(config);
     this.config = config;
     this.defaultTimeframe = config.candleTimeframe ?? '1m';
@@ -149,7 +153,7 @@ export class DummyExchange extends DecentralizedExchange<DummyExchangeConfig> {
     return this.marketLimits;
   }
 
-  protected resolveNetworkConfiguration(config: DummyExchangeConfig): NetworkConfiguration | undefined {
+  protected resolveNetworkConfiguration(config: DummyDecentralizedExchangeConfig): NetworkConfiguration | undefined {
     return config.networkConfiguration;
   }
 
@@ -284,4 +288,4 @@ export class DummyExchange extends DecentralizedExchange<DummyExchangeConfig> {
   }
 }
 
-export type { DummyExchangeConfig } from './dummy.types';
+export type { DummyDecentralizedExchangeConfig } from './dummy-decentralized-exchange.types';
