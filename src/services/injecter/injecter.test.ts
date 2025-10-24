@@ -10,7 +10,7 @@ vi.mock('@services/configuration/configuration', () => {
 vi.mock('@services/storage/sqlite.storage', () => ({
   SQLiteStorage: vi.fn(() => ({})),
 }));
-vi.mock('@services/exchange/binance/binance', () => ({
+vi.mock('@services/exchange/centralized/binance/binance', () => ({
   BinanceExchange: vi.fn(({ name }) => ({ exchangeName: name })),
 }));
 

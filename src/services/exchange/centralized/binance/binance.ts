@@ -24,11 +24,12 @@ import {
 } from 'binance';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { first, isNil, last } from 'lodash-es';
-import { Exchange, MarketLimits } from '../exchange';
-import { LIMITS } from '../exchange.const';
-import { InvalidOrder, OrderNotFound } from '../exchange.error';
+import { MarketLimits } from '../../exchange';
+import { LIMITS } from '../../exchange.const';
+import { InvalidOrder, OrderNotFound } from '../../exchange.error';
+import { CentralizedExchange } from '../cex';
 
-export class BinanceExchange extends Exchange {
+export class BinanceExchange extends CentralizedExchange {
   private ws: WebsocketClient;
   private client: MainClient;
   private marketLimits?: MarketLimits;
