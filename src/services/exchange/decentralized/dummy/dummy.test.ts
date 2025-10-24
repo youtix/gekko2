@@ -12,7 +12,7 @@ vi.mock('@services/configuration/configuration', () => ({
 
 describe('DummyExchange', () => {
   const baseConfig: DummyExchangeConfig = {
-    name: 'dummyDEX',
+    name: 'dummy-dex',
     interval: 200,
     sandbox: false,
     verbose: false,
