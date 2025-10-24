@@ -113,7 +113,7 @@ export class BinanceExchange extends CentralizedExchange {
   protected async getKlinesImpl(
     startTime?: EpochTimeStamp,
     interval: KlineInterval = '1m',
-    limit = LIMITS[this.exchangeName],
+    limit = LIMITS[this.exchangeName]?.candles,
   ) {
     const symbol = this.getRestSymbol();
     try {
@@ -138,7 +138,7 @@ export class BinanceExchange extends CentralizedExchange {
 
   protected async fetchTradesImpl() {
     const symbol = this.getRestSymbol();
-    const limit = LIMITS[this.exchangeName];
+    const limit = LIMITS[this.exchangeName]?.trades;
     try {
       const trades = await this.client.getRecentTrades({
         symbol,
@@ -152,7 +152,7 @@ export class BinanceExchange extends CentralizedExchange {
 
   protected async fetchMyTradesImpl(from?: EpochTimeStamp) {
     const symbol = this.getRestSymbol();
-    const limit = LIMITS[this.exchangeName];
+    const limit = LIMITS[this.exchangeName]?.myTrades;
     try {
       const trades = await this.client.getAccountTradeList({
         symbol,
