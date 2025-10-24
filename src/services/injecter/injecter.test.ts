@@ -3,9 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../configuration/configuration';
 import { inject } from './injecter';
 
-const { BinanceExchangeMock, DummyDecentralizedExchangeMock } = vi.hoisted(() => ({
+const { BinanceExchangeMock, DummyDecentralizedExchangeMock, DummyCentralizedExchangeMock } = vi.hoisted(() => ({
   BinanceExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'binance' })),
   DummyDecentralizedExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'dummy' })),
+  DummyCentralizedExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'dummy-cex' })),
 }));
 
 vi.mock('@services/configuration/configuration', () => {
@@ -21,6 +22,9 @@ vi.mock('@services/exchange/centralized/binance/binance', () => ({
 vi.mock('@services/exchange/decentralized/dummy/dummy-decentralized-exchange', () => ({
   DummyDecentralizedExchange: DummyDecentralizedExchangeMock,
 }));
+vi.mock('@services/exchange/centralized/dummy/dummy-centralized-exchange', () => ({
+  DummyCentralizedExchange: DummyCentralizedExchangeMock,
+}));
 
 describe('Injecter', () => {
   const getStorageMock = vi.spyOn(config, 'getStorage');
@@ -31,6 +35,7 @@ describe('Injecter', () => {
     inject['exchangeInstance'] = undefined;
     BinanceExchangeMock.mockClear();
     DummyDecentralizedExchangeMock.mockClear();
+    DummyCentralizedExchangeMock.mockClear();
   });
 
   describe('storage', () => {
@@ -69,6 +74,18 @@ describe('Injecter', () => {
       expect(DummyDecentralizedExchangeMock).toHaveBeenCalledTimes(1);
       expect(DummyDecentralizedExchangeMock).toHaveBeenCalledWith({
         name: 'dummy-dex',
+        verbose: false,
+        sandbox: false,
+      });
+    });
+
+    it('should instantiate dummy centralized exchange when requested', () => {
+      getExchangeMock.mockReturnValue({ name: 'dummy-cex', verbose: false, sandbox: false });
+      const exchange = inject.exchange();
+      expect(exchange).toMatchObject({ exchangeName: 'dummy-cex', type: 'dummy-cex' });
+      expect(DummyCentralizedExchangeMock).toHaveBeenCalledTimes(1);
+      expect(DummyCentralizedExchangeMock).toHaveBeenCalledWith({
+        name: 'dummy-cex',
         verbose: false,
         sandbox: false,
       });
