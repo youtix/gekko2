@@ -9,6 +9,7 @@ import {
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Exchange } from '@services/exchange/exchange';
+import { config } from '../../services/configuration/configuration';
 import { bindAll } from 'lodash-es';
 import EventEmitter from 'node:events';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
@@ -27,7 +28,10 @@ vi.mock('@services/logger', () => ({
   error: vi.fn(),
 }));
 vi.mock('../../services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({ getWatch: vi.fn(() => ({})), getStrategy: vi.fn(() => ({})) }));
+  const Configuration = vi.fn(() => ({
+    getWatch: vi.fn(() => ({ mode: 'realtime' })),
+    getStrategy: vi.fn(() => ({})),
+  }));
   return { config: new Configuration() };
 });
 vi.mock('lodash-es', async () => ({
@@ -44,6 +48,7 @@ vi.mock('../../services/core/order/sticky/stickyOrder', () => ({
 describe('Trader', () => {
   let onceEventCallback: () => Promise<void> = () => Promise.resolve();
   const setIntervalSpy = vi.spyOn(global, 'setInterval');
+  const getWatchMock = config.getWatch as unknown as Mock;
   let trader: any;
   let fakeExchange: {
     getExchangeName: Mock;
@@ -66,6 +71,8 @@ describe('Trader', () => {
   };
 
   beforeEach(() => {
+    getWatchMock.mockReturnValue({ mode: 'realtime' });
+    setIntervalSpy.mockClear();
     fakeExchange = {
       getExchangeName: vi.fn().mockReturnValue('FakeExchange'),
       getInterval: vi.fn().mockReturnValue(50),
@@ -103,6 +110,14 @@ describe('Trader', () => {
 
     it('should call setInterval with synchronize and SYNCHRONIZATION_INTERVAL', () => {
       expect(setIntervalSpy).toHaveBeenCalledWith(trader['synchronize'], SYNCHRONIZATION_INTERVAL);
+    });
+
+    it('should not set up synchronization timer in backtest mode', () => {
+      getWatchMock.mockReturnValue({ mode: 'backtest' });
+      setIntervalSpy.mockClear();
+      const backtestTrader = new Trader();
+      expect(setIntervalSpy).not.toHaveBeenCalled();
+      backtestTrader['processFinalize']();
     });
 
     it('should call lodash bindAll with synchronize functions', () => {
@@ -664,9 +679,9 @@ describe('Trader', () => {
       expect(config.schema).toBe(traderSchema);
     });
 
-    it('should return a configuration object with modes equal to ["realtime"]', () => {
+    it('should return a configuration object with modes equal to ["realtime", "backtest"]', () => {
       const config = Trader.getStaticConfiguration();
-      expect(config.modes).toEqual(['realtime']);
+      expect(config.modes).toEqual(['realtime', 'backtest']);
     });
 
     it('should return a configuration object with dependencies as an empty array', () => {

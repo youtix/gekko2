@@ -31,7 +31,7 @@ plugins:
 ## Events Emitted
 
 The **EventSubscriber** plugin does not emit any custom events.  
-Its role is to **listen to trading events** emitted by other plugins (like `Trader`, `PaperTrader`, `PerformanceAnalyzer`, etc.) and send formatted messages to a Telegram chat.
+Its role is to **listen to trading events** emitted by other plugins (like `Trader`, `PerformanceAnalyzer`, etc.) and send formatted messages to a Telegram chat.
 
 It acts purely as a consumer of events and never produces new ones within the Gekko event system.
 

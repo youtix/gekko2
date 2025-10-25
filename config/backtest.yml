@@ -9,6 +9,9 @@ watch:
     start: '2018-01-01T00:00:00.000Z'
     end: '2025-05-01T00:00:00.000Z'
 
+exchange:
+  name: dummy-cex
+
 storage:
   type: sqlite
   database: ./db/binance-BTC_USDT.sql
@@ -26,7 +29,7 @@ plugins:
   - name: TradingAdvisor
     strategyName: RSI
 
-  - name: PaperTrader
+  - name: Trader
 
   - name: PerformanceAnalyzer
     enableConsoleTable: true
