@@ -1,4 +1,6 @@
+import { Candle } from '@models/candle.types';
 import { ExchangeConfig } from '@models/configuration.types';
+import { Exchange } from './exchange';
 
 export type ExchangeNames = ExchangeConfig['name'];
 
@@ -17,3 +19,5 @@ export interface MarketLimits {
   amount?: MarketLimitRange;
   cost?: MarketLimitRange;
 }
+
+export type DummyExchange = Exchange & { addCandle: (candle: Candle) => void };
