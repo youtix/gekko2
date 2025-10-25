@@ -1,16 +1,16 @@
 import { GekkoError } from '@errors/gekko.error';
+import { Configuration } from '@models/configuration.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../configuration/configuration';
 import { inject } from './injecter';
 
-const { BinanceExchangeMock, DummyDecentralizedExchangeMock, DummyCentralizedExchangeMock } = vi.hoisted(() => ({
+const { BinanceExchangeMock, DummyCentralizedExchangeMock } = vi.hoisted(() => ({
   BinanceExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'binance' })),
-  DummyDecentralizedExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'dummy' })),
   DummyCentralizedExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'dummy-cex' })),
 }));
 
 vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({ getStorage: vi.fn(), getExchange: vi.fn() }));
+  const Configuration = vi.fn(() => ({ getStorage: vi.fn(), getExchange: vi.fn(), getWatch: vi.fn() }));
   return { config: new Configuration() };
 });
 vi.mock('@services/storage/sqlite.storage', () => ({
@@ -19,23 +19,18 @@ vi.mock('@services/storage/sqlite.storage', () => ({
 vi.mock('@services/exchange/centralized/binance/binance', () => ({
   BinanceExchange: BinanceExchangeMock,
 }));
-vi.mock('@services/exchange/decentralized/dummy/dummy-decentralized-exchange', () => ({
-  DummyDecentralizedExchange: DummyDecentralizedExchangeMock,
-}));
-vi.mock('@services/exchange/centralized/dummy/dummy-centralized-exchange', () => ({
+vi.mock('@services/exchange/centralized/dummy/dummyCentralizedExchange', () => ({
   DummyCentralizedExchange: DummyCentralizedExchangeMock,
 }));
 
 describe('Injecter', () => {
   const getStorageMock = vi.spyOn(config, 'getStorage');
   const getExchangeMock = vi.spyOn(config, 'getExchange');
+  const getWatchMock = vi.spyOn(config, 'getWatch');
 
   beforeEach(() => {
     inject['storageInstance'] = undefined;
     inject['exchangeInstance'] = undefined;
-    BinanceExchangeMock.mockClear();
-    DummyDecentralizedExchangeMock.mockClear();
-    DummyCentralizedExchangeMock.mockClear();
   });
 
   describe('storage', () => {
@@ -67,22 +62,12 @@ describe('Injecter', () => {
       expect(() => inject.exchange()).toThrow(GekkoError);
     });
 
-    it('should instantiate dummy exchange when requested', () => {
-      getExchangeMock.mockReturnValue({ name: 'dummy-dex', verbose: false, sandbox: false });
-      const exchange = inject.exchange();
-      expect(exchange).toMatchObject({ exchangeName: 'dummy-dex', type: 'dummy' });
-      expect(DummyDecentralizedExchangeMock).toHaveBeenCalledTimes(1);
-      expect(DummyDecentralizedExchangeMock).toHaveBeenCalledWith({
-        name: 'dummy-dex',
-        verbose: false,
-        sandbox: false,
-      });
-    });
-
     it('should instantiate dummy centralized exchange when requested', () => {
       getExchangeMock.mockReturnValue({ name: 'dummy-cex', verbose: false, sandbox: false });
+      getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT' } as unknown as Configuration['watch']);
       const exchange = inject.exchange();
-      expect(exchange).toMatchObject({ exchangeName: 'dummy-cex', type: 'dummy-cex' });
+
+      expect(exchange).toMatchObject({ exchangeName: 'dummy-cex' });
       expect(DummyCentralizedExchangeMock).toHaveBeenCalledTimes(1);
       expect(DummyCentralizedExchangeMock).toHaveBeenCalledWith({
         name: 'dummy-cex',
