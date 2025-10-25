@@ -35,7 +35,7 @@ Gekko is a powerful tool, but it has some limitations:
 - It is single-threaded and not optimized for large-scale production deployment.
 - It does not include advanced order types beyond basic market or limit orders.
 - Risk management and portfolio diversification must be implemented manually.
-- Only one trade plugin can be active at a time (e.g., `trader` or `paperTrader`).
+- Only one Trader plugin can manage orders at a time—configure it with a live exchange for real orders or the dummy exchange to simulate trades safely.
 
 Gekko is best used for learning, prototyping, and running simple to medium complexity strategies.
 
