@@ -7,7 +7,7 @@ This plugin is useful for both backtests and live runs to evaluate how profitabl
 ```
 💡 Note:
 - This plugin is read-only. It only analyzes and reports.
-- Requires data from other plugins like `PaperTrader` or `Trader` to function correctly.
+- Requires data from the `Trader` plugin to function correctly.
 - Designed to work in both realtime and backtest modes.
 ```
 
