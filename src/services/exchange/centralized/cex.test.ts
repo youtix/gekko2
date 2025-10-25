@@ -7,7 +7,7 @@ import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
 import { describe, expect, it, vi } from 'vitest';
-import { MarketLimits } from '../exchange';
+import { MarketLimits } from '../exchange.types';
 import { CentralizedExchange } from './cex';
 
 vi.mock('@services/configuration/configuration', () => ({

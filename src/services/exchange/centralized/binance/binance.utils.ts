@@ -2,21 +2,7 @@ import { Candle } from '@models/candle.types';
 import { Order } from '@models/order.types';
 import { Trade } from '@models/trade.types';
 import { Kline, RawAccountTrade, RawTrade } from 'binance';
-
-export type BinanceSpotOrder = Partial<{
-  orderId: number;
-  id: number;
-  clientOrderId: string;
-  origClientOrderId: string;
-  status: string;
-  executedQty: string | number;
-  origQty: string | number;
-  cummulativeQuoteQty: string | number;
-  price: string | number;
-  updateTime: number;
-  transactTime: number;
-  time: number;
-}>;
+import { BinanceSpotOrder } from './binance.types';
 
 const parseNumber = (value?: string | number) => {
   if (value === undefined || value === null) return undefined;

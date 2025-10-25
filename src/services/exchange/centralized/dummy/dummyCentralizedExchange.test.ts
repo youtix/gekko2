@@ -1,8 +1,8 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Candle } from '@models/candle.types';
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { DummyCentralizedExchange } from './dummy-centralized-exchange';
-import type { DummyCentralizedExchangeConfig } from './dummy-centralized-exchange.types';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DummyCentralizedExchange } from './dummyCentralizedExchange';
+import type { DummyCentralizedExchangeConfig } from './dummyCentralizedExchange.types';
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
@@ -20,9 +20,8 @@ const baseConfig: DummyCentralizedExchangeConfig = {
     amount: { min: 0.1, max: 100 },
     cost: { min: 10, max: 100_000 },
   },
-  portfolio: { asset: 10, currency: 50_000 },
+  simulationBalance: { asset: 10, currency: 50_000 },
   initialTicker: { bid: 100, ask: 101 },
-  candleTimeframe: '1m',
 };
 
 const createExchange = (overrides: Partial<DummyCentralizedExchangeConfig> = {}) =>
@@ -50,7 +49,7 @@ describe('DummyCentralizedExchange', () => {
 
   it('loads markets with provided overrides and exposes portfolio and ticker', async () => {
     const exchange = createExchange({
-      portfolio: { asset: 1, currency: 1_000 },
+      simulationBalance: { asset: 1, currency: 1_000 },
       limits: {
         price: { min: 2, max: 500 },
         amount: { min: 0.5, max: 5 },
@@ -66,39 +65,8 @@ describe('DummyCentralizedExchange', () => {
     await expect(exchange.getKlines()).resolves.toEqual([]);
   });
 
-  it('enqueues candles, emits them to listeners, and stores by timeframe', async () => {
-    const exchange = createExchange();
-    await exchange.loadMarkets();
-
-    const emitted: Candle[] = [];
-    const unsubscribe = exchange.onNewCandle(candle => emitted.push(candle));
-
-    const first = sampleCandle(Date.now(), { close: 120, low: 120, high: 120 });
-    const second = sampleCandle(Date.now() + 60_000, { close: 121, low: 121, high: 121 });
-
-    exchange.addCandle(first);
-    exchange.addCandle(second);
-    exchange.addCandle(sampleCandle(Date.now(), { close: 200, low: 200, high: 200 }), '5m');
-
-    const interval = baseConfig.interval ?? 0;
-    vi.advanceTimersByTime(interval * 2 + 10);
-
-    expect(emitted).toHaveLength(2);
-    expect(emitted[0]).toMatchObject({ close: 120 });
-    expect(emitted[1]).toMatchObject({ close: 121 });
-
-    const oneMinuteCandles = await exchange.getKlines(undefined, '1m');
-    expect(oneMinuteCandles).toHaveLength(2);
-
-    const fiveMinuteCandles = await exchange.getKlines(undefined, '5m');
-    expect(fiveMinuteCandles).toHaveLength(1);
-
-    unsubscribe();
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
   it('manages order lifecycle including reservation, fill, and cancellation', async () => {
-    const exchange = createExchange({ portfolio: { asset: 2, currency: 1_000 } });
+    const exchange = createExchange({ simulationBalance: { asset: 2, currency: 1_000 } });
     await exchange.loadMarkets();
 
     const buyOrder = await exchange.createLimitOrder('buy', 1);

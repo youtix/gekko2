@@ -8,12 +8,14 @@ import {
   TRADE_INITIATED_EVENT,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
+import { StopGekkoError } from '@errors/stopGekko.error';
 import { Action } from '@models/action.types';
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { Portfolio } from '@models/portfolio.types';
 import { TradeAborted, TradeCanceled, TradeErrored, TradeInitiated } from '@models/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
+import { config } from '@services/configuration/configuration';
 import {
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,
@@ -22,7 +24,6 @@ import {
 } from '@services/core/order/base/baseOrder.const';
 import { StickyOrder } from '@services/core/order/sticky/stickyOrder';
 import { debug, error, info, warning } from '@services/logger';
-import { config } from '@services/configuration/configuration';
 import { toISOString } from '@utils/date/date.utils';
 import { wait } from '@utils/process/process.utils';
 import { bindAll, filter, isEqual, isNil } from 'lodash-es';
@@ -33,6 +34,8 @@ export class Trader extends Plugin {
   private propogatedTrades: number;
   private cancellingOrder: boolean;
   private sendInitialPortfolio: boolean;
+  private warmupCompleted: boolean;
+  private warmupCandle?: Candle;
   private portfolio: Portfolio;
   private balance: number;
   private price: number;
@@ -47,11 +50,13 @@ export class Trader extends Plugin {
     this.propogatedTrades = 0;
     this.cancellingOrder = false;
     this.sendInitialPortfolio = false;
+    this.warmupCompleted = false;
+    this.warmupCandle = undefined;
     this.portfolio = { asset: 0, currency: 0 };
     this.balance = 0;
     this.exposure = 0;
     this.price = 0;
-    this.exposed = false;
+    this.exposed = this.portfolio.asset > 0;
 
     bindAll(this, ['synchronize']);
 
@@ -100,6 +105,24 @@ export class Trader extends Plugin {
     this.exposure = (this.portfolio.asset * this.price) / this.balance;
     // if more than 10% of balance is in asset we are exposed
     this.exposed = this.exposure > 0.1;
+  }
+
+  public onStrategyWarmupCompleted() {
+    this.warmupCompleted = true;
+    const candle = this.warmupCandle;
+    this.warmupCandle = undefined;
+    if (!candle) throw new GekkoError('trader', 'No warmup candle on strategy warmup completed event');
+    void this.processOneMinuteCandle(candle);
+  }
+
+  public onRoundtripCompleted() {
+    if (this.portfolio.asset === 0 && this.portfolio.currency === 0) {
+      warning(
+        'trader',
+        'Portfolio is completely empty (no assets, no currency). Initiating the stop of gekko application !',
+      );
+      throw new StopGekkoError();
+    }
   }
 
   public onStrategyAdvice(advice: Advice) {
@@ -239,6 +262,7 @@ export class Trader extends Plugin {
       if (side === 'buy') return { effectivePrice: price * (feePercent / 100 + 1), cost };
       else return { effectivePrice: price * (1 - feePercent / 100), cost };
     }
+
     warning('trader', 'Exchange did not provide fee information, assuming no fees..');
     return { effectivePrice: price, cost: price * amount };
   }
@@ -290,6 +314,11 @@ export class Trader extends Plugin {
   }
 
   protected async processOneMinuteCandle(candle: Candle) {
+    if (!this.warmupCompleted) {
+      this.warmupCandle = candle;
+      return;
+    }
+
     this.price = candle.close;
     const previousBalance = this.balance;
     this.setBalance();
@@ -297,10 +326,7 @@ export class Trader extends Plugin {
     if (!this.sendInitialPortfolio) {
       this.sendInitialPortfolio = true;
       await this.synchronize();
-      this.deferredEmit(PORTFOLIO_CHANGE_EVENT, {
-        asset: this.portfolio.asset,
-        currency: this.portfolio.currency,
-      });
+      this.emitPortfolioChangeEvent();
     }
 
     if (this.balance !== previousBalance) {

@@ -83,7 +83,7 @@ watch:
     candleCount: 10
 
 exchange:
-  name: dummy-cex # swap to 'binance-sandbox' or 'binance' for sandbox/live trading
+  name: dummy-cex # swap to 'binance' for sandbox/live trading
 
 strategy:
   name: MyAwesomeStrategy

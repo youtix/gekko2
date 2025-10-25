@@ -2,15 +2,9 @@ import { GekkoError } from '@errors/gekko.error';
 import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
 import { ExchangeConfig } from '@models/configuration.types';
+import { MarketLimits } from '@services/exchange/exchange.types';
 import { debug, error, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import {
-  BinanceSpotOrder,
-  mapAccountTradeToTrade,
-  mapKlinesToCandles,
-  mapPublicTradeToTrade,
-  mapSpotOrderToOrder,
-} from './binance.utils';
 import type { AxiosError } from 'axios';
 import {
   KlineInterval,
@@ -24,10 +18,16 @@ import {
 } from 'binance';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { first, isNil, last } from 'lodash-es';
-import { MarketLimits } from '../../exchange';
 import { LIMITS } from '../../exchange.const';
 import { InvalidOrder, OrderNotFound } from '../../exchange.error';
 import { CentralizedExchange } from '../cex';
+import { BinanceSpotOrder } from './binance.types';
+import {
+  mapAccountTradeToTrade,
+  mapKlinesToCandles,
+  mapPublicTradeToTrade,
+  mapSpotOrderToOrder,
+} from './binance.utils';
 
 export class BinanceExchange extends CentralizedExchange {
   private ws: WebsocketClient;
@@ -152,7 +152,7 @@ export class BinanceExchange extends CentralizedExchange {
 
   protected async fetchMyTradesImpl(from?: EpochTimeStamp) {
     const symbol = this.getRestSymbol();
-    const limit = LIMITS[this.exchangeName]?.myTrades;
+    const limit = LIMITS[this.exchangeName]?.trades;
     try {
       const trades = await this.client.getAccountTradeList({
         symbol,
