@@ -22,6 +22,7 @@ import {
 } from '@services/core/order/base/baseOrder.const';
 import { StickyOrder } from '@services/core/order/sticky/stickyOrder';
 import { debug, error, info, warning } from '@services/logger';
+import { config } from '@services/configuration/configuration';
 import { toISOString } from '@utils/date/date.utils';
 import { wait } from '@utils/process/process.utils';
 import { bindAll, filter, isEqual, isNil } from 'lodash-es';
@@ -54,7 +55,10 @@ export class Trader extends Plugin {
 
     bindAll(this, ['synchronize']);
 
-    this.syncInterval = setInterval(this.synchronize, SYNCHRONIZATION_INTERVAL);
+    const { mode } = config.getWatch();
+    if (mode === 'realtime') {
+      this.syncInterval = setInterval(this.synchronize, SYNCHRONIZATION_INTERVAL);
+    }
   }
 
   private async synchronize() {
@@ -317,7 +321,7 @@ export class Trader extends Plugin {
   public static getStaticConfiguration() {
     return {
       schema: traderSchema,
-      modes: ['realtime'],
+      modes: ['realtime', 'backtest'],
       dependencies: [],
       inject: ['exchange'],
       eventsHandlers: filter(Object.getOwnPropertyNames(Trader.prototype), p => p.startsWith('on')),

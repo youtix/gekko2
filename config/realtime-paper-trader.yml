@@ -7,7 +7,7 @@ watch:
     candleCount: 365
 
 exchange:
-  name: binance
+  name: dummy-cex
 
 strategy:
   name: DEMA
@@ -20,15 +20,7 @@ plugins:
   - name: TradingAdvisor
     strategyName: DEMA
 
-  - name: PaperTrader
-    simulationBalance: # start balance, on what the current balance is compared with
-      # these are in the unit types configured in the watcher.
-      asset: 1
-      currency: 100
-    # how much fee in % does each trade cost?
-    feeMaker: 0.15
-    feeTaker: 0.25
-    feeUsing: maker
+  - name: Trader
 
   - name: PerformanceAnalyzer
     riskFreeReturn: 5
