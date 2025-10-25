@@ -8,11 +8,12 @@ import {
   TRADE_INITIATED_EVENT,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
+import { StopGekkoError } from '@errors/stopGekko.error';
 import { Exchange } from '@services/exchange/exchange';
-import { config } from '../../services/configuration/configuration';
 import { bindAll } from 'lodash-es';
 import EventEmitter from 'node:events';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { config } from '../../services/configuration/configuration';
 import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '../../services/core/order/base/baseOrder.const';
 import { StickyOrder } from '../../services/core/order/sticky/stickyOrder';
 import { error, warning } from '../../services/logger';
@@ -31,6 +32,7 @@ vi.mock('../../services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getWatch: vi.fn(() => ({ mode: 'realtime' })),
     getStrategy: vi.fn(() => ({})),
+    getExchange: vi.fn(() => ({ name: 'binance' })),
   }));
   return { config: new Configuration() };
 });
@@ -49,6 +51,7 @@ describe('Trader', () => {
   let onceEventCallback: () => Promise<void> = () => Promise.resolve();
   const setIntervalSpy = vi.spyOn(global, 'setInterval');
   const getWatchMock = config.getWatch as unknown as Mock;
+  const getExchangeMock = config.getExchange as unknown as Mock;
   let trader: any;
   let fakeExchange: {
     getExchangeName: Mock;
@@ -71,7 +74,9 @@ describe('Trader', () => {
   };
 
   beforeEach(() => {
+    if (trader) trader['processFinalize']?.();
     getWatchMock.mockReturnValue({ mode: 'realtime' });
+    getExchangeMock.mockReturnValue({ name: 'binance' });
     setIntervalSpy.mockClear();
     fakeExchange = {
       getExchangeName: vi.fn().mockReturnValue('FakeExchange'),
@@ -227,6 +232,11 @@ describe('Trader', () => {
   describe('processOneMinuteCandle', () => {
     const fakeCandle = { close: 123 };
 
+    beforeEach(() => {
+      trader['warmupCompleted'] = true;
+      trader['warmupCandle'] = undefined;
+    });
+
     it('should update the price with candle.close', async () => {
       // Stub synchronize so it does not affect our test.
       trader['synchronize'] = vi.fn(() => Promise.resolve());
@@ -286,6 +296,71 @@ describe('Trader', () => {
       trader['emitPortfolioValueChangeEvent'] = vi.fn();
       await trader['processOneMinuteCandle'](fakeCandle);
       expect(trader['emitPortfolioValueChangeEvent']).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('simulation mode', () => {
+    const simulationExchangeConfig = {
+      name: 'dummy-cex',
+      simulationBalance: { asset: 0, currency: 1000 },
+      feeMaker: 0.25,
+      feeTaker: 0.4,
+    };
+
+    beforeEach(() => {
+      trader['processFinalize']?.();
+      getExchangeMock.mockReturnValue(simulationExchangeConfig);
+      trader = new Trader();
+      trader['deferredEmit'] = vi.fn();
+      trader['getExchange'] = vi.fn().mockReturnValue(fakeExchange);
+      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 0, currency: 1000 });
+    });
+
+    it('should store warmup candle until warmup completes', async () => {
+      const candle = { close: 456 };
+      await trader['processOneMinuteCandle'](candle as any);
+      expect(trader['warmupCandle']).toEqual(candle);
+      expect(trader['price']).toBe(0);
+    });
+
+    it('should throw when completing warmup without candle', () => {
+      trader['warmupCandle'] = undefined;
+      expect(() => trader.onStrategyWarmupCompleted()).toThrow(GekkoError);
+    });
+
+    it('should process warmup candle when available', () => {
+      const candle = { close: 789 } as any;
+      trader['warmupCandle'] = candle;
+      const processSpy = vi.spyOn(trader as any, 'processOneMinuteCandle').mockResolvedValue(undefined);
+
+      trader.onStrategyWarmupCompleted();
+
+      expect(processSpy).toHaveBeenCalledWith(candle);
+      expect(trader['warmupCandle']).toBeUndefined();
+    });
+
+    it('should emit portfolio events after warmup when initializing simulation state', async () => {
+      const candle = { close: 789 } as any;
+      trader['warmupCompleted'] = true;
+      trader['portfolio'] = { asset: 0, currency: 1000 };
+      trader['synchronize'] = vi.fn();
+      const emitPortfolioChangeSpy = vi.spyOn(trader as any, 'emitPortfolioChangeEvent');
+      const emitPortfolioValueSpy = vi.spyOn(trader as any, 'emitPortfolioValueChangeEvent');
+
+      await trader['processOneMinuteCandle'](candle);
+
+      expect(trader['sendInitialPortfolio']).toBe(true);
+      expect(trader['synchronize']).toHaveBeenCalled();
+      expect(emitPortfolioChangeSpy).toHaveBeenCalled();
+      expect(emitPortfolioValueSpy).toHaveBeenCalled();
+
+      emitPortfolioChangeSpy.mockRestore();
+      emitPortfolioValueSpy.mockRestore();
+    });
+
+    it('should throw StopGekkoError when portfolio is empty on roundtrip completion', () => {
+      trader['portfolio'] = { asset: 0, currency: 0 };
+      expect(() => trader.onRoundtripCompleted()).toThrow(StopGekkoError);
     });
   });
 
@@ -696,7 +771,7 @@ describe('Trader', () => {
 
     it('should return a configuration object with all eventsHandlers', () => {
       const config = Trader.getStaticConfiguration();
-      expect(config.eventsHandlers).toEqual(['onStrategyAdvice']);
+      expect(config.eventsHandlers).toEqual(['onStrategyWarmupCompleted', 'onRoundtripCompleted', 'onStrategyAdvice']);
     });
 
     it('should return a configuration object with eventsEmitted equal to the expected array', () => {

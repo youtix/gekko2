@@ -30,13 +30,16 @@ export class DummyDecentralizedExchange extends DecentralizedExchange<DummyDecen
   private tradeSequence = 0;
   private lastEmittedTradeIndex = 0;
   private readonly defaultTimeframe: string;
+  private readonly makerFee: number;
 
   constructor(config: DummyDecentralizedExchangeConfig) {
     super(config);
     this.config = config;
     this.defaultTimeframe = config.candleTimeframe ?? '1m';
+    this.makerFee = config.feeMaker ?? 0;
 
-    if (config.portfolio) this.portfolio = cloneDeep(config.portfolio);
+    const portfolio = config.simulationBalance ?? config.portfolio;
+    if (portfolio) this.portfolio = cloneDeep(portfolio);
     if (config.initialTicker) this.ticker = { ...config.initialTicker };
     if (config.limits) this.marketLimits = cloneDeep(config.limits);
   }
@@ -44,7 +47,7 @@ export class DummyDecentralizedExchange extends DecentralizedExchange<DummyDecen
   public async loadMarkets(): Promise<void> {
     if (this.marketsLoaded) return;
     this.marketLimits = cloneDeep(this.config.limits ?? DUMMY_DEFAULT_LIMITS);
-    this.portfolio = cloneDeep(this.config.portfolio ?? DUMMY_DEFAULT_PORTFOLIO);
+    this.portfolio = cloneDeep(this.config.simulationBalance ?? this.config.portfolio ?? DUMMY_DEFAULT_PORTFOLIO);
     this.ticker = { ...(this.config.initialTicker ?? DUMMY_DEFAULT_TICKER) };
     this.marketsLoaded = true;
   }
@@ -219,7 +222,7 @@ export class DummyDecentralizedExchange extends DecentralizedExchange<DummyDecen
         amount: order.amount,
         timestamp: candle.start,
         price,
-        fee: { rate: 0 },
+        fee: { rate: this.makerFee },
       };
       this.trades.push(trade);
     });

@@ -16,6 +16,11 @@ const warmupSchema = object({
   candleCount: number().default(0),
 });
 
+const simulationBalanceSchema = object({
+  asset: number().min(0).default(0),
+  currency: number().min(0).default(1000),
+});
+
 export const watchSchema = object({
   currency: string().required(),
   asset: string().required(),
@@ -29,13 +34,33 @@ export const watchSchema = object({
   batchSize: number().notRequired(),
 });
 
-export const exchangeSchema = object({
+const baseExchangeSchema = object({
   name: string().oneOf(['binance', 'dummy-dex', 'dummy-cex']).required(),
   interval: number().positive().notRequired(),
   sandbox: boolean().default(false),
   key: string().notRequired(),
   secret: string().notRequired(),
   verbose: boolean().default(false),
+}).shape({
+  simulationBalance: simulationBalanceSchema.default(undefined).notRequired(),
+  feeMaker: number().positive().default(undefined).notRequired(),
+  feeTaker: number().positive().default(undefined).notRequired(),
+});
+
+export const exchangeSchema = baseExchangeSchema.when('name', {
+  is: (name: string) => ['dummy-dex', 'dummy-cex'].includes(name),
+  then: schema =>
+    schema.shape({
+      simulationBalance: simulationBalanceSchema.default(() => ({ asset: 0, currency: 1000 })).required(),
+      feeMaker: number().positive().default(0.15).required(),
+      feeTaker: number().positive().default(0.25).required(),
+    }),
+  otherwise: schema =>
+    schema.shape({
+      simulationBalance: simulationBalanceSchema.default(undefined).notRequired(),
+      feeMaker: number().positive().default(undefined).notRequired(),
+      feeTaker: number().positive().default(undefined).notRequired(),
+    }),
 });
 
 export const storageSchema = object({
