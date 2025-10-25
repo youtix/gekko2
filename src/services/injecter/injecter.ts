@@ -2,8 +2,7 @@ import { GekkoError } from '@errors/gekko.error';
 import { ExchangeConfig } from '@models/configuration.types';
 import { config } from '@services/configuration/configuration';
 import { BinanceExchange } from '@services/exchange/centralized/binance/binance';
-import { DummyDecentralizedExchange } from '@services/exchange/decentralized/dummy/dummy-decentralized-exchange';
-import { DummyCentralizedExchange } from '@services/exchange/centralized/dummy/dummy-centralized-exchange';
+import { DummyCentralizedExchange } from '@services/exchange/centralized/dummy/dummyCentralizedExchange';
 import { Exchange } from '@services/exchange/exchange';
 import { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { Storage } from '@services/storage/storage';
@@ -14,7 +13,6 @@ class Injecter {
 
   private readonly exchangeFactories: Record<string, new (config: ExchangeConfig) => Exchange> = {
     binance: BinanceExchange,
-    'dummy-dex': DummyDecentralizedExchange,
     'dummy-cex': DummyCentralizedExchange,
   };
 

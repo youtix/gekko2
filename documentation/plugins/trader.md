@@ -41,7 +41,7 @@ exchange:
 
 # Example: sandbox trading on an exchange-provided test environment
 # exchange:
-#   name: binance-sandbox
+#   name: binance
 #   sandbox: true # Enable sandbox/testnet mode so Gekko uses the exchange's paper environment.
 #   key: <your_sandbox_key>
 #   secret: <your_sandbox_secret>

@@ -10,17 +10,7 @@ import { config } from '@services/configuration/configuration';
 import { isNil } from 'lodash-es';
 import { INTERVAL_BETWEEN_CALLS_IN_MS } from './exchange.const';
 import { UndefinedLimitsError } from './exchange.error';
-
-export interface MarketLimitRange {
-  min?: number;
-  max?: number;
-}
-
-export interface MarketLimits {
-  price?: MarketLimitRange;
-  amount?: MarketLimitRange;
-  cost?: MarketLimitRange;
-}
+import { MarketLimits } from './exchange.types';
 
 export abstract class Exchange {
   protected readonly exchangeName: string;
