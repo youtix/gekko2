@@ -5,6 +5,18 @@ import { info } from '@services/logger';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginsStream } from './plugins.stream';
 
+const { injectMock } = vi.hoisted(() => ({
+  injectMock: {
+    exchange: vi.fn(() => ({
+      getExchangeName: (): string => 'binance',
+    })),
+  },
+}));
+
+vi.mock('@services/injecter/injecter', () => ({
+  inject: injectMock,
+}));
+
 vi.mock('@services/logger', () => ({
   info: vi.fn(),
   debug: vi.fn(),
@@ -55,5 +67,33 @@ describe('PluginsStream', () => {
 
     expect(processCloseStream).toHaveBeenCalledTimes(1);
     expect(info).toHaveBeenCalledWith('stream', 'Gekko is closing the application !');
+  });
+
+  it('forwards candles to the dummy exchange before plugin processing', async () => {
+    const callOrder: string[] = [];
+    const dummyExchange = {
+      addCandle: vi.fn(() => {
+        callOrder.push('exchange');
+      }),
+      getExchangeName: () => 'dummy-cex',
+    };
+    injectMock.exchange.mockReturnValue(dummyExchange);
+
+    const plugin = createPluginStub({
+      processInputStream: vi.fn(async () => {
+        callOrder.push('plugin');
+      }),
+    });
+
+    const stream = new PluginsStream([plugin]);
+
+    await new Promise<void>((resolve, reject) => {
+      stream.write({} as Candle, error => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+
+    expect(callOrder).toEqual(['exchange', 'plugin']);
   });
 });
