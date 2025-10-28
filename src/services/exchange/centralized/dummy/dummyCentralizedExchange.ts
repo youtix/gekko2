@@ -3,12 +3,7 @@ import { Order } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
-import {
-  DUMMY_DEFAULT_BUFFER_SIZE,
-  DUMMY_DEFAULT_LIMITS,
-  DUMMY_DEFAULT_PORTFOLIO,
-  DUMMY_DEFAULT_TICKER,
-} from '@services/exchange/exchange.const';
+import { DUMMY_DEFAULT_BUFFER_SIZE } from '@services/exchange/exchange.const';
 import { MarketLimits } from '@services/exchange/exchange.types';
 import { RingBuffer } from '@utils/array/ringBuffer';
 import { isNil } from 'lodash-es';
@@ -30,9 +25,9 @@ export class DummyCentralizedExchange extends CentralizedExchange {
   constructor(config: DummyCentralizedExchangeConfig) {
     super(config);
     this.makerFee = config.feeMaker ?? 0;
-    this.marketLimits = { ...(config.limits ?? DUMMY_DEFAULT_LIMITS) };
-    this.portfolio = { ...(config.simulationBalance ?? DUMMY_DEFAULT_PORTFOLIO) };
-    this.ticker = { ...(config.initialTicker ?? DUMMY_DEFAULT_TICKER) };
+    this.marketLimits = config.limits;
+    this.portfolio = { ...config.simulationBalance };
+    this.ticker = { ...config.initialTicker };
     this.candles = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
     this.trades = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
     this.orders = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
