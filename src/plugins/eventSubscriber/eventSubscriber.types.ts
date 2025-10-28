@@ -1,4 +1,4 @@
-import Yup from 'yup';
+import { z } from 'zod';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
 
 export const EVENT_NAMES = [
@@ -14,4 +14,4 @@ export const EVENT_NAMES = [
 
 export type Event = (typeof EVENT_NAMES)[number];
 
-export type EventSubscriberConfig = Yup.InferType<typeof eventSubscriberSchema>;
+export type EventSubscriberConfig = z.infer<typeof eventSubscriberSchema>;

@@ -17,7 +17,7 @@ class Configuration {
     const data = readFileSync(configFilePath, 'utf8');
     if (isJson) this.configuration = JSON5.parse(data);
     else if (isYaml) this.configuration = load(data) as ConfigurationModel;
-    this.configuration = configurationSchema.validateSync(this.configuration);
+    this.configuration = configurationSchema.parse(this.configuration);
   }
 
   public showLogo() {
@@ -39,10 +39,10 @@ class Configuration {
     if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
     const { daterange, scan, mode } = this.configuration.watch;
 
-    if (mode === 'importer' && !isDaterangeValid(daterange.start, daterange.end))
+    if (mode === 'importer' && daterange && !isDaterangeValid(daterange.start, daterange.end))
       throw new GekkoError('configuration', `Wrong date range: ${daterange.start} -> ${daterange.end}`);
 
-    if (mode === 'backtest' && !scan && !isDaterangeValid(daterange.start, daterange.end))
+    if (mode === 'backtest' && daterange && !scan && !isDaterangeValid(daterange.start, daterange.end))
       throw new GekkoError('configuration', `Wrong date range: ${daterange.start} -> ${daterange.end}`);
 
     return this.configuration.watch;

@@ -1,5 +1,4 @@
 import { GekkoError } from '@errors/gekko.error';
-import { ExchangeConfig } from '@models/configuration.types';
 import { config } from '@services/configuration/configuration';
 import { BinanceExchange } from '@services/exchange/centralized/binance/binance';
 import { DummyCentralizedExchange } from '@services/exchange/centralized/dummy/dummyCentralizedExchange';
@@ -10,11 +9,6 @@ import { Storage } from '@services/storage/storage';
 class Injecter {
   private storageInstance?: Storage;
   private exchangeInstance?: Exchange;
-
-  private readonly exchangeFactories: Record<string, new (config: ExchangeConfig) => Exchange> = {
-    binance: BinanceExchange,
-    'dummy-cex': DummyCentralizedExchange,
-  };
 
   public storage() {
     if (this.storageInstance) return this.storageInstance;
@@ -28,9 +22,16 @@ class Injecter {
     if (this.exchangeInstance) return this.exchangeInstance;
     const exchangeConfig = config.getExchange();
     if (!exchangeConfig?.name) throw new GekkoError('injecter', 'Missing or unknown exchange.');
-    const ExchangeFactory = this.exchangeFactories[exchangeConfig.name];
-    if (!ExchangeFactory) throw new GekkoError('injecter', 'Missing or unknown exchange.');
-    this.exchangeInstance = new ExchangeFactory(exchangeConfig);
+    switch (exchangeConfig.name) {
+      case 'binance':
+        this.exchangeInstance = new BinanceExchange(exchangeConfig);
+        break;
+      case 'dummy-cex':
+        this.exchangeInstance = new DummyCentralizedExchange(exchangeConfig);
+        break;
+      default:
+        throw new GekkoError('injecter', 'Missing or unknown exchange.');
+    }
     return this.exchangeInstance;
   }
 }

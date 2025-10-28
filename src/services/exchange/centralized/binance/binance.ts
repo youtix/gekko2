@@ -1,7 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
-import { ExchangeConfig } from '@models/configuration.types';
 import { MarketLimits } from '@services/exchange/exchange.types';
 import { debug, error, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
@@ -21,7 +20,7 @@ import { first, isNil, last } from 'lodash-es';
 import { LIMITS } from '../../exchange.const';
 import { InvalidOrder, OrderNotFound } from '../../exchange.error';
 import { CentralizedExchange } from '../cex';
-import { BinanceSpotOrder } from './binance.types';
+import { BinanceExchangeConfig, BinanceSpotOrder } from './binance.types';
 import {
   mapAccountTradeToTrade,
   mapKlinesToCandles,
@@ -34,7 +33,7 @@ export class BinanceExchange extends CentralizedExchange {
   private client: MainClient;
   private marketLimits?: MarketLimits;
 
-  constructor(exchangeConfig: ExchangeConfig) {
+  constructor(exchangeConfig: BinanceExchangeConfig) {
     super(exchangeConfig);
     this.client = new MainClient({
       api_key: this.apiKey,
