@@ -1,6 +1,5 @@
 import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
-import { ExchangeConfig } from '@models/configuration.types';
 import { Order } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
@@ -9,6 +8,7 @@ import { error, warning } from '@services/logger';
 import { getRetryDelay } from '@utils/fetch/fetch.utils';
 import { Exchange } from '../exchange';
 import { BROKER_MAX_RETRIES_ON_FAILURE } from '../exchange.const';
+import { CentralizedExchangeConfig } from './cex.types';
 
 export abstract class CentralizedExchange extends Exchange {
   protected readonly sandbox: boolean;
@@ -16,7 +16,7 @@ export abstract class CentralizedExchange extends Exchange {
   protected readonly apiSecret?: string;
   protected readonly verbose: boolean;
 
-  constructor(config: ExchangeConfig) {
+  constructor(config: CentralizedExchangeConfig) {
     const { key, secret, sandbox, verbose } = config;
     super({ name: config.name, interval: config.interval });
     this.sandbox = sandbox ?? false;

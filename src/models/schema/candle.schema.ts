@@ -1,16 +1,16 @@
-import { array, number, object } from 'yup';
+import { z } from 'zod';
 
-export const candleSchema = object({
-  id: number().notRequired(),
-  start: number().positive().required(),
-  open: number().min(0).required(),
-  high: number().min(0).required(),
-  low: number().min(0).required(),
-  close: number().min(0).required(),
-  volume: number().min(0).required(),
-  volumeActive: number().min(0).optional(),
-  quoteVolume: number().min(0).optional(),
-  quoteVolumeActive: number().min(0).optional(),
+export const candleSchema = z.object({
+  id: z.number().optional(),
+  start: z.number().positive(),
+  open: z.number().min(0),
+  high: z.number().min(0),
+  low: z.number().min(0),
+  close: z.number().min(0),
+  volume: z.number().min(0),
+  volumeActive: z.number().min(0).optional(),
+  quoteVolume: z.number().min(0).optional(),
+  quoteVolumeActive: z.number().min(0).optional(),
 });
 
-export const candlesSchema = array().of(candleSchema);
+export const candlesSchema = z.array(candleSchema);

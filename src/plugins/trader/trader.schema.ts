@@ -1,5 +1,5 @@
-import { object, string } from 'yup';
+import { z } from 'zod';
 
-export const traderSchema = object({
-  name: string().notRequired(),
+export const traderSchema = z.object({
+  name: z.string().optional(),
 });

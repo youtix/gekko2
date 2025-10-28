@@ -1,7 +1,7 @@
-import { object, string } from 'yup';
+import { z } from 'zod';
 
-export const eventSubscriberSchema = object({
-  name: string().required(),
-  token: string().required(),
-  botUsername: string().required(),
+export const eventSubscriberSchema = z.object({
+  name: z.string(),
+  token: z.string(),
+  botUsername: z.string(),
 });

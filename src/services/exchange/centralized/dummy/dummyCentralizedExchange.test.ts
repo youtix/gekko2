@@ -15,6 +15,8 @@ const baseConfig: DummyCentralizedExchangeConfig = {
   interval: 200,
   sandbox: false,
   verbose: false,
+  feeMaker: 0.15,
+  feeTaker: 0.25,
   limits: {
     price: { min: 1, max: 10_000 },
     amount: { min: 0.1, max: 100 },

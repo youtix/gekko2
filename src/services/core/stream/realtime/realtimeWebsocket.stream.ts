@@ -29,7 +29,7 @@ export class RealtimeWebsocketStream extends Readable {
       ].join(' '),
     );
 
-    candleSchema.validate(candle);
+    candleSchema.parse(candle);
     this.push(candle);
   }
 

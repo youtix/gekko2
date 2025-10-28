@@ -1,14 +1,15 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
-import { ExchangeConfig } from '@models/configuration.types';
 import { Order } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
 import { describe, expect, it, vi } from 'vitest';
 import { MarketLimits } from '../exchange.types';
+import { BinanceExchangeConfig } from './binance/binance.types';
 import { CentralizedExchange } from './cex';
+import { CentralizedExchangeConfig } from './cex.types';
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
@@ -25,7 +26,7 @@ class TestCentralizedExchange extends CentralizedExchange {
   public fetchTickerImplCalls = 0;
   public createLimitOrderImplCalls = 0;
 
-  constructor(config: ExchangeConfig, limits?: MarketLimits) {
+  constructor(config: CentralizedExchangeConfig, limits?: MarketLimits) {
     super(config);
     this.limits = limits;
   }
@@ -122,7 +123,7 @@ class TestCentralizedExchange extends CentralizedExchange {
 }
 
 describe('CentralizedExchange', () => {
-  const config = { name: 'binance', sandbox: false, verbose: false } as ExchangeConfig;
+  const config = { name: 'binance', sandbox: false, verbose: false } as BinanceExchangeConfig;
   const baseLimits: MarketLimits = {
     price: { min: 1, max: 1000 },
     amount: { min: 0.1, max: 5 },

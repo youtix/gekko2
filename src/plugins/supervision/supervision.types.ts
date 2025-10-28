@@ -1,4 +1,4 @@
-import Yup from 'yup';
+import { z } from 'zod';
 import { supervisionSchema } from './supervision.schema';
 
-export type SupervisionConfig = Yup.InferType<typeof supervisionSchema>;
+export type SupervisionConfig = z.infer<typeof supervisionSchema>;

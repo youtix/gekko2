@@ -1,7 +1,6 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
-import { ExchangeConfig } from '@models/configuration.types';
 import { Order } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
@@ -10,7 +9,7 @@ import { config } from '@services/configuration/configuration';
 import { isNil } from 'lodash-es';
 import { INTERVAL_BETWEEN_CALLS_IN_MS } from './exchange.const';
 import { UndefinedLimitsError } from './exchange.error';
-import { MarketLimits } from './exchange.types';
+import { ExchangeConfig, MarketLimits } from './exchange.types';
 
 export abstract class Exchange {
   protected readonly exchangeName: string;
@@ -19,7 +18,7 @@ export abstract class Exchange {
   protected readonly symbol: string;
   protected readonly interval: number;
 
-  constructor({ name, interval }: Pick<ExchangeConfig, 'name' | 'interval'>) {
+  constructor({ name, interval }: ExchangeConfig) {
     const { asset, currency } = config.getWatch();
     this.exchangeName = name;
     this.asset = asset;

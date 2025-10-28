@@ -103,7 +103,7 @@ export const validatePluginsSchema = async (context: PipelineContext) => {
   const parameters = config.getPlugins();
   return map(context, (plugin, i) => ({
     ...plugin,
-    parameters: plugin.schema?.validateSync(parameters[i]),
+    parameters: plugin.schema?.parse(parameters[i]),
   }));
 };
 

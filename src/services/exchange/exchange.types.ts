@@ -1,15 +1,17 @@
 import { Candle } from '@models/candle.types';
-import { ExchangeConfig } from '@models/configuration.types';
+import z from 'zod';
 import { Exchange } from './exchange';
+import { exchangeSchema } from './exchange.schema';
 
-export type ExchangeNames = ExchangeConfig['name'];
+export type ExchangeConfig = z.infer<typeof exchangeSchema>;
 
 export interface ExchangeDataLimits {
   candles: number;
   trades: number;
   orders: number;
 }
-export interface MarketLimitRange {
+
+interface MarketLimitRange {
   min?: number;
   max?: number;
 }
