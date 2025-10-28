@@ -28,8 +28,8 @@ const initialTickerSchema = z.object({
 
 export const dummyExchangeSchema = centralizedExchangeSchema.extend({
   name: z.literal('dummy-cex'),
-  feeMaker: z.number().positive().default(0.15),
-  feeTaker: z.number().positive().default(0.25),
+  feeMaker: z.number().positive().default(0.15), // in %
+  feeTaker: z.number().positive().default(0.25), // in %
   simulationBalance: simulationBalanceSchema,
   limits: limitsSchema,
   initialTicker: initialTickerSchema,
