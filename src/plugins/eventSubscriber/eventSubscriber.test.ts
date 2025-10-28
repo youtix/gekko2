@@ -59,7 +59,7 @@ describe('EventSubscriber', () => {
       p.onStrategyAdvice({ recommendation: 'long', date: toTimestamp('2022-01-01T00:00:00Z') } as Advice);
     const onTradeInitiated = (p: EventSubscriber) =>
       p.onTradeInitiated({
-        action: 'buy',
+        action: 'BUY',
         balance: 1,
         date: toTimestamp('2022-01-01T00:00:00Z'),
         id: '1',
@@ -71,7 +71,7 @@ describe('EventSubscriber', () => {
     const onTradeAborted = (p: EventSubscriber) =>
       p.onTradeAborted({
         id: '1',
-        action: 'buy',
+        action: 'BUY',
         adviceId: 'a1',
         balance: 0,
         date: toTimestamp('2022-01-01T00:00:00Z'),
@@ -87,7 +87,7 @@ describe('EventSubscriber', () => {
       } as TradeErrored);
     const onTradeCompleted = (p: EventSubscriber) =>
       p.onTradeCompleted({
-        action: 'buy',
+        action: 'BUY',
         adviceId: 'a1',
         amount: 1,
         balance: 1,

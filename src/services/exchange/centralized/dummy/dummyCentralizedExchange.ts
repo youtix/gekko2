@@ -1,5 +1,5 @@
 import { Candle } from '@models/candle.types';
-import { Order } from '@models/order.types';
+import { OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
@@ -77,10 +77,10 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return { ...this.portfolio };
   }
 
-  protected async createLimitOrderImpl(side: DummyOrderSide, amount: number): Promise<Order> {
-    const price = await this.calculatePrice(side);
-    const normalizedAmount = this.calculateAmount(amount);
-    this.checkCost(normalizedAmount, price);
+  protected async createLimitOrderImpl(side: DummyOrderSide, amount: number): Promise<OrderState> {
+    const price = await this.checkOrderPrice(side);
+    const normalizedAmount = this.checkOrderAmount(amount);
+    this.checkOrderCost(normalizedAmount, price);
 
     this.reserveBalance(side, normalizedAmount, price);
 
@@ -100,7 +100,51 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return this.cloneOrder(order);
   }
 
-  protected async cancelLimitOrderImpl(id: string): Promise<Order> {
+  protected async createMarketOrderImpl(side: DummyOrderSide, amount: number): Promise<OrderState> {
+    const normalizedAmount = this.checkOrderAmount(amount);
+    const price = side === 'BUY' ? this.ticker.ask : this.ticker.bid;
+    this.checkOrderCost(normalizedAmount, price);
+
+    const id = `order-${++this.orderSequence}`;
+    const timestamp = Date.now();
+
+    if (side === 'BUY') {
+      const cost = normalizedAmount * price;
+      if (this.portfolio.currency < cost) throw new Error('Insufficient currency balance');
+      this.portfolio.currency -= cost;
+      this.portfolio.asset += normalizedAmount;
+    } else {
+      if (this.portfolio.asset < normalizedAmount) throw new Error('Insufficient asset balance');
+      this.portfolio.asset -= normalizedAmount;
+      this.portfolio.currency += normalizedAmount * price;
+    }
+
+    const order: DummyInternalOrder = {
+      id,
+      status: 'closed',
+      price,
+      filled: normalizedAmount,
+      remaining: 0,
+      amount: normalizedAmount,
+      timestamp,
+      side,
+    };
+
+    this.orders.push(order);
+
+    const trade: Trade = {
+      id: `trade-${++this.tradeSequence}`,
+      amount: normalizedAmount,
+      timestamp,
+      price,
+      fee: { rate: this.makerFee },
+    };
+    this.trades.push(trade);
+
+    return this.cloneOrder(order);
+  }
+
+  protected async cancelOrderImpl(id: string): Promise<OrderState> {
     const order = this.orders.find(c => c.id === id);
     if (!order) throw new Error(`Unknown order: ${id}`);
 
@@ -114,7 +158,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return this.cloneOrder(order);
   }
 
-  protected async fetchOrderImpl(id: string): Promise<Order> {
+  protected async fetchOrderImpl(id: string): Promise<OrderState> {
     const order = this.orders.find(c => c.id === id);
     if (!order) throw new Error(`Unknown order: ${id}`);
     return this.cloneOrder(order);
@@ -128,13 +172,13 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return false;
   }
 
-  private cloneOrder(order: DummyInternalOrder): Order {
+  private cloneOrder(order: DummyInternalOrder): OrderState {
     const { id, status, filled, remaining, price, timestamp } = order;
     return { id, status, filled, remaining, price, timestamp };
   }
 
   private reserveBalance(side: DummyOrderSide, amount: number, price: number) {
-    if (side === 'buy') {
+    if (side === 'BUY') {
       const cost = amount * price;
       if (this.portfolio.currency < cost) throw new Error('Insufficient currency balance');
       this.portfolio.currency -= cost;
@@ -149,7 +193,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     const remaining = order.amount - filled;
     if (remaining <= 0) return;
 
-    if (order.side === 'buy') {
+    if (order.side === 'BUY') {
       this.portfolio.currency += remaining * (order.price ?? 0);
     } else {
       this.portfolio.asset += remaining;
@@ -160,7 +204,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     this.orders.forEach(order => {
       if (order.status !== 'open') return;
       const price = order.price ?? 0;
-      const shouldFill = order.side === 'buy' ? candle.low <= price : candle.high >= price;
+      const shouldFill = order.side === 'BUY' ? candle.low <= price : candle.high >= price;
       if (!shouldFill) return;
 
       order.status = 'closed';
@@ -168,7 +212,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       order.remaining = 0;
       order.timestamp = candle.start;
 
-      if (order.side === 'buy') {
+      if (order.side === 'BUY') {
         this.portfolio.asset += order.amount;
       } else {
         this.portfolio.currency += order.amount * price;

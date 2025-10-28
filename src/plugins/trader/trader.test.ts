@@ -9,12 +9,12 @@ import {
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { StopGekkoError } from '@errors/stopGekko.error';
+import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '@services/core/order/order.const';
 import { Exchange } from '@services/exchange/exchange';
 import { bindAll } from 'lodash-es';
 import EventEmitter from 'node:events';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { config } from '../../services/configuration/configuration';
-import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '../../services/core/order/base/baseOrder.const';
 import { StickyOrder } from '../../services/core/order/sticky/stickyOrder';
 import { error, warning } from '../../services/logger';
 import { wait } from '../../utils/process/process.utils';
@@ -69,7 +69,7 @@ describe('Trader', () => {
     amount: 2,
     price: 100,
     feePercent: 1,
-    side: 'buy',
+    side: 'BUY',
     date: 1609459200000, // Jan 1, 2021 in ms.
   };
 
@@ -372,7 +372,7 @@ describe('Trader', () => {
     });
 
     it('should ignore long advice if order already exists with same side', () => {
-      trader['order'] = { getSide: () => 'buy' };
+      trader['order'] = { getSide: () => 'BUY' };
       trader['createOrder'] = vi.fn().mockImplementation(() => {});
       const advice = { recommendation: 'long', id: 'adv-long-same', date: Date.now() };
       trader.onStrategyAdvice(advice);
@@ -380,7 +380,7 @@ describe('Trader', () => {
     });
 
     it('should ignore short advice if order already exists with same side', () => {
-      trader['order'] = { getSide: () => 'sell' };
+      trader['order'] = { getSide: () => 'SELL' };
       trader['createOrder'] = vi.fn().mockImplementation(() => {});
       const advice = { recommendation: 'short', id: 'adv-short-same', date: Date.now() };
       trader.onStrategyAdvice(advice);
@@ -388,7 +388,7 @@ describe('Trader', () => {
     });
 
     it('should ignore advice if already cancelling a previous order', () => {
-      trader['order'] = { getSide: () => 'buy' };
+      trader['order'] = { getSide: () => 'BUY' };
       trader['cancellingOrder'] = true;
       trader['createOrder'] = vi.fn().mockImplementation(() => {});
       const advice = { recommendation: 'long', id: 'adv-cancelling', date: Date.now() };
@@ -397,7 +397,7 @@ describe('Trader', () => {
     });
 
     it('should cancel existing order if advice direction differs from current order', () => {
-      trader['order'] = { getSide: () => 'sell' };
+      trader['order'] = { getSide: () => 'SELL' };
       trader['cancellingOrder'] = false;
       trader['cancelOrder'] = vi.fn();
       const advice = { recommendation: 'long', id: 'adv-diff-side', date: Date.now() };
@@ -405,7 +405,7 @@ describe('Trader', () => {
       expect(trader['cancelOrder']).toHaveBeenCalled();
     });
 
-    it('should abort buy trade if already exposed', () => {
+    it('should abort BUY trade if already exposed', () => {
       trader['order'] = undefined;
       trader['exposed'] = true;
       trader['portfolio'] = { asset: 0, currency: 100 };
@@ -415,7 +415,7 @@ describe('Trader', () => {
       expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_ABORTED_EVENT, {
         id: 'trade-1',
         adviceId: advice.id,
-        action: 'buy',
+        action: 'BUY',
         portfolio: trader['portfolio'],
         balance: trader['balance'],
         reason: 'Portfolio already in position.',
@@ -423,7 +423,7 @@ describe('Trader', () => {
       });
     });
 
-    it('should create buy order when not exposed', () => {
+    it('should create BUY order when not exposed', () => {
       trader['order'] = undefined;
       trader['exposed'] = false;
       trader['portfolio'] = { asset: 0, currency: 200 };
@@ -431,10 +431,10 @@ describe('Trader', () => {
       trader['createOrder'] = vi.fn().mockImplementation(() => {});
       const advice = { recommendation: 'long', id: 'adv-buy-create', date: Date.now() };
       trader.onStrategyAdvice(advice);
-      expect(trader['createOrder']).toHaveBeenCalledWith('buy', 1.9, advice, 'trade-1');
+      expect(trader['createOrder']).toHaveBeenCalledWith('BUY', 1.9, advice, 'trade-1');
     });
 
-    it('should abort sell trade if not exposed', () => {
+    it('should abort SELL trade if not exposed', () => {
       trader['order'] = undefined;
       trader['exposed'] = false;
       trader['portfolio'] = { asset: 5, currency: 50 };
@@ -444,7 +444,7 @@ describe('Trader', () => {
       expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_ABORTED_EVENT, {
         id: 'trade-1',
         adviceId: advice.id,
-        action: 'sell',
+        action: 'SELL',
         portfolio: trader['portfolio'],
         balance: trader['balance'],
         reason: 'Portfolio already in position.',
@@ -452,14 +452,14 @@ describe('Trader', () => {
       });
     });
 
-    it('should create sell order when exposed', () => {
+    it('should create SELL order when exposed', () => {
       trader['order'] = undefined;
       trader['exposed'] = true;
       trader['portfolio'] = { asset: 3, currency: 50 };
       trader['createOrder'] = vi.fn();
       const advice = { recommendation: 'short', id: 'adv-sell-create', date: Date.now() };
       trader.onStrategyAdvice(advice);
-      expect(trader['createOrder']).toHaveBeenCalledWith('sell', 3, advice, 'trade-1');
+      expect(trader['createOrder']).toHaveBeenCalledWith('SELL', 3, advice, 'trade-1');
     });
   });
 
@@ -539,11 +539,11 @@ describe('Trader', () => {
   describe('createOrder', () => {
     const advice = { id: 'adv1', date: 1609459200000 };
     const orderId = 'trade-1';
-    const side = 'buy';
+    const side = 'BUY';
     const amount = 2;
 
     beforeEach(() => {
-      trader['order'] = new StickyOrder('buy', 0, fakeExchange as unknown as Exchange);
+      trader['order'] = new StickyOrder('BUY', 0, fakeExchange as unknown as Exchange);
     });
 
     it('should emit TRADE_INITIATED_EVENT with correct payload', async () => {
@@ -626,8 +626,8 @@ describe('Trader', () => {
   });
 
   describe('processCostAndPrice', () => {
-    it('should calculate cost and effectivePrice for buy with feePercent provided', () => {
-      const side = 'buy';
+    it('should calculate cost and effectivePrice for BUY order with feePercent provided', () => {
+      const side = 'BUY';
       const price = 100;
       const amount = 2;
       const feePercent = 1; // 1%
@@ -637,8 +637,8 @@ describe('Trader', () => {
       expect(result).toEqual({ effectivePrice: 101, cost: 2 });
     });
 
-    it('should calculate cost and effectivePrice for sell with feePercent provided', () => {
-      const side = 'sell';
+    it('should calculate cost and effectivePrice for SELL with feePercent provided', () => {
+      const side = 'SELL';
       const price = 100;
       const amount = 2;
       const feePercent = 1; // 1%
@@ -649,7 +649,7 @@ describe('Trader', () => {
     });
 
     it('should handle a feePercent of 0 correctly', () => {
-      const side = 'buy';
+      const side = 'BUY';
       const price = 100;
       const amount = 2;
       const feePercent = 0;
@@ -658,7 +658,7 @@ describe('Trader', () => {
     });
 
     it('should calculate cost and effectivePrice when feePercent is not provided', () => {
-      const side = 'buy'; // side doesn't matter in this branch
+      const side = 'BUY'; // side doesn't matter in this branch
       const price = 100;
       const amount = 2;
       // Expected effectivePrice = price = 100,
@@ -668,7 +668,7 @@ describe('Trader', () => {
     });
 
     it('should log warning when feePercent is not provided', () => {
-      const side = 'buy';
+      const side = 'BUY';
       const price = 100;
       const amount = 2;
       trader['processCostAndPrice'](side, price, amount);
