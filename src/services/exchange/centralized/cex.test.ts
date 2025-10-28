@@ -1,7 +1,7 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
-import { Order } from '@models/order.types';
+import { OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
@@ -25,6 +25,7 @@ class TestCentralizedExchange extends CentralizedExchange {
   private readonly createOrderBehaviors: Array<'error' | 'success'> = [];
   public fetchTickerImplCalls = 0;
   public createLimitOrderImplCalls = 0;
+  public createMarketOrderImplCalls = 0;
 
   constructor(config: CentralizedExchangeConfig, limits?: MarketLimits) {
     super(config);
@@ -69,13 +70,13 @@ class TestCentralizedExchange extends CentralizedExchange {
     return { asset: 0, currency: 0 };
   }
 
-  protected async createLimitOrderImpl(side: Action, amount: number): Promise<Order> {
+  protected async createLimitOrderImpl(side: Action, amount: number): Promise<OrderState> {
     this.createLimitOrderImplCalls += 1;
     const behavior = this.createOrderBehaviors.shift();
     if (behavior === 'error') throw new RetryableError('temporary failure');
-    const price = await this.calculatePrice(side);
-    const normalizedAmount = this.calculateAmount(amount);
-    this.checkCost(normalizedAmount, price);
+    const price = await this.checkOrderPrice(side);
+    const normalizedAmount = this.checkOrderAmount(amount);
+    this.checkOrderCost(normalizedAmount, price);
     return {
       id: `order-${this.createLimitOrderImplCalls}`,
       status: 'open',
@@ -85,11 +86,29 @@ class TestCentralizedExchange extends CentralizedExchange {
     };
   }
 
-  protected async cancelLimitOrderImpl(): Promise<Order> {
+  protected async createMarketOrderImpl(side: Action, amount: number): Promise<OrderState> {
+    this.createMarketOrderImplCalls += 1;
+    const behavior = this.createOrderBehaviors.shift();
+    if (behavior === 'error') throw new RetryableError('temporary failure');
+    const ticker = await this.fetchTicker();
+    const price = side === 'BUY' ? ticker.ask : ticker.bid;
+    const normalizedAmount = this.checkOrderAmount(amount);
+    this.checkOrderCost(normalizedAmount, price);
+    return {
+      id: `market-${this.createMarketOrderImplCalls}`,
+      status: 'closed',
+      price,
+      filled: normalizedAmount,
+      remaining: 0,
+      timestamp: 0,
+    };
+  }
+
+  protected async cancelOrderImpl(): Promise<OrderState> {
     return { id: 'cancel', status: 'canceled', timestamp: 0 };
   }
 
-  protected async fetchOrderImpl(): Promise<Order> {
+  protected async fetchOrderImpl(): Promise<OrderState> {
     return { id: '1', status: 'open', timestamp: 0 };
   }
 
@@ -106,15 +125,15 @@ class TestCentralizedExchange extends CentralizedExchange {
   }
 
   public calculatePricePublic(side: Action) {
-    return this.calculatePrice(side);
+    return this.checkOrderPrice(side);
   }
 
   public calculateAmountPublic(amount: number) {
-    return this.calculateAmount(amount);
+    return this.checkOrderAmount(amount);
   }
 
   public checkCostPublic(amount: number, price: number) {
-    return this.checkCost(amount, price);
+    return this.checkOrderCost(amount, price);
   }
 
   public onNewCandle(): () => void {
@@ -139,13 +158,13 @@ describe('CentralizedExchange', () => {
     expect(exchange.fetchTickerImplCalls).toBe(2);
   });
 
-  it('calculates buy and sell prices within configured limits', async () => {
+  it('calculates BUY and SELL prices within configured limits', async () => {
     const exchange = new TestCentralizedExchange(config, baseLimits);
     exchange.enqueueTicker({ bid: 100, ask: 110 });
-    await expect(exchange.calculatePricePublic('buy')).resolves.toBe(101);
+    await expect(exchange.calculatePricePublic('BUY')).resolves.toBe(101);
 
     exchange.enqueueTicker({ bid: 100, ask: 110 });
-    await expect(exchange.calculatePricePublic('sell')).resolves.toBe(109);
+    await expect(exchange.calculatePricePublic('SELL')).resolves.toBe(109);
   });
 
   it('enforces amount limits when calculating order quantity', () => {
@@ -166,7 +185,7 @@ describe('CentralizedExchange', () => {
     exchange.enqueueCreateOrderBehavior('success');
     exchange.enqueueTicker({ bid: 100, ask: 105 });
 
-    const order = await exchange.createLimitOrder('buy', 0.2);
+    const order = await exchange.createLimitOrder('BUY', 0.2);
 
     expect(exchange.createLimitOrderImplCalls).toBe(2);
     expect(order.price).toBe(101);
@@ -177,6 +196,6 @@ describe('CentralizedExchange', () => {
     const exchange = new TestCentralizedExchange(config, baseLimits);
     exchange.enqueueTicker({ bid: 10, ask: 12 });
 
-    await expect(exchange.createLimitOrder('buy', 0.2)).rejects.toThrow(OrderOutOfRangeError);
+    await expect(exchange.createLimitOrder('BUY', 0.2)).rejects.toThrow(OrderOutOfRangeError);
   });
 });

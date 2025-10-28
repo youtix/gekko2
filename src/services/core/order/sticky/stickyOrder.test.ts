@@ -1,10 +1,10 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
-import { Order } from '@models/order.types';
+import { OrderState } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
+import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { warning } from '@services/logger';
 import { toTimestamp } from '@utils/date/date.utils';
-import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StickyOrder } from './stickyOrder';
 
@@ -28,11 +28,17 @@ vi.useFakeTimers();
 
 describe('StickyOrder', () => {
   let stickyOrder: StickyOrder;
-  const defaultOrder: Order = { id: 'new-id', status: 'open', filled: 0, price: 100, timestamp: toTimestamp('2025') };
+  const defaultOrder: OrderState = {
+    id: 'new-id',
+    status: 'open',
+    filled: 0,
+    price: 100,
+    timestamp: toTimestamp('2025'),
+  };
 
   beforeEach(() => {
     fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
-    stickyOrder = new StickyOrder('buy', 10, fakeExchange as unknown as Exchange);
+    stickyOrder = new StickyOrder('BUY', 10, fakeExchange as unknown as Exchange);
   });
 
   afterAll(() => {
@@ -41,7 +47,7 @@ describe('StickyOrder', () => {
 
   describe('constructor', () => {
     it('should create an initial order', async () => {
-      expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('buy', 10);
+      expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BUY', 10);
     });
     it('should set an interval', async () => {
       expect(stickyOrder['interval']).toBeDefined();
@@ -133,7 +139,7 @@ describe('StickyOrder', () => {
 
     it('should call cancelOrder when id is defined', async () => {
       stickyOrder['cancelOrder'] = vi.fn();
-      stickyOrder['createOrder'] = vi.fn();
+      stickyOrder['createLimitOrder'] = vi.fn();
       stickyOrder['id'] = 'order-move-test';
       await stickyOrder['move']();
       expect(stickyOrder['cancelOrder']).toHaveBeenCalledWith('order-move-test');
@@ -148,22 +154,22 @@ describe('StickyOrder', () => {
       'should call createOrder with computed amount when filledAmount is $filledAmount (amount: $expectedAmount)',
       async ({ filledAmount, expectedAmount }) => {
         stickyOrder['cancelOrder'] = vi.fn();
-        stickyOrder['createOrder'] = vi.fn();
+        stickyOrder['createLimitOrder'] = vi.fn();
         stickyOrder['id'] = 'order-move-test';
         stickyOrder['amount'] = 10;
         stickyOrder['transactions'] = [{ id: 'tx1', filled: filledAmount, timestamp: 1710000000000 }];
         await stickyOrder['move']();
-        expect(stickyOrder['createOrder']).toHaveBeenCalledWith('buy', expectedAmount);
+        expect(stickyOrder['createLimitOrder']).toHaveBeenCalledWith('BUY', expectedAmount);
       },
     );
 
     it('should NOT call createOrder when status is error', async () => {
-      stickyOrder['createOrder'] = vi.fn();
+      stickyOrder['createLimitOrder'] = vi.fn();
       stickyOrder['cancelOrder'] = vi.fn();
       stickyOrder['id'] = 'order-move-test';
       stickyOrder['status'] = 'error';
       await stickyOrder['move']();
-      expect(stickyOrder['createOrder']).not.toHaveBeenCalled();
+      expect(stickyOrder['createLimitOrder']).not.toHaveBeenCalled();
     });
 
     it.each`
@@ -172,17 +178,17 @@ describe('StickyOrder', () => {
       ${'canceled'}
       ${'rejected'}
     `('should NOT call createOrder when status is $status', async ({ status }) => {
-      stickyOrder['createOrder'] = vi.fn();
+      stickyOrder['createLimitOrder'] = vi.fn();
       stickyOrder['cancelOrder'] = vi.fn();
       stickyOrder['id'] = 'order-move-test';
       stickyOrder['status'] = status;
       await stickyOrder['move']();
-      expect(stickyOrder['createOrder']).not.toHaveBeenCalled();
+      expect(stickyOrder['createLimitOrder']).not.toHaveBeenCalled();
     });
 
     it('should always set moving flag to false after execution', async () => {
       stickyOrder['cancelOrder'] = vi.fn();
-      stickyOrder['createOrder'] = vi.fn();
+      stickyOrder['createLimitOrder'] = vi.fn();
       stickyOrder['id'] = 'order-move-test';
       await stickyOrder['move']();
       expect(stickyOrder['moving']).toBe(false);
@@ -360,7 +366,7 @@ describe('StickyOrder', () => {
     });
 
     it('should log a warning when status is unknown', () => {
-      stickyOrder['handleCreateOrderSuccess']({ ...defaultOrder, status: 'unknown' } as unknown as Order);
+      stickyOrder['handleCreateOrderSuccess']({ ...defaultOrder, status: 'unknown' } as unknown as OrderState);
       expect(warning).toHaveBeenCalled();
     });
   });
@@ -600,7 +606,7 @@ describe('StickyOrder', () => {
       expect(summary.amount).toBe(5);
       expect(summary.price).toBe(103);
       expect(summary.feePercent).toBeCloseTo(0.013);
-      expect(summary.side).toBe('buy');
+      expect(summary.side).toBe('BUY');
       expect(summary.date).toBe(1710000100000);
     });
   });

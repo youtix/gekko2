@@ -70,7 +70,7 @@ export class PerformanceAnalyzer extends Plugin {
   }
 
   public onTradeCompleted(trade: TradeCompleted): void {
-    if (this.trades === 0 && trade.action === 'sell') return;
+    if (this.trades === 0 && trade.action === 'SELL') return;
 
     this.trades++;
     this.balance = trade.balance;
@@ -82,7 +82,7 @@ export class PerformanceAnalyzer extends Plugin {
   // --- BEGIN INTERNALS ---
 
   private registerRoundtripPart(trade: TradeCompleted): void {
-    if (trade.action === 'buy') {
+    if (trade.action === 'BUY') {
       if (this.roundTrip.exit) {
         this.roundTrip.id++;
         this.roundTrip.exit = null;
@@ -96,7 +96,7 @@ export class PerformanceAnalyzer extends Plugin {
       };
       this.maxAdverseExcursion = 0;
       this.openRoundTrip = true;
-    } else if (trade.action === 'sell') {
+    } else if (trade.action === 'SELL') {
       this.roundTrip.exit = {
         date: trade.date,
         price: trade.price,

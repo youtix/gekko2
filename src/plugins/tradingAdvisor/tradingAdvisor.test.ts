@@ -44,8 +44,8 @@ describe('TradingAdvisor', () => {
   const defaultAdvice: Advice = { id: 'advice-100', recommendation: 'short', date: toTimestamp('2020') };
   const defaultCandle: Candle = { close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
   const defaultBuyTradeEvent: TradeCompleted = {
-    action: 'buy',
-    id: 'buy',
+    action: 'BUY',
+    id: 'BUY',
     adviceId: 'buyAdvice',
     date: 0,
     portfolio: { asset: 100, currency: 200 },
