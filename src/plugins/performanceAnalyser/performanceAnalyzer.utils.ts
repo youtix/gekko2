@@ -55,13 +55,12 @@ export const logFinalize = (report: Report, currency: string, enableConsoleTable
 };
 
 export const logTrade = (trade: TradeCompleted, currency: string, asset: string) => {
-  if (trade.action !== 'sell' && trade.action !== 'buy') return;
   debug(
     'performance analyzer',
     [
-      `${trade.action === 'buy' ? 'Bought' : 'Sold'}`,
-      `${trade.action === 'buy' ? round(trade.portfolio.asset, ROUND) : round(trade.portfolio.currency, ROUND)}`,
-      `${trade.action === 'buy' ? asset : currency}`,
+      `${trade.action === 'BUY' ? 'Bought' : 'Sold'}`,
+      `${trade.action === 'BUY' ? round(trade.portfolio.asset, ROUND) : round(trade.portfolio.currency, ROUND)}`,
+      `${trade.action === 'BUY' ? asset : currency}`,
       `at ${toISOString(trade.date)}`,
     ].join(' '),
   );

@@ -21,7 +21,7 @@ import {
   ORDER_ERRORED_EVENT,
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
-} from '@services/core/order/base/baseOrder.const';
+} from '@services/core/order/order.const';
 import { StickyOrder } from '@services/core/order/sticky/stickyOrder';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
@@ -130,7 +130,7 @@ export class Trader extends Plugin {
       error('trader', 'Ignoring advice in unknown direction');
       return;
     }
-    const direction = advice.recommendation === 'long' ? 'buy' : 'sell';
+    const direction: Action = advice.recommendation === 'long' ? 'BUY' : 'SELL';
     const id = `trade-${++this.propogatedTrades}`;
 
     if (this.order) {
@@ -157,7 +157,7 @@ export class Trader extends Plugin {
       return;
     }
 
-    if (direction === 'buy') {
+    if (direction === 'BUY') {
       if (this.exposed) {
         info('trader', 'NOT buying, already exposed');
         return this.deferredEmit<TradeAborted>(TRADE_ABORTED_EVENT, {
@@ -174,7 +174,7 @@ export class Trader extends Plugin {
       info('trader', `Received advice to go long. Buying ${this.asset}`);
     }
 
-    if (direction === 'sell') {
+    if (direction === 'SELL') {
       if (!this.exposed) {
         info('trader', 'NOT selling, already no exposure');
         return this.deferredEmit<TradeAborted>(TRADE_ABORTED_EVENT, {
@@ -191,7 +191,7 @@ export class Trader extends Plugin {
       info('trader', `Received advice to go short. Selling ${this.asset}`);
     }
 
-    const amount = direction === 'buy' ? (this.portfolio.currency / this.price) * 0.95 : this.portfolio.asset;
+    const amount = direction === 'BUY' ? (this.portfolio.currency / this.price) * 0.95 : this.portfolio.asset;
 
     this.createOrder(direction, amount, advice, id);
   }
@@ -259,7 +259,7 @@ export class Trader extends Plugin {
   private processCostAndPrice(side: Action, price: number, amount: number, feePercent?: number) {
     if (!isNil(feePercent)) {
       const cost = (feePercent / 100) * amount * price;
-      if (side === 'buy') return { effectivePrice: price * (feePercent / 100 + 1), cost };
+      if (side === 'BUY') return { effectivePrice: price * (feePercent / 100 + 1), cost };
       else return { effectivePrice: price * (1 - feePercent / 100), cost };
     }
 

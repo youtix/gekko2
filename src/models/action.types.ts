@@ -1,1 +1,1 @@
-export type Action = 'sell' | 'buy';
+export type Action = 'SELL' | 'BUY';
