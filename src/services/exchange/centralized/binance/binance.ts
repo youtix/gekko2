@@ -190,9 +190,9 @@ export class BinanceExchange extends CentralizedExchange {
   }
 
   protected async createLimitOrderImpl(side: Action, amount: number) {
-    const orderPrice = await this.calculatePrice(side);
-    const orderAmount = this.calculateAmount(amount);
-    this.checkCost(orderAmount, orderPrice);
+    const orderPrice = await this.checkOrderPrice(side);
+    const orderAmount = this.checkOrderAmount(amount);
+    this.checkOrderCost(orderAmount, orderPrice);
 
     const symbol = this.getRestSymbol();
     try {
@@ -210,7 +210,22 @@ export class BinanceExchange extends CentralizedExchange {
     }
   }
 
-  protected async cancelLimitOrderImpl(id: string) {
+  protected async createMarketOrderImpl(side: Action, amount: number) {
+    const orderAmount = this.checkOrderAmount(amount);
+    const ticker = await this.fetchTicker();
+    const price = side === 'BUY' ? ticker.ask : ticker.bid;
+    this.checkOrderCost(orderAmount, price);
+
+    const symbol = this.getRestSymbol();
+    try {
+      const order = await this.client.submitNewOrder({ symbol, side, type: 'MARKET', quantity: orderAmount });
+      return mapSpotOrderToOrder(order as BinanceSpotOrder);
+    } catch (error) {
+      throw this.transformOrderError(error);
+    }
+  }
+
+  protected async cancelOrderImpl(id: string) {
     const symbol = this.getRestSymbol();
     try {
       const order = await this.client.cancelOrder({ symbol, ...this.buildOrderIdentifier(id) });

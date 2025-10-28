@@ -1,13 +1,10 @@
-const orderStatus = ['open', 'closed', 'canceled'] as const;
-
-export type Order = {
+export type OrderState = {
   id: string;
-  status: (typeof orderStatus)[number];
+  status: 'open' | 'closed' | 'canceled';
+  timestamp: EpochTimeStamp;
   filled?: number;
   remaining?: number;
   price?: number;
-  timestamp: EpochTimeStamp;
 };
 
-export const isOrderStatus = (status?: string): status is Order['status'] =>
-  orderStatus.includes(status as Order['status']);
+export type OrderType = 'MARKET' | 'STICKY';

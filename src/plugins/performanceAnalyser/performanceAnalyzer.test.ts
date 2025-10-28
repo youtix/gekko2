@@ -21,8 +21,8 @@ describe('PerformanceAnalyzer', () => {
   let analyzer: PerformanceAnalyzer;
   const defaultCandle: Candle = { close: 1, high: 2, low: 0, open: 1, start: toTimestamp('2025'), volume: 10 };
   const defaultBuyTradeEvent: TradeCompleted = {
-    action: 'buy',
-    id: 'buy',
+    action: 'BUY',
+    id: 'BUY',
     adviceId: 'buyAdvice',
     date: 0,
     portfolio: { asset: 100, currency: 200 },
@@ -34,8 +34,8 @@ describe('PerformanceAnalyzer', () => {
     feePercent: 0.33,
   };
   const defaultSellTradeEvent: TradeCompleted = {
-    action: 'sell',
-    id: 'sell',
+    action: 'SELL',
+    id: 'SELL',
     adviceId: 'sellAdvice',
     date: 0,
     portfolio: { asset: 101, currency: 199 },
@@ -127,7 +127,7 @@ describe('PerformanceAnalyzer', () => {
     });
   });
   describe('onTradeCompleted', () => {
-    it('should NOT process if the first trade is a sell', () => {
+    it('should NOT process if the first trade is a SELL', () => {
       analyzer['trades'] = 0;
       analyzer.onTradeCompleted(defaultSellTradeEvent);
       expect(analyzer['trades']).toBe(0);
@@ -187,7 +187,7 @@ describe('PerformanceAnalyzer', () => {
     });
   });
   describe('registerRoundtripPart', () => {
-    it('should register a buy trade as the entry of a new round trip', () => {
+    it('should register a BUY trade as the entry of a new round trip', () => {
       analyzer['registerRoundtripPart'](defaultBuyTradeEvent);
       expect(analyzer['roundTrip'].entry).toStrictEqual({
         date: defaultBuyTradeEvent.date,
@@ -212,7 +212,7 @@ describe('PerformanceAnalyzer', () => {
       analyzer['registerRoundtripPart'](defaultBuyTradeEvent);
       expect(analyzer['roundTrip'].exit).toBeNull();
     });
-    it('should register a sell trade as the exit of an open round trip', () => {
+    it('should register a SELL trade as the exit of an open round trip', () => {
       analyzer['registerRoundtripPart'](defaultBuyTradeEvent);
       analyzer['registerRoundtripPart'](defaultSellTradeEvent);
 

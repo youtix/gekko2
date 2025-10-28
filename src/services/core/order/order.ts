@@ -1,5 +1,5 @@
 import { Action } from '@models/action.types';
-import { Order } from '@models/order.types';
+import { OrderState, OrderType } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { debug, error, info } from '@services/logger';
 import EventEmitter from 'node:events';
@@ -9,22 +9,24 @@ import {
   ORDER_INVALID_EVENT,
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
-} from './baseOrder.const';
-import { OrderStatus, Transaction } from './baseOrder.types';
+} from './order.const';
+import { OrderStatus, Transaction } from './order.types';
 
-export abstract class BaseOrder extends EventEmitter {
+export abstract class Order extends EventEmitter {
   private status: OrderStatus;
   protected exchange: Exchange;
   protected transactions: Transaction[];
+  protected readonly label: OrderType;
 
-  constructor(exchange: Exchange) {
+  constructor(exchange: Exchange, label: OrderType) {
     super();
     this.exchange = exchange;
     this.status = 'initializing';
     this.transactions = [];
+    this.label = label;
   }
 
-  protected async createOrder(action: Action, amount: number) {
+  protected async createLimitOrder(action: Action, amount: number) {
     try {
       debug('core', `Creating ${action} limit order with amount: ${amount}`);
       const order = await this.exchange.createLimitOrder(action, amount);
@@ -34,10 +36,20 @@ export abstract class BaseOrder extends EventEmitter {
     }
   }
 
+  protected async createMarketOrder(action: Action, amount: number) {
+    try {
+      debug('core', `Creating ${action} market order with amount: ${amount}`);
+      const order = await this.exchange.createMarketOrder(action, amount);
+      await this.handleCreateOrderSuccess(order);
+    } catch (error) {
+      await this.handleCreateOrderError(error);
+    }
+  }
+
   protected async cancelOrder(id: string) {
     try {
-      debug('core', `Canceling order with ID: ${id}`);
-      const order = await this.exchange.cancelLimitOrder(id);
+      debug('core', `Canceling ${this.label} order with ID: ${id}`);
+      const order = await this.exchange.cancelOrder(id);
       await this.handleCancelOrderSuccess(order);
     } catch (error) {
       await this.handleCancelOrderError(error);
@@ -46,7 +58,7 @@ export abstract class BaseOrder extends EventEmitter {
 
   protected async fetchOrder(id: string) {
     try {
-      debug('core', `Fetching order with ID: ${id}`);
+      debug('core', `Fetching ${this.label} order with ID: ${id}`);
       const order = await this.exchange.fetchOrder(id);
       await this.handleFetchOrderSuccess(order);
     } catch (error) {
@@ -61,8 +73,8 @@ export abstract class BaseOrder extends EventEmitter {
   protected setStatus(status: OrderStatus, reason?: string) {
     this.status = status;
     this.emit(ORDER_STATUS_CHANGED_EVENT, this.status);
-    if (reason) error('core', `Sticky order ${status}: ${reason}`);
-    else info('core', `Sticky order ${status}`);
+    if (reason) error('core', `${this.label} order ${status}: ${reason}`);
+    else info('core', `${this.label} order ${status}`);
   }
 
   protected orderCanceled(partiallyFilled = false) {
@@ -91,10 +103,10 @@ export abstract class BaseOrder extends EventEmitter {
     this.emit(ORDER_ERRORED_EVENT, error.message);
   }
 
-  protected abstract handleCancelOrderSuccess(order: Order): void;
+  protected abstract handleCancelOrderSuccess(order: OrderState): void;
   protected abstract handleCancelOrderError(error: unknown): void;
-  protected abstract handleCreateOrderSuccess(order: Order): void;
+  protected abstract handleCreateOrderSuccess(order: OrderState): void;
   protected abstract handleCreateOrderError(error: unknown): void;
-  protected abstract handleFetchOrderSuccess(order: Order): void;
+  protected abstract handleFetchOrderSuccess(order: OrderState): void;
   protected abstract handleFetchOrderError(error: unknown): void;
 }

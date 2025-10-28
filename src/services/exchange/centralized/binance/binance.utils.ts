@@ -1,5 +1,5 @@
 import { Candle } from '@models/candle.types';
-import { Order } from '@models/order.types';
+import { OrderState } from '@models/order.types';
 import { Trade } from '@models/trade.types';
 import { Kline, RawAccountTrade, RawTrade } from 'binance';
 import { BinanceSpotOrder } from './binance.types';
@@ -10,7 +10,7 @@ const parseNumber = (value?: string | number) => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-const mapOrderStatus = (status?: string): Order['status'] => {
+const mapOrderStatus = (status?: string): OrderState['status'] => {
   switch (status) {
     case 'FILLED':
       return 'closed';
@@ -47,7 +47,7 @@ export const mapAccountTradeToTrade = (trade: RawAccountTrade): Trade => {
   };
 };
 
-export const mapSpotOrderToOrder = (data: BinanceSpotOrder): Order => {
+export const mapSpotOrderToOrder = (data: BinanceSpotOrder): OrderState => {
   const filled = parseNumber(data.executedQty) ?? 0;
   const original = parseNumber(data.origQty) ?? filled;
   const cumulativeQuote = parseNumber(data.cummulativeQuoteQty);

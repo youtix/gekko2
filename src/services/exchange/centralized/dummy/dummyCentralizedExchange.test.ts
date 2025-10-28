@@ -71,7 +71,7 @@ describe('DummyCentralizedExchange', () => {
     const exchange = createExchange({ simulationBalance: { asset: 2, currency: 1_000 } });
     await exchange.loadMarkets();
 
-    const buyOrder = await exchange.createLimitOrder('buy', 1);
+    const buyOrder = await exchange.createLimitOrder('BUY', 1);
     const reservedPortfolio = await exchange.fetchPortfolio();
     expect(reservedPortfolio.currency).toBeCloseTo(1_000 - (buyOrder.price ?? 0));
     expect(reservedPortfolio.asset).toBe(2);
@@ -91,11 +91,11 @@ describe('DummyCentralizedExchange', () => {
     const portfolioAfterFill = await exchange.fetchPortfolio();
     expect(portfolioAfterFill.asset).toBeCloseTo(3);
 
-    const sellOrder = await exchange.createLimitOrder('sell', 1);
+    const sellOrder = await exchange.createLimitOrder('SELL', 1);
     const reservedAfterSell = await exchange.fetchPortfolio();
     expect(reservedAfterSell.asset).toBeCloseTo(2);
 
-    const canceled = await exchange.cancelLimitOrder(sellOrder.id);
+    const canceled = await exchange.cancelOrder(sellOrder.id);
     expect(canceled.status).toBe('canceled');
 
     const restoredPortfolio = await exchange.fetchPortfolio();
@@ -106,7 +106,7 @@ describe('DummyCentralizedExchange', () => {
     const exchange = createExchange({ limits: baseConfig.limits });
     await exchange.loadMarkets();
 
-    await expect(exchange.createLimitOrder('buy', 0.01)).rejects.toBeInstanceOf(OrderOutOfRangeError);
+    await expect(exchange.createLimitOrder('BUY', 0.01)).rejects.toBeInstanceOf(OrderOutOfRangeError);
 
     const tickerSpy = vi.spyOn(exchange as unknown as { fetchTickerImpl: () => Promise<never> }, 'fetchTickerImpl');
     tickerSpy.mockImplementation(async () => {
@@ -122,7 +122,7 @@ describe('DummyCentralizedExchange', () => {
     const exchange = createExchange();
     await exchange.loadMarkets();
 
-    const order = await exchange.createLimitOrder('buy', 0.5);
+    const order = await exchange.createLimitOrder('BUY', 0.5);
     const candle = sampleCandle(Date.now(), {
       low: order.price ?? 0,
       high: order.price ?? 0,
