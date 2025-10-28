@@ -14,7 +14,10 @@ export class DummyCentralizedExchange extends CentralizedExchange {
   private readonly orders: RingBuffer<DummyInternalOrder>;
   private readonly trades: RingBuffer<Trade>;
   private readonly candles: RingBuffer<Candle>;
+  /** Maker fee in % */
   private readonly makerFee: number;
+  /** Taker fee in % */
+  private readonly takerFee: number;
   private readonly marketLimits: MarketLimits;
   private portfolio: Portfolio;
   private ticker: Ticker;
@@ -25,6 +28,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
   constructor(config: DummyCentralizedExchangeConfig) {
     super(config);
     this.makerFee = config.feeMaker ?? 0;
+    this.takerFee = config.feeTaker ?? 0;
     this.marketLimits = config.limits;
     this.portfolio = { ...config.simulationBalance };
     this.ticker = { ...config.initialTicker };
@@ -107,16 +111,16 @@ export class DummyCentralizedExchange extends CentralizedExchange {
 
     const id = `order-${++this.orderSequence}`;
     const timestamp = Date.now();
+    const cost = normalizedAmount * price;
 
     if (side === 'BUY') {
-      const cost = normalizedAmount * price;
       if (this.portfolio.currency < cost) throw new Error('Insufficient currency balance');
-      this.portfolio.currency -= cost;
+      this.portfolio.currency -= cost * (1 + this.takerFee);
       this.portfolio.asset += normalizedAmount;
     } else {
       if (this.portfolio.asset < normalizedAmount) throw new Error('Insufficient asset balance');
       this.portfolio.asset -= normalizedAmount;
-      this.portfolio.currency += normalizedAmount * price;
+      this.portfolio.currency += cost * (1 - this.takerFee);
     }
 
     const order: DummyInternalOrder = {
@@ -137,7 +141,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       amount: normalizedAmount,
       timestamp,
       price,
-      fee: { rate: this.makerFee },
+      fee: { rate: this.takerFee },
     };
     this.trades.push(trade);
 

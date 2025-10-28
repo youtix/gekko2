@@ -198,4 +198,25 @@ describe('CentralizedExchange', () => {
 
     await expect(exchange.createLimitOrder('BUY', 0.2)).rejects.toThrow(OrderOutOfRangeError);
   });
+
+  it('retries market order creation and returns executed order details', async () => {
+    const exchange = new TestCentralizedExchange(config, baseLimits);
+    exchange.enqueueCreateOrderBehavior('error');
+    exchange.enqueueCreateOrderBehavior('success');
+    exchange.enqueueTicker({ bid: 100, ask: 105 });
+
+    const order = await exchange.createMarketOrder('SELL', 0.5);
+
+    expect(exchange.createMarketOrderImplCalls).toBe(2);
+    expect(order.status).toBe('closed');
+    expect(order.price).toBe(100);
+    expect(order.filled).toBe(0.5);
+  });
+
+  it('rejects market orders that violate cost limits', async () => {
+    const exchange = new TestCentralizedExchange(config, baseLimits);
+    exchange.enqueueTicker({ bid: 10, ask: 12 });
+
+    await expect(exchange.createMarketOrder('BUY', 0.2)).rejects.toThrow(OrderOutOfRangeError);
+  });
 });
