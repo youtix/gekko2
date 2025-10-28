@@ -1,90 +1,75 @@
+import { binanceExchangeSchema } from '@services/exchange/centralized/binance/binance.schema';
+import { dummyExchangeSchema } from '@services/exchange/centralized/dummy/dummyCentralizedExchange.schema';
 import { some } from 'lodash-es';
-import { array, boolean, number, object, string } from 'yup';
+import { z } from 'zod';
 import { TIMEFRAMES } from './configuration.const';
 
-const daterangeSchema = object({
-  start: string().datetime().required(),
-  end: string().datetime().required(),
-}).when(['mode', 'scan'], {
-  is: (mode: string, scan: boolean) => mode === 'importer' || (mode === 'backtest' && !scan),
-  then: schema => schema.required(),
-  otherwise: schema => schema.default(null).notRequired(),
+const disclaimerField = 'I understand that Gekko only automates MY OWN trading strategies' as const;
+
+const daterangeSchema = z.object({
+  start: z.iso.datetime(),
+  end: z.iso.datetime(),
 });
 
-const warmupSchema = object({
-  tickrate: number().default(1000),
-  candleCount: number().default(0),
+const warmupSchema = z.object({
+  tickrate: z.number().default(1000),
+  candleCount: z.number().default(0),
 });
 
-const simulationBalanceSchema = object({
-  asset: number().min(0).default(0),
-  currency: number().min(0).default(1000),
+export const watchSchema = z
+  .object({
+    currency: z.string(),
+    asset: z.string(),
+    tickrate: z.number().default(1000),
+    mode: z.enum(['realtime', 'backtest', 'importer']),
+    timeframe: z.enum(TIMEFRAMES).default('1m'),
+    fillGaps: z.enum(['no', 'empty']).default('empty'),
+    warmup: warmupSchema,
+    daterange: z.union([daterangeSchema, z.null()]).default(null),
+    scan: z.boolean().optional(),
+    batchSize: z.number().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const requiresDaterange = data.mode === 'importer' || (data.mode === 'backtest' && !data.scan);
+    if (requiresDaterange && data.daterange === null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['daterange'],
+        message: 'daterange is required for importer mode or backtest without scan',
+      });
+    }
+  });
+
+export const storageSchema = z.object({
+  type: z.literal('sqlite'),
+  database: z.string(),
+  insertThreshold: z.number().optional(),
 });
 
-export const watchSchema = object({
-  currency: string().required(),
-  asset: string().required(),
-  tickrate: number().default(1000),
-  mode: string().oneOf(['realtime', 'backtest', 'importer']).defined(),
-  timeframe: string().oneOf(TIMEFRAMES).default('1m'),
-  fillGaps: string().oneOf(['no', 'empty']).default('empty'),
-  warmup: warmupSchema,
-  daterange: daterangeSchema,
-  scan: boolean().notRequired(),
-  batchSize: number().notRequired(),
-});
-
-const baseExchangeSchema = object({
-  name: string().oneOf(['binance', 'dummy-cex']).required(),
-  interval: number().positive().notRequired(),
-  sandbox: boolean().default(false),
-  key: string().notRequired(),
-  secret: string().notRequired(),
-  verbose: boolean().default(false),
-}).shape({
-  simulationBalance: simulationBalanceSchema.default(undefined).notRequired(),
-  feeMaker: number().positive().default(undefined).notRequired(),
-  feeTaker: number().positive().default(undefined).notRequired(),
-});
-
-export const exchangeSchema = baseExchangeSchema.when('name', {
-  is: (name: string) => ['dummy-cex'].includes(name),
-  then: schema =>
-    schema.shape({
-      simulationBalance: simulationBalanceSchema.default(() => ({ asset: 0, currency: 1000 })).required(),
-      feeMaker: number().positive().default(0.15).required(),
-      feeTaker: number().positive().default(0.25).required(),
-    }),
-  otherwise: schema =>
-    schema.shape({
-      simulationBalance: simulationBalanceSchema.default(undefined).notRequired(),
-      feeMaker: number().positive().default(undefined).notRequired(),
-      feeTaker: number().positive().default(undefined).notRequired(),
-    }),
-});
-
-export const storageSchema = object({
-  type: string().oneOf(['sqlite']).defined(),
-  database: string().required(),
-  insertThreshold: number().notRequired(),
-});
-
-const pluginSchema = object({
-  name: string().required(),
-});
-
-const disclaimerSchema = boolean().when(['plugins'], {
-  is: (plugins: { name: string }[]) => some(plugins, { name: 'trader' }),
-  then: schema => schema.isTrue().required(),
-  otherwise: schema => schema.default(null).notRequired(),
-});
-
-export const configurationSchema = object({
-  showLogo: boolean().default(true),
-  watch: watchSchema,
-  exchange: exchangeSchema.default(null).notRequired(),
-  storage: storageSchema.default(null).notRequired(),
-  plugins: array().of(pluginSchema).required(),
-  strategy: object({ name: string().notRequired() }),
-  'I understand that Gekko only automates MY OWN trading strategies': disclaimerSchema,
-});
+export const configurationSchema = z
+  .object({
+    showLogo: z.boolean().default(true),
+    watch: watchSchema,
+    exchange: z
+      .discriminatedUnion('name', [dummyExchangeSchema, binanceExchangeSchema])
+      .nullable()
+      .optional()
+      .default(null),
+    storage: storageSchema.nullable().optional().default(null),
+    plugins: z.array(z.looseObject({ name: z.string() })),
+    strategy: z.looseObject({ name: z.string().optional() }),
+    [disclaimerField]: z.boolean().nullable().default(null),
+  })
+  .superRefine((data, ctx) => {
+    const hasTraderPlugin = some(data.plugins, plugin => plugin.name?.toLowerCase() === 'trader');
+    const isUsingRealExchange = data.exchange && !data.exchange.name.includes('dummy') && !data.exchange.sandbox;
+    const isDisclaimerIgnored = !data[disclaimerField];
+    if (hasTraderPlugin && isUsingRealExchange && isDisclaimerIgnored) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [disclaimerField],
+        message:
+          'These settings enable Trader with a real exchange and may spend real money, leading to severe losses. Confirm by setting the disclaimer sentence to true in the settings app.',
+      });
+    }
+  });

@@ -34,11 +34,12 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
 
 const buildBacktestPipeline = async (plugins: Plugin[]) => {
   const watch = config.getWatch();
+  // Here we have already checked the watch.daterange in configuration
   await pipeline(
     new BacktestStream(
       watch.scan
         ? await askForDaterange()
-        : { start: toTimestamp(watch.daterange.start), end: toTimestamp(watch.daterange.end) },
+        : { start: toTimestamp(watch.daterange!.start), end: toTimestamp(watch.daterange!.end) },
     ),
     new GapFillerStream(),
     new PluginsStream(plugins),
@@ -47,10 +48,11 @@ const buildBacktestPipeline = async (plugins: Plugin[]) => {
 
 const buildImporterPipeline = async (plugins: Plugin[]) => {
   const { daterange, tickrate } = config.getWatch();
+  // Here we have already checked the watch.daterange in configuration
   await pipeline(
     new HistoricalCandleStream({
-      startDate: toTimestamp(daterange.start),
-      endDate: toTimestamp(daterange.end),
+      startDate: toTimestamp(daterange!.start),
+      endDate: toTimestamp(daterange!.end),
       tickrate,
     }),
     new GapFillerStream(),

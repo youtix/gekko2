@@ -1,12 +1,12 @@
-import { number, object, string } from 'yup';
+import { z } from 'zod';
 
-export const supervisionSchema = object({
-  name: string().required(),
-  token: string().required(),
-  botUsername: string().required(),
-  cpuThreshold: number().positive().default(80),
-  memoryThreshold: number().positive().default(1024),
-  cpuCheckInterval: number().positive().default(10000),
-  memoryCheckInterval: number().positive().default(10000),
-  logMonitoringInterval: number().positive().default(60000),
+export const supervisionSchema = z.object({
+  name: z.string(),
+  token: z.string(),
+  botUsername: z.string(),
+  cpuThreshold: z.number().positive().default(80),
+  memoryThreshold: z.number().positive().default(1024),
+  cpuCheckInterval: z.number().positive().default(10000),
+  memoryCheckInterval: z.number().positive().default(10000),
+  logMonitoringInterval: z.number().positive().default(60000),
 });

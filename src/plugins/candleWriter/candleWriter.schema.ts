@@ -1,5 +1,3 @@
-import { object, string } from 'yup';
+import { z } from 'zod';
 
-export const candleWriterSchema = object({
-  name: string().required(),
-});
+export const candleWriterSchema = z.object({ name: z.string() });

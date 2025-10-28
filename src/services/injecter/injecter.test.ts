@@ -1,5 +1,7 @@
 import { GekkoError } from '@errors/gekko.error';
-import { Configuration } from '@models/configuration.types';
+import { Watch } from '@models/configuration.types';
+import { BinanceExchangeConfig } from '@services/exchange/centralized/binance/binance.types';
+import { DummyCentralizedExchangeConfig } from '@services/exchange/centralized/dummy/dummyCentralizedExchange.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../configuration/configuration';
 import { inject } from './injecter';
@@ -49,31 +51,36 @@ describe('Injecter', () => {
 
   describe('exchange', () => {
     it('should cache the exchange instance and return the same object on multiple calls', () => {
-      getExchangeMock.mockReturnValue({ name: 'binance', verbose: false, sandbox: false });
+      const binanceConfig = { name: 'binance', verbose: false, sandbox: false, interval: 1000 };
+      getExchangeMock.mockReturnValue(binanceConfig as BinanceExchangeConfig);
       const first = inject.exchange();
       const second = inject.exchange();
       expect(second).toBe(first);
       expect(BinanceExchangeMock).toHaveBeenCalledTimes(1);
-      expect(BinanceExchangeMock).toHaveBeenCalledWith({ name: 'binance', verbose: false, sandbox: false });
+      expect(BinanceExchangeMock).toHaveBeenCalledWith(binanceConfig);
     });
 
     it('should throw GekkoError if no exchange config is returned', () => {
-      getExchangeMock.mockReturnValue(undefined as unknown as ReturnType<typeof config.getExchange>);
+      getExchangeMock.mockReturnValue(undefined as unknown as BinanceExchangeConfig);
       expect(() => inject.exchange()).toThrow(GekkoError);
     });
 
     it('should instantiate dummy centralized exchange when requested', () => {
-      getExchangeMock.mockReturnValue({ name: 'dummy-cex', verbose: false, sandbox: false });
-      getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT' } as unknown as Configuration['watch']);
+      const dummyConfig = {
+        name: 'dummy-cex',
+        verbose: false,
+        sandbox: false,
+        feeMaker: 0.15,
+        feeTaker: 0.25,
+        simulationBalance: { asset: 0, currency: 0 },
+      };
+      getExchangeMock.mockReturnValue(dummyConfig as DummyCentralizedExchangeConfig);
+      getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT' } as Watch);
       const exchange = inject.exchange();
 
       expect(exchange).toMatchObject({ exchangeName: 'dummy-cex' });
       expect(DummyCentralizedExchangeMock).toHaveBeenCalledTimes(1);
-      expect(DummyCentralizedExchangeMock).toHaveBeenCalledWith({
-        name: 'dummy-cex',
-        verbose: false,
-        sandbox: false,
-      });
+      expect(DummyCentralizedExchangeMock).toHaveBeenCalledWith(dummyConfig);
     });
   });
 });

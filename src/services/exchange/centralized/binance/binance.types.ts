@@ -1,3 +1,8 @@
+import z from 'zod';
+import { binanceExchangeSchema } from './binance.schema';
+
+export type BinanceExchangeConfig = z.infer<typeof binanceExchangeSchema>;
+
 export type BinanceSpotOrder = Partial<{
   orderId: number;
   id: number;

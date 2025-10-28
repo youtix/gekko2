@@ -1,9 +1,9 @@
 import { Portfolio } from '@models/portfolio.types';
 import { Nullable } from '@models/utility.types';
-import Yup from 'yup';
+import { z } from 'zod';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 
-export type PerformanceAnalyzerConfig = Yup.InferType<typeof performanceAnalyzerSchema>;
+export type PerformanceAnalyzerConfig = z.infer<typeof performanceAnalyzerSchema>;
 
 export type Start = {
   balance: number;
