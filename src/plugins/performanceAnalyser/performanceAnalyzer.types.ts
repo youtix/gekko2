@@ -10,23 +10,9 @@ export type Start = {
   portfolio: Nullable<Portfolio>;
 };
 
-export type SingleRoundTrip = {
-  id: number;
-  exit: Nullable<RoundTripData>;
-  entry: Nullable<RoundTripData>;
-};
-
 export type DateRange = {
   start: EpochTimeStamp;
   end: EpochTimeStamp;
-};
-
-export type RoundTripData = {
-  price: number;
-  date: number;
-  total: number;
-  asset: number;
-  currency: number;
 };
 
 export type Report = {
@@ -46,14 +32,8 @@ export type Report = {
   exposure: number;
   sharpe: number;
   sortino: number;
-  /** Standard deviation of roundtrip profits */
+  /** Standard deviation of balance-change returns */
   standardDeviation: number;
   downside: number;
-  ratioRoundTrips: Nullable<number>;
-  /**
-   * Descending list of up to ten of the worst adverse excursions observed.
-   * Values are expressed as percentages.
-   */
-  topMaxAdverseExcursions: number[];
   alpha: number;
 };

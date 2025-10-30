@@ -1,21 +1,25 @@
 import { GekkoError } from '@errors/gekko.error';
-import { Action } from '@models/action.types';
-import { OrderType } from '@models/order.types';
+import { OrderSide, OrderType } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { debug } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { weightedMean } from '@utils/math/math.utils';
 import { filter, last, map, sortBy, sumBy } from 'lodash-es';
-import { Transaction } from './order.types';
+import { OrderSummary, Transaction } from './order.types';
 
 type CreateOrderSummaryParams = {
   exchange: Exchange;
-  label: OrderType;
-  side: Action;
+  type: OrderType;
+  side: OrderSide;
   transactions: Transaction[];
 };
 
-export async function createOrderSummary({ exchange, label, side, transactions }: CreateOrderSummaryParams) {
+export const createOrderSummary = async ({
+  exchange,
+  type,
+  side,
+  transactions,
+}: CreateOrderSummaryParams): Promise<OrderSummary> => {
   if (!transactions.length) throw new GekkoError('core', 'Order is not completed');
 
   const from = resetDateParts(transactions[0]?.timestamp, ['ms']);
@@ -28,7 +32,7 @@ export async function createOrderSummary({ exchange, label, side, transactions }
 
   debug(
     'core',
-    [`${myTrades.length} trades used to fill ${label} order.`, `First trade started at: ${toISOString(from)}.`].join(
+    [`${myTrades.length} trades used to fill ${type} order.`, `First trade started at: ${toISOString(from)}.`].join(
       ' ',
     ),
   );
@@ -47,4 +51,4 @@ export async function createOrderSummary({ exchange, label, side, transactions }
     side,
     date: last(trades)?.timestamp,
   };
-}
+};

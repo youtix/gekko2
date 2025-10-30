@@ -1,12 +1,12 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
-import { Action } from '@models/action.types';
-import { OrderState } from '@models/order.types';
+import { OrderSide, OrderState } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { debug, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { bindAll, find, map, reject, sumBy } from 'lodash-es';
+import { UUID } from 'node:crypto';
 import { Order } from '../order';
 import { createOrderSummary } from '../order.utils';
 
@@ -14,17 +14,15 @@ export class StickyOrder extends Order {
   private completing: boolean;
   private moving: boolean;
   private checking: boolean;
-  private side: Action;
   private amount: number;
   private id?: string;
   private interval?: Timer;
 
-  constructor(action: Action, amount: number, exchange: Exchange) {
-    super(exchange, 'STICKY');
+  constructor(gekkoOrderId: UUID, action: OrderSide, amount: number, exchange: Exchange) {
+    super(gekkoOrderId, exchange, action, 'STICKY');
     this.completing = false;
     this.moving = false;
     this.checking = false;
-    this.side = action;
     this.amount = amount;
 
     // Creating initial order
@@ -34,10 +32,6 @@ export class StickyOrder extends Order {
     bindAll(this, ['checkOrder']);
 
     this.interval = setInterval(this.checkOrder, this.exchange.getInterval());
-  }
-
-  public getSide() {
-    return this.side;
   }
 
   public async cancel() {
@@ -57,7 +51,7 @@ export class StickyOrder extends Order {
 
     return createOrderSummary({
       exchange: this.exchange,
-      label: 'STICKY',
+      type: 'STICKY',
       side: this.side,
       transactions: this.transactions,
     });

@@ -1,3 +1,5 @@
+import { OrderSide } from '@models/order.types';
+
 export type OrderStatus =
   | 'canceled' // Order was succesfully canceled
   | 'error'
@@ -7,3 +9,10 @@ export type OrderStatus =
   | 'rejected'; // Order was rejected by the exchange
 
 export type Transaction = { id: string; timestamp: EpochTimeStamp; filled?: number };
+export type OrderSummary = {
+  amount: number;
+  price: number;
+  side: OrderSide;
+  feePercent?: number;
+  date?: EpochTimeStamp;
+};

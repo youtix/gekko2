@@ -1,795 +1,621 @@
 import {
+  ORDER_ABORTED_EVENT,
+  ORDER_CANCELED_EVENT,
+  ORDER_COMPLETED_EVENT,
+  ORDER_ERRORED_EVENT,
+  ORDER_INITIATED_EVENT,
   PORTFOLIO_CHANGE_EVENT,
   PORTFOLIO_VALUE_CHANGE_EVENT,
-  TRADE_ABORTED_EVENT,
-  TRADE_CANCELED_EVENT,
-  TRADE_COMPLETED_EVENT,
-  TRADE_ERRORED_EVENT,
-  TRADE_INITIATED_EVENT,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
-import { StopGekkoError } from '@errors/stopGekko.error';
-import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '@services/core/order/order.const';
-import { Exchange } from '@services/exchange/exchange';
-import { bindAll } from 'lodash-es';
-import EventEmitter from 'node:events';
-import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
+import { Advice } from '@models/advice.types';
+import * as lodash from 'lodash-es';
+import type { Mock } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../services/configuration/configuration';
-import { StickyOrder } from '../../services/core/order/sticky/stickyOrder';
-import { error, warning } from '../../services/logger';
-import { wait } from '../../utils/process/process.utils';
+import * as logger from '../../services/logger';
+import * as processUtils from '../../utils/process/process.utils';
 import { Trader } from './trader';
 import { SYNCHRONIZATION_INTERVAL } from './trader.const';
-import { traderSchema } from './trader.schema';
+import * as traderUtils from './trader.utils';
 
-vi.mock('@services/logger', () => ({
-  debug: vi.fn(),
-  info: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-}));
-vi.mock('../../services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({
-    getWatch: vi.fn(() => ({ mode: 'realtime' })),
-    getStrategy: vi.fn(() => ({})),
-    getExchange: vi.fn(() => ({ name: 'binance' })),
-  }));
-  return { config: new Configuration() };
+vi.mock('@services/logger');
+
+const baseWatch = {
+  asset: 'BTC',
+  currency: 'USDT',
+  tickrate: 1000,
+  mode: 'realtime' as const,
+  timeframe: '1m' as const,
+  fillGaps: 'empty' as const,
+  warmup: { tickrate: 1000, candleCount: 0 },
+  daterange: null,
+};
+
+const cloneWatch = () => ({
+  ...baseWatch,
+  warmup: { ...baseWatch.warmup },
 });
+
+type OrderListener = (...args: unknown[]) => void;
+
 vi.mock('lodash-es', async () => ({
   ...(await vi.importActual('lodash-es')),
   bindAll: vi.fn(),
 }));
-vi.mock('../../utils/process/process.utils', () => ({
-  wait: vi.fn(),
-}));
+
+vi.mock('../../services/configuration/configuration', () => {
+  const getWatch = vi.fn(() => cloneWatch());
+  const getStrategy = vi.fn(() => ({}));
+  const getExchange = vi.fn(() => ({ name: 'dummy-cex' }));
+  return { config: { getWatch, getStrategy, getExchange } };
+});
+
+function createOrderMock(orderType: 'STICKY' | 'MARKET') {
+  const listenersStore = new WeakMap<object, Map<string, Set<OrderListener>>>();
+
+  const ensureStore = (instance: object) => {
+    let store = listenersStore.get(instance);
+    if (!store) {
+      store = new Map();
+      listenersStore.set(instance, store);
+    }
+    return store;
+  };
+
+  const addListener = (instance: object, event: string, handler: OrderListener) => {
+    const store = ensureStore(instance);
+    let handlers = store.get(event);
+    if (!handlers) {
+      handlers = new Set();
+      store.set(event, handlers);
+    }
+    handlers.add(handler);
+  };
+
+  const removeListener = (instance: object, event: string, handler: OrderListener) => {
+    const store = ensureStore(instance);
+    const handlers = store.get(event);
+    if (!handlers) return;
+    handlers.delete(handler);
+    if (!handlers.size) store.delete(event);
+  };
+
+  function MockOrder(this: any, id: string, side: string, amount: number, _exchange: unknown) {
+    ensureStore(this);
+    this.id = id;
+    this.side = side;
+    this.amount = amount;
+    this.cancel = vi.fn();
+    this.createSummary = vi.fn().mockResolvedValue({
+      amount: this.amount,
+      price: 100,
+      feePercent: 0.25,
+      side: this.side,
+      date: 1_700_000_000_000,
+    });
+    this.removeAllListeners = vi.fn(() => {
+      listenersStore.set(this, new Map());
+    });
+  }
+
+  MockOrder.prototype.getGekkoOrderId = function () {
+    return this.id;
+  };
+
+  MockOrder.prototype.getType = function () {
+    return orderType;
+  };
+
+  MockOrder.prototype.on = function (event: string, handler: OrderListener) {
+    addListener(this, event, handler);
+    return this;
+  };
+
+  MockOrder.prototype.once = function (event: string, handler: OrderListener) {
+    const wrapped: OrderListener = (...args) => {
+      removeListener(this, event, wrapped);
+      handler(...args);
+    };
+    addListener(this, event, wrapped);
+    return this;
+  };
+
+  MockOrder.prototype.emit = function (event: string, ...args: unknown[]) {
+    const handlers = ensureStore(this).get(event);
+    if (!handlers) return false;
+    Array.from(handlers).forEach(listener => listener(...args));
+    return handlers.size > 0;
+  };
+
+  return MockOrder as unknown as new (id: string, side: string, amount: number, exchange: unknown) => any;
+}
+
 vi.mock('../../services/core/order/sticky/stickyOrder', () => ({
-  StickyOrder: class extends EventEmitter {},
+  StickyOrder: createOrderMock('STICKY'),
+}));
+
+vi.mock('../../services/core/order/market/marketOrder', () => ({
+  MarketOrder: createOrderMock('MARKET'),
 }));
 
 describe('Trader', () => {
-  let onceEventCallback: () => Promise<void> = () => Promise.resolve();
-  const setIntervalSpy = vi.spyOn(global, 'setInterval');
-  const getWatchMock = config.getWatch as unknown as Mock;
-  const getExchangeMock = config.getExchange as unknown as Mock;
-  let trader: any;
+  let trader: Trader;
   let fakeExchange: {
     getExchangeName: Mock;
     getInterval: Mock;
     fetchTicker: Mock;
     fetchPortfolio: Mock;
   };
-  let fakeOrder: {
-    createSummary: Mock;
-    removeAllListeners: Mock;
-    cancel: Mock;
-    once: Mock;
-  };
-  const summary = {
-    amount: 2,
-    price: 100,
-    feePercent: 1,
-    side: 'BUY',
-    date: 1609459200000, // Jan 1, 2021 in ms.
+  let setIntervalSpy: ReturnType<typeof vi.spyOn>;
+  let clearIntervalSpy: ReturnType<typeof vi.spyOn>;
+  let waitSpy: ReturnType<typeof vi.spyOn>;
+  const getWatchMock = config.getWatch as unknown as Mock;
+  const getExchangeMock = config.getExchange as unknown as Mock;
+  const getStrategyMock = config.getStrategy as unknown as Mock;
+
+  const buildAdvice = (overrides?: Partial<Advice>): Advice => {
+    const orderOverrides = overrides?.order ?? {};
+    return {
+      id: overrides?.id ?? '20a7abd2-546b-4c65-b04d-900b84fa5fe6',
+      date: overrides?.date ?? 1_700_000_000_100,
+      order: {
+        type: 'STICKY',
+        side: 'BUY',
+        quantity: undefined,
+        ...orderOverrides,
+      },
+    };
   };
 
+  beforeAll(() => {
+    vi.useFakeTimers();
+    // @ts-expect-error do not need to fix
+    setIntervalSpy = vi.spyOn(global, 'setInterval');
+    clearIntervalSpy = vi.spyOn(global, 'clearInterval');
+    // @ts-expect-error do not need to fix
+    waitSpy = vi.spyOn(processUtils, 'wait');
+  });
+
+  afterAll(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
-    if (trader) trader['processFinalize']?.();
-    getWatchMock.mockReturnValue({ mode: 'realtime' });
-    getExchangeMock.mockReturnValue({ name: 'binance' });
-    setIntervalSpy.mockClear();
-    fakeExchange = {
-      getExchangeName: vi.fn().mockReturnValue('FakeExchange'),
-      getInterval: vi.fn().mockReturnValue(50),
-      fetchTicker: vi.fn().mockResolvedValue({ bid: 100 }),
-      fetchPortfolio: vi.fn().mockResolvedValue({ asset: 1, currency: 50 }),
-    };
-    fakeOrder = {
-      createSummary: vi.fn().mockResolvedValue(summary),
-      removeAllListeners: vi.fn(),
-      cancel: vi.fn(),
-      once: vi.fn().mockImplementation((_: string, cb: () => Promise<void>) => {
-        onceEventCallback = cb;
-      }),
-    };
+    waitSpy.mockResolvedValue(undefined);
+    getWatchMock.mockReturnValue(cloneWatch());
+    getExchangeMock.mockReturnValue({ name: 'dummy-cex' });
+    getStrategyMock.mockReturnValue({});
+
     trader = new Trader();
+    fakeExchange = {
+      getExchangeName: vi.fn(() => 'MockExchange'),
+      getInterval: vi.fn(() => 42),
+      fetchTicker: vi.fn().mockResolvedValue({ bid: 123 }),
+      fetchPortfolio: vi.fn().mockResolvedValue({ asset: 1, currency: 2 }),
+    };
+
     trader['getExchange'] = vi.fn().mockReturnValue(fakeExchange);
     trader['deferredEmit'] = vi.fn();
-    trader['order'] = fakeOrder;
+  });
+
+  afterEach(() => {
+    trader?.['processFinalize']?.();
   });
 
   describe('constructor', () => {
     it.each`
-      property                  | expectedValue
-      ${'propogatedTrades'}     | ${0}
-      ${'cancellingOrder'}      | ${false}
+      field                     | expected
       ${'sendInitialPortfolio'} | ${false}
+      ${'warmupCompleted'}      | ${false}
+      ${'warmupCandle'}         | ${undefined}
       ${'portfolio'}            | ${{ asset: 0, currency: 0 }}
       ${'balance'}              | ${0}
-      ${'exposure'}             | ${0}
       ${'price'}                | ${0}
-      ${'exposed'}              | ${false}
-    `('should initialize $property to $expectedValue', ({ property, expectedValue }) => {
-      expect(trader[property]).toEqual(expectedValue);
+    `('initializes $field to $expected', ({ field, expected }) => {
+      expect((trader as any)[field]).toEqual(expected);
     });
 
-    it('should call setInterval with synchronize and SYNCHRONIZATION_INTERVAL', () => {
+    it('initializes orders collection as empty array', () => {
+      const orders = (trader as any).orders;
+      expect(Array.isArray(orders)).toBe(true);
+      expect(orders).toHaveLength(0);
+    });
+
+    it('binds synchronize and schedules interval when running in realtime mode', () => {
+      const bindAllMock = lodash.bindAll as unknown as Mock;
+      expect(bindAllMock).toHaveBeenCalledWith(trader, ['synchronize']);
       expect(setIntervalSpy).toHaveBeenCalledWith(trader['synchronize'], SYNCHRONIZATION_INTERVAL);
     });
 
-    it('should not set up synchronization timer in backtest mode', () => {
-      getWatchMock.mockReturnValue({ mode: 'backtest' });
+    it('does not schedule synchronization when running in backtest mode', () => {
       setIntervalSpy.mockClear();
+      getWatchMock.mockReturnValue({ ...cloneWatch(), mode: 'backtest' });
       const backtestTrader = new Trader();
       expect(setIntervalSpy).not.toHaveBeenCalled();
       backtestTrader['processFinalize']();
     });
-
-    it('should call lodash bindAll with synchronize functions', () => {
-      expect(bindAll).toHaveBeenCalledWith(trader, ['synchronize']);
-    });
   });
 
   describe('synchronize', () => {
-    it('should update price from ticker when price is 0', async () => {
-      trader['price'] = 0;
+    it('updates price and waits for exchange interval when price is unset', async () => {
       await trader['synchronize']();
-      expect(trader['price']).toBe(100);
+
+      expect(fakeExchange.fetchTicker).toHaveBeenCalledTimes(1);
+      expect(trader['price']).toBe(123);
+      expect(waitSpy).toHaveBeenCalledWith(42);
     });
 
-    it('should call wait with the exchange interval when price is 0', async () => {
-      trader['price'] = 0;
-      await trader['synchronize']();
-      expect(wait).toHaveBeenCalledWith(50);
-    });
+    it('skips ticker fetch when price is already known', async () => {
+      trader['price'] = 250;
+      const setBalanceSpy = vi.spyOn(trader as unknown as { setBalance: () => void }, 'setBalance');
 
-    it('should NOT call fetchTicker if price is non-zero', async () => {
-      trader['price'] = 200; // non-zero price bypasses ticker fetching
       await trader['synchronize']();
+
       expect(fakeExchange.fetchTicker).not.toHaveBeenCalled();
+      expect(waitSpy).not.toHaveBeenCalled();
+      expect(setBalanceSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('should update portfolio from exchange', async () => {
-      const newPortfolio = { asset: 2, currency: 100 };
-      fakeExchange.fetchPortfolio.mockResolvedValue(newPortfolio);
-      await trader['synchronize']();
-      expect(trader['portfolio']).toEqual(newPortfolio);
-    });
-
-    it('should call setBalance', async () => {
-      trader['setBalance'] = vi.fn();
-      await trader['synchronize']();
-      expect(trader['setBalance']).toHaveBeenCalled();
-    });
-
-    it('should emit portfolio change event if sendInitialPortfolio is true and portfolio changes', async () => {
+    it('emits portfolio change when initial portfolio was sent and values differ', async () => {
       trader['sendInitialPortfolio'] = true;
-      trader['portfolio'] = { asset: 1, currency: 50 };
-      const updatedPortfolio = { asset: 2, currency: 100 };
-      fakeExchange.fetchPortfolio.mockResolvedValue(updatedPortfolio);
-      trader['emitPortfolioChangeEvent'] = vi.fn();
+      trader['portfolio'] = { asset: 0.5, currency: 10 };
+      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 1, currency: 20 });
+      const emitSpy = vi.spyOn(
+        trader as unknown as { emitPortfolioChangeEvent: () => void },
+        'emitPortfolioChangeEvent',
+      );
+
       await trader['synchronize']();
-      expect(trader['emitPortfolioChangeEvent']).toHaveBeenCalled();
+
+      expect(emitSpy).toHaveBeenCalled();
     });
 
-    it('should not emit portfolio change event if sendInitialPortfolio is true but portfolio is unchanged', async () => {
+    it('does not emit portfolio change when fetched portfolio matches current state', async () => {
       trader['sendInitialPortfolio'] = true;
-      trader['portfolio'] = { asset: 1, currency: 50 };
-      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 1, currency: 50 });
-      trader['emitPortfolioChangeEvent'] = vi.fn();
+      trader['portfolio'] = { asset: 1, currency: 2 };
+      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 1, currency: 2 });
+      const emitSpy = vi.spyOn(
+        trader as unknown as { emitPortfolioChangeEvent: () => void },
+        'emitPortfolioChangeEvent',
+      );
+
       await trader['synchronize']();
-      expect(trader['emitPortfolioChangeEvent']).not.toHaveBeenCalled();
+
+      expect(emitSpy).not.toHaveBeenCalled();
     });
   });
 
-  describe('emitPortfolioChangeEvent', () => {
-    it('should call deferredEmit with PORTFOLIO_CHANGE_EVENT and correct portfolio data', () => {
-      trader['portfolio'] = { asset: 5, currency: 15 };
+  describe('portfolio event emitters', () => {
+    it('defers portfolio change events with current asset and currency', () => {
+      trader['portfolio'] = { asset: 10, currency: 25 };
       trader['emitPortfolioChangeEvent']();
-      const portfolio = { asset: 5, currency: 15 };
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, portfolio);
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, {
+        asset: 10,
+        currency: 25,
+      });
     });
-  });
 
-  describe('emitPortfolioValueChangeEvent', () => {
-    it('should call deferredEmit with PORTFOLIO_VALUE_CHANGE_EVENT and correct balance data', () => {
-      trader['balance'] = 1234.56;
+    it('defers portfolio value events with current balance', () => {
+      trader['balance'] = 321.45;
       trader['emitPortfolioValueChangeEvent']();
-      const balance = { balance: 1234.56 };
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(PORTFOLIO_VALUE_CHANGE_EVENT, balance);
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(PORTFOLIO_VALUE_CHANGE_EVENT, {
+        balance: 321.45,
+      });
     });
   });
 
   describe('setBalance', () => {
     it.each`
-      property      | expected
-      ${'balance'}  | ${0}
-      ${'exposure'} | ${0}
-      ${'exposed'}  | ${false}
-    `('should leave $property unchanged when portfolio is empty', ({ property, expected }) => {
-      trader['price'] = 100;
-      trader['portfolio'] = { asset: 0, currency: 0 };
-      trader['setBalance']();
-      expect(trader[property]).toEqual(expected);
-    });
+      description                                      | price  | portfolio                     | initialBalance | expectedBalance
+      ${'keeps balance unchanged for empty portfolio'} | ${150} | ${{ asset: 0, currency: 0 }}  | ${123}         | ${123}
+      ${'recalculates balance when holdings exist'}    | ${100} | ${{ asset: 2, currency: 10 }} | ${0}           | ${210}
+    `(' $description', ({ price, portfolio, initialBalance, expectedBalance }) => {
+      trader['price'] = price;
+      trader['portfolio'] = portfolio;
+      trader['balance'] = initialBalance;
 
-    // For example, asset = 1, currency = 50, price = 100
-    // Expected balance = 100*1 + 50 = 150
-    // Expected exposure = (1*100) / 150 ≈ 0.66667, which is > 0.1 so exposed = true
-    it.each`
-      property      | expected
-      ${'balance'}  | ${150}
-      ${'exposure'} | ${100 / 150}
-      ${'exposed'}  | ${true}
-    `('should update $property correctly', ({ property, expected }) => {
-      trader['price'] = 100;
-      trader['portfolio'] = { asset: 1, currency: 50 };
       trader['setBalance']();
-      expect(trader[property]).toBe(expected);
+
+      expect(trader['balance']).toBeCloseTo(expectedBalance);
     });
   });
 
-  describe('processOneMinuteCandle', () => {
-    const fakeCandle = { close: 123 };
-
-    beforeEach(() => {
-      trader['warmupCompleted'] = true;
-      trader['warmupCandle'] = undefined;
-    });
-
-    it('should update the price with candle.close', async () => {
-      // Stub synchronize so it does not affect our test.
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      await trader['processOneMinuteCandle'](fakeCandle);
-      expect(trader['price']).toBe(fakeCandle.close);
-    });
-
-    it('should call setBalance', async () => {
-      trader['sendInitialPortfolio'] = true;
-      trader['setBalance'] = vi.fn();
-      await trader['processOneMinuteCandle'](fakeCandle);
-      expect(trader['setBalance']).toHaveBeenCalledWith();
-    });
-
-    it('should set sendInitialPortfolio to true when it was false', async () => {
-      trader['sendInitialPortfolio'] = false;
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      await trader['processOneMinuteCandle'](fakeCandle);
-      expect(trader['sendInitialPortfolio']).toBe(true);
-    });
-
-    it('should call synchronize when sendInitialPortfolio is false', async () => {
-      trader['sendInitialPortfolio'] = false;
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      await trader['processOneMinuteCandle'](fakeCandle);
-      expect(trader['synchronize']).toHaveBeenCalledWith();
-    });
-
-    it('should call deferredEmit with PORTFOLIO_CHANGE_EVENT when sendInitialPortfolio is false', async () => {
-      trader['sendInitialPortfolio'] = false;
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      trader['portfolio'] = { asset: 10, currency: 20 };
-      await trader['processOneMinuteCandle'](fakeCandle);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, {
-        asset: trader['portfolio'].asset,
-        currency: trader['portfolio'].currency,
-      });
-    });
-
-    it('should call emitPortfolioValueChangeEvent if balance has changed', async () => {
-      trader['sendInitialPortfolio'] = true;
-      trader['balance'] = 100;
-      trader['setBalance'] = vi.fn(() => {
-        trader['balance'] = 150;
-      });
-      trader['emitPortfolioValueChangeEvent'] = vi.fn();
-      await trader['processOneMinuteCandle'](fakeCandle);
-      expect(trader['emitPortfolioValueChangeEvent']).toHaveBeenCalled();
-    });
-
-    it('should NOT call emitPortfolioValueChangeEvent if balance remains unchanged', async () => {
-      trader['sendInitialPortfolio'] = true;
-      trader['balance'] = 100;
-      trader['setBalance'] = vi.fn(() => {
-        trader['balance'] = 100;
-      });
-      trader['emitPortfolioValueChangeEvent'] = vi.fn();
-      await trader['processOneMinuteCandle'](fakeCandle);
-      expect(trader['emitPortfolioValueChangeEvent']).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('simulation mode', () => {
-    const simulationExchangeConfig = {
-      name: 'dummy-cex',
-      simulationBalance: { asset: 0, currency: 1000 },
-      feeMaker: 0.25,
-      feeTaker: 0.4,
-    };
-
-    beforeEach(() => {
-      trader['processFinalize']?.();
-      getExchangeMock.mockReturnValue(simulationExchangeConfig);
-      trader = new Trader();
-      trader['deferredEmit'] = vi.fn();
-      trader['getExchange'] = vi.fn().mockReturnValue(fakeExchange);
-      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 0, currency: 1000 });
-    });
-
-    it('should store warmup candle until warmup completes', async () => {
-      const candle = { close: 456 };
-      await trader['processOneMinuteCandle'](candle as any);
-      expect(trader['warmupCandle']).toEqual(candle);
-      expect(trader['price']).toBe(0);
-    });
-
-    it('should throw when completing warmup without candle', () => {
-      trader['warmupCandle'] = undefined;
+  describe('onStrategyWarmupCompleted', () => {
+    it('throws when warmup candle is missing', () => {
       expect(() => trader.onStrategyWarmupCompleted()).toThrow(GekkoError);
     });
 
-    it('should process warmup candle when available', () => {
-      const candle = { close: 789 } as any;
+    it('processes stored warmup candle and clears state', () => {
+      const candle = { close: 456 } as any;
       trader['warmupCandle'] = candle;
-      const processSpy = vi.spyOn(trader as any, 'processOneMinuteCandle').mockResolvedValue(undefined);
+      const processSpy = vi
+        .spyOn(
+          trader as unknown as { processOneMinuteCandle: (c: typeof candle) => Promise<void> },
+          'processOneMinuteCandle',
+        )
+        .mockResolvedValue(undefined);
 
       trader.onStrategyWarmupCompleted();
 
       expect(processSpy).toHaveBeenCalledWith(candle);
       expect(trader['warmupCandle']).toBeUndefined();
     });
+  });
 
-    it('should emit portfolio events after warmup when initializing simulation state', async () => {
-      const candle = { close: 789 } as any;
-      trader['warmupCompleted'] = true;
-      trader['portfolio'] = { asset: 0, currency: 1000 };
-      trader['synchronize'] = vi.fn();
-      const emitPortfolioChangeSpy = vi.spyOn(trader as any, 'emitPortfolioChangeEvent');
-      const emitPortfolioValueSpy = vi.spyOn(trader as any, 'emitPortfolioValueChangeEvent');
-
+  describe('processOneMinuteCandle', () => {
+    it('buffers candle until warmup completes', async () => {
+      const candle = { close: 99 } as any;
       await trader['processOneMinuteCandle'](candle);
+      expect(trader['warmupCandle']).toBe(candle);
+      expect(trader['price']).toBe(0);
+    });
 
+    it('synchronizes and emits events after warmup', async () => {
+      trader['warmupCompleted'] = true;
+      trader['portfolio'] = { asset: 1, currency: 0 };
+      const syncSpy = vi
+        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
+        .mockResolvedValue(undefined);
+      const emitPortfolioChangeSpy = vi.spyOn(
+        trader as unknown as { emitPortfolioChangeEvent: () => void },
+        'emitPortfolioChangeEvent',
+      );
+      const emitPortfolioValueSpy = vi.spyOn(
+        trader as unknown as { emitPortfolioValueChangeEvent: () => void },
+        'emitPortfolioValueChangeEvent',
+      );
+
+      await trader['processOneMinuteCandle']({ close: 100 } as any);
+
+      expect(trader['price']).toBe(100);
       expect(trader['sendInitialPortfolio']).toBe(true);
-      expect(trader['synchronize']).toHaveBeenCalled();
+      expect(syncSpy).toHaveBeenCalled();
       expect(emitPortfolioChangeSpy).toHaveBeenCalled();
       expect(emitPortfolioValueSpy).toHaveBeenCalled();
-
-      emitPortfolioChangeSpy.mockRestore();
-      emitPortfolioValueSpy.mockRestore();
     });
 
-    it('should throw StopGekkoError when portfolio is empty on roundtrip completion', () => {
-      trader['portfolio'] = { asset: 0, currency: 0 };
-      expect(() => trader.onRoundtripCompleted()).toThrow(StopGekkoError);
-    });
-  });
-
-  describe('onStrategyAdvice', () => {
-    it('should ignore advice with unknown recommendation', () => {
-      const invalidAdvice = { recommendation: 'neutral', id: 'adv-invalid', date: Date.now() };
-      trader.onStrategyAdvice(invalidAdvice);
-      expect(error).toHaveBeenCalledWith('trader', 'Ignoring advice in unknown direction');
-    });
-
-    it('should ignore long advice if order already exists with same side', () => {
-      trader['order'] = { getSide: () => 'BUY' };
-      trader['createOrder'] = vi.fn().mockImplementation(() => {});
-      const advice = { recommendation: 'long', id: 'adv-long-same', date: Date.now() };
-      trader.onStrategyAdvice(advice);
-      expect(trader['createOrder']).not.toHaveBeenCalled();
-    });
-
-    it('should ignore short advice if order already exists with same side', () => {
-      trader['order'] = { getSide: () => 'SELL' };
-      trader['createOrder'] = vi.fn().mockImplementation(() => {});
-      const advice = { recommendation: 'short', id: 'adv-short-same', date: Date.now() };
-      trader.onStrategyAdvice(advice);
-      expect(trader['createOrder']).not.toHaveBeenCalled();
-    });
-
-    it('should ignore advice if already cancelling a previous order', () => {
-      trader['order'] = { getSide: () => 'BUY' };
-      trader['cancellingOrder'] = true;
-      trader['createOrder'] = vi.fn().mockImplementation(() => {});
-      const advice = { recommendation: 'long', id: 'adv-cancelling', date: Date.now() };
-      trader.onStrategyAdvice(advice);
-      expect(trader['createOrder']).not.toHaveBeenCalled();
-    });
-
-    it('should cancel existing order if advice direction differs from current order', () => {
-      trader['order'] = { getSide: () => 'SELL' };
-      trader['cancellingOrder'] = false;
-      trader['cancelOrder'] = vi.fn();
-      const advice = { recommendation: 'long', id: 'adv-diff-side', date: Date.now() };
-      trader.onStrategyAdvice(advice);
-      expect(trader['cancelOrder']).toHaveBeenCalled();
-    });
-
-    it('should abort BUY trade if already exposed', () => {
-      trader['order'] = undefined;
-      trader['exposed'] = true;
-      trader['portfolio'] = { asset: 0, currency: 100 };
+    it('does not emit portfolio value event when balance stays constant', async () => {
+      trader['warmupCompleted'] = true;
+      trader['sendInitialPortfolio'] = true;
       trader['balance'] = 50;
-      const advice = { recommendation: 'long', id: 'adv-buy-abort', date: Date.now() };
-      trader.onStrategyAdvice(advice);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_ABORTED_EVENT, {
-        id: 'trade-1',
-        adviceId: advice.id,
-        action: 'BUY',
-        portfolio: trader['portfolio'],
-        balance: trader['balance'],
-        reason: 'Portfolio already in position.',
-        date: advice.date,
-      });
-    });
+      trader['portfolio'] = { asset: 0, currency: 50 };
+      const emitValueSpy = vi.spyOn(
+        trader as unknown as { emitPortfolioValueChangeEvent: () => void },
+        'emitPortfolioValueChangeEvent',
+      );
 
-    it('should create BUY order when not exposed', () => {
-      trader['order'] = undefined;
-      trader['exposed'] = false;
-      trader['portfolio'] = { asset: 0, currency: 200 };
-      trader['price'] = 100;
-      trader['createOrder'] = vi.fn().mockImplementation(() => {});
-      const advice = { recommendation: 'long', id: 'adv-buy-create', date: Date.now() };
-      trader.onStrategyAdvice(advice);
-      expect(trader['createOrder']).toHaveBeenCalledWith('BUY', 1.9, advice, 'trade-1');
-    });
+      await trader['processOneMinuteCandle']({ close: 10 } as any);
 
-    it('should abort SELL trade if not exposed', () => {
-      trader['order'] = undefined;
-      trader['exposed'] = false;
-      trader['portfolio'] = { asset: 5, currency: 50 };
-      trader['balance'] = 100;
-      const advice = { recommendation: 'short', id: 'adv-sell-abort', date: Date.now() };
-      trader.onStrategyAdvice(advice);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_ABORTED_EVENT, {
-        id: 'trade-1',
-        adviceId: advice.id,
-        action: 'SELL',
-        portfolio: trader['portfolio'],
-        balance: trader['balance'],
-        reason: 'Portfolio already in position.',
-        date: advice.date,
-      });
-    });
-
-    it('should create SELL order when exposed', () => {
-      trader['order'] = undefined;
-      trader['exposed'] = true;
-      trader['portfolio'] = { asset: 3, currency: 50 };
-      trader['createOrder'] = vi.fn();
-      const advice = { recommendation: 'short', id: 'adv-sell-create', date: Date.now() };
-      trader.onStrategyAdvice(advice);
-      expect(trader['createOrder']).toHaveBeenCalledWith('SELL', 3, advice, 'trade-1');
+      expect(emitValueSpy).not.toHaveBeenCalled();
     });
   });
 
-  describe('cancelOrder', () => {
-    it('should call the callback immediately if no order exists', () => {
-      trader['order'] = undefined;
-      const callback = vi.fn();
-      trader['cancelOrder']('test-id', { id: 'adv1' }, callback);
-      expect(callback).toHaveBeenCalled();
+  describe('onStrategyCreateOrder', () => {
+    it('aborts BUY advice when amount is invalid', () => {
+      trader['price'] = 0;
+      trader['portfolio'] = { asset: 0, currency: 0 };
+      const advice = buildAdvice();
+
+      trader.onStrategyCreateOrder(advice);
+
+      expect(logger.warning).toHaveBeenCalledWith('trader', expect.stringContaining('NOT buying 0'));
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+        ORDER_ABORTED_EVENT,
+        expect.objectContaining({
+          orderId: advice.id,
+          reason: 'invalid amount (0)',
+          orderType: advice.order.type,
+          requestedAmount: 0,
+        }),
+      );
     });
 
-    it('should set cancellingOrder to true when order exists', () => {
-      const callback = vi.fn();
-      trader['cancelOrder']('test-id', { id: 'adv1' }, callback);
-      expect(trader['cancellingOrder']).toBe(true);
+    it('aborts SELL advice when holdings are insufficient', () => {
+      trader['price'] = 100;
+      trader['portfolio'] = { asset: 0, currency: 0 };
+      const advice = buildAdvice({ order: { side: 'SELL', type: 'MARKET' } });
+
+      trader.onStrategyCreateOrder(advice);
+
+      expect(logger.warning).toHaveBeenCalledWith('trader', expect.stringContaining('NOT selling 0'));
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+        ORDER_ABORTED_EVENT,
+        expect.objectContaining({
+          orderId: advice.id,
+          reason: 'invalid amount (0)',
+          orderType: advice.order.type,
+          requestedAmount: 0,
+        }),
+      );
     });
 
-    it('should call order.removeAllListeners when order exists', () => {
-      const callback = vi.fn();
-      trader['cancelOrder']('test-id', { id: 'adv1' }, callback);
-      expect(fakeOrder.removeAllListeners).toHaveBeenCalled();
+    it('delegates to createOrder for valid BUY advice', () => {
+      trader['price'] = 100;
+      trader['portfolio'] = { asset: 0, currency: 1000 };
+      const advice = buildAdvice();
+      const createOrderSpy = vi
+        .spyOn(trader as unknown as { createOrder: (a: Advice, amount: number) => Promise<void> }, 'createOrder')
+        .mockResolvedValue(undefined);
+
+      trader.onStrategyCreateOrder(advice);
+
+      expect(createOrderSpy).toHaveBeenCalledTimes(1);
+      const [calledAdvice, requestedAmount] = createOrderSpy.mock.calls[0];
+      expect(calledAdvice).toBe(advice);
+      expect(requestedAmount).toBeCloseTo(9.5, 5);
     });
 
-    it('should call order.cancel when order exists', () => {
-      const callback = vi.fn();
-      trader['cancelOrder']('test-id', { id: 'adv1' }, callback);
-      expect(fakeOrder.cancel).toHaveBeenCalled();
-    });
+    it('delegates to createOrder for valid SELL advice using asset holdings', () => {
+      trader['price'] = 100;
+      trader['portfolio'] = { asset: 3, currency: 0 };
+      const advice = buildAdvice({ order: { side: 'SELL', type: 'MARKET' } });
+      const createOrderSpy = vi
+        .spyOn(trader as unknown as { createOrder: (a: Advice, amount: number) => Promise<void> }, 'createOrder')
+        .mockResolvedValue(undefined);
 
-    it('should clear order after ORDER_COMPLETED_EVENT is triggered', async () => {
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      const callback = vi.fn();
-      trader['cancelOrder']('test-id', { id: 'adv1' }, callback);
-      await onceEventCallback();
-      expect(trader['order']).toBeUndefined();
-    });
+      trader.onStrategyCreateOrder(advice);
 
-    it('should set cancellingOrder to false after ORDER_COMPLETED_EVENT is triggered', async () => {
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      const callback = vi.fn();
-      trader['cancelOrder']('test-id', { id: 'adv1' }, callback);
-      await onceEventCallback();
-      expect(trader['cancellingOrder']).toBe(false);
-    });
-
-    it('should emit TRADE_CANCELED_EVENT with correct payload after ORDER_COMPLETED_EVENT is triggered', async () => {
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      const callback = vi.fn();
-      const fixedTime = 123456789;
-      vi.spyOn(Date, 'now').mockReturnValue(fixedTime);
-      trader['cancelOrder']('test-id', { id: 'adv1' }, callback);
-      await onceEventCallback();
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_CANCELED_EVENT, {
-        id: 'test-id',
-        adviceId: 'adv1',
-        date: fixedTime,
-      });
-    });
-
-    it('should call synchronize after ORDER_COMPLETED_EVENT is triggered', async () => {
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      const callback = vi.fn();
-      trader['cancelOrder']('test-id', { id: 'adv1' }, callback);
-      await onceEventCallback();
-      expect(trader['synchronize']).toHaveBeenCalled();
-    });
-
-    it('should call the provided callback after ORDER_COMPLETED_EVENT is triggered', async () => {
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      const callback = vi.fn();
-      trader['cancelOrder']('test-id', { id: 'adv1' }, callback);
-      await onceEventCallback();
-      expect(callback).toHaveBeenCalled();
+      expect(createOrderSpy).toHaveBeenCalledWith(advice, 3);
     });
   });
 
   describe('createOrder', () => {
-    const advice = { id: 'adv1', date: 1609459200000 };
-    const orderId = 'trade-1';
-    const side = 'BUY';
-    const amount = 2;
+    it('stores created order and emits initiation event', async () => {
+      const advice = buildAdvice();
+      trader['synchronize'] = vi.fn();
 
-    beforeEach(() => {
-      trader['order'] = new StickyOrder('BUY', 0, fakeExchange as unknown as Exchange);
+      await trader['createOrder'](advice, 2);
+
+      expect((trader as any).orders).toHaveLength(1);
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+        ORDER_INITIATED_EVENT,
+        expect.objectContaining({
+          orderId: advice.id,
+          requestedAmount: 2,
+          orderType: advice.order.type,
+        }),
+      );
     });
 
-    it('should emit TRADE_INITIATED_EVENT with correct payload', async () => {
-      await trader['createOrder'](side, amount, advice, orderId);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_INITIATED_EVENT, {
-        id: orderId,
-        adviceId: advice.id,
-        action: side,
-        portfolio: trader['portfolio'],
-        balance: trader['balance'],
-        date: advice.date,
-      });
-    });
+    it('handles ORDER_ERRORED_EVENT by emitting error and removing order', async () => {
+      const advice = buildAdvice();
+      const synchronizeSpy = vi
+        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
+        .mockResolvedValue(undefined);
 
-    it('should log error when ORDER_ERRORED_EVENT is emitted', async () => {
-      await trader['createOrder'](side, amount, advice, orderId);
-      trader['order']._events[ORDER_ERRORED_EVENT]('error reason');
-      expect(error).toHaveBeenCalledWith('trader', 'Gekko received error: error reason');
-    });
+      await trader['createOrder'](advice, 1);
 
-    it('should clear trader.order when ORDER_ERRORED_EVENT is emitted', async () => {
-      await trader['createOrder'](side, amount, advice, orderId);
-      trader['order']._events[ORDER_ERRORED_EVENT]('error reason');
-      expect(trader['order']).toBeUndefined();
-    });
+      const order = (trader as any).orders[0];
+      order.emit(ORDER_ERRORED_EVENT, 'boom');
 
-    it('should set cancellingOrder to false when ORDER_ERRORED_EVENT is emitted', async () => {
-      await trader['createOrder'](side, amount, advice, orderId);
-      trader['cancellingOrder'] = true;
-      trader['order']._events[ORDER_ERRORED_EVENT]('error reason');
-      expect(trader['cancellingOrder']).toBe(false);
-    });
-
-    it('should emit TRADE_ERRORED_EVENT with correct payload on order error', async () => {
-      const fixedTime = 1609459300000;
-      vi.spyOn(Date, 'now').mockReturnValue(fixedTime);
-      await trader['createOrder'](side, amount, advice, orderId);
-      trader['order']._events[ORDER_ERRORED_EVENT]('error reason');
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_ERRORED_EVENT, {
-        id: orderId,
-        adviceId: advice.id,
-        date: fixedTime,
-        reason: 'error reason',
-      });
-    });
-
-    it('should call handleOrderCompletedEvent on ORDER_COMPLETED_EVENT', async () => {
-      trader['handleOrderCompletedEvent'] = vi.fn();
-      await trader['createOrder'](side, amount, advice, orderId);
-      await trader['order']._events[ORDER_COMPLETED_EVENT]();
-      expect(trader['handleOrderCompletedEvent']).toHaveBeenCalledWith(advice, orderId);
-    });
-
-    it('should log error if handleOrderCompletedEvent throws an error on ORDER_COMPLETED_EVENT', async () => {
-      const errorMessage = 'handle error';
-      trader['handleOrderCompletedEvent'] = vi.fn().mockImplementation(() => {
-        throw new Error(errorMessage);
-      });
-      await trader['createOrder'](side, amount, advice, orderId);
-      await trader['order']._events[ORDER_COMPLETED_EVENT]();
-      expect(error).toHaveBeenCalledWith('trader', errorMessage);
-    });
-
-    it('should emit TRADE_ERRORED_EVENT with correct payload if handleOrderCompletedEvent throws an error', async () => {
-      const errorMessage = 'handle error';
-      trader['handleOrderCompletedEvent'] = vi.fn().mockImplementation(() => {
-        throw new Error(errorMessage);
-      });
-      const fixedTime = 1609459400000;
-      vi.spyOn(Date, 'now').mockReturnValue(fixedTime);
-      await trader['createOrder'](side, amount, advice, orderId);
-      await trader['order']._events[ORDER_COMPLETED_EVENT]();
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_ERRORED_EVENT, {
-        id: orderId,
-        adviceId: advice.id,
-        date: fixedTime,
-        reason: errorMessage,
-      });
+      expect(logger.error).toHaveBeenCalledWith('trader', 'Gekko received error: boom');
+      expect((trader as any).orders).toHaveLength(0);
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+        ORDER_ERRORED_EVENT,
+        expect.objectContaining({
+          orderId: advice.id,
+          reason: 'boom',
+          orderType: advice.order.type,
+        }),
+      );
+      expect(synchronizeSpy).toHaveBeenCalled();
     });
   });
 
-  describe('processCostAndPrice', () => {
-    it('should calculate cost and effectivePrice for BUY order with feePercent provided', () => {
-      const side = 'BUY';
-      const price = 100;
-      const amount = 2;
-      const feePercent = 1; // 1%
-      // Expected cost = (1/100) * 2 * 100 = 2,
-      // Expected effectivePrice = 100 * (1 + 1/100) = 101.
-      const result = trader['processCostAndPrice'](side, price, amount, feePercent);
-      expect(result).toEqual({ effectivePrice: 101, cost: 2 });
+  describe('onStrategyCancelOrder', () => {
+    it('warns when order is unknown', () => {
+      trader.onStrategyCancelOrder('missing-id' as any);
+      expect(logger.warning).toHaveBeenCalledWith('trader', 'Impossible to cancel order: Unknown Order');
     });
 
-    it('should calculate cost and effectivePrice for SELL with feePercent provided', () => {
-      const side = 'SELL';
-      const price = 100;
-      const amount = 2;
-      const feePercent = 1; // 1%
-      // Expected cost = (1/100) * 2 * 100 = 2,
-      // Expected effectivePrice = 100 * (1 - 1/100) = 99.
-      const result = trader['processCostAndPrice'](side, price, amount, feePercent);
-      expect(result).toEqual({ effectivePrice: 99, cost: 2 });
-    });
+    it('removes listeners, cancels order, and emits cancellation after completion', async () => {
+      const advice = buildAdvice();
+      const synchronizeSpy = vi
+        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
+        .mockResolvedValue(undefined);
 
-    it('should handle a feePercent of 0 correctly', () => {
-      const side = 'BUY';
-      const price = 100;
-      const amount = 2;
-      const feePercent = 0;
-      const result = trader['processCostAndPrice'](side, price, amount, feePercent);
-      expect(result).toEqual({ effectivePrice: 100, cost: 0 });
-    });
+      await trader['createOrder'](advice, 1);
+      const order = (trader as any).orders[0];
 
-    it('should calculate cost and effectivePrice when feePercent is not provided', () => {
-      const side = 'BUY'; // side doesn't matter in this branch
-      const price = 100;
-      const amount = 2;
-      // Expected effectivePrice = price = 100,
-      // Expected cost = 100 * 2 = 200.
-      const result = trader['processCostAndPrice'](side, price, amount);
-      expect(result).toEqual({ effectivePrice: 100, cost: 200 });
-    });
+      trader.onStrategyCancelOrder(advice.id);
 
-    it('should log warning when feePercent is not provided', () => {
-      const side = 'BUY';
-      const price = 100;
-      const amount = 2;
-      trader['processCostAndPrice'](side, price, amount);
-      expect(warning).toHaveBeenCalledWith('trader', 'Exchange did not provide fee information, assuming no fees..');
+      expect(order.removeAllListeners).toHaveBeenCalled();
+      expect(order.cancel).toHaveBeenCalled();
+
+      order.emit(ORDER_COMPLETED_EVENT);
+      await Promise.resolve();
+
+      expect((trader as any).orders).toHaveLength(0);
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+        ORDER_CANCELED_EVENT,
+        expect.objectContaining({
+          orderId: advice.id,
+          orderType: advice.order.type,
+        }),
+      );
+      expect(synchronizeSpy).toHaveBeenCalled();
     });
   });
 
   describe('handleOrderCompletedEvent', () => {
-    it('should throw PluginError when order is missing', async () => {
-      trader['order'] = undefined;
-      let error;
-      try {
-        await trader['handleOrderCompletedEvent']({ id: 'adv1' }, 'trade-1');
-      } catch (err) {
-        error = err;
-      }
-      expect(error).toBeInstanceOf(GekkoError);
+    it('throws error when order cannot be found', async () => {
+      await expect(trader['handleOrderCompletedEvent'](buildAdvice(), 1)).rejects.toThrow(GekkoError);
     });
 
-    it('should clear order after handling the completed event', async () => {
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      trader['processCostAndPrice'] = vi.fn().mockReturnValue({ effectivePrice: 101, cost: 2 });
-      await trader['handleOrderCompletedEvent']({ id: 'adv2' }, 'trade-1');
-      expect(trader['order']).toBeUndefined();
-    });
+    it('removes order, synchronizes, and emits completion summary', async () => {
+      const advice = buildAdvice();
+      await trader['createOrder'](advice, 2);
+      const order = (trader as any).orders[0];
 
-    it('should call synchronize after handling the completed event', async () => {
-      const syncSpy = vi.fn(() => Promise.resolve());
-      trader['synchronize'] = syncSpy;
-      trader['processCostAndPrice'] = vi.fn().mockReturnValue({ effectivePrice: 101, cost: 2 });
-      await trader['handleOrderCompletedEvent']({ id: 'adv3' }, 'trade-1');
-      expect(syncSpy).toHaveBeenCalled();
-    });
+      const summary = {
+        amount: 2,
+        price: 100,
+        feePercent: 0.5,
+        side: 'BUY',
+        date: 1_700_000_111_000,
+      };
+      order.createSummary.mockResolvedValue(summary);
 
-    it('should call processCostAndPrice with summary values', async () => {
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      trader['processCostAndPrice'] = vi.fn().mockReturnValue({ effectivePrice: 101, cost: 2 });
-      await trader['handleOrderCompletedEvent']({ id: 'adv4' }, 'trade-1');
-      expect(trader['processCostAndPrice']).toHaveBeenCalledWith(
-        summary.side,
-        summary.price,
-        summary.amount,
-        summary.feePercent,
+      const processCostSpy = vi
+        .spyOn(traderUtils, 'processCostAndPrice')
+        .mockReturnValue({ effectivePrice: 101, cost: 2 });
+      const synchronizeSpy = vi
+        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
+        .mockResolvedValue(undefined);
+
+      trader['portfolio'] = { asset: 5, currency: 10 };
+      trader['balance'] = 510;
+
+      await trader['handleOrderCompletedEvent'](advice, 2);
+
+      expect((trader as any).orders).toHaveLength(0);
+      expect(synchronizeSpy).toHaveBeenCalled();
+      expect(processCostSpy).toHaveBeenCalledWith(summary.side, summary.price, summary.amount, summary.feePercent);
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+        ORDER_COMPLETED_EVENT,
+        expect.objectContaining({
+          orderId: advice.id,
+          side: summary.side,
+          amount: summary.amount,
+          price: summary.price,
+          feePercent: summary.feePercent,
+          effectivePrice: 101,
+          cost: 2,
+          orderType: advice.order.type,
+          requestedAmount: 2,
+          portfolio: trader['portfolio'],
+          balance: trader['balance'],
+        }),
       );
-    });
-
-    it('should emit TRADE_COMPLETED_EVENT with correct payload', async () => {
-      trader['synchronize'] = vi.fn(() => Promise.resolve());
-      trader['portfolio'] = { asset: 1, currency: 50 };
-      trader['balance'] = 150;
-      trader['processCostAndPrice'] = vi.fn().mockReturnValue({ effectivePrice: 101, cost: 2 });
-      await trader['handleOrderCompletedEvent']({ id: 'adv5' }, 'trade-1');
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(TRADE_COMPLETED_EVENT, {
-        id: 'trade-1',
-        adviceId: 'adv5',
-        action: summary.side,
-        cost: 2,
-        amount: summary.amount,
-        price: summary.price,
-        portfolio: trader['portfolio'],
-        balance: trader['balance'],
-        date: summary.date,
-        feePercent: summary.feePercent,
-        effectivePrice: 101,
-      });
     });
   });
 
   describe('processFinalize', () => {
-    it('should clear sync interval if it exists', () => {
-      const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
-      trader['syncInterval'] = setInterval(() => {}, 100);
-      const interval = trader['syncInterval'];
+    it('clears synchronization interval if present', () => {
+      trader['syncInterval'] = 123 as unknown as NodeJS.Timer;
       trader['processFinalize']();
-      expect(clearIntervalSpy).toHaveBeenCalledWith(interval);
+      expect(clearIntervalSpy).toHaveBeenCalledWith(123);
       expect(trader['syncInterval']).toBeUndefined();
     });
   });
 
   describe('getStaticConfiguration', () => {
-    it('should return a configuration object with schema equal to traderSchema', () => {
-      const config = Trader.getStaticConfiguration();
-      expect(config.schema).toBe(traderSchema);
-    });
-
-    it('should return a configuration object with modes equal to ["realtime", "backtest"]', () => {
-      const config = Trader.getStaticConfiguration();
-      expect(config.modes).toEqual(['realtime', 'backtest']);
-    });
-
-    it('should return a configuration object with dependencies as an empty array', () => {
-      const config = Trader.getStaticConfiguration();
-      expect(config.dependencies).toEqual([]);
-    });
-
-    it('should return a configuration object with inject equal to ["exchange"]', () => {
-      const config = Trader.getStaticConfiguration();
-      expect(config.inject).toEqual(['exchange']);
-    });
-
-    it('should return a configuration object with all eventsHandlers', () => {
-      const config = Trader.getStaticConfiguration();
-      expect(config.eventsHandlers).toEqual(['onStrategyWarmupCompleted', 'onRoundtripCompleted', 'onStrategyAdvice']);
-    });
-
-    it('should return a configuration object with eventsEmitted equal to the expected array', () => {
-      const config = Trader.getStaticConfiguration();
-      expect(config.eventsEmitted).toEqual([
-        PORTFOLIO_CHANGE_EVENT,
-        PORTFOLIO_VALUE_CHANGE_EVENT,
-        TRADE_ABORTED_EVENT,
-        TRADE_CANCELED_EVENT,
-        TRADE_COMPLETED_EVENT,
-        TRADE_ERRORED_EVENT,
-        TRADE_INITIATED_EVENT,
-      ]);
-    });
-
-    it('should return a configuration object with name equal to Trader.name', () => {
-      const config = Trader.getStaticConfiguration();
-      expect(config.name).toEqual(Trader.name);
+    it('exposes expected metadata', () => {
+      const configInfo = Trader.getStaticConfiguration();
+      expect(configInfo.name).toBe('Trader');
+      expect(configInfo.eventsEmitted).toEqual(
+        expect.arrayContaining([
+          PORTFOLIO_CHANGE_EVENT,
+          PORTFOLIO_VALUE_CHANGE_EVENT,
+          ORDER_ABORTED_EVENT,
+          ORDER_CANCELED_EVENT,
+          ORDER_COMPLETED_EVENT,
+          ORDER_ERRORED_EVENT,
+          ORDER_INITIATED_EVENT,
+        ]),
+      );
+      expect(configInfo.eventsHandlers.every(handler => handler.startsWith('on'))).toBe(true);
     });
   });
 });

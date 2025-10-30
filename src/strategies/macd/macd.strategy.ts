@@ -1,4 +1,4 @@
-import { TradeCompleted } from '@models/tradeStatus.types';
+import { OrderCompleted } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
@@ -12,7 +12,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };
   }
 
-  onCandleAfterWarmup({ strategyParams, advice, log }: Tools<MACDStrategyParams>, ...indicators: unknown[]): void {
+  onCandleAfterWarmup({ strategyParams, createOrder, log }: Tools<MACDStrategyParams>, ...indicators: unknown[]): void {
     const { macdSrc } = strategyParams;
     const [macd] = indicators;
 
@@ -30,7 +30,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
 
       if (this.trend.persisted && !this.trend.adviced) {
         this.trend.adviced = true;
-        advice('long');
+        createOrder({ type: 'STICKY', side: 'BUY' });
       }
     } else if (macd[macdSrc] < strategyParams.thresholds.down) {
       if (this.trend?.direction !== 'down') {
@@ -44,7 +44,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
 
       if (this.trend.persisted && !this.trend.adviced) {
         this.trend.adviced = true;
-        advice('short');
+        createOrder({ type: 'STICKY', side: 'SELL' });
       }
     } else {
       log('debug', 'MACD: no trend detected');
@@ -74,6 +74,6 @@ export class MACD implements Strategy<MACDStrategyParams> {
 
   // NOT USED
   onEachCandle(_tools: Tools<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  onTradeCompleted(_trade: TradeCompleted): void {}
+  onOrderCompleted(_trade: OrderCompleted): void {}
   end(): void {}
 }

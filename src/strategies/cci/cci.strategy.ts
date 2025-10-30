@@ -1,4 +1,4 @@
-import { TradeCompleted } from '@models/tradeStatus.types';
+import { OrderCompleted } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { CCIStrategyParams, CCITrend } from './cci.types';
@@ -15,7 +15,7 @@ export class CCI implements Strategy<CCIStrategyParams> {
   }
 
   onCandleAfterWarmup(
-    { advice, strategyParams: strategySettings, log }: Tools<CCIStrategyParams>,
+    { createOrder, strategyParams: strategySettings, log }: Tools<CCIStrategyParams>,
     ...indicators: unknown[]
   ): void {
     const [cci] = indicators;
@@ -29,14 +29,14 @@ export class CCI implements Strategy<CCIStrategyParams> {
         this.trend = { direction: 'overbought', duration: 1, persisted: persistence === 0, adviced: false };
         if (persistence === 0) {
           this.trend.adviced = true;
-          advice('short');
+          createOrder({ type: 'STICKY', side: 'SELL' });
         }
       } else {
         this.trend.duration++;
         if (this.trend.duration >= persistence) this.trend.persisted = true;
         if (this.trend.persisted && !this.trend.adviced) {
           this.trend.adviced = true;
-          advice('short');
+          createOrder({ type: 'STICKY', side: 'SELL' });
         }
       }
     } else if (cci <= down) {
@@ -45,14 +45,14 @@ export class CCI implements Strategy<CCIStrategyParams> {
         this.trend = { direction: 'oversold', duration: 1, persisted: persistence === 0, adviced: false };
         if (persistence === 0) {
           this.trend.adviced = true;
-          advice('long');
+          createOrder({ type: 'STICKY', side: 'BUY' });
         }
       } else {
         this.trend.duration++;
         if (this.trend.duration >= persistence) this.trend.persisted = true;
         if (this.trend.persisted && !this.trend.adviced) {
           this.trend.adviced = true;
-          advice('long');
+          createOrder({ type: 'STICKY', side: 'BUY' });
         }
       }
     } else {
@@ -73,6 +73,6 @@ export class CCI implements Strategy<CCIStrategyParams> {
   }
   // NOT USED
   onEachCandle(_tools: Tools<CCIStrategyParams>, ..._indicators: unknown[]): void {}
-  onTradeCompleted(_trade: TradeCompleted): void {}
+  onOrderCompleted(_trade: OrderCompleted): void {}
   end(): void {}
 }

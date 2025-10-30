@@ -1,7 +1,6 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
-import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
-import { OrderState } from '@models/order.types';
+import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
@@ -70,7 +69,7 @@ class TestCentralizedExchange extends CentralizedExchange {
     return { asset: 0, currency: 0 };
   }
 
-  protected async createLimitOrderImpl(side: Action, amount: number): Promise<OrderState> {
+  protected async createLimitOrderImpl(side: OrderSide, amount: number): Promise<OrderState> {
     this.createLimitOrderImplCalls += 1;
     const behavior = this.createOrderBehaviors.shift();
     if (behavior === 'error') throw new RetryableError('temporary failure');
@@ -86,7 +85,7 @@ class TestCentralizedExchange extends CentralizedExchange {
     };
   }
 
-  protected async createMarketOrderImpl(side: Action, amount: number): Promise<OrderState> {
+  protected async createMarketOrderImpl(side: OrderSide, amount: number): Promise<OrderState> {
     this.createMarketOrderImplCalls += 1;
     const behavior = this.createOrderBehaviors.shift();
     if (behavior === 'error') throw new RetryableError('temporary failure');
@@ -124,7 +123,7 @@ class TestCentralizedExchange extends CentralizedExchange {
     // avoid real timers in tests
   }
 
-  public calculatePricePublic(side: Action) {
+  public calculatePricePublic(side: OrderSide) {
     return this.checkOrderPrice(side);
   }
 

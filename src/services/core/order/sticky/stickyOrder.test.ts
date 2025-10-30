@@ -38,7 +38,12 @@ describe('StickyOrder', () => {
 
   beforeEach(() => {
     fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
-    stickyOrder = new StickyOrder('BUY', 10, fakeExchange as unknown as Exchange);
+    stickyOrder = new StickyOrder(
+      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+      'BUY',
+      10,
+      fakeExchange as unknown as Exchange,
+    );
   });
 
   afterAll(() => {

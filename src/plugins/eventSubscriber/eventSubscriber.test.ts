@@ -1,13 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Advice } from '../../models/advice.types';
-import { RoundTrip } from '../../models/roundtrip.types';
-import {
-  TradeAborted,
-  TradeCanceled,
-  TradeCompleted,
-  TradeErrored,
-  TradeInitiated,
-} from '../../models/tradeStatus.types';
+import { OrderAborted, OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '../../models/order.types';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { EventSubscriber } from './eventSubscriber';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
@@ -16,7 +9,7 @@ import { EVENT_NAMES } from './eventSubscriber.types';
 vi.mock('@services/logger', () => ({ debug: vi.fn() }));
 vi.mock('../../services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
-    getWatch: vi.fn(() => ({ mode: 'realtime' })),
+    getWatch: vi.fn(() => ({ mode: 'realtime', warmup: {} })),
     getStrategy: vi.fn(() => ({})),
   }));
   return { config: new Configuration() };
@@ -55,78 +48,105 @@ describe('EventSubscriber', () => {
   describe('event notifications', () => {
     const onStrategyInfo = (p: EventSubscriber) =>
       p.onStrategyInfo({ timestamp: 1, level: 'debug', message: 'M', tag: 'strategy' });
-    const onStrategyAdvice = (p: EventSubscriber) =>
-      p.onStrategyAdvice({ recommendation: 'long', date: toTimestamp('2022-01-01T00:00:00Z') } as Advice);
-    const onTradeInitiated = (p: EventSubscriber) =>
-      p.onTradeInitiated({
-        action: 'BUY',
+    const onStrategyCreateOrder = (p: EventSubscriber) =>
+      p.onStrategyCreateOrder({
+        order: { type: 'STICKY', side: 'BUY', quantity: 1 },
+        date: toTimestamp('2022-01-01T00:00:00Z'),
+        id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+      } as Advice);
+    const onOrderInitiated = (p: EventSubscriber) =>
+      p.onOrderInitiated({
+        side: 'BUY',
         balance: 1,
         date: toTimestamp('2022-01-01T00:00:00Z'),
-        id: '1',
-        adviceId: 'a1',
+        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
         portfolio: { asset: 0, currency: 0 },
-      } as TradeInitiated);
-    const onTradeCanceled = (p: EventSubscriber) =>
-      p.onTradeCanceled({ id: '1', date: toTimestamp('2022-01-01T00:00:00Z'), adviceId: 'a1' } as TradeCanceled);
-    const onTradeAborted = (p: EventSubscriber) =>
-      p.onTradeAborted({
-        id: '1',
-        action: 'BUY',
-        adviceId: 'a1',
+        orderType: 'STICKY',
+        requestedAmount: 1,
+      } as OrderInitiated);
+    const onOrderCanceled = (p: EventSubscriber) =>
+      p.onOrderCanceled({
+        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+        date: toTimestamp('2022-01-01T00:00:00Z'),
+        orderType: 'STICKY',
+      } as OrderCanceled);
+    const onOrderAborted = (p: EventSubscriber) =>
+      p.onOrderAborted({
+        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+        side: 'BUY',
         balance: 0,
         date: toTimestamp('2022-01-01T00:00:00Z'),
         portfolio: { asset: 0, currency: 0 },
         reason: 'r',
-      } as TradeAborted);
-    const onTradeErrored = (p: EventSubscriber) =>
-      p.onTradeErrored({
-        id: '1',
-        adviceId: 'a1',
+        orderType: 'STICKY',
+        requestedAmount: 1,
+      } as OrderAborted);
+    const onOrderErrored = (p: EventSubscriber) =>
+      p.onOrderErrored({
+        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
         date: toTimestamp('2022-01-01T00:00:00Z'),
         reason: 'r',
-      } as TradeErrored);
-    const onTradeCompleted = (p: EventSubscriber) =>
-      p.onTradeCompleted({
-        action: 'BUY',
-        adviceId: 'a1',
+        orderType: 'STICKY',
+      } as OrderErrored);
+    const onOrderCompleted = (p: EventSubscriber) =>
+      p.onOrderCompleted({
+        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+        side: 'BUY',
         amount: 1,
         balance: 1,
         cost: 1,
         date: toTimestamp('2022-01-01T00:00:00Z'),
         effectivePrice: 1,
-        id: '1',
         portfolio: { asset: 0, currency: 0 },
-      } as TradeCompleted);
-    const onRoundtrip = (p: EventSubscriber) =>
-      p.onRoundtrip({
-        id: 1,
-        entryBalance: 0,
-        entryPrice: 0,
-        exitBalance: 0,
-        exitPrice: 0,
-        maxAdverseExcursion: 0,
-        duration: 0,
-        entryAt: toTimestamp('2022-01-01T00:00:00Z'),
-        exitAt: toTimestamp('2022-01-01T01:00:00Z'),
-        pnl: 0,
-        profit: 0,
-      } as RoundTrip);
-
+        orderType: 'STICKY',
+        requestedAmount: 1,
+        price: 100,
+      } as OrderCompleted);
     it.each`
       name                 | handler
       ${'strategy_info'}   | ${onStrategyInfo}
-      ${'strategy_advice'} | ${onStrategyAdvice}
-      ${'trade_initiated'} | ${onTradeInitiated}
-      ${'trade_canceled'}  | ${onTradeCanceled}
-      ${'trade_aborted'}   | ${onTradeAborted}
-      ${'trade_errored'}   | ${onTradeErrored}
-      ${'trade_completed'} | ${onTradeCompleted}
-      ${'roundtrip'}       | ${onRoundtrip}
+      ${'strategy_advice'} | ${onStrategyCreateOrder}
+      ${'trade_initiated'} | ${onOrderInitiated}
+      ${'trade_canceled'}  | ${onOrderCanceled}
+      ${'trade_aborted'}   | ${onOrderAborted}
+      ${'trade_errored'}   | ${onOrderErrored}
+      ${'trade_completed'} | ${onOrderCompleted}
     `('sends message only when subscribed for $name', ({ name, handler }) => {
+      fakeBot.sendMessage.mockReset();
       handler(plugin);
       plugin['handleCommand'](`/subscribe_to_${name}`);
       handler(plugin);
       expect(fakeBot.sendMessage).toHaveBeenCalledTimes(1);
+    });
+
+    it('formats strategy advice message with order metadata', () => {
+      fakeBot.sendMessage.mockReset();
+      plugin['handleCommand']('/subscribe_to_strategy_advice');
+      plugin.onStrategyCreateOrder({
+        id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+        date: toTimestamp('2022-01-01T00:00:00Z'),
+        order: { type: 'MARKET', side: 'SELL', quantity: 3 },
+      } as Advice);
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('MARKET SELL advice'));
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested quantity: 3'));
+    });
+
+    it('reports trade initiation details including order type and requested amount', () => {
+      fakeBot.sendMessage.mockReset();
+      plugin['handleCommand']('/subscribe_to_trade_initiated');
+      plugin.onOrderInitiated({
+        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+        side: 'BUY',
+        balance: 10,
+        date: toTimestamp('2022-01-01T00:00:00Z'),
+        portfolio: { asset: 1, currency: 2 },
+        orderType: 'MARKET',
+        requestedAmount: 5,
+      } as OrderInitiated);
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('MARKET order created (ee21e130-48bc-405f-be0c-46e9bf17b52e)'),
+      );
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested amount: 5'));
     });
   });
 
@@ -178,7 +198,6 @@ describe('EventSubscriber', () => {
 /subscribe_to_trade_aborted
 /subscribe_to_trade_errored
 /subscribe_to_trade_completed
-/subscribe_to_roundtrip
 /subscribe_to_all
 /unsubscribe_from_all
 /subscriptions

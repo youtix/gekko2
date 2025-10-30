@@ -1,6 +1,5 @@
-import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
-import { OrderState } from '@models/order.types';
+import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
@@ -49,11 +48,11 @@ export abstract class CentralizedExchange extends Exchange {
     return this.retry(() => this.fetchPortfolioImpl());
   }
 
-  public async createLimitOrder(side: Action, amount: number) {
+  public async createLimitOrder(side: OrderSide, amount: number) {
     return this.retry(() => this.createLimitOrderImpl(side, amount));
   }
 
-  public async createMarketOrder(side: Action, amount: number) {
+  public async createMarketOrder(side: OrderSide, amount: number) {
     return this.retry(() => this.createMarketOrderImpl(side, amount));
   }
 
@@ -75,8 +74,8 @@ export abstract class CentralizedExchange extends Exchange {
   protected abstract fetchTradesImpl(): Promise<Trade[]>;
   protected abstract fetchMyTradesImpl(from?: EpochTimeStamp): Promise<Trade[]>;
   protected abstract fetchPortfolioImpl(): Promise<Portfolio>;
-  protected abstract createLimitOrderImpl(side: Action, amount: number): Promise<OrderState>;
-  protected abstract createMarketOrderImpl(side: Action, amount: number): Promise<OrderState>;
+  protected abstract createLimitOrderImpl(side: OrderSide, amount: number): Promise<OrderState>;
+  protected abstract createMarketOrderImpl(side: OrderSide, amount: number): Promise<OrderState>;
   protected abstract cancelOrderImpl(id: string): Promise<OrderState>;
   protected abstract fetchOrderImpl(id: string): Promise<OrderState>;
   protected abstract isRetryableError(error: unknown): boolean;

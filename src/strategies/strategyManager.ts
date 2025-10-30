@@ -1,30 +1,34 @@
-import { STRATEGY_ADVICE_EVENT, STRATEGY_INFO_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '@constants/event.const';
+import {
+  STRATEGY_CANCEL_ORDER_EVENT,
+  STRATEGY_CREATE_ORDER_EVENT,
+  STRATEGY_INFO_EVENT,
+  STRATEGY_WARMUP_COMPLETED_EVENT,
+} from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import * as indicators from '@indicators/index';
 import { Indicator } from '@indicators/indicator';
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
-import { Advice } from '@models/advice.types';
+import { Advice, AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { LogLevel } from '@models/logLevel.types';
+import { OrderCompleted } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
-import { TradeCompleted } from '@models/tradeStatus.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { toISOString } from '@utils/date/date.utils';
 import { bindAll } from 'lodash-es';
+import { randomUUID, UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { isAbsolute, resolve } from 'node:path';
-import { Direction, Strategy } from './strategy.types';
+import { Strategy } from './strategy.types';
 
 export class StrategyManager extends EventEmitter {
   private age: number;
   private warmupPeriod: number;
-  private currentDirection?: Direction;
   private indicators: Indicator[];
   private isStartegyInitialized: boolean;
   private isWarmupCompleted: boolean;
-  private propogatedAdvices: number;
   private strategyParams: object;
   private strategy?: Strategy<object>;
 
@@ -36,10 +40,9 @@ export class StrategyManager extends EventEmitter {
     this.indicators = [];
     this.isStartegyInitialized = false;
     this.isWarmupCompleted = false;
-    this.propogatedAdvices = 0;
     this.strategyParams = config.getStrategy();
 
-    bindAll(this, [this.addIndicator.name, this.advice.name, this.log.name]);
+    bindAll(this, [this.addIndicator.name, this.createOrder.name, this.cancelOrder.name, this.log.name]);
   }
 
   // ---- Called by trading advisor ----
@@ -64,7 +67,13 @@ export class StrategyManager extends EventEmitter {
       indicator.onNewCandle(candle);
       return indicator.getResult();
     });
-    const tools = { candle, advice: this.advice, log: this.log, strategyParams: this.strategyParams };
+    const tools = {
+      candle,
+      createOrder: this.createOrder,
+      cancelOrder: this.cancelOrder,
+      log: this.log,
+      strategyParams: this.strategyParams,
+    };
     this.strategy?.onEachCandle(tools, ...results);
     if (!this.isWarmupCompleted) this.warmup(candle);
     if (this.isWarmupCompleted) {
@@ -73,8 +82,8 @@ export class StrategyManager extends EventEmitter {
     }
   }
 
-  public onTradeCompleted(trade: TradeCompleted) {
-    this.strategy?.onTradeCompleted(trade);
+  public onOrderCompleted(trade: OrderCompleted) {
+    this.strategy?.onOrderCompleted(trade);
   }
 
   public finish() {
@@ -97,20 +106,15 @@ export class StrategyManager extends EventEmitter {
     return indicator;
   }
 
-  private advice(newDirection: Direction) {
-    // If advice the same direction than before then ignore it
-    if (newDirection === this.currentDirection) return;
+  private cancelOrder(orderId: UUID): void {
+    this.emit<UUID>(STRATEGY_CANCEL_ORDER_EVENT, orderId);
+  }
 
-    this.propogatedAdvices++;
-
+  private createOrder(order: AdviceOrder): UUID {
+    const id = randomUUID();
     // Timestamp handled in trading advisor
-    this.emit<Partial<Advice>>(STRATEGY_ADVICE_EVENT, {
-      id: `advice-${this.propogatedAdvices}`,
-      recommendation: newDirection,
-    });
-
-    this.currentDirection = newDirection;
-    return this.propogatedAdvices;
+    this.emit<Partial<Advice>>(STRATEGY_CREATE_ORDER_EVENT, { id, order });
+    return id;
   }
 
   private log(level: LogLevel, message: string) {
