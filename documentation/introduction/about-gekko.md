@@ -12,7 +12,7 @@ If you're new to Gekko, check out the [Getting Started](./getting-started.md) gu
 
 A [**strategy**](../strategies/introduction.md) in Gekko is a JavaScript class that defines how your bot reacts to market conditions. Strategies process market data (candles and indicators) and can issue **advices**: go `long` (buy) or go `short` (sell).
 
-You can also write your own custom strategies using built-in or custom indicators. Strategies expose lifecycle methods such as `init`, `onEachCandle`, `onCandleAfterWarmup`, `log`, `end` and `onTradeExecuted` to hook into Gekko's engine.
+You can also write your own custom strategies using built-in or custom indicators. Strategies expose lifecycle methods such as `init`, `onEachCandle`, `onCandleAfterWarmup`, `log`, `end` and `onOrderExecuted` to hook into Gekko's engine.
 
 ## Indicators
 

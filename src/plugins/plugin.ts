@@ -29,7 +29,7 @@ export abstract class Plugin extends EventEmitter {
     this.asset = asset;
     this.currency = currency;
     this.timeframe = timeframe;
-    this.warmupPeriod = warmup?.candleCount;
+    this.warmupPeriod = warmup.candleCount;
   }
 
   // --------------------------------------------------------------------------

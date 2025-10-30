@@ -9,7 +9,6 @@ export const EVENT_NAMES = [
   'trade_aborted',
   'trade_errored',
   'trade_completed',
-  'roundtrip',
 ] as const;
 
 export type Event = (typeof EVENT_NAMES)[number];

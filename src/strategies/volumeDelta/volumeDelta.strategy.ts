@@ -1,4 +1,4 @@
-import type { TradeCompleted } from '@models/tradeStatus.types';
+import type { OrderCompleted } from '@models/order.types';
 import type { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import type { VolumeDeltaStrategyParams, VolumeDeltaTrend } from './volumeDelta.types';
 
@@ -12,7 +12,7 @@ export class VolumeDelta implements Strategy<VolumeDeltaStrategyParams> {
   }
 
   onCandleAfterWarmup(
-    { advice, log, strategyParams }: Tools<VolumeDeltaStrategyParams>,
+    { createOrder, log, strategyParams }: Tools<VolumeDeltaStrategyParams>,
     indicator: IndicatorRegistry['VolumeDelta']['output'],
   ): void {
     const { output } = strategyParams;
@@ -30,7 +30,7 @@ export class VolumeDelta implements Strategy<VolumeDeltaStrategyParams> {
 
       if (this.trend.persisted && !this.trend.adviced) {
         this.trend.adviced = true;
-        advice('long');
+        createOrder({ type: 'STICKY', side: 'BUY' });
       }
     } else if (indicator[output] < strategyParams.thresholds.down) {
       if (this.trend?.direction !== 'down') {
@@ -44,7 +44,7 @@ export class VolumeDelta implements Strategy<VolumeDeltaStrategyParams> {
 
       if (this.trend.persisted && !this.trend.adviced) {
         this.trend.adviced = true;
-        advice('short');
+        createOrder({ type: 'STICKY', side: 'SELL' });
       }
     } else {
       log('debug', 'VolumeDelta: no trend detected');
@@ -61,6 +61,6 @@ export class VolumeDelta implements Strategy<VolumeDeltaStrategyParams> {
 
   // NOT USED
   onEachCandle(_tools: Tools<VolumeDeltaStrategyParams>, ..._indicators: unknown[]): void {}
-  onTradeCompleted(_trade: TradeCompleted): void {}
+  onOrderCompleted(_trade: OrderCompleted): void {}
   end(): void {}
 }

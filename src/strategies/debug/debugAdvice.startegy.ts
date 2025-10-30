@@ -1,21 +1,21 @@
-import { TradeCompleted } from '@models/tradeStatus.types';
+import { OrderCompleted } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { DebugAdviceParams } from './debugAdvice.types';
 
 export class DebugAdvice implements Strategy<DebugAdviceParams> {
   private index = 0;
 
-  onCandleAfterWarmup({ strategyParams, log, advice }: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {
+  onCandleAfterWarmup({ strategyParams, log, createOrder }: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {
     if (strategyParams.wait > this.index) return;
 
     log('debug', `Iteration: ${this.index}`);
 
     if (this.index % strategyParams.each === 0) {
       log('debug', 'Trigger SHORT');
-      advice('short');
+      createOrder({ type: 'STICKY', side: 'SELL', quantity: 1 });
     } else if (this.index % strategyParams.each === strategyParams.each / 2) {
       log('debug', 'Trigger LONG');
-      advice('long');
+      createOrder({ type: 'STICKY', side: 'BUY', quantity: 1 });
     }
 
     // if(i % 2 === 0)
@@ -28,7 +28,7 @@ export class DebugAdvice implements Strategy<DebugAdviceParams> {
 
   init(_addIndicator: AddIndicatorFn, _strategyParams: unknown): void {}
   onEachCandle(_tools: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {}
-  onTradeCompleted(_trade: TradeCompleted): void {}
+  onOrderCompleted(_trade: OrderCompleted): void {}
   log(_tools: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }

@@ -28,7 +28,12 @@ describe('MarketOrder', () => {
     const orderResponse: OrderState = { id: 'order-1', status: 'closed', filled: 1, timestamp: 1_700_000_000_000 };
     fakeExchange.createMarketOrder.mockResolvedValue(orderResponse);
 
-    const order = new MarketOrder('BUY', 1, fakeExchange as unknown as Exchange);
+    const order = new MarketOrder(
+      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+      'BUY',
+      1,
+      fakeExchange as unknown as Exchange,
+    );
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
 
     await order.creation;
@@ -42,7 +47,12 @@ describe('MarketOrder', () => {
     const error = new Error('exchange down');
     fakeExchange.createMarketOrder.mockRejectedValue(error);
 
-    const order = new MarketOrder('SELL', 2, fakeExchange as unknown as Exchange);
+    const order = new MarketOrder(
+      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+      'SELL',
+      2,
+      fakeExchange as unknown as Exchange,
+    );
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
 
     await expect(order.creation).rejects.toThrow('exchange down');
@@ -59,7 +69,12 @@ describe('MarketOrder', () => {
       { id: 'other-order', amount: 5, timestamp: timestamp + 2, price: 20, fee: { rate: 0.3 } },
     ]);
 
-    const order = new MarketOrder('BUY', 2, fakeExchange as unknown as Exchange);
+    const order = new MarketOrder(
+      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+      'BUY',
+      2,
+      fakeExchange as unknown as Exchange,
+    );
     await order.creation;
 
     const summary = await order.createSummary();

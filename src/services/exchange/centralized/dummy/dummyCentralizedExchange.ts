@@ -1,5 +1,5 @@
 import { Candle } from '@models/candle.types';
-import { OrderState } from '@models/order.types';
+import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
@@ -8,7 +8,7 @@ import { MarketLimits } from '@services/exchange/exchange.types';
 import { RingBuffer } from '@utils/array/ringBuffer';
 import { isNil } from 'lodash-es';
 import { CentralizedExchange } from '../cex';
-import { DummyCentralizedExchangeConfig, DummyInternalOrder, DummyOrderSide } from './dummyCentralizedExchange.types';
+import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
 
 export class DummyCentralizedExchange extends CentralizedExchange {
   private readonly orders: RingBuffer<DummyInternalOrder>;
@@ -81,7 +81,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return { ...this.portfolio };
   }
 
-  protected async createLimitOrderImpl(side: DummyOrderSide, amount: number): Promise<OrderState> {
+  protected async createLimitOrderImpl(side: OrderSide, amount: number): Promise<OrderState> {
     const price = await this.checkOrderPrice(side);
     const normalizedAmount = this.checkOrderAmount(amount);
     this.checkOrderCost(normalizedAmount, price);
@@ -104,7 +104,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return this.cloneOrder(order);
   }
 
-  protected async createMarketOrderImpl(side: DummyOrderSide, amount: number): Promise<OrderState> {
+  protected async createMarketOrderImpl(side: OrderSide, amount: number): Promise<OrderState> {
     const normalizedAmount = this.checkOrderAmount(amount);
     const price = side === 'BUY' ? this.ticker.ask : this.ticker.bid;
     this.checkOrderCost(normalizedAmount, price);
@@ -181,7 +181,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return { id, status, filled, remaining, price, timestamp };
   }
 
-  private reserveBalance(side: DummyOrderSide, amount: number, price: number) {
+  private reserveBalance(side: OrderSide, amount: number, price: number) {
     if (side === 'BUY') {
       const cost = amount * price;
       if (this.portfolio.currency < cost) throw new Error('Insufficient currency balance');

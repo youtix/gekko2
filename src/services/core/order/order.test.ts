@@ -24,6 +24,8 @@ class TestOrder extends Order {
   public handleCreateOrderError = vi.fn();
   public handleFetchOrderSuccess = vi.fn();
   public handleFetchOrderError = vi.fn();
+  public cancel = vi.fn();
+  public createSummary = vi.fn();
 }
 const fakeExchange = {
   createLimitOrder: vi.fn(),
@@ -39,7 +41,12 @@ describe('order', () => {
   let testOrder: TestOrder;
 
   beforeEach(() => {
-    testOrder = new TestOrder(fakeExchange as unknown as Exchange, 'STICKY');
+    testOrder = new TestOrder(
+      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+      fakeExchange as unknown as Exchange,
+      'BUY',
+      'STICKY',
+    );
   });
 
   it('should have status "initializing" upon creation', () => {

@@ -19,13 +19,13 @@ vi.mock('@services/logger', () => ({
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: vi.fn(() => ({ asset: 'BTC', currency: 'USDT' })),
+    getWatch: vi.fn(() => ({ asset: 'BTC', currency: 'USDT', warmup: {} })),
     getStrategy: vi.fn(() => ({ name: 'DEMA' })),
   },
 }));
 
 const HEADER =
-  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;expected downside;ratio roundtrip;top mae list\n';
+  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;expected downside\n';
 
 const baseConfig = {
   name: 'PerformanceReporter',
@@ -51,10 +51,8 @@ const sampleReport: Report = {
   sortino: 1.1,
   standardDeviation: 2.5,
   downside: 0.08,
-  ratioRoundTrips: 0.9,
   profit: 10,
   relativeProfit: 1,
-  topMaxAdverseExcursions: [5.1234, 2.5, 0],
 };
 
 // ---------------------------------------------------------------------------
@@ -121,8 +119,6 @@ describe('PerformanceReporter', () => {
           '1.10',
           '2.50',
           '0.08%',
-          '0.9%',
-          '[5.12%, 2.5%, 0%]',
         ].join(';') + '\n';
 
       expect(fs.appendFileSync).toHaveBeenCalledWith(expectedPath, expectedLine, 'utf8');

@@ -1,3 +1,5 @@
+import type { AdviceOrder } from '@models/advice.types';
+import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MACD } from './macd.strategy';
 
@@ -15,12 +17,16 @@ vi.mock('@services/configuration/configuration', () => {
 
 describe('MACD Strategy', () => {
   let strategy: MACD;
-  let advices: string[];
+  let advices: AdviceOrder[];
   let tools: any;
 
   beforeEach(() => {
     strategy = new MACD();
     advices = [];
+    const createOrder = vi.fn((order: AdviceOrder) => {
+      advices.push({ ...order, quantity: order.quantity ?? 1 });
+      return '00000000-0000-0000-0000-000000000000' as UUID;
+    });
     tools = {
       candle: { close: 1 },
       strategyParams: {
@@ -30,7 +36,8 @@ describe('MACD Strategy', () => {
         macdSrc: 'macd',
         thresholds: { up: 0.5, down: -0.5, persistence: 2 },
       },
-      advice: (direction: string) => advices.push(direction),
+      createOrder,
+      cancelOrder: vi.fn(),
       log: vi.fn(),
     };
   });
@@ -43,13 +50,13 @@ describe('MACD Strategy', () => {
   it('should emit long advice after persistence on uptrend', () => {
     strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
     strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
-    expect(advices).toEqual(['long']);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', quantity: 1 }]);
   });
 
   it('should emit short advice after persistence on downtrend', () => {
     strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
     strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
-    expect(advices).toEqual(['short']);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', quantity: 1 }]);
   });
 
   it('should reset trend when switching from up to down', () => {
@@ -57,7 +64,10 @@ describe('MACD Strategy', () => {
     strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
     strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
     strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
-    expect(advices).toEqual(['long', 'short']);
+    expect(advices).toEqual([
+      { type: 'STICKY', side: 'BUY', quantity: 1 },
+      { type: 'STICKY', side: 'SELL', quantity: 1 },
+    ]);
   });
 
   it('should do nothing when MACD result is invalid', () => {

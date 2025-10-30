@@ -47,8 +47,6 @@ Each row in the CSV contains the following metrics:
 | `sortinoRatio`          | Risk-adjusted return metric that only considers downside volatility                             |
 | `standardDeviation`     | Standard deviation of trade profits, used to measure volatility                                 |
 | `expectedDownside`      | Worst-case loss estimate                                                                        |
-| `ratioRoundtrip`        | Ratio of trades that completed a full buy/sell cycle                                            |
-| `topMaeList`            | Bracketed list string of up to ten worst MAE percentages (descending order)                     |
 
 ## Events Emitted
 

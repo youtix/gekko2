@@ -1,7 +1,6 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
-import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
-import { OrderState } from '@models/order.types';
+import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
@@ -41,7 +40,7 @@ export abstract class Exchange {
   }
 
   // Protected functions
-  protected async checkOrderPrice(side: Action) {
+  protected async checkOrderPrice(side: OrderSide) {
     const limits = this.getMarketLimits();
     const priceLimits = limits?.price;
     const minimalPrice = priceLimits?.min;
@@ -91,8 +90,8 @@ export abstract class Exchange {
   public abstract fetchTrades(): Promise<Trade[]>;
   public abstract fetchMyTrades(from?: EpochTimeStamp): Promise<Trade[]>;
   public abstract fetchPortfolio(): Promise<Portfolio>;
-  public abstract createLimitOrder(side: Action, amount: number): Promise<OrderState>;
-  public abstract createMarketOrder(side: Action, amount: number): Promise<OrderState>;
+  public abstract createLimitOrder(side: OrderSide, amount: number): Promise<OrderState>;
+  public abstract createMarketOrder(side: OrderSide, amount: number): Promise<OrderState>;
   public abstract cancelOrder(id: string): Promise<OrderState>;
   public abstract fetchOrder(id: string): Promise<OrderState>;
   protected abstract getMarketLimits(): MarketLimits | undefined;

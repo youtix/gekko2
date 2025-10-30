@@ -1,9 +1,17 @@
-import { STRATEGY_ADVICE_EVENT, STRATEGY_INFO_EVENT, STRATEGY_WARMUP_COMPLETED_EVENT } from '@constants/event.const';
+import {
+  STRATEGY_CREATE_ORDER_EVENT,
+  STRATEGY_INFO_EVENT,
+  STRATEGY_WARMUP_COMPLETED_EVENT,
+} from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { debug, error, info, warning } from '@services/logger';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrategyManager } from './strategyManager';
+
+vi.mock('node:crypto', () => ({
+  randomUUID: vi.fn(() => 'db2254e3-c749-448c-b7b6-aa28831bbae7'),
+}));
 
 vi.mock('@services/logger', () => ({
   debug: vi.fn(),
@@ -22,7 +30,7 @@ vi.mock('@strategies/index', () => ({
     init = vi.fn();
     onEachCandle = vi.fn();
     onCandleAfterWarmup = vi.fn();
-    onTradeCompleted = vi.fn();
+    onOrderCompleted = vi.fn();
     log = vi.fn();
     end = vi.fn();
   },
@@ -33,7 +41,7 @@ vi.mock('./debug/debugAdvice.startegy.ts', () => ({
     init = vi.fn();
     onEachCandle = vi.fn();
     onCandleAfterWarmup = vi.fn();
-    onTradeCompleted = vi.fn();
+    onOrderCompleted = vi.fn();
     log = vi.fn();
     end = vi.fn();
   },
@@ -90,25 +98,25 @@ describe('StrategyManager', () => {
     });
   });
 
-  describe('advice', () => {
+  describe('create order', () => {
     it('should emit strategy advice event with incremented id', () => {
       const listener = vi.fn();
-      manager.on(STRATEGY_ADVICE_EVENT, listener);
-      const id = (manager as any).advice('long');
-      expect(id).toBe(1);
+      manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+      const order = { side: 'BUY', type: 'STICKY', quantity: 1 } as const;
+      const id = manager['createOrder'](order);
+      expect(id).toBe('db2254e3-c749-448c-b7b6-aa28831bbae7');
       expect(listener).toHaveBeenCalledWith({
-        id: 'advice-1',
-        recommendation: 'long',
+        id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
+        order,
       });
     });
 
-    it('should ignore repeated direction', () => {
+    it('should emit when quantity changes', () => {
       const listener = vi.fn();
-      manager.on(STRATEGY_ADVICE_EVENT, listener);
-      (manager as any).advice('long');
-      const id = (manager as any).advice('long');
-      expect(id).toBeUndefined();
-      expect(listener).toHaveBeenCalledTimes(1);
+      manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+      manager['createOrder']({ side: 'BUY', type: 'STICKY', quantity: 1 });
+      manager['createOrder']({ side: 'BUY', type: 'STICKY', quantity: 2 });
+      expect(listener).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -166,12 +174,12 @@ describe('StrategyManager', () => {
     });
   });
 
-  describe('onTradeCompleted', () => {
+  describe('onOrderCompleted', () => {
     it('should forward trade events to strategy', () => {
-      const strategy: any = { onTradeCompleted: vi.fn() };
+      const strategy: any = { onOrderCompleted: vi.fn() };
       (manager as any).strategy = strategy;
-      manager.onTradeCompleted(trade);
-      expect(strategy.onTradeCompleted).toHaveBeenCalledWith(trade);
+      manager.onOrderCompleted(trade);
+      expect(strategy.onOrderCompleted).toHaveBeenCalledWith(trade);
     });
   });
 
