@@ -123,15 +123,14 @@ describe('DummyCentralizedExchange', () => {
     await exchange.loadMarkets();
 
     const initialPortfolio = await exchange.fetchPortfolio();
-    const takerFeePercent = baseConfig.feeTaker ?? 0;
-    const takerMultiplier = takerFeePercent / 100;
+    const takerFeeRate = baseConfig.feeTaker ?? 0;
 
     const buyOrder = await exchange.createMarketOrder('BUY', 2);
     expect(buyOrder.status).toBe('closed');
     expect(buyOrder.remaining).toBe(0);
 
     const afterBuy = await exchange.fetchPortfolio();
-    const expectedBuyCurrency = initialPortfolio.currency - 2 * baseConfig.initialTicker.ask * (1 + takerMultiplier);
+    const expectedBuyCurrency = initialPortfolio.currency - 2 * baseConfig.initialTicker.ask * (1 + takerFeeRate);
     expect(afterBuy.asset).toBeCloseTo(initialPortfolio.asset + 2, 8);
     expect(afterBuy.currency).toBeCloseTo(expectedBuyCurrency, 8);
 
@@ -139,7 +138,7 @@ describe('DummyCentralizedExchange', () => {
     expect(sellOrder.status).toBe('closed');
 
     const afterSell = await exchange.fetchPortfolio();
-    const expectedSellCurrency = expectedBuyCurrency + 1 * baseConfig.initialTicker.bid * (1 - takerMultiplier);
+    const expectedSellCurrency = expectedBuyCurrency + 1 * baseConfig.initialTicker.bid * (1 - takerFeeRate);
     expect(afterSell.asset).toBeCloseTo(initialPortfolio.asset + 1, 8);
     expect(afterSell.currency).toBeCloseTo(expectedSellCurrency, 8);
 

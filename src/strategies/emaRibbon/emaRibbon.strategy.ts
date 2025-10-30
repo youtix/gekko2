@@ -1,4 +1,4 @@
-import type { TradeCompleted } from '@models/tradeStatus.types';
+import type { OrderCompleted } from '@models/order.types';
 import type { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import type { EMARibbonStrategyParams } from './emaRibbon.types';
 
@@ -10,7 +10,7 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
     addIndicator('EMARibbon', { src, count, start, step });
   }
 
-  onCandleAfterWarmup({ advice }: Tools<EMARibbonStrategyParams>, ...indicators: unknown[]): void {
+  onCandleAfterWarmup({ createOrder }: Tools<EMARibbonStrategyParams>, ...indicators: unknown[]): void {
     const [emaRibbon] = indicators as [{ results: number[]; spread: number }];
     if (emaRibbon === undefined || emaRibbon === null) return;
 
@@ -18,12 +18,12 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
     const isBullish = emaRibbon.results.every((result, index, values) => !index || values[index - 1] > result);
 
     if (!this.isLong && isBullish) {
-      advice('long');
+      createOrder({ type: 'STICKY', side: 'BUY' });
       this.isLong = true;
     }
 
     if (this.isLong && !isBullish) {
-      advice('short');
+      createOrder({ type: 'STICKY', side: 'SELL' });
       this.isLong = false;
     }
   }
@@ -37,6 +37,6 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
 
   // NOT USED
   onEachCandle(_tools: Tools<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
-  onTradeCompleted(_trade: TradeCompleted): void {}
+  onOrderCompleted(_trade: OrderCompleted): void {}
   end(): void {}
 }

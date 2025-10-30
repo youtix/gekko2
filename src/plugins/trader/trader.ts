@@ -1,62 +1,50 @@
 import {
-  PORTFOLIO_CHANGE_EVENT,
-  PORTFOLIO_VALUE_CHANGE_EVENT,
-  TRADE_ABORTED_EVENT,
-  TRADE_CANCELED_EVENT,
-  TRADE_COMPLETED_EVENT,
-  TRADE_ERRORED_EVENT,
-  TRADE_INITIATED_EVENT,
-} from '@constants/event.const';
-import { GekkoError } from '@errors/gekko.error';
-import { StopGekkoError } from '@errors/stopGekko.error';
-import { Action } from '@models/action.types';
-import { Advice } from '@models/advice.types';
-import { Candle } from '@models/candle.types';
-import { Portfolio } from '@models/portfolio.types';
-import { TradeAborted, TradeCanceled, TradeErrored, TradeInitiated } from '@models/tradeStatus.types';
-import { Plugin } from '@plugins/plugin';
-import { config } from '@services/configuration/configuration';
-import {
+  ORDER_ABORTED_EVENT,
+  ORDER_CANCELED_EVENT,
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,
-  ORDER_PARTIALLY_FILLED_EVENT,
-  ORDER_STATUS_CHANGED_EVENT,
-} from '@services/core/order/order.const';
-import { StickyOrder } from '@services/core/order/sticky/stickyOrder';
+  ORDER_INITIATED_EVENT,
+  PORTFOLIO_CHANGE_EVENT,
+  PORTFOLIO_VALUE_CHANGE_EVENT,
+} from '@constants/event.const';
+import { GekkoError } from '@errors/gekko.error';
+import { Advice } from '@models/advice.types';
+import { Candle } from '@models/candle.types';
+import { OrderAborted, OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '@models/order.types';
+import { Portfolio } from '@models/portfolio.types';
+import { Plugin } from '@plugins/plugin';
+import { config } from '@services/configuration/configuration';
+import { Order } from '@services/core/order/order';
+import { ORDER_PARTIALLY_FILLED_EVENT, ORDER_STATUS_CHANGED_EVENT } from '@services/core/order/order.const';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { wait } from '@utils/process/process.utils';
-import { bindAll, filter, isEqual, isNil } from 'lodash-es';
-import { SYNCHRONIZATION_INTERVAL } from './trader.const';
+import { bindAll, filter, isEqual } from 'lodash-es';
+import { UUID } from 'node:crypto';
+import { ORDER_FACTORY, SYNCHRONIZATION_INTERVAL } from './trader.const';
 import { traderSchema } from './trader.schema';
+import { findWhyWeCannotBuy, findWhyWeCannotSell, processCostAndPrice, resolveOrderAmount } from './trader.utils';
 
 export class Trader extends Plugin {
-  private propogatedTrades: number;
-  private cancellingOrder: boolean;
+  private readonly orders: Order[];
   private sendInitialPortfolio: boolean;
   private warmupCompleted: boolean;
   private warmupCandle?: Candle;
   private portfolio: Portfolio;
   private balance: number;
   private price: number;
-  private exposure: number;
-  private exposed: boolean;
-  private order?: StickyOrder;
   // Timer controlling periodic synchronization with the exchange.
   private syncInterval?: Timer;
 
   constructor() {
     super(Trader.name);
-    this.propogatedTrades = 0;
-    this.cancellingOrder = false;
+    this.orders = [];
     this.sendInitialPortfolio = false;
     this.warmupCompleted = false;
     this.warmupCandle = undefined;
     this.portfolio = { asset: 0, currency: 0 };
     this.balance = 0;
-    this.exposure = 0;
     this.price = 0;
-    this.exposed = this.portfolio.asset > 0;
 
     bindAll(this, ['synchronize']);
 
@@ -68,7 +56,7 @@ export class Trader extends Plugin {
 
   private async synchronize() {
     const exchange = this.getExchange();
-    debug('trader', `Synchronizing data with ${exchange.getExchangeName()}`);
+    info('trader', `Synchronizing data with ${exchange.getExchangeName()}`);
     if (!this.price) {
       const sleepInterval = exchange.getInterval();
       const ticker = await exchange.fetchTicker();
@@ -102,9 +90,6 @@ export class Trader extends Plugin {
   private setBalance() {
     if (!this.portfolio.asset && !this.portfolio.currency) return;
     this.balance = this.price * this.portfolio.asset + this.portfolio.currency;
-    this.exposure = (this.portfolio.asset * this.price) / this.balance;
-    // if more than 10% of balance is in asset we are exposed
-    this.exposed = this.exposure > 0.1;
   }
 
   public onStrategyWarmupCompleted() {
@@ -115,139 +100,122 @@ export class Trader extends Plugin {
     void this.processOneMinuteCandle(candle);
   }
 
-  public onRoundtripCompleted() {
-    if (this.portfolio.asset === 0 && this.portfolio.currency === 0) {
-      warning(
-        'trader',
-        'Portfolio is completely empty (no assets, no currency). Initiating the stop of gekko application !',
-      );
-      throw new StopGekkoError();
-    }
-  }
+  public onStrategyCancelOrder(id: UUID) {
+    const orderInstance = this.getOrder(id);
+    if (!orderInstance) return warning('trader', 'Impossible to cancel order: Unknown Order');
 
-  public onStrategyAdvice(advice: Advice) {
-    if (!['long', 'short'].includes(advice.recommendation)) {
-      error('trader', 'Ignoring advice in unknown direction');
-      return;
-    }
-    const direction: Action = advice.recommendation === 'long' ? 'BUY' : 'SELL';
-    const id = `trade-${++this.propogatedTrades}`;
-
-    if (this.order) {
-      if (this.order.getSide() === direction) {
-        info('trader', `Ignoring advice: already in the process to ${direction}`);
-        return;
-      }
-
-      if (this.cancellingOrder) {
-        info('trader', `Ignoring advice: already cancelling previous ${this.order.getSide()} order`);
-        return;
-      }
-
-      info(
-        'trader',
-        [
-          `Received advice to ${direction}`,
-          `however Gekko is already in the process to ${this.order.getSide()}.`,
-          `Canceling ${this.order.getSide()} order first`,
-        ].join(' '),
-      );
-
-      this.cancelOrder(id, advice, () => this.onStrategyAdvice(advice));
-      return;
-    }
-
-    if (direction === 'BUY') {
-      if (this.exposed) {
-        info('trader', 'NOT buying, already exposed');
-        return this.deferredEmit<TradeAborted>(TRADE_ABORTED_EVENT, {
-          id,
-          adviceId: advice.id,
-          action: direction,
-          portfolio: this.portfolio,
-          balance: this.balance,
-          date: advice.date,
-          reason: 'Portfolio already in position.',
-        });
-      }
-
-      info('trader', `Received advice to go long. Buying ${this.asset}`);
-    }
-
-    if (direction === 'SELL') {
-      if (!this.exposed) {
-        info('trader', 'NOT selling, already no exposure');
-        return this.deferredEmit<TradeAborted>(TRADE_ABORTED_EVENT, {
-          id,
-          adviceId: advice.id,
-          action: direction,
-          portfolio: this.portfolio,
-          balance: this.balance,
-          date: advice.date,
-          reason: 'Portfolio already in position.',
-        });
-      }
-
-      info('trader', `Received advice to go short. Selling ${this.asset}`);
-    }
-
-    const amount = direction === 'BUY' ? (this.portfolio.currency / this.price) * 0.95 : this.portfolio.asset;
-
-    this.createOrder(direction, amount, advice, id);
-  }
-
-  private cancelOrder(id: string, advice: Advice, callback: () => void) {
-    if (!this.order) return callback();
-
-    this.cancellingOrder = true;
-
-    this.order.removeAllListeners();
-    this.order.cancel();
-    this.order.once(ORDER_COMPLETED_EVENT, async () => {
-      this.order = undefined;
-      this.cancellingOrder = false;
-      this.deferredEmit<TradeCanceled>(TRADE_CANCELED_EVENT, {
-        id,
-        adviceId: advice.id,
+    const orderType = orderInstance.getType();
+    orderInstance.removeAllListeners();
+    orderInstance.once(ORDER_COMPLETED_EVENT, async () => {
+      this.removeOrder(id);
+      this.deferredEmit<OrderCanceled>(ORDER_CANCELED_EVENT, {
+        orderId: id,
         date: Date.now(),
+        orderType,
       });
+      // We do not check if cancel goes bad because we cannot do much for it
       await this.synchronize();
-      callback();
     });
+    orderInstance.cancel();
   }
 
-  private async createOrder(side: Action, amount: number, advice: Advice, id: string) {
-    info('trader', `Creating order to ${side} ${amount} ${this.asset}`);
-    this.deferredEmit<TradeInitiated>(TRADE_INITIATED_EVENT, {
-      id,
-      adviceId: advice.id,
-      action: side,
+  public onStrategyCreateOrder(advice: Advice) {
+    const { order, date, id } = advice;
+    const { side, type, quantity } = order;
+    const price = this.price;
+    const requestedAmount = resolveOrderAmount(this.portfolio, price, side, quantity);
+
+    if (side === 'BUY') {
+      const currency = this.portfolio.currency;
+      const insufficient = requestedAmount <= 0 || price <= 0 || currency < requestedAmount * price;
+      if (insufficient) {
+        const reason = findWhyWeCannotBuy(requestedAmount, price, currency, this.currency);
+        warning(
+          'trader',
+          `NOT buying ${requestedAmount} ${this.asset} @ ${price} ${this.currency}/${this.asset} [${type} order]: ${reason}`,
+        );
+        return this.deferredEmit<OrderAborted>(ORDER_ABORTED_EVENT, {
+          orderId: id,
+          side: side,
+          portfolio: this.portfolio,
+          balance: this.balance,
+          date,
+          reason,
+          orderType: type,
+          requestedAmount,
+        });
+      }
+      info('trader', `Received BUY ${type} order advice. Buying ${requestedAmount} ${this.asset}`);
+    }
+
+    if (side === 'SELL') {
+      const asset = this.portfolio.asset;
+      const insufficient = requestedAmount <= 0 || price <= 0 || asset < requestedAmount;
+      if (insufficient) {
+        const reason = findWhyWeCannotSell(requestedAmount, price, asset, this.asset);
+        warning(
+          'trader',
+          `NOT selling ${requestedAmount} ${this.asset} @ ${price} ${this.currency}/${this.asset} [${type} order]: ${reason}`,
+        );
+        return this.deferredEmit<OrderAborted>(ORDER_ABORTED_EVENT, {
+          orderId: id,
+          side: side,
+          portfolio: this.portfolio,
+          balance: this.balance,
+          date,
+          reason,
+          orderType: type,
+          requestedAmount,
+        });
+      }
+      info('trader', `Received SELL ${type} order advice. Selling ${requestedAmount} ${this.asset}`);
+    }
+
+    this.createOrder(advice, requestedAmount);
+  }
+
+  private async createOrder(advice: Advice, amount: number) {
+    const { order, date, id } = advice;
+    const { side, type } = order;
+    info('trader', `Creating ${type} order to ${side} ${amount} ${this.asset}`);
+    this.deferredEmit<OrderInitiated>(ORDER_INITIATED_EVENT, {
+      orderId: id,
+      side: side,
       portfolio: this.portfolio,
       balance: this.balance,
-      date: advice.date,
+      date,
+      orderType: type,
+      requestedAmount: amount,
     });
-    this.order = new StickyOrder(side, amount, this.getExchange());
+    const exchange = this.getExchange();
 
-    this.order.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
+    const orderInstance = new ORDER_FACTORY[type](id, side, amount, exchange);
+    this.orders.push(orderInstance);
+
+    orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
       info('trader', `Partial ${side} fill, total filled: ${filled}`),
     );
-    this.order.on(ORDER_STATUS_CHANGED_EVENT, status => debug('trader', `status changed: ${status}`));
-    this.order.on(ORDER_ERRORED_EVENT, reason => {
+    orderInstance.on(ORDER_STATUS_CHANGED_EVENT, status => debug('trader', `status changed: ${status}`));
+    orderInstance.on(ORDER_ERRORED_EVENT, reason => {
       error('trader', `Gekko received error: ${reason}`);
-      this.order = undefined;
-      this.cancellingOrder = false;
-
-      this.deferredEmit<TradeErrored>(TRADE_ERRORED_EVENT, { id, adviceId: advice.id, date: Date.now(), reason });
+      this.removeOrder(id);
+      this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
+        orderId: id,
+        orderType: type,
+        date: Date.now(),
+        reason,
+      });
+      this.synchronize();
     });
-    this.order.on(ORDER_COMPLETED_EVENT, async () => {
+    orderInstance.on(ORDER_COMPLETED_EVENT, async () => {
       try {
-        await this.handleOrderCompletedEvent(advice, id);
+        await this.handleOrderCompletedEvent(advice, amount);
       } catch (err) {
         if (err instanceof Error) {
           error('trader', err.message);
-          return this.deferredEmit<TradeErrored>(TRADE_ERRORED_EVENT, {
-            id,
-            adviceId: advice.id,
+          return this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
+            orderId: id,
+            orderType: type,
             date: Date.now(),
             reason: err.message,
           });
@@ -256,33 +224,23 @@ export class Trader extends Plugin {
     });
   }
 
-  private processCostAndPrice(side: Action, price: number, amount: number, feePercent?: number) {
-    if (!isNil(feePercent)) {
-      const cost = (feePercent / 100) * amount * price;
-      if (side === 'BUY') return { effectivePrice: price * (feePercent / 100 + 1), cost };
-      else return { effectivePrice: price * (1 - feePercent / 100), cost };
-    }
+  private async handleOrderCompletedEvent({ id, order }: Advice, requestedAmount: number) {
+    const orderInstance = this.getOrder(id);
+    if (!orderInstance) throw new GekkoError('trader', 'Missing order when handling order completed event');
 
-    warning('trader', 'Exchange did not provide fee information, assuming no fees..');
-    return { effectivePrice: price, cost: price * amount };
-  }
+    const summary = await orderInstance.createSummary();
 
-  private async handleOrderCompletedEvent(advice: Advice, id: string) {
-    if (!this.order) throw new GekkoError('trader', 'Missing order when handling order completed event');
-
-    const summary = await this.order.createSummary();
-
-    this.order = undefined;
+    this.removeOrder(id);
     await this.synchronize();
 
     const { amount, price, feePercent, side, date } = summary;
-    const { effectivePrice, cost } = this.processCostAndPrice(side, price, amount, feePercent);
+    const { effectivePrice, cost } = processCostAndPrice(side, price, amount, feePercent);
 
     info(
       'trader',
       [
-        `${side} sticky order summary '${id}':`,
-        `Completed at: ${date ? toISOString(date) : 'Unknown'},`,
+        `${side} ${order.type} order summary '${id}':`,
+        `Completed at: ${toISOString(date)}`,
         `Order amount: ${amount},`,
         `Effective price: ${effectivePrice},`,
         `Cost: ${cost},`,
@@ -290,19 +248,31 @@ export class Trader extends Plugin {
       ].join(' '),
     );
 
-    this.deferredEmit(TRADE_COMPLETED_EVENT, {
-      id,
-      adviceId: advice.id,
-      action: side,
+    this.deferredEmit<OrderCompleted>(ORDER_COMPLETED_EVENT, {
+      orderId: id,
+      side,
       cost,
-      amount: amount,
-      price: price,
+      amount,
+      price,
       portfolio: this.portfolio,
       balance: this.balance,
-      date: date,
+      date: date ?? 0,
       feePercent: feePercent,
       effectivePrice,
+      orderType: order.type,
+      requestedAmount,
     });
+  }
+
+  private removeOrder(id: UUID) {
+    const index = this.orders.findIndex(o => o.getGekkoOrderId() === id);
+    if (index >= 0) this.orders.splice(index, 1);
+  }
+
+  private getOrder(id: UUID) {
+    const orderIndex = this.orders.findIndex(o => o.getGekkoOrderId() === id);
+    if (orderIndex === -1) return;
+    return this.orders[orderIndex];
   }
 
   // --------------------------------------------------------------------------
@@ -354,11 +324,11 @@ export class Trader extends Plugin {
       eventsEmitted: [
         PORTFOLIO_CHANGE_EVENT,
         PORTFOLIO_VALUE_CHANGE_EVENT,
-        TRADE_ABORTED_EVENT,
-        TRADE_CANCELED_EVENT,
-        TRADE_COMPLETED_EVENT,
-        TRADE_ERRORED_EVENT,
-        TRADE_INITIATED_EVENT,
+        ORDER_ABORTED_EVENT,
+        ORDER_CANCELED_EVENT,
+        ORDER_COMPLETED_EVENT,
+        ORDER_ERRORED_EVENT,
+        ORDER_INITIATED_EVENT,
       ],
       name: 'Trader',
     };

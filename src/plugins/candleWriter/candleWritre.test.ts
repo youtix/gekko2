@@ -4,7 +4,7 @@ import { candleWriterSchema } from './candleWriter.schema';
 
 vi.mock('../../services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
-    getWatch: vi.fn(() => ({})),
+    getWatch: vi.fn(() => ({ warmup: {} })),
     getStrategy: vi.fn(() => ({})),
   }));
   return { config: new Configuration() };

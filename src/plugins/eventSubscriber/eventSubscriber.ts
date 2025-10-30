@@ -1,13 +1,10 @@
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { RoundTrip } from '@models/roundtrip.types';
+import { OrderAborted, OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
-import { TradeAborted, TradeCanceled, TradeCompleted, TradeErrored, TradeInitiated } from '@models/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { toISOString } from '@utils/date/date.utils';
-import { round } from '@utils/math/round.utils';
-import { formatDuration, intervalToDuration } from 'date-fns';
 import { bindAll, filter, upperCase } from 'lodash-es';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
 import { Event, EVENT_NAMES, EventSubscriberConfig } from './eventSubscriber.types';
@@ -64,20 +61,31 @@ export class EventSubscriber extends Plugin {
     this.bot.sendMessage(msg);
   }
 
-  public onStrategyAdvice({ recommendation, date }: Advice) {
+  public onStrategyCreateOrder({ order, date }: Advice) {
     if (!this.subscriptions.has('strategy_advice')) return;
     const message = [
-      `Received advice to go ${recommendation}`,
+      `Received ${order.type} ${order.side} advice`,
+      `Requested quantity: ${order.quantity ?? 'auto'}`,
       `At time: ${toISOString(date)}`,
       `Target price: ${this.price}`,
     ].join('\n');
     this.bot.sendMessage(message);
   }
 
-  public onTradeInitiated({ action, balance, date, id, adviceId, portfolio }: TradeInitiated) {
+  public onOrderInitiated({
+    side: action,
+    balance,
+    date,
+    orderId: id,
+    orderId: adviceId,
+    orderType,
+    portfolio,
+    requestedAmount,
+  }: OrderInitiated) {
     if (!this.subscriptions.has('trade_initiated')) return;
     const message = [
-      `${upperCase(action)} sticky order created (${id})`,
+      `${upperCase(action)} ${orderType} order created (${id})`,
+      `Requested amount: ${requestedAmount}`,
       `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
       `Current balance: ${balance}`,
       `Target price: ${this.price}`,
@@ -87,10 +95,10 @@ export class EventSubscriber extends Plugin {
     this.bot.sendMessage(message);
   }
 
-  public onTradeCanceled({ id, date, adviceId }: TradeCanceled) {
+  public onOrderCanceled({ orderId: id, date, orderId: adviceId, orderType }: OrderCanceled) {
     if (!this.subscriptions.has('trade_canceled')) return;
     const message = [
-      `Sticky order canceled (${id})`,
+      `${orderType} order canceled (${id})`,
       `At time: ${toISOString(date)}`,
       `Current price: ${this.price} ${this.currency}`,
       `Advice: ${adviceId}`,
@@ -98,10 +106,19 @@ export class EventSubscriber extends Plugin {
     this.bot.sendMessage(message);
   }
 
-  public onTradeAborted({ id, action, adviceId, balance, date, portfolio, reason }: TradeAborted) {
+  public onOrderAborted({
+    orderId: id,
+    side: action,
+    orderId: adviceId,
+    balance,
+    date,
+    portfolio,
+    reason,
+    orderType,
+  }: OrderAborted) {
     if (!this.subscriptions.has('trade_aborted')) return;
     const message = [
-      `${upperCase(action)} sticky order aborted (${id})`,
+      `${upperCase(action)} ${orderType} order aborted (${id})`,
       `Due to ${reason}`,
       `At time: ${toISOString(date)}`,
       `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
@@ -112,10 +129,10 @@ export class EventSubscriber extends Plugin {
     this.bot.sendMessage(message);
   }
 
-  public onTradeErrored({ adviceId, date, id, reason }: TradeErrored) {
+  public onOrderErrored({ orderId: adviceId, date, orderId: id, reason, orderType }: OrderErrored) {
     if (!this.subscriptions.has('trade_errored')) return;
     const message = [
-      `Sticky order errored (${id})`,
+      `${orderType} order errored (${id})`,
       `Due to ${reason}`,
       `At time: ${toISOString(date)}`,
       `Current price: ${this.price} ${this.currency}`,
@@ -124,21 +141,22 @@ export class EventSubscriber extends Plugin {
     this.bot.sendMessage(message);
   }
 
-  public onTradeCompleted({
-    action,
-    adviceId,
+  public onOrderCompleted({
+    side: action,
+    orderId: adviceId,
     amount,
     balance,
     cost,
     date,
     effectivePrice,
     feePercent,
-    id,
+    orderId: id,
     portfolio,
-  }: TradeCompleted) {
+    orderType,
+  }: OrderCompleted) {
     if (!this.subscriptions.has('trade_completed')) return;
     const message = [
-      `${upperCase(action)} sticky order completed (${id})`,
+      `${upperCase(action)} ${orderType} order completed (${id})`,
       `Amount: ${amount} ${this.asset}`,
       `Price: ${effectivePrice} ${this.currency}`,
       `Fee percent: ${feePercent ?? '0'}%`,
@@ -151,18 +169,6 @@ export class EventSubscriber extends Plugin {
     this.bot.sendMessage(message);
   }
 
-  public onRoundtrip({ duration, entryAt, exitAt, pnl, profit, maxAdverseExcursion }: RoundTrip) {
-    const formater = new Intl.NumberFormat();
-    if (!this.subscriptions.has('roundtrip')) return;
-    const message = [
-      `Roundtrip done from ${toISOString(entryAt)} to ${toISOString(exitAt)}`,
-      `Exposed Duration: ${formatDuration(intervalToDuration({ start: 0, end: duration }))}`,
-      `Profit & Loss: ${formater.format(pnl)} ${this.currency}`,
-      `Profit percent: ${round(profit, 2, 'down')}%`,
-      `MAE: ${round(maxAdverseExcursion, 2, 'down')}%`,
-    ].join('\n');
-    this.bot.sendMessage(message);
-  }
   // --- END LISTENERS ---
 
   // --------------------------------------------------------------------------

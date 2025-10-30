@@ -1,5 +1,6 @@
 import {
-  STRATEGY_ADVICE_EVENT,
+  STRATEGY_CANCEL_ORDER_EVENT,
+  STRATEGY_CREATE_ORDER_EVENT,
   STRATEGY_INFO_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
   TIMEFRAME_CANDLE_EVENT,
@@ -8,8 +9,8 @@ import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
+import { OrderCompleted } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
-import { TradeCompleted } from '@models/tradeStatus.types';
 import { Plugin } from '@plugins/plugin';
 import { CandleBatcher } from '@services/core/batcher/candleBatcher/candleBatcher';
 import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
@@ -17,6 +18,7 @@ import { info } from '@services/logger';
 import { StrategyManager } from '@strategies/strategyManager';
 import { addMinutes } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
+import { UUID } from 'node:crypto';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
@@ -48,7 +50,8 @@ export class TradingAdvisor extends Plugin {
   private setUpListeners() {
     this.strategyManager
       ?.on(STRATEGY_WARMUP_COMPLETED_EVENT, this.relayStrategyWarmupCompleted)
-      .on(STRATEGY_ADVICE_EVENT, this.relayAdvice)
+      .on(STRATEGY_CREATE_ORDER_EVENT, this.relayCreateOrder)
+      .on(STRATEGY_CANCEL_ORDER_EVENT, this.relayCancelOrder)
       .on(STRATEGY_INFO_EVENT, this.relayStrategyInfo);
   }
 
@@ -56,9 +59,14 @@ export class TradingAdvisor extends Plugin {
     this.deferredEmit(STRATEGY_WARMUP_COMPLETED_EVENT, event);
   }
 
-  private relayAdvice(advice: Advice) {
+  private relayCancelOrder(orderId: UUID) {
     if (!this.candle) throw new GekkoError('trading advisor', 'No candle when relaying advice');
-    this.deferredEmit(STRATEGY_ADVICE_EVENT, {
+    this.deferredEmit(STRATEGY_CANCEL_ORDER_EVENT, orderId);
+  }
+
+  private relayCreateOrder(advice: Advice) {
+    if (!this.candle) throw new GekkoError('trading advisor', 'No candle when relaying advice');
+    this.deferredEmit(STRATEGY_CREATE_ORDER_EVENT, {
       ...advice,
       date: addMinutes(this.candle.start, 1).getTime(),
     });
@@ -73,8 +81,8 @@ export class TradingAdvisor extends Plugin {
   //                           PLUGIN LISTENERS
   // --------------------------------------------------------------------------
 
-  public onTradeCompleted(trade: TradeCompleted) {
-    this.strategyManager?.onTradeCompleted(trade);
+  public onOrderCompleted(trade: OrderCompleted) {
+    this.strategyManager?.onOrderCompleted(trade);
   }
 
   // --------------------------------------------------------------------------
@@ -110,7 +118,8 @@ export class TradingAdvisor extends Plugin {
       eventsHandlers: filter(Object.getOwnPropertyNames(TradingAdvisor.prototype), p => p.startsWith('on')),
       eventsEmitted: [
         STRATEGY_INFO_EVENT,
-        STRATEGY_ADVICE_EVENT,
+        STRATEGY_CREATE_ORDER_EVENT,
+        STRATEGY_CANCEL_ORDER_EVENT,
         STRATEGY_WARMUP_COMPLETED_EVENT,
         TIMEFRAME_CANDLE_EVENT,
       ],

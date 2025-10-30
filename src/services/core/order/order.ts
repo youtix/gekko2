@@ -1,7 +1,7 @@
-import { Action } from '@models/action.types';
-import { OrderState, OrderType } from '@models/order.types';
+import { OrderSide, OrderState, OrderType } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { debug, error, info } from '@services/logger';
+import { UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import {
   ORDER_COMPLETED_EVENT,
@@ -10,23 +10,39 @@ import {
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
 } from './order.const';
-import { OrderStatus, Transaction } from './order.types';
+import { OrderStatus, OrderSummary, Transaction } from './order.types';
 
 export abstract class Order extends EventEmitter {
   private status: OrderStatus;
   protected exchange: Exchange;
   protected transactions: Transaction[];
-  protected readonly label: OrderType;
+  protected readonly type: OrderType;
+  protected readonly side: OrderSide;
+  protected readonly gekkoOrderId: UUID;
 
-  constructor(exchange: Exchange, label: OrderType) {
+  constructor(gekkoOrderId: UUID, exchange: Exchange, side: OrderSide, type: OrderType) {
     super();
     this.exchange = exchange;
     this.status = 'initializing';
     this.transactions = [];
-    this.label = label;
+    this.type = type;
+    this.side = side;
+    this.gekkoOrderId = gekkoOrderId;
   }
 
-  protected async createLimitOrder(action: Action, amount: number) {
+  public getGekkoOrderId() {
+    return this.gekkoOrderId;
+  }
+
+  public getSide() {
+    return this.side;
+  }
+
+  public getType() {
+    return this.type;
+  }
+
+  protected async createLimitOrder(action: OrderSide, amount: number) {
     try {
       debug('core', `Creating ${action} limit order with amount: ${amount}`);
       const order = await this.exchange.createLimitOrder(action, amount);
@@ -36,7 +52,7 @@ export abstract class Order extends EventEmitter {
     }
   }
 
-  protected async createMarketOrder(action: Action, amount: number) {
+  protected async createMarketOrder(action: OrderSide, amount: number) {
     try {
       debug('core', `Creating ${action} market order with amount: ${amount}`);
       const order = await this.exchange.createMarketOrder(action, amount);
@@ -48,7 +64,7 @@ export abstract class Order extends EventEmitter {
 
   protected async cancelOrder(id: string) {
     try {
-      debug('core', `Canceling ${this.label} order with ID: ${id}`);
+      debug('core', `Canceling ${this.type} order with ID: ${id}`);
       const order = await this.exchange.cancelOrder(id);
       await this.handleCancelOrderSuccess(order);
     } catch (error) {
@@ -58,7 +74,7 @@ export abstract class Order extends EventEmitter {
 
   protected async fetchOrder(id: string) {
     try {
-      debug('core', `Fetching ${this.label} order with ID: ${id}`);
+      debug('core', `Fetching ${this.type} order with ID: ${id}`);
       const order = await this.exchange.fetchOrder(id);
       await this.handleFetchOrderSuccess(order);
     } catch (error) {
@@ -73,8 +89,8 @@ export abstract class Order extends EventEmitter {
   protected setStatus(status: OrderStatus, reason?: string) {
     this.status = status;
     this.emit(ORDER_STATUS_CHANGED_EVENT, this.status);
-    if (reason) error('core', `${this.label} order ${status}: ${reason}`);
-    else info('core', `${this.label} order ${status}`);
+    if (reason) error('core', `${this.type} order ${status}: ${reason}`);
+    else info('core', `${this.type} order ${status}`);
   }
 
   protected orderCanceled(partiallyFilled = false) {
@@ -102,6 +118,9 @@ export abstract class Order extends EventEmitter {
     this.setStatus('error', error.message);
     this.emit(ORDER_ERRORED_EVENT, error.message);
   }
+
+  public abstract cancel(): Promise<void>;
+  public abstract createSummary(): Promise<OrderSummary>;
 
   protected abstract handleCancelOrderSuccess(order: OrderState): void;
   protected abstract handleCancelOrderError(error: unknown): void;

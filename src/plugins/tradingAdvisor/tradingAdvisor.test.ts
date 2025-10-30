@@ -1,6 +1,5 @@
-// tradingAdvisor.test.ts
 import {
-  STRATEGY_ADVICE_EVENT,
+  STRATEGY_CREATE_ORDER_EVENT,
   STRATEGY_INFO_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
   TIMEFRAME_CANDLE_EVENT,
@@ -8,8 +7,8 @@ import {
 import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
+import { OrderCompleted } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
-import { TradeCompleted } from '@models/tradeStatus.types';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
@@ -20,7 +19,7 @@ vi.mock('@strategies/index', () => ({
   DummyStrategy: class {
     init = vi.fn();
     onNewCandle = vi.fn();
-    onTradeCompleted = vi.fn();
+    onOrderCompleted = vi.fn();
     finish = vi.fn();
     on() {
       return this;
@@ -30,7 +29,7 @@ vi.mock('@strategies/index', () => ({
 }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
-    getWatch: vi.fn(() => ({})),
+    getWatch: vi.fn(() => ({ warmup: {} })),
     getStrategy: vi.fn(() => ({})),
   }));
   return { config: new Configuration() };
@@ -41,12 +40,15 @@ describe('TradingAdvisor', () => {
     name: 'TradingAdvisor',
     strategyName: 'DummyStrategy',
   } satisfies TradingAdvisorConfiguration;
-  const defaultAdvice: Advice = { id: 'advice-100', recommendation: 'short', date: toTimestamp('2020') };
+  const defaultAdvice: Advice = {
+    id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+    date: toTimestamp('2020'),
+    order: { type: 'STICKY', side: 'SELL', quantity: 1 },
+  };
   const defaultCandle: Candle = { close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
-  const defaultBuyTradeEvent: TradeCompleted = {
-    action: 'BUY',
-    id: 'BUY',
-    adviceId: 'buyAdvice',
+  const defaultBuyTradeEvent: OrderCompleted = {
+    orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+    side: 'BUY',
     date: 0,
     portfolio: { asset: 100, currency: 200 },
     balance: 1000,
@@ -55,6 +57,8 @@ describe('TradingAdvisor', () => {
     amount: 30,
     effectivePrice: 31,
     feePercent: 0.33,
+    orderType: 'STICKY',
+    requestedAmount: 30,
   };
 
   let advisor: TradingAdvisor;
@@ -109,14 +113,14 @@ describe('TradingAdvisor', () => {
     });
   });
 
-  describe('onTradeCompleted', () => {
+  describe('onOrderCompleted', () => {
     beforeEach(async () => {
       await advisor['processInit']();
     });
-    it('should call strategyManager.onTradeCompleted when onTradeCompleted is called', () => {
-      advisor['strategyManager']!.onTradeCompleted = vi.fn();
-      advisor.onTradeCompleted(defaultBuyTradeEvent);
-      expect(advisor['strategyManager']?.onTradeCompleted).toHaveBeenCalledExactlyOnceWith(defaultBuyTradeEvent);
+    it('should call strategyManager.onOrderCompleted when onOrderCompleted is called', () => {
+      advisor['strategyManager']!.onOrderCompleted = vi.fn();
+      advisor.onOrderCompleted(defaultBuyTradeEvent);
+      expect(advisor['strategyManager']?.onOrderCompleted).toHaveBeenCalledExactlyOnceWith(defaultBuyTradeEvent);
     });
   });
 
@@ -140,16 +144,16 @@ describe('TradingAdvisor', () => {
       expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_WARMUP_COMPLETED_EVENT, payload);
     });
 
-    it('should throw GekkoError in relayAdvice if no candle is set', () => {
+    it('should throw GekkoError in relayCreateOrder if no candle is set', () => {
       (advisor as any).candle = undefined;
-      expect(() => advisor['relayAdvice'](defaultAdvice)).toThrow(GekkoError);
+      expect(() => advisor['relayCreateOrder'](defaultAdvice)).toThrow(GekkoError);
     });
 
-    it('should emit STRATEGY_ADVICE_EVENT in relayAdvice when a candle is set', () => {
+    it('should emit STRATEGY_CREATE_ORDER_EVENT in relayCreateOrder when a candle is set', () => {
       const candleStart = toTimestamp('2025-01-01T00:00:00Z');
       (advisor as any).candle = defaultCandle;
-      advisor['relayAdvice'](defaultAdvice);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_ADVICE_EVENT, {
+      advisor['relayCreateOrder'](defaultAdvice);
+      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CREATE_ORDER_EVENT, {
         ...defaultAdvice,
         date: addMinutes(candleStart, 1).getTime(),
       });

@@ -1,6 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
-import { Action } from '@models/action.types';
 import { Candle } from '@models/candle.types';
+import { OrderSide } from '@models/order.types';
 import { MarketLimits } from '@services/exchange/exchange.types';
 import { debug, error, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
@@ -189,7 +189,7 @@ export class BinanceExchange extends CentralizedExchange {
     }
   }
 
-  protected async createLimitOrderImpl(side: Action, amount: number) {
+  protected async createLimitOrderImpl(side: OrderSide, amount: number) {
     const orderPrice = await this.checkOrderPrice(side);
     const orderAmount = this.checkOrderAmount(amount);
     this.checkOrderCost(orderAmount, orderPrice);
@@ -210,7 +210,7 @@ export class BinanceExchange extends CentralizedExchange {
     }
   }
 
-  protected async createMarketOrderImpl(side: Action, amount: number) {
+  protected async createMarketOrderImpl(side: OrderSide, amount: number) {
     const orderAmount = this.checkOrderAmount(amount);
     const ticker = await this.fetchTicker();
     const price = side === 'BUY' ? ticker.ask : ticker.bid;

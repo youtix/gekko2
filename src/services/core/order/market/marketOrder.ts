@@ -1,20 +1,24 @@
 import { GekkoError } from '@errors/gekko.error';
-import { Action } from '@models/action.types';
-import { OrderState } from '@models/order.types';
+import { OrderSide, OrderState } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { InvalidOrder } from '@services/exchange/exchange.error';
 import { warning } from '@services/logger';
+import { UUID } from 'node:crypto';
 import { Order } from '../order';
 import { createOrderSummary } from '../order.utils';
 
 export class MarketOrder extends Order {
   public readonly creation: Promise<void>;
-  private readonly side: Action;
+  private id?: string;
 
-  constructor(side: Action, amount: number, exchange: Exchange) {
-    super(exchange, 'MARKET');
-    this.side = side;
+  constructor(gekkoOrderId: UUID, side: OrderSide, amount: number, exchange: Exchange) {
+    super(gekkoOrderId, exchange, side, 'MARKET');
     this.creation = this.createMarketOrder(side, amount);
+  }
+
+  public async cancel() {
+    if (!this.id || this.isOrderCompleted()) return;
+    await this.cancelOrder(this.id);
   }
 
   public async createSummary() {
@@ -22,7 +26,7 @@ export class MarketOrder extends Order {
 
     return createOrderSummary({
       exchange: this.exchange,
-      label: 'MARKET',
+      type: 'MARKET',
       side: this.side,
       transactions: this.transactions,
     });
@@ -59,6 +63,8 @@ export class MarketOrder extends Order {
   private applyOrderUpdate(order: OrderState) {
     const { id, timestamp, filled = 0, status } = order;
     if (!id) return;
+
+    this.id = id;
 
     const transaction = { id, timestamp, filled };
     const index = this.transactions.findIndex(t => t.id === id);

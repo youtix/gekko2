@@ -3,10 +3,16 @@ import path from 'node:path';
 export default {
   test: {
     mockReset: true,
+    restoreMock: true,
     coverage: {
       reporter: ['text'],
       include: ['src/**/*.ts'],
-      exclude: ['src/**/*.{schema,mock,types,error,const}.ts', 'src/**/index.ts', 'src/strategies/custom/**/*.ts'],
+      exclude: [
+        'src/**/*.{schema,mock,types,error,const}.ts',
+        'src/**/index.ts',
+        'src/strategies/custom/**/*.ts',
+        'src/strategies/debug/**/*.ts',
+      ],
       thresholds: {
         lines: 80,
         functions: 80,

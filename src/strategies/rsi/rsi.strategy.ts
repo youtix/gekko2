@@ -1,4 +1,4 @@
-import { TradeCompleted } from '@models/tradeStatus.types';
+import { OrderCompleted } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber } from 'lodash-es';
@@ -11,7 +11,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
     this.trend = { direction: 'none', duration: 0, adviced: false };
   }
 
-  onCandleAfterWarmup({ strategyParams, advice, log }: Tools<RSIStrategyParams>, ...indicators: unknown[]): void {
+  onCandleAfterWarmup({ strategyParams, createOrder, log }: Tools<RSIStrategyParams>, ...indicators: unknown[]): void {
     const [rsi] = indicators;
     if (!isNumber(rsi)) return;
     const { thresholds } = strategyParams;
@@ -26,7 +26,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;
-        advice('short');
+        createOrder({ type: 'STICKY', side: 'SELL' });
       }
     } else if (rsi < thresholds.low) {
       if (this.trend.direction !== 'low') {
@@ -38,7 +38,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;
-        advice('long');
+        createOrder({ type: 'STICKY', side: 'BUY' });
       }
     }
   }
@@ -49,7 +49,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
   }
 
   // NOT USED
-  onTradeCompleted(_trade: TradeCompleted): void {}
+  onOrderCompleted(_trade: OrderCompleted): void {}
   onEachCandle(_tools: Tools<RSIStrategyParams>, ..._indicators: unknown[]): void {}
   log(_tools: Tools<RSIStrategyParams>, ..._indicators: unknown[]): void {}
   end(): void {}
