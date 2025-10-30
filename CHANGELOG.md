@@ -1,3 +1,21 @@
+# [1.2.0](https://github.com/youtix/gekko2/compare/v1.1.0...v1.2.0) (2025-10-30)
+
+### Bug Fixes
+
+- **streams:** exit gracefully when strategy goes bankrupt ([e783bde](https://github.com/youtix/gekko2/commit/e783bde5d2b83f01dc0552358272f65988034071))
+
+### Features
+
+- check the bot username before to process telgram bot command ([871f750](https://github.com/youtix/gekko2/commit/871f750fc00292fd233cd928bcae31e055db9afc))
+- enrich candle with additional volume detail properties ([c93a777](https://github.com/youtix/gekko2/commit/c93a777794302ba00b02ac0ad726718d8ab3c317))
+- format standard deviation in reports ([f39ff80](https://github.com/youtix/gekko2/commit/f39ff8015e43a1a7c4b8104c947dbcda71b04c57))
+- implement sortino deviation calculation ([db95401](https://github.com/youtix/gekko2/commit/db954010db61dfa926cca8f6bad0013959ff030a))
+- **indicators:** implement volume delta indicator ([75e2498](https://github.com/youtix/gekko2/commit/75e2498239df558501298e57d6c6afc99441ccab))
+- **plugins:** implement mae list in report ([fc3f567](https://github.com/youtix/gekko2/commit/fc3f567eca03fcb21c057d11b0b847f91f35c250))
+- remove empty indictors ([e0aecb1](https://github.com/youtix/gekko2/commit/e0aecb1d74ba5f5b20df4f172f019264d980cbc8))
+- **strategies:** implement ema ribbon strategy ([7c79c0d](https://github.com/youtix/gekko2/commit/7c79c0d0ee2492b59a264f8750e45963658fd271))
+- **strategies:** implement volume delta strategy ([7aa9143](https://github.com/youtix/gekko2/commit/7aa914301ed7f9346281b91abca0c4c827a95e16))
+
 # [1.1.0](https://github.com/youtix/gekko2/compare/v1.0.0...v1.1.0) (2025-09-01)
 
 ### Bug Fixes
