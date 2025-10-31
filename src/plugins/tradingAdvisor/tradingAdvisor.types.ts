@@ -1,4 +1,4 @@
-import Yup from 'yup';
+import { z } from 'zod';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 
-export type TradingAdvisorConfiguration = Yup.InferType<typeof tradingAdvisorSchema>;
+export type TradingAdvisorConfiguration = z.infer<typeof tradingAdvisorSchema>;

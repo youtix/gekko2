@@ -40,15 +40,13 @@ Each row in the CSV contains the following metrics:
 | `market`                | Performance of the underlying market (i.e., return from a simple buy-and-hold strategy)         |
 | `alpha`                 | Strategy alpha (raw edge over the market)                                                       |
 | `simulatedYearlyProfit` | Annualized profit estimation based on performance                                               |
-| `amountOfTrades`        | Number of trades executed                                                                       |
+| `amountOfOrders`        | Number of trades executed                                                                       |
 | `originalBalance`       | Starting portfolio balance                                                                      |
 | `currentBalance`        | Final portfolio balance                                                                         |
 | `sharpeRatio`           | Risk-adjusted return metric that considers both upside and downside volatility                  |
 | `sortinoRatio`          | Risk-adjusted return metric that only considers downside volatility                             |
 | `standardDeviation`     | Standard deviation of trade profits, used to measure volatility                                 |
 | `expectedDownside`      | Worst-case loss estimate                                                                        |
-| `ratioRoundtrip`        | Ratio of trades that completed a full buy/sell cycle                                            |
-| `topMaeList`            | Bracketed list string of up to ten worst MAE percentages (descending order)                     |
 
 ## Events Emitted
 

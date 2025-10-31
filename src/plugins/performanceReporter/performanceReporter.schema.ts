@@ -1,7 +1,7 @@
-import { object, string } from 'yup';
+import { z } from 'zod';
 
-export const performanceReporterSchema = object({
-  name: string().required(),
-  filePath: string().default(process.cwd()),
-  fileName: string().default('performance_reports.csv'),
+export const performanceReporterSchema = z.object({
+  name: z.string(),
+  filePath: z.string().default(process.cwd()),
+  fileName: z.string().default('performance_reports.csv'),
 });

@@ -13,7 +13,7 @@ A more universal approach is to run Gekko on live markets using [**realtime**](.
 To run backtests, you should [enable and configure](../plugins/introduction.md) the following plugins:
 
 - [Trading Advisor](../plugins/trading-advisor.md) – to execute your strategy.
-- [Paper Trader](../plugins/paper-trader.md) – to simulate trades.
+- [Trader](../plugins/trader.md) – configure it with the dummy exchange to simulate trades.
 - [Performance Analyzer](../plugins/performance-analyzer.md) – to evaluate the performance of your strategy.
 
 Additionally, make sure to configure the `watch`, `storage`, and `strategy` sections of your configuration file.
@@ -63,6 +63,9 @@ watch:
     start: '2024-01-01T00:00:00.000Z'
     end: '2024-02-01T00:00:00.000Z'
 
+exchange:
+  name: dummy-cex
+
 storage:
   type: sqlite
   database: ./db/gekko.sql
@@ -78,15 +81,7 @@ plugins:
   - name: TradingAdvisor
     strategyName: DEMA
 
-  - name: PaperTrader
-    simulationBalance: # start balance, on what the current balance is compared with
-      # these are in the unit types configured in the watcher.
-      asset: 0
-      currency: 1000
-    # how much fee in % does each trade cost?
-    feeMaker: 0.15
-    feeTaker: 0.25
-    feeUsing: maker
+  - name: Trader
 
   - name: PerformanceAnalyzer
     riskFreeReturn: 5

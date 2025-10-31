@@ -6,7 +6,7 @@ You can either create a custom trading strategy or start with one of the built-i
 
 - [**Importer**](./importer.md): Import historical market data from supported exchanges.
 - [**Backtest**](./backtest.md): Simulate your strategy over a historical dataset to evaluate how it would have performed (including executed trades, profit/loss, and risk metrics).
-- [**Realtime**](./realtime.md): Run the strategy on live market data using one of three options:
-  - **Paper Trader**: Simulate trades locally using fake money, based on your strategy’s signals.
-  - **Sandbox**: Simulate trades using your exchange's testnet environment (fake money via API).
-  - **Trader**: Place real orders on a live exchange using real money, based on your strategy’s advice.
+- [**Realtime**](./realtime.md): Run the strategy on live market data by connecting the Trader plugin to different exchange setups:
+  - **Dummy exchange**: Simulate trades locally with fake money while the Trader plugin routes orders to `dummy-cex`.
+  - **Sandbox**: Test your strategy using an exchange-provided testnet with sandbox API keys.
+  - **Live exchange**: Place real orders on a funded exchange account using live API credentials.

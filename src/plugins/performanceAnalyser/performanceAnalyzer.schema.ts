@@ -1,7 +1,7 @@
-import { boolean, number, object, string } from 'yup';
+import { z } from 'zod';
 
-export const performanceAnalyzerSchema = object({
-  name: string().required(),
-  riskFreeReturn: number().positive().default(5),
-  enableConsoleTable: boolean().default(false),
+export const performanceAnalyzerSchema = z.object({
+  name: z.string(),
+  riskFreeReturn: z.number().positive().default(5),
+  enableConsoleTable: z.boolean().default(false),
 });

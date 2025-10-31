@@ -1,4 +1,4 @@
-import Yup from 'yup';
+import { z } from 'zod';
 import { performanceReporterSchema } from './performanceReporter.schema';
 
-export type PerformanceReporterConfig = Yup.InferType<typeof performanceReporterSchema>;
+export type PerformanceReporterConfig = z.infer<typeof performanceReporterSchema>;

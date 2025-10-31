@@ -1,5 +1,5 @@
 import { Plugin } from '@plugins/plugin';
-import { Schema } from 'yup';
+import { z } from 'zod';
 import { Nullable } from './utility.types';
 
 export type PipelineContext = {
@@ -11,5 +11,5 @@ export type PipelineContext = {
   dependencies?: string[];
   inject?: string[];
   modes?: string[];
-  schema?: Schema;
+  schema?: z.ZodTypeAny;
 }[];

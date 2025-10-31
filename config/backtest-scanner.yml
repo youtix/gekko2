@@ -7,6 +7,9 @@ watch:
   warmup:
     candleCount: 52
 
+exchange:
+  name: dummy-cex
+
 storage:
   type: sqlite
   database: ./db/binance-BTC_USDT.sql
@@ -25,7 +28,7 @@ plugins:
   - name: TradingAdvisor
     strategyName: MACD
 
-  - name: PaperTrader
+  - name: Trader
 
   - name: PerformanceAnalyzer
     enableConsoleTable: true

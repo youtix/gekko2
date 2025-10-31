@@ -1,4 +1,6 @@
+import type { AdviceOrder } from '@models/advice.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { UUID } from 'node:crypto';
 import { EMARibbon } from './emaRibbon.strategy';
 
 const makeIndicator = (results?: number[], spread = 0) => (results ? [{ results, spread }] : [undefined]);
@@ -6,19 +8,25 @@ const makeIndicator = (results?: number[], spread = 0) => (results ? [{ results,
 describe('EMARibbon', () => {
   let strategy: EMARibbon;
   const addIndicator = vi.fn();
-  const advice = vi.fn();
   const log = vi.fn();
-  const tools = { advice, log } as any;
+  let advices: AdviceOrder[];
+  let tools: any;
+  const longAdvice: AdviceOrder = { type: 'STICKY', side: 'BUY', quantity: 1 };
+  const shortAdvice: AdviceOrder = { type: 'STICKY', side: 'SELL', quantity: 1 };
 
   beforeEach(() => {
     strategy = new EMARibbon();
+    advices = [];
+    const createOrder = vi.fn((order: AdviceOrder) => {
+      advices.push({ ...order, quantity: order.quantity ?? 1 });
+      return '00000000-0000-0000-0000-000000000000' as UUID;
+    });
+    tools = { createOrder, log } as any;
   });
 
   it('init() adds the EMARibbon indicator with passed params', () => {
     const params = { src: 'close' as const, count: 6, start: 8, step: 2 };
-
     strategy.init(addIndicator, params);
-
     expect(addIndicator).toHaveBeenCalledWith('EMARibbon', { src: 'close', count: 6, start: 8, step: 2 });
   });
 
@@ -30,22 +38,21 @@ describe('EMARibbon', () => {
   `('onCandleAfterWarmup advises long when $case', ({ results, expectedCalls }) => {
     strategy.onCandleAfterWarmup(tools, ...makeIndicator(results));
 
-    if (expectedCalls) expect(tools.advice).toHaveBeenCalledWith(expectedCalls);
-    else expect(tools.advice).not.toHaveBeenCalled();
+    if (expectedCalls) expect(advices).toEqual([expectedCalls === 'long' ? longAdvice : shortAdvice]);
+    else expect(advices).toHaveLength(0);
   });
 
   it('onCandleAfterWarmup goes long then flips short when ribbon loses bullish order', () => {
     strategy.onCandleAfterWarmup(tools, ...makeIndicator([10, 9, 8, 7]));
     strategy.onCandleAfterWarmup(tools, ...makeIndicator([10, 11, 9, 8])); // break order
 
-    expect(tools.advice).toHaveBeenNthCalledWith(1, 'long');
-    expect(tools.advice).toHaveBeenNthCalledWith(2, 'short');
+    expect(advices).toEqual([longAdvice, shortAdvice]);
   });
 
   it('onCandleAfterWarmup does nothing when indicator is missing', () => {
     strategy.onCandleAfterWarmup(tools, ...makeIndicator(undefined));
 
-    expect(tools.advice).not.toHaveBeenCalled();
+    expect(advices).toHaveLength(0);
   });
 
   it('onCandleAfterWarmup does not reissue long while already long and still bullish', () => {
@@ -53,7 +60,7 @@ describe('EMARibbon', () => {
     strategy.onCandleAfterWarmup(tools, ...makeIndicator([90, 80, 70]));
     strategy.onCandleAfterWarmup(tools, ...makeIndicator([70, 60, 50]));
 
-    expect(tools.advice).toHaveBeenCalledExactlyOnceWith('long');
+    expect(advices).toEqual([longAdvice]);
   });
 
   it('log() prints ribbon results and spread', () => {
@@ -63,11 +70,11 @@ describe('EMARibbon', () => {
     expect(tools.log).toHaveBeenNthCalledWith(2, 'debug', 'Ribbon Spread: 0.42');
   });
 
-  it('end(), onEachCandle(), onTradeCompleted() are no-ops', () => {
+  it('end(), onEachCandle(), onOrderCompleted() are no-ops', () => {
     // These should not throw and should not log/advice.
     expect(() => {
       strategy.onEachCandle(tools);
-      strategy.onTradeCompleted({} as any);
+      strategy.onOrderCompleted({} as any);
       strategy.end();
     }).not.toThrow();
   });

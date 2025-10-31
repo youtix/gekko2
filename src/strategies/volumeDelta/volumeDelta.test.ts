@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AdviceOrder } from '@models/advice.types';
+import type { UUID } from 'node:crypto';
 import { VolumeDelta } from './volumeDelta.strategy';
 
 describe('VolumeDelta Strategy', () => {
   let strategy: VolumeDelta;
-  let advices: string[];
+  let advices: AdviceOrder[];
   let tools: any;
 
   const paramsBase = {
@@ -28,10 +30,15 @@ describe('VolumeDelta Strategy', () => {
   beforeEach(() => {
     strategy = new VolumeDelta();
     advices = [];
+    const createOrder = vi.fn((order: AdviceOrder) => {
+      advices.push({ ...order, quantity: order.quantity ?? 1 });
+      return '00000000-0000-0000-0000-000000000000' as UUID;
+    });
     tools = {
       candle: { close: 1 },
       strategyParams: { ...paramsBase },
-      advice: (direction: string) => advices.push(direction),
+      createOrder,
+      cancelOrder: vi.fn(),
       log: vi.fn(),
     };
   });
@@ -47,7 +54,7 @@ describe('VolumeDelta Strategy', () => {
     strategy.onCandleAfterWarmup(tools, makeIndicator(output, value));
     expect(advices).toHaveLength(0);
     strategy.onCandleAfterWarmup(tools, makeIndicator(output, value));
-    expect(advices).toEqual(['long']);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', quantity: 1 }]);
   });
 
   it.each`
@@ -61,7 +68,7 @@ describe('VolumeDelta Strategy', () => {
     strategy.onCandleAfterWarmup(tools, makeIndicator(output, value));
     expect(advices).toHaveLength(0);
     strategy.onCandleAfterWarmup(tools, makeIndicator(output, value));
-    expect(advices).toEqual(['short']);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', quantity: 1 }]);
   });
 
   it.each`
@@ -79,7 +86,7 @@ describe('VolumeDelta Strategy', () => {
     strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', 1));
     strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', 1));
     strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', 1));
-    expect(advices).toEqual(['long']);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', quantity: 1 }]);
   });
 
   it('resets when switching trend and advises accordingly', () => {
@@ -90,7 +97,10 @@ describe('VolumeDelta Strategy', () => {
     // Switch to a downtrend -> short
     strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', -1));
     strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', -1));
-    expect(advices).toEqual(['long', 'short']);
+    expect(advices).toEqual([
+      { type: 'STICKY', side: 'BUY', quantity: 1 },
+      { type: 'STICKY', side: 'SELL', quantity: 1 },
+    ]);
   });
 
   it.each`

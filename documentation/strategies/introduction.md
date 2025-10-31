@@ -18,7 +18,7 @@ At its core, a strategy:
 ```
 💡 Note:
 Strategies **do not execute trades directly**.
-Instead, they emit advice events that are consumed by other plugins (like Trader or PaperTrader).
+Instead, they emit advice events that are consumed by the Trader plugin, which can be wired to a live exchange or the dummy exchange for simulations.
 ```
 
 ## Available Strategies

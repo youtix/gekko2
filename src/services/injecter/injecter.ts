@@ -1,6 +1,7 @@
 import { GekkoError } from '@errors/gekko.error';
 import { config } from '@services/configuration/configuration';
-import { BinanceExchange } from '@services/exchange/binance/binance';
+import { BinanceExchange } from '@services/exchange/centralized/binance/binance';
+import { DummyCentralizedExchange } from '@services/exchange/centralized/dummy/dummyCentralizedExchange';
 import { Exchange } from '@services/exchange/exchange';
 import { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { Storage } from '@services/storage/storage';
@@ -21,7 +22,16 @@ class Injecter {
     if (this.exchangeInstance) return this.exchangeInstance;
     const exchangeConfig = config.getExchange();
     if (!exchangeConfig?.name) throw new GekkoError('injecter', 'Missing or unknown exchange.');
-    this.exchangeInstance = new BinanceExchange(exchangeConfig);
+    switch (exchangeConfig.name) {
+      case 'binance':
+        this.exchangeInstance = new BinanceExchange(exchangeConfig);
+        break;
+      case 'dummy-cex':
+        this.exchangeInstance = new DummyCentralizedExchange(exchangeConfig);
+        break;
+      default:
+        throw new GekkoError('injecter', 'Missing or unknown exchange.');
+    }
     return this.exchangeInstance;
   }
 }

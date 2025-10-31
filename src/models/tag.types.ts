@@ -6,7 +6,6 @@ export type Tag =
   | 'fetcher'
   | 'gekko'
   | 'injecter'
-  | 'paper trader'
   | 'performance analyzer'
   | 'performance reporter'
   | 'pipeline'

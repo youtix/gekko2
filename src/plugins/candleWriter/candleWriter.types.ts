@@ -1,4 +1,4 @@
-import Yup from 'yup';
+import { z } from 'zod';
 import { candleWriterSchema } from './candleWriter.schema';
 
-export type CandleWriterConfig = Yup.InferType<typeof candleWriterSchema>;
+export type CandleWriterConfig = z.infer<typeof candleWriterSchema>;

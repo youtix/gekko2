@@ -1,3 +1,5 @@
+import type { AdviceOrder } from '@models/advice.types';
+import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CCI } from './cci.strategy';
 
@@ -12,16 +14,21 @@ vi.mock('@services/configuration/configuration', () => {
 
 describe('CCI Strategy', () => {
   let strategy: CCI;
-  let advices: string[];
+  let advices: AdviceOrder[];
   let tools: any;
 
   beforeEach(() => {
     strategy = new CCI();
     advices = [];
+    const createOrder = vi.fn((order: AdviceOrder) => {
+      advices.push({ ...order, quantity: order.quantity ?? 1 });
+      return '00000000-0000-0000-0000-000000000000' as UUID;
+    });
     tools = {
       candle: { start: Date.now(), open: 1, high: 2, low: 0, close: 1, volume: 100 },
       strategyParams: { period: 14, thresholds: { up: 100, down: -100, persistence: 2 } },
-      advice: (direction: string) => advices.push(direction),
+      createOrder,
+      cancelOrder: vi.fn(),
       log: vi.fn(),
     };
   });
@@ -34,13 +41,13 @@ describe('CCI Strategy', () => {
   it('should emit short advice after persistence on overbought', () => {
     strategy.onCandleAfterWarmup(tools, 150);
     strategy.onCandleAfterWarmup(tools, 150);
-    expect(advices).toEqual(['short']);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', quantity: 1 }]);
   });
 
   it('should emit long advice after persistence on oversold', () => {
     strategy.onCandleAfterWarmup(tools, -150);
     strategy.onCandleAfterWarmup(tools, -150);
-    expect(advices).toEqual(['long']);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', quantity: 1 }]);
   });
 
   it('should reset trend when switching from overbought to oversold', () => {
@@ -50,7 +57,10 @@ describe('CCI Strategy', () => {
     strategy.onCandleAfterWarmup(tools, -150);
     strategy.onCandleAfterWarmup(tools, -150);
 
-    expect(advices).toEqual(['short', 'long']);
+    expect(advices).toEqual([
+      { type: 'STICKY', side: 'SELL', quantity: 1 },
+      { type: 'STICKY', side: 'BUY', quantity: 1 },
+    ]);
   });
 
   it('should do nothing when CCI result is invalid', () => {

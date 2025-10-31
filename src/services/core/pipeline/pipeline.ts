@@ -63,7 +63,7 @@ export const preloadMarkets = async (context: PipelineContext) => {
   const isPreloadMarketNeeded =
     ['realtime', 'importer'].includes(mode) || some(context, plugin => plugin.inject?.includes('exchange'));
   if (isPreloadMarketNeeded) {
-    const exchange = await inject.exchange();
+    const exchange = inject.exchange();
     debug('pipeline', `Preloading Markets data for ${exchange.getExchangeName()}`);
     await exchange.loadMarkets();
   }
@@ -103,7 +103,7 @@ export const validatePluginsSchema = async (context: PipelineContext) => {
   const parameters = config.getPlugins();
   return map(context, (plugin, i) => ({
     ...plugin,
-    parameters: plugin.schema?.validateSync(parameters[i]),
+    parameters: plugin.schema?.parse(parameters[i]),
   }));
 };
 

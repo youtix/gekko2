@@ -1,7 +1,7 @@
-import { object, string } from 'yup';
+import { z } from 'zod';
 
-export const tradingAdvisorSchema = object({
-  name: string().required(),
-  strategyName: string().required(),
-  strategyPath: string().optional(),
+export const tradingAdvisorSchema = z.object({
+  name: z.string(),
+  strategyName: z.string(),
+  strategyPath: z.string().optional(),
 });
