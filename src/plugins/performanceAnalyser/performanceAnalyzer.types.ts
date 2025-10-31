@@ -27,7 +27,7 @@ export type Report = {
   relativeYearlyProfit: number;
   startPrice: number;
   endPrice: number;
-  trades: number;
+  orders: number;
   startBalance: number;
   exposure: number;
   sharpe: number;

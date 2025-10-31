@@ -51,7 +51,7 @@ vi.mock('../../services/configuration/configuration', () => {
   return { config: { getWatch, getStrategy, getExchange } };
 });
 
-function createOrderMock(orderType: 'STICKY' | 'MARKET') {
+function createOrderMock(type: 'STICKY' | 'MARKET') {
   const listenersStore = new WeakMap<object, Map<string, Set<OrderListener>>>();
 
   const ensureStore = (instance: object) => {
@@ -104,7 +104,7 @@ function createOrderMock(orderType: 'STICKY' | 'MARKET') {
   };
 
   MockOrder.prototype.getType = function () {
-    return orderType;
+    return type;
   };
 
   MockOrder.prototype.on = function (event: string, handler: OrderListener) {
@@ -405,7 +405,7 @@ describe('Trader', () => {
         expect.objectContaining({
           orderId: advice.id,
           reason: 'invalid amount (0)',
-          orderType: advice.order.type,
+          type: advice.order.type,
           requestedAmount: 0,
         }),
       );
@@ -424,7 +424,7 @@ describe('Trader', () => {
         expect.objectContaining({
           orderId: advice.id,
           reason: 'invalid amount (0)',
-          orderType: advice.order.type,
+          type: advice.order.type,
           requestedAmount: 0,
         }),
       );
@@ -473,7 +473,7 @@ describe('Trader', () => {
         expect.objectContaining({
           orderId: advice.id,
           requestedAmount: 2,
-          orderType: advice.order.type,
+          type: advice.order.type,
         }),
       );
     });
@@ -496,7 +496,7 @@ describe('Trader', () => {
         expect.objectContaining({
           orderId: advice.id,
           reason: 'boom',
-          orderType: advice.order.type,
+          type: advice.order.type,
         }),
       );
       expect(synchronizeSpy).toHaveBeenCalled();
@@ -531,7 +531,7 @@ describe('Trader', () => {
         ORDER_CANCELED_EVENT,
         expect.objectContaining({
           orderId: advice.id,
-          orderType: advice.order.type,
+          type: advice.order.type,
         }),
       );
       expect(synchronizeSpy).toHaveBeenCalled();
@@ -582,7 +582,7 @@ describe('Trader', () => {
           feePercent: summary.feePercent,
           effectivePrice: 101,
           cost: 2,
-          orderType: advice.order.type,
+          type: advice.order.type,
           requestedAmount: 2,
           portfolio: trader['portfolio'],
           balance: trader['balance'],

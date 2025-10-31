@@ -1,4 +1,4 @@
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompleted, OrderErrored } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { DebugAdviceParams } from './debugAdvice.types';
 
@@ -28,7 +28,8 @@ export class DebugAdvice implements Strategy<DebugAdviceParams> {
 
   init(_addIndicator: AddIndicatorFn, _strategyParams: unknown): void {}
   onEachCandle(_tools: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_trade: OrderCompleted): void {}
+  onOrderCompleted(_order: OrderCompleted): void {}
+  onOrderErrored(_order: OrderErrored): void {}
   log(_tools: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }

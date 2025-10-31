@@ -1,4 +1,4 @@
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompleted, OrderErrored } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
@@ -74,6 +74,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
 
   // NOT USED
   onEachCandle(_tools: Tools<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_trade: OrderCompleted): void {}
+  onOrderCompleted(_order: OrderCompleted): void {}
+  onOrderErrored(_order: OrderErrored): void {}
   end(): void {}
 }

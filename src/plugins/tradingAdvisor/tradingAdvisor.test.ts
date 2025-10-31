@@ -57,7 +57,7 @@ describe('TradingAdvisor', () => {
     amount: 30,
     effectivePrice: 31,
     feePercent: 0.33,
-    orderType: 'STICKY',
+    type: 'STICKY',
     requestedAmount: 30,
   };
 

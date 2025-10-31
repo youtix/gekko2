@@ -25,7 +25,7 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 
 const HEADER =
-  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total trades;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;expected downside\n';
+  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total orders;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;expected downside\n';
 
 const baseConfig = {
   name: 'PerformanceReporter',
@@ -44,7 +44,7 @@ const sampleReport: Report = {
   alpha: 0.12,
   yearlyProfit: 3650,
   relativeYearlyProfit: 116.8,
-  trades: 4,
+  orders: 4,
   startBalance: 1000,
   balance: 1320,
   sharpe: 1.25,

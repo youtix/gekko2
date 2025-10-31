@@ -11,7 +11,7 @@ import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types
 import { Advice, AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { LogLevel } from '@models/logLevel.types';
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompleted, OrderErrored } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
@@ -82,8 +82,12 @@ export class StrategyManager extends EventEmitter {
     }
   }
 
-  public onOrderCompleted(trade: OrderCompleted) {
-    this.strategy?.onOrderCompleted(trade);
+  public onOrderCompleted(order: OrderCompleted) {
+    this.strategy?.onOrderCompleted(order);
+  }
+
+  public onOrderErrored(order: OrderErrored) {
+    this.strategy?.onOrderErrored(order);
   }
 
   public finish() {

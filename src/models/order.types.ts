@@ -16,7 +16,7 @@ export type OrderSide = 'SELL' | 'BUY';
 export type OrderCanceled = {
   orderId: UUID;
   date: EpochTimeStamp;
-  orderType: OrderType;
+  type: OrderType;
 };
 
 export type OrderErrored = OrderCanceled & {

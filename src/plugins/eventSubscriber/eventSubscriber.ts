@@ -5,7 +5,7 @@ import { StrategyInfo } from '@models/strategyInfo.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { toISOString } from '@utils/date/date.utils';
-import { bindAll, filter, upperCase } from 'lodash-es';
+import { bindAll, filter } from 'lodash-es';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
 import { Event, EVENT_NAMES, EventSubscriberConfig } from './eventSubscriber.types';
 
@@ -72,91 +72,68 @@ export class EventSubscriber extends Plugin {
     this.bot.sendMessage(message);
   }
 
-  public onOrderInitiated({
-    side: action,
-    balance,
-    date,
-    orderId: id,
-    orderId: adviceId,
-    orderType,
-    portfolio,
-    requestedAmount,
-  }: OrderInitiated) {
-    if (!this.subscriptions.has('trade_initiated')) return;
+  public onOrderInitiated({ orderId, type, side, balance, date, portfolio, requestedAmount }: OrderInitiated) {
+    if (!this.subscriptions.has('order_initiated')) return;
     const message = [
-      `${upperCase(action)} ${orderType} order created (${id})`,
+      `${side} ${type} order created (${orderId})`,
       `Requested amount: ${requestedAmount}`,
       `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
       `Current balance: ${balance}`,
       `Target price: ${this.price}`,
       `At time: ${toISOString(date)}`,
-      `Advice: ${adviceId}`,
     ].join('\n');
     this.bot.sendMessage(message);
   }
 
-  public onOrderCanceled({ orderId: id, date, orderId: adviceId, orderType }: OrderCanceled) {
-    if (!this.subscriptions.has('trade_canceled')) return;
+  public onOrderCanceled({ orderId, date, type }: OrderCanceled) {
+    if (!this.subscriptions.has('order_canceled')) return;
     const message = [
-      `${orderType} order canceled (${id})`,
+      `${type} order canceled (${orderId})`,
       `At time: ${toISOString(date)}`,
       `Current price: ${this.price} ${this.currency}`,
-      `Advice: ${adviceId}`,
     ].join('\n');
     this.bot.sendMessage(message);
   }
 
-  public onOrderAborted({
-    orderId: id,
-    side: action,
-    orderId: adviceId,
-    balance,
-    date,
-    portfolio,
-    reason,
-    orderType,
-  }: OrderAborted) {
-    if (!this.subscriptions.has('trade_aborted')) return;
+  public onOrderAborted({ orderId, type, side, balance, date, portfolio, reason }: OrderAborted) {
+    if (!this.subscriptions.has('order_aborted')) return;
     const message = [
-      `${upperCase(action)} ${orderType} order aborted (${id})`,
+      `${side} ${type} order aborted (${orderId})`,
       `Due to ${reason}`,
       `At time: ${toISOString(date)}`,
       `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
       `Current balance: ${balance}`,
       `Current price: ${this.price} ${this.currency}`,
-      `Advice: ${adviceId}`,
     ].join('\n');
     this.bot.sendMessage(message);
   }
 
-  public onOrderErrored({ orderId: adviceId, date, orderId: id, reason, orderType }: OrderErrored) {
-    if (!this.subscriptions.has('trade_errored')) return;
+  public onOrderErrored({ orderId, type, date, reason }: OrderErrored) {
+    if (!this.subscriptions.has('order_errored')) return;
     const message = [
-      `${orderType} order errored (${id})`,
+      `${type} order errored (${orderId})`,
       `Due to ${reason}`,
       `At time: ${toISOString(date)}`,
       `Current price: ${this.price} ${this.currency}`,
-      `Advice: ${adviceId}`,
     ].join('\n');
     this.bot.sendMessage(message);
   }
 
   public onOrderCompleted({
-    side: action,
-    orderId: adviceId,
+    orderId,
+    type,
+    side,
     amount,
     balance,
     cost,
     date,
     effectivePrice,
     feePercent,
-    orderId: id,
     portfolio,
-    orderType,
   }: OrderCompleted) {
-    if (!this.subscriptions.has('trade_completed')) return;
+    if (!this.subscriptions.has('order_completed')) return;
     const message = [
-      `${upperCase(action)} ${orderType} order completed (${id})`,
+      `${side} ${type} order completed (${orderId})`,
       `Amount: ${amount} ${this.asset}`,
       `Price: ${effectivePrice} ${this.currency}`,
       `Fee percent: ${feePercent ?? '0'}%`,
@@ -164,7 +141,6 @@ export class EventSubscriber extends Plugin {
       `At time: ${toISOString(date)}`,
       `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
       `Current balance: ${balance}`,
-      `Advice: ${adviceId}`,
     ].join('\n');
     this.bot.sendMessage(message);
   }

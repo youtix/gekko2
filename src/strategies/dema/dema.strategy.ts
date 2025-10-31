@@ -1,4 +1,4 @@
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompleted, OrderErrored } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { DEMAStrategyParams } from './dema.types';
@@ -43,9 +43,7 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
       log('debug', `We are currently not in an up or down trend: ${message}`);
     }
   }
-  onOrderCompleted(_trade: OrderCompleted): void {
-    throw new Error('Method not implemented.');
-  }
+
   log({ log }: Tools<DEMAStrategyParams>, ...indicators: unknown[]): void {
     const [dema, sma] = indicators;
     if (!isNumber(sma) || !isNumber(dema)) return;
@@ -60,5 +58,7 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
 
   // NOT USED
   onEachCandle(_tools: Tools<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCompleted(_order: OrderCompleted): void {}
+  onOrderErrored(_order: OrderErrored): void {}
   end(): void {}
 }
