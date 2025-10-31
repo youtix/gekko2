@@ -22,7 +22,7 @@ export const logFinalize = (report: Report, currency: string, enableConsoleTable
       market: `${round(report.market, 2, 'down')}%`,
       alpha: `${round(report.alpha, 2, 'down')}%`,
       simulatedYearlyProfit: `${formater.format(report.yearlyProfit)} ${currency} (${round(report.relativeYearlyProfit, 2, 'down')}%)`,
-      amountOfTrades: report.trades,
+      amountOfOrders: report.orders,
       originalBalance: `${formater.format(report.startBalance)} ${currency}`,
       currentbalance: `${formater.format(report.balance)} ${currency}`,
       sharpeRatio: formatRatio(report.sharpe),

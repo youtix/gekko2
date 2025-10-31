@@ -61,14 +61,14 @@ describe('EventSubscriber', () => {
         date: toTimestamp('2022-01-01T00:00:00Z'),
         orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
         portfolio: { asset: 0, currency: 0 },
-        orderType: 'STICKY',
+        type: 'STICKY',
         requestedAmount: 1,
       } as OrderInitiated);
     const onOrderCanceled = (p: EventSubscriber) =>
       p.onOrderCanceled({
         orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
         date: toTimestamp('2022-01-01T00:00:00Z'),
-        orderType: 'STICKY',
+        type: 'STICKY',
       } as OrderCanceled);
     const onOrderAborted = (p: EventSubscriber) =>
       p.onOrderAborted({
@@ -78,7 +78,7 @@ describe('EventSubscriber', () => {
         date: toTimestamp('2022-01-01T00:00:00Z'),
         portfolio: { asset: 0, currency: 0 },
         reason: 'r',
-        orderType: 'STICKY',
+        type: 'STICKY',
         requestedAmount: 1,
       } as OrderAborted);
     const onOrderErrored = (p: EventSubscriber) =>
@@ -86,7 +86,7 @@ describe('EventSubscriber', () => {
         orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
         date: toTimestamp('2022-01-01T00:00:00Z'),
         reason: 'r',
-        orderType: 'STICKY',
+        type: 'STICKY',
       } as OrderErrored);
     const onOrderCompleted = (p: EventSubscriber) =>
       p.onOrderCompleted({
@@ -98,7 +98,7 @@ describe('EventSubscriber', () => {
         date: toTimestamp('2022-01-01T00:00:00Z'),
         effectivePrice: 1,
         portfolio: { asset: 0, currency: 0 },
-        orderType: 'STICKY',
+        type: 'STICKY',
         requestedAmount: 1,
         price: 100,
       } as OrderCompleted);
@@ -106,11 +106,11 @@ describe('EventSubscriber', () => {
       name                 | handler
       ${'strategy_info'}   | ${onStrategyInfo}
       ${'strategy_advice'} | ${onStrategyCreateOrder}
-      ${'trade_initiated'} | ${onOrderInitiated}
-      ${'trade_canceled'}  | ${onOrderCanceled}
-      ${'trade_aborted'}   | ${onOrderAborted}
-      ${'trade_errored'}   | ${onOrderErrored}
-      ${'trade_completed'} | ${onOrderCompleted}
+      ${'order_initiated'} | ${onOrderInitiated}
+      ${'order_canceled'}  | ${onOrderCanceled}
+      ${'order_aborted'}   | ${onOrderAborted}
+      ${'order_errored'}   | ${onOrderErrored}
+      ${'order_completed'} | ${onOrderCompleted}
     `('sends message only when subscribed for $name', ({ name, handler }) => {
       fakeBot.sendMessage.mockReset();
       handler(plugin);
@@ -133,14 +133,14 @@ describe('EventSubscriber', () => {
 
     it('reports trade initiation details including order type and requested amount', () => {
       fakeBot.sendMessage.mockReset();
-      plugin['handleCommand']('/subscribe_to_trade_initiated');
+      plugin['handleCommand']('/subscribe_to_order_initiated');
       plugin.onOrderInitiated({
         orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
         side: 'BUY',
         balance: 10,
         date: toTimestamp('2022-01-01T00:00:00Z'),
         portfolio: { asset: 1, currency: 2 },
-        orderType: 'MARKET',
+        type: 'MARKET',
         requestedAmount: 5,
       } as OrderInitiated);
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(
@@ -153,18 +153,18 @@ describe('EventSubscriber', () => {
   describe('commands', () => {
     it.each`
       preSubscribed | expected
-      ${false}      | ${'Subscribed to trade_initiated'}
-      ${true}       | ${'Unsubscribed from trade_initiated'}
+      ${false}      | ${'Subscribed to order_initiated'}
+      ${true}       | ${'Unsubscribed from order_initiated'}
     `('toggles subscription', ({ preSubscribed, expected }) => {
-      if (preSubscribed) plugin['handleCommand']('/subscribe_to_trade_initiated');
-      const res = plugin['handleCommand']('/subscribe_to_trade_initiated');
+      if (preSubscribed) plugin['handleCommand']('/subscribe_to_order_initiated');
+      const res = plugin['handleCommand']('/subscribe_to_order_initiated');
       expect(res).toBe(expected);
     });
 
     it.each`
       setup                                                             | expected
       ${() => undefined}                                                | ${'No subscriptions'}
-      ${() => plugin['handleCommand']('/subscribe_to_trade_initiated')} | ${'trade_initiated'}
+      ${() => plugin['handleCommand']('/subscribe_to_order_initiated')} | ${'order_initiated'}
     `('lists subscriptions', ({ setup, expected }) => {
       setup();
       const res = plugin['handleCommand']('/subscriptions');
@@ -193,11 +193,11 @@ describe('EventSubscriber', () => {
       expect(res).toBe(`Available commands:
 /subscribe_to_strategy_info
 /subscribe_to_strategy_advice
-/subscribe_to_trade_initiated
-/subscribe_to_trade_canceled
-/subscribe_to_trade_aborted
-/subscribe_to_trade_errored
-/subscribe_to_trade_completed
+/subscribe_to_order_initiated
+/subscribe_to_order_canceled
+/subscribe_to_order_aborted
+/subscribe_to_order_errored
+/subscribe_to_order_completed
 /subscribe_to_all
 /unsubscribe_from_all
 /subscriptions

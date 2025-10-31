@@ -55,7 +55,7 @@ describe('performanceAnalyzer.utils', () => {
       relativeYearlyProfit: 15.12,
       startPrice: 21_000,
       endPrice: 22_250,
-      trades: 7,
+      orders: 7,
       startBalance: 4800,
       exposure: 55.678,
       sharpe: 1.5,
@@ -110,7 +110,7 @@ describe('performanceAnalyzer.utils', () => {
         market: 'rounded(12.34,2,down)%',
         alpha: 'rounded(2.56,2,down)%',
         simulatedYearlyProfit: 'formatted(730) EUR (rounded(15.12,2,down)%)',
-        amountOfTrades: 7,
+        amountOfOrders: 7,
         originalBalance: 'formatted(4800) EUR',
         currentbalance: 'formatted(5050) EUR',
         sharpeRatio: 'ratio(1.5)',
@@ -138,7 +138,7 @@ describe('performanceAnalyzer.utils', () => {
       amount: 1,
       price: 10,
       effectivePrice: 10,
-      orderType: 'MARKET',
+      type: 'MARKET',
       feePercent: 0.2,
     };
 

@@ -104,16 +104,29 @@ export class Trader extends Plugin {
     const orderInstance = this.getOrder(id);
     if (!orderInstance) return warning('trader', 'Impossible to cancel order: Unknown Order');
 
-    const orderType = orderInstance.getType();
+    const type = orderInstance.getType();
     orderInstance.removeAllListeners();
+
+    // Handle Cancel Success hook
     orderInstance.once(ORDER_COMPLETED_EVENT, async () => {
       this.removeOrder(id);
       this.deferredEmit<OrderCanceled>(ORDER_CANCELED_EVENT, {
         orderId: id,
         date: Date.now(),
-        orderType,
+        type,
       });
-      // We do not check if cancel goes bad because we cannot do much for it
+      await this.synchronize();
+    });
+
+    // Handle Cancel Error hook
+    orderInstance.once(ORDER_ERRORED_EVENT, async reason => {
+      this.removeOrder(id);
+      this.deferredEmit<OrderErrored>(ORDER_CANCELED_EVENT, {
+        orderId: id,
+        date: Date.now(),
+        type,
+        reason,
+      });
       await this.synchronize();
     });
     orderInstance.cancel();
@@ -141,7 +154,7 @@ export class Trader extends Plugin {
           balance: this.balance,
           date,
           reason,
-          orderType: type,
+          type,
           requestedAmount,
         });
       }
@@ -164,7 +177,7 @@ export class Trader extends Plugin {
           balance: this.balance,
           date,
           reason,
-          orderType: type,
+          type,
           requestedAmount,
         });
       }
@@ -184,7 +197,7 @@ export class Trader extends Plugin {
       portfolio: this.portfolio,
       balance: this.balance,
       date,
-      orderType: type,
+      type,
       requestedAmount: amount,
     });
     const exchange = this.getExchange();
@@ -201,7 +214,7 @@ export class Trader extends Plugin {
       this.removeOrder(id);
       this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
         orderId: id,
-        orderType: type,
+        type,
         date: Date.now(),
         reason,
       });
@@ -215,7 +228,7 @@ export class Trader extends Plugin {
           error('trader', err.message);
           return this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
             orderId: id,
-            orderType: type,
+            type,
             date: Date.now(),
             reason: err.message,
           });
@@ -259,7 +272,7 @@ export class Trader extends Plugin {
       date: date ?? 0,
       feePercent: feePercent,
       effectivePrice,
-      orderType: order.type,
+      type: order.type,
       requestedAmount,
     });
   }

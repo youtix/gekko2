@@ -2,7 +2,7 @@ import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types
 import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { LogLevel } from '@models/logLevel.types';
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompleted, OrderErrored } from '@models/order.types';
 import { UUID } from 'node:crypto';
 
 export type Direction = 'short' | 'long';
@@ -19,7 +19,8 @@ export interface Strategy<T> {
   init(addIndicator: AddIndicatorFn, strategyParams: T): void;
   onEachCandle(tools: Tools<T>, ...indicators: unknown[]): void;
   onCandleAfterWarmup(tools: Tools<T>, ...indicators: unknown[]): void;
-  onOrderCompleted(trade: OrderCompleted): void;
+  onOrderCompleted(order: OrderCompleted): void;
+  onOrderErrored(order: OrderErrored): void;
   log(tools: Tools<T>, ...indicators: unknown[]): void;
   end(): void;
 }

@@ -1,4 +1,4 @@
-import type { OrderCompleted } from '@models/order.types';
+import type { OrderCompleted, OrderErrored } from '@models/order.types';
 import type { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import type { EMARibbonStrategyParams } from './emaRibbon.types';
 
@@ -37,6 +37,7 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
 
   // NOT USED
   onEachCandle(_tools: Tools<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_trade: OrderCompleted): void {}
+  onOrderCompleted(_order: OrderCompleted): void {}
+  onOrderErrored(_order: OrderErrored): void {}
   end(): void {}
 }

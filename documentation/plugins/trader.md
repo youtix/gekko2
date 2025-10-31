@@ -67,8 +67,8 @@ The **Trader** plugin emits a number of events during live trading. These events
 |--------------------------------|-----------------------------------------------------------------------------|
 | `PORTFOLIO_CHANGE_EVENT`       | Emitted when the asset or currency amount in the portfolio changes.         |
 | `PORTFOLIO_VALUE_CHANGE_EVENT` | Emitted when the total portfolio value changes due to price or position.    |
-| `TRADE_INITIATED_EVENT`        | Emitted when a trade is about to be placed on the market.                   |
-| `TRADE_ABORTED_EVENT`          | Emitted when a trade is rejected due to portfolio constraints.              |
-| `TRADE_CANCELED_EVENT`         | Emitted after a pending order is canceled before completion.                |
-| `TRADE_COMPLETED_EVENT`        | Emitted when an order is fully filled and executed successfully.            |
-| `TRADE_ERRORED_EVENT`          | Emitted when an error occurs during order execution.                        |
+| `ORDER_INITIATED_EVENT`        | Emitted when an order is about to be placed on the market.                  |
+| `ORDER_ABORTED_EVENT`          | Emitted when an order is rejected due to portfolio constraints.             |
+| `ORDER_CANCELED_EVENT`         | Emitted after a pending order is canceled before completion.                |
+| `ORDER_COMPLETED_EVENT`        | Emitted when an order is fully filled and executed successfully.            |
+| `ORDER_ERRORED_EVENT`          | Emitted when an error occurs during order execution.                        |

@@ -44,11 +44,11 @@ The **EventSubscriber** plugin listens to a variety of events in order to send n
 | `processOneMinuteCandle` | Updates the current price based on incoming candle data.                   |
 | `onStrategyInfo`         | Sends a message with logs from a strategy.                                 |
 | `onStrategyCreateOrder`  | Sends a message when new advice is received from a strategy.               |
-| `onOrderInitiated`       | Notifies when a trade is about to be placed.                               |
-| `onOrderCompleted`       | Sends detailed info once a trade is successfully executed.                 |
-| `onOrderAborted`         | Sends a message when a trade is aborted due to portfolio constraints.      |
-| `onOrderCanceled`        | Notifies when a pending trade is canceled before execution.                |
-| `onOrderErrored`         | Reports an error that occurred during trade execution.                     |
+| `onOrderInitiated`       | Notifies when an order is about to be placed.                               |
+| `onOrderCompleted`       | Sends detailed info once an order is successfully executed.                 |
+| `onOrderAborted`         | Sends a message when an order is aborted due to portfolio constraints.      |
+| `onOrderCanceled`        | Notifies when a pending order is canceled before execution.                |
+| `onOrderErrored`         | Reports an error that occurred during order execution.                     |
 
 ## Commands
 
@@ -60,11 +60,11 @@ Each event can be toggled with `/subscribe_to_<event>`:
 
 - `/subscribe_to_strategy_info`
 - `/subscribe_to_strategy_advice`
-- `/subscribe_to_trade_initiated`
-- `/subscribe_to_trade_canceled`
-- `/subscribe_to_trade_aborted`
-- `/subscribe_to_trade_errored`
-- `/subscribe_to_trade_completed`
+- `/subscribe_to_order_initiated`
+- `/subscribe_to_order_canceled`
+- `/subscribe_to_order_aborted`
+- `/subscribe_to_order_errored`
+- `/subscribe_to_order_completed`
 
 Sending the same command again unsubscribes from that event.
 

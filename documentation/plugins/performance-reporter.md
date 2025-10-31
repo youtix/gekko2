@@ -40,7 +40,7 @@ Each row in the CSV contains the following metrics:
 | `market`                | Performance of the underlying market (i.e., return from a simple buy-and-hold strategy)         |
 | `alpha`                 | Strategy alpha (raw edge over the market)                                                       |
 | `simulatedYearlyProfit` | Annualized profit estimation based on performance                                               |
-| `amountOfTrades`        | Number of trades executed                                                                       |
+| `amountOfOrders`        | Number of trades executed                                                                       |
 | `originalBalance`       | Starting portfolio balance                                                                      |
 | `currentBalance`        | Final portfolio balance                                                                         |
 | `sharpeRatio`           | Risk-adjusted return metric that considers both upside and downside volatility                  |

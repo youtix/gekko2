@@ -1,4 +1,4 @@
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompleted, OrderErrored } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { CCIStrategyParams, CCITrend } from './cci.types';
@@ -73,6 +73,7 @@ export class CCI implements Strategy<CCIStrategyParams> {
   }
   // NOT USED
   onEachCandle(_tools: Tools<CCIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_trade: OrderCompleted): void {}
+  onOrderCompleted(_order: OrderCompleted): void {}
+  onOrderErrored(_order: OrderErrored): void {}
   end(): void {}
 }

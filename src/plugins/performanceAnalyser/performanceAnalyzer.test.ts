@@ -42,7 +42,7 @@ describe('PerformanceAnalyzer', () => {
     amount: 5,
     effectivePrice: 100,
     feePercent: 0.2,
-    orderType: 'STICKY',
+    type: 'STICKY',
     requestedAmount: 5,
   };
 
@@ -57,7 +57,7 @@ describe('PerformanceAnalyzer', () => {
     amount: 5,
     effectivePrice: 110,
     feePercent: 0.2,
-    orderType: 'STICKY',
+    type: 'STICKY',
     requestedAmount: 5,
   };
 
@@ -125,7 +125,7 @@ describe('PerformanceAnalyzer', () => {
   describe('onOrderCompleted', () => {
     it('increments trade count, balance, and samples', () => {
       analyzer.onOrderCompleted(buyTrade);
-      expect(analyzer['trades']).toBe(1);
+      expect(analyzer['orders']).toBe(1);
       expect(analyzer['balance']).toBe(buyTrade.balance);
       expect(analyzer['balanceSamples']).toEqual([{ date: buyTrade.date, balance: buyTrade.balance }]);
     });
@@ -177,13 +177,13 @@ describe('PerformanceAnalyzer', () => {
       expect(analyzer['exposure']).toBe(analyzer['dates'].end - defaultCandle.start);
     });
 
-    it('emits a performance report even when no trades occurred', () => {
+    it('emits a performance report even when no orders occurred', () => {
       analyzer['processFinalize']();
       expect(analyzer['emit']).toHaveBeenCalledWith(
         PERFORMANCE_REPORT_EVENT,
         expect.objectContaining({
           profit: 0,
-          trades: 0,
+          orders: 0,
           balance: 1000,
         }),
       );
@@ -205,7 +205,7 @@ describe('PerformanceAnalyzer', () => {
         { date: start + 1, balance: 1100 },
         { date: start + 2, balance: 990 },
       ];
-      analyzer['trades'] = 2;
+      analyzer['orders'] = 2;
       analyzer['exposure'] = (end - start) / 2;
     });
 
@@ -233,9 +233,9 @@ describe('PerformanceAnalyzer', () => {
       expect(report?.profit).toBe(300 - 1000);
     });
 
-    it('returns zeroed volatility metrics when no trades were recorded', () => {
+    it('returns zeroed volatility metrics when no orders were executed', () => {
       analyzer['balanceSamples'] = [];
-      analyzer['trades'] = 0;
+      analyzer['orders'] = 0;
       analyzer['balance'] = 1000;
       analyzer['latestPortfolio'] = analyzer['start'].portfolio;
       const report = analyzer['calculateReportStatistics']();

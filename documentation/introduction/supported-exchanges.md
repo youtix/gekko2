@@ -10,7 +10,6 @@ Gekko can interact directly with the APIs of multiple cryptocurrency exchanges. 
 | Exchange      | Monitoring | Sandbox | Live Trading | Importing | Notes                                                                   |
 |---------------|:----------:|:-------:|:------------:|:---------:|-------------------------------------------------------------------------|
 | **Binance**   | 🟩         | 🟩      | 🟩           | 🟩        | Up to 1,000 trades per request and high trading volume. Perfect choice |
-| **Bitfinex**  | 🟨         | 🟥      | 🟨           | 🟨        | Up to 10,000 trades per request, but **low trading volume** may limit data usefulness. A high tickrate is recommended. |
 
 ## Legend
 

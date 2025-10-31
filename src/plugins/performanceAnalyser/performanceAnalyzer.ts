@@ -22,7 +22,7 @@ export class PerformanceAnalyzer extends Plugin {
   private start: Start;
   private latestPortfolio: Portfolio | null;
   private startPrice: number;
-  private trades: number;
+  private orders: number;
   private warmupCandle?: Candle;
   private warmupCompleted: boolean;
   private enableConsoleTable: boolean;
@@ -40,7 +40,7 @@ export class PerformanceAnalyzer extends Plugin {
     this.start = { balance: 0, portfolio: null };
     this.latestPortfolio = null;
     this.startPrice = 0;
-    this.trades = 0;
+    this.orders = 0;
     this.warmupCompleted = false;
     this.enableConsoleTable = enableConsoleTable ?? false;
     this.balanceSamples = [];
@@ -69,7 +69,7 @@ export class PerformanceAnalyzer extends Plugin {
   }
 
   public onOrderCompleted(trade: OrderCompleted): void {
-    this.trades++;
+    this.orders++;
     this.balance = trade.balance;
     this.latestPortfolio = trade.portfolio;
     this.balanceSamples.push({ date: trade.date, balance: trade.balance });
@@ -158,7 +158,7 @@ export class PerformanceAnalyzer extends Plugin {
       startPrice: this.startPrice,
       startTime: this.dates.start,
       duration: formatDuration(timespan),
-      trades: this.trades,
+      orders: this.orders,
       yearlyProfit: profit / (elapsedYears || 1),
     };
 
