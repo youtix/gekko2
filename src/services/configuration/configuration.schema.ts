@@ -11,10 +11,12 @@ const daterangeSchema = z.object({
   end: z.iso.datetime(),
 });
 
-const warmupSchema = z.object({
-  tickrate: z.number().default(1000),
-  candleCount: z.number().default(0),
-});
+const warmupSchema = z
+  .object({
+    tickrate: z.number().default(1000),
+    candleCount: z.number().default(0),
+  })
+  .default({ tickrate: 1000, candleCount: 0 });
 
 export const watchSchema = z
   .object({
@@ -57,7 +59,7 @@ export const configurationSchema = z
       .default(null),
     storage: storageSchema.nullable().optional().default(null),
     plugins: z.array(z.looseObject({ name: z.string() })),
-    strategy: z.looseObject({ name: z.string().optional() }),
+    strategy: z.looseObject({ name: z.string() }).optional(),
     [disclaimerField]: z.boolean().nullable().default(null),
   })
   .superRefine((data, ctx) => {

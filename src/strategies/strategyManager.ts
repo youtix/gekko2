@@ -40,7 +40,7 @@ export class StrategyManager extends EventEmitter {
     this.indicators = [];
     this.isStartegyInitialized = false;
     this.isWarmupCompleted = false;
-    this.strategyParams = config.getStrategy();
+    this.strategyParams = config.getStrategy() ?? {};
 
     bindAll(this, [this.addIndicator.name, this.createOrder.name, this.cancelOrder.name, this.log.name]);
   }

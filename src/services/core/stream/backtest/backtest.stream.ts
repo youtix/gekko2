@@ -26,7 +26,7 @@ export class BacktestStream extends Readable {
     warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
 
     const { batchSize, asset, currency } = config.getWatch();
-    const { name } = config.getStrategy();
+    const strategy = config.getStrategy();
     this.dateranges = splitIntervals(daterange.start, daterange.end, batchSize ?? 1440);
     this.iteration = 0;
 
@@ -35,7 +35,7 @@ export class BacktestStream extends Readable {
       [
         `Launching backtest on ${asset}/${currency}`,
         `from ${toISOString(daterange.start)} -> to ${toISOString(daterange.end)}`,
-        `using ${name} strategy`,
+        `using ${strategy?.name} strategy`,
       ].join(' '),
     );
   }
