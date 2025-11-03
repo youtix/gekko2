@@ -18,17 +18,7 @@ To run backtests, you should [enable and configure](../plugins/introduction.md) 
 
 Additionally, make sure to configure the `watch`, `storage`, and `strategy` sections of your configuration file.
 
-You can define a specific date range for the backtest using `watch.daterange`, or use `watch.scan` to let Gekko automatically scan your local database for available date ranges:
-
-```yaml
-watch:
-  asset: BTC
-  currency: USDT
-  mode: backtest
-  scan: true
-```
-
-If you already know the exact date range you want to backtest against, use the `daterange` option:
+You can define a specific date range for the backtest using `watch.daterange`:
 
 ```yaml
 watch:
@@ -111,4 +101,21 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
 {"level":"info","message":"Launching backtest on BTC/USDT from 2024-01-01T00:00:00.000Z -> to 2024-02-01T00:00:00.000Z using DEMA strategy","timestamp":"2025-03-24T22:52:11.307Z"}
 {"level":"info","message":"Executing short advice due to detected downtrend: @ 43111.10000000 (42868.78797/-161.98797)","timestamp":"2025-03-24T22:30:35.064Z"}
 ...
+```
+
+### Listing available date ranges
+
+If you want to inspect which ranges are available in your SQLite database before running a backtest, invoke Gekko with the `--list-dateranges` flag:
+
+```
+gekko2 --list-dateranges
+```
+
+Gekko will read the configured database connection and output each contiguous range of candles, for example:
+
+```
+Available date ranges:
+-> 2017-08-17T00:00:00.000Z - 2017-12-31T23:59:59.999Z
+-> 2018-08-17T00:00:00.000Z - 2018-12-31T23:59:59.999Z
+-> 2019-08-17T00:00:00.000Z - 2019-12-31T23:59:59.999Z
 ```

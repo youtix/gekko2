@@ -37,12 +37,12 @@ class Configuration {
 
   public getWatch() {
     if (!this.configuration) throw new GekkoError('configuration', 'Empty configuration file');
-    const { daterange, scan, mode } = this.configuration.watch;
+    const { daterange, mode } = this.configuration.watch;
 
     if (mode === 'importer' && daterange && !isDaterangeValid(daterange.start, daterange.end))
       throw new GekkoError('configuration', `Wrong date range: ${daterange.start} -> ${daterange.end}`);
 
-    if (mode === 'backtest' && daterange && !scan && !isDaterangeValid(daterange.start, daterange.end))
+    if (mode === 'backtest' && daterange && !isDaterangeValid(daterange.start, daterange.end))
       throw new GekkoError('configuration', `Wrong date range: ${daterange.start} -> ${daterange.end}`);
 
     return this.configuration.watch;

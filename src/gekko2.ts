@@ -16,15 +16,21 @@
 
 import { StopGekkoError } from '@errors/stopGekko.error';
 import { config } from '@services/configuration/configuration';
+import { listAvailableDateRanges } from '@services/core/cli/listDateranges';
 import { gekkoPipeline } from '@services/core/pipeline/pipeline';
 import { error, info } from '@services/logger';
 import { logVersion } from '@utils/process/process.utils';
 
 export const main = async () => {
-  if (config.showLogo()) {
-    // eslint-disable-next-line no-console
-    console.log(`
-  ______   ________  __    __  __    __   ______          ______  
+  const cliArgs = new Set(process.argv.slice(2));
+
+  try {
+    if (cliArgs.has('--list-dateranges')) return listAvailableDateRanges();
+
+    if (config.showLogo()) {
+      // eslint-disable-next-line no-console
+      console.log(`
+  ______   ________  __    __  __    __   ______          ______
  /      \\ /        |/  |  /  |/  |  /  | /      \\        /      \\ 
 /$$$$$$  |$$$$$$$$/ $$ | /$$/ $$ | /$$/ /$$$$$$  |      /$$$$$$  |
 $$ | _$$/ $$ |__    $$ |/$$/  $$ |/$$/  $$ |  $$ |      $$____$$ |
@@ -34,9 +40,8 @@ $$ \\__$$ |$$ |_____ $$ |$$  \\ $$ |$$  \\ $$ \\__$$ |      $$ |_____
 $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
  $$$$$$/  $$$$$$$$/ $$/   $$/ $$/   $$/  $$$$$$/        $$$$$$$$/ 
 `);
-  }
+    }
 
-  try {
     info('gekko', logVersion());
     await gekkoPipeline(); // Launch bot
   } catch (e) {

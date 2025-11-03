@@ -28,16 +28,15 @@ export const watchSchema = z
     fillGaps: z.enum(['no', 'empty']).default('empty'),
     warmup: warmupSchema,
     daterange: z.union([daterangeSchema, z.null()]).default(null),
-    scan: z.boolean().optional(),
     batchSize: z.number().optional(),
   })
   .superRefine((data, ctx) => {
-    const requiresDaterange = data.mode === 'importer' || (data.mode === 'backtest' && !data.scan);
+    const requiresDaterange = data.mode === 'importer' || data.mode === 'backtest';
     if (requiresDaterange && data.daterange === null) {
       ctx.addIssue({
         code: 'custom',
         path: ['daterange'],
-        message: 'daterange is required for importer mode or backtest without scan',
+        message: 'daterange is required for importer and backtest modes',
       });
     }
   });
