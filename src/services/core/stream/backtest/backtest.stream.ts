@@ -1,6 +1,6 @@
 import { config } from '@services/configuration/configuration';
 import { inject } from '@services/injecter/injecter';
-import { debug, error, info, warning } from '@services/logger';
+import { debug, info, warning } from '@services/logger';
 import { Storage } from '@services/storage/storage';
 import { splitIntervals, toISOString } from '@utils/date/date.utils';
 import { differenceInMinutes, Interval } from 'date-fns';
@@ -19,8 +19,7 @@ export class BacktestStream extends Readable {
     const result = this.storage.checkInterval(daterange);
     if (result?.missingCandleCount) {
       const availableDateranges = this.storage.getCandleDateranges();
-      error('stream', { availableDateranges });
-      throw new MissingCandlesError(daterange);
+      throw new MissingCandlesError(daterange, availableDateranges);
     }
 
     warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
