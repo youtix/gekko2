@@ -75,7 +75,6 @@
     "@date-fns/tz": "^1.2.0",
     "binance": "^3.0.4",
     "date-fns": "^4.1.0",
-    "inquirer": "^12.6.0",
     "js-yaml": "^4.1.0",
     "json5": "^2.2.3",
     "lodash-es": "^4.17.21",

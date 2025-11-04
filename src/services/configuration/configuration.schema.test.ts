@@ -16,10 +16,10 @@ describe('watchSchema', () => {
     const importerBase = { ...baseWatch, mode: 'importer' as const };
 
     it.each`
-      scenario                                | overrides                                                                         | expectSuccess
-      ${'missing daterange fails validation'} | ${{}}                                                                             | ${false}
-      ${'accepts valid daterange'}            | ${{ daterange: { start: ISO_START, end: ISO_END } }}                              | ${true}
-      ${'respects extra optional fields'}     | ${{ daterange: { start: ISO_START, end: ISO_END }, batchSize: 500, scan: false }} | ${true}
+      scenario                                | overrides                                                            | expectSuccess
+      ${'missing daterange fails validation'} | ${{}}                                                                | ${false}
+      ${'accepts valid daterange'}            | ${{ daterange: { start: ISO_START, end: ISO_END } }}                 | ${true}
+      ${'respects extra optional fields'}     | ${{ daterange: { start: ISO_START, end: ISO_END }, batchSize: 500 }} | ${true}
     `('$scenario', ({ overrides, expectSuccess }) => {
       const candidate: Record<string, unknown> = {
         ...importerBase,
@@ -42,12 +42,10 @@ describe('watchSchema', () => {
     const backtestBase = { ...baseWatch, mode: 'backtest' as const };
 
     it.each`
-      scenario                                               | overrides                                                         | expectSuccess
-      ${'omitted scan still requires daterange'}             | ${{}}                                                             | ${false}
-      ${'explicit scan false requires daterange'}            | ${{ scan: false }}                                                | ${false}
-      ${'scan true bypasses daterange requirement'}          | ${{ scan: true }}                                                 | ${true}
-      ${'daterange satisfies requirement when scan omitted'} | ${{ daterange: { start: ISO_START, end: ISO_END } }}              | ${true}
-      ${'scan false with daterange succeeds'}                | ${{ scan: false, daterange: { start: ISO_START, end: ISO_END } }} | ${true}
+      scenario                                | overrides                                                            | expectSuccess
+      ${'missing daterange fails validation'} | ${{}}                                                                | ${false}
+      ${'accepts valid daterange'}            | ${{ daterange: { start: ISO_START, end: ISO_END } }}                 | ${true}
+      ${'respects extra optional fields'}     | ${{ daterange: { start: ISO_START, end: ISO_END }, batchSize: 500 }} | ${true}
     `('$scenario', ({ overrides, expectSuccess }) => {
       const candidate: Record<string, unknown> = {
         ...backtestBase,

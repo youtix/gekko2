@@ -18,17 +18,7 @@ To run backtests, you should [enable and configure](../plugins/introduction.md) 
 
 Additionally, make sure to configure the `watch`, `storage`, and `strategy` sections of your configuration file.
 
-You can define a specific date range for the backtest using `watch.daterange`, or use `watch.scan` to let Gekko automatically scan your local database for available date ranges:
-
-```yaml
-watch:
-  asset: BTC
-  currency: USDT
-  mode: backtest
-  scan: true
-```
-
-If you already know the exact date range you want to backtest against, use the `daterange` option:
+You can define a specific date range for the backtest using `watch.daterange`:
 
 ```yaml
 watch:

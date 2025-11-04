@@ -14,8 +14,6 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 vi.mock('@services/injecter/injecter', () => ({ inject: {} }));
 vi.mock('@plugins/index');
-vi.mock('inquirer', () => ({ default: { prompt: vi.fn() } }));
-
 describe('Pipeline Steps', () => {
   describe('checkPluginsDuplicateEvents', () => {
     it('returns context when no duplicate events are present', async () => {
