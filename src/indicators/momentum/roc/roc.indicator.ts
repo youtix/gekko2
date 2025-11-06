@@ -1,6 +1,6 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/candle.types';
-import { RingBuffer } from '@utils/array/ringBuffer';
+import { RingBuffer } from '@utils/collection/ringBuffer';
 
 export class ROC extends Indicator<'ROC'> {
   private ringBuffer: RingBuffer<number>;

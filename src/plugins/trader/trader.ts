@@ -13,7 +13,6 @@ import { Candle } from '@models/candle.types';
 import { OrderAborted, OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Plugin } from '@plugins/plugin';
-import { config } from '@services/configuration/configuration';
 import { Order } from '@services/core/order/order';
 import { ORDER_PARTIALLY_FILLED_EVENT, ORDER_STATUS_CHANGED_EVENT } from '@services/core/order/order.const';
 import { debug, error, info, warning } from '@services/logger';
@@ -23,7 +22,7 @@ import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { ORDER_FACTORY, SYNCHRONIZATION_INTERVAL } from './trader.const';
 import { traderSchema } from './trader.schema';
-import { findWhyWeCannotBuy, findWhyWeCannotSell, processCostAndPrice, resolveOrderAmount } from './trader.utils';
+import { computeOrderPricing, findWhyWeCannotBuy, findWhyWeCannotSell, resolveOrderAmount } from './trader.utils';
 
 export class Trader extends Plugin {
   private readonly orders: Order[];
@@ -46,12 +45,9 @@ export class Trader extends Plugin {
     this.balance = 0;
     this.price = 0;
 
-    bindAll(this, ['synchronize']);
+    bindAll(this, [this.synchronize.name]);
 
-    const { mode } = config.getWatch();
-    if (mode === 'realtime') {
-      this.syncInterval = setInterval(this.synchronize, SYNCHRONIZATION_INTERVAL);
-    }
+    this.syncInterval = setInterval(this.synchronize, SYNCHRONIZATION_INTERVAL);
   }
 
   private async synchronize() {
@@ -247,7 +243,7 @@ export class Trader extends Plugin {
     await this.synchronize();
 
     const { amount, price, feePercent, side, date } = summary;
-    const { effectivePrice, cost } = processCostAndPrice(side, price, amount, feePercent);
+    const { effectivePrice, fee } = computeOrderPricing(side, price, amount, feePercent);
 
     info(
       'trader',
@@ -256,7 +252,7 @@ export class Trader extends Plugin {
         `Completed at: ${toISOString(date)}`,
         `Order amount: ${amount},`,
         `Effective price: ${effectivePrice},`,
-        `Cost: ${cost},`,
+        `Fee: ${fee},`,
         `Fee percent: ${feePercent},`,
       ].join(' '),
     );
@@ -264,7 +260,7 @@ export class Trader extends Plugin {
     this.deferredEmit<OrderCompleted>(ORDER_COMPLETED_EVENT, {
       orderId: id,
       side,
-      cost,
+      fee,
       amount,
       price,
       portfolio: this.portfolio,

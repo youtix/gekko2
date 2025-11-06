@@ -4,15 +4,15 @@ import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
 import { DUMMY_DEFAULT_BUFFER_SIZE } from '@services/exchange/exchange.const';
+import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { MarketLimits } from '@services/exchange/exchange.types';
-import { RingBuffer } from '@utils/array/ringBuffer';
-import { isNil } from 'lodash-es';
+import { RingBuffer } from '@utils/collection/ringBuffer';
+import { bindAll, isNil } from 'lodash-es';
 import { CentralizedExchange } from '../cex';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
 
 export class DummyCentralizedExchange extends CentralizedExchange {
   private readonly orders: RingBuffer<DummyInternalOrder>;
-  private readonly trades: RingBuffer<Trade>;
   private readonly candles: RingBuffer<Candle>;
   /** Maker fee in % */
   private readonly makerFee: number;
@@ -23,7 +23,6 @@ export class DummyCentralizedExchange extends CentralizedExchange {
   private ticker: Ticker;
 
   private orderSequence = 0;
-  private tradeSequence = 0;
 
   constructor(config: DummyCentralizedExchangeConfig) {
     super(config);
@@ -33,8 +32,9 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     this.portfolio = { ...config.simulationBalance };
     this.ticker = { ...config.initialTicker };
     this.candles = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
-    this.trades = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
     this.orders = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
+
+    bindAll(this, [this.mapOrderToTrade.name]);
   }
 
   public addCandle(candle: Candle): void {
@@ -68,13 +68,13 @@ export class DummyCentralizedExchange extends CentralizedExchange {
   }
 
   protected async fetchTradesImpl(): Promise<Trade[]> {
-    return this.trades.toArray().map(trade => ({ ...trade, fee: { ...trade.fee } }));
+    return this.orders.toArray().map(this.mapOrderToTrade);
   }
 
   protected async fetchMyTradesImpl(from?: EpochTimeStamp): Promise<Trade[]> {
-    const arr = this.trades.toArray();
-    const filtered = isNil(from) ? arr : arr.filter(trade => trade.timestamp >= from);
-    return filtered.map(trade => ({ ...trade, fee: { ...trade.fee } }));
+    const arr = this.orders.toArray();
+    const filtered = isNil(from) ? arr : arr.filter(order => order.timestamp >= from);
+    return filtered.map(this.mapOrderToTrade);
   }
 
   protected async fetchPortfolioImpl(): Promise<Portfolio> {
@@ -89,7 +89,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     this.reserveBalance(side, normalizedAmount, price);
 
     const id = `order-${++this.orderSequence}`;
-    const timestamp = Date.now();
+    const timestamp = this.candles.last().start;
     const order: DummyInternalOrder = {
       id,
       status: 'open',
@@ -99,6 +99,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       amount: normalizedAmount,
       timestamp,
       side,
+      type: 'LIMIT',
     };
     this.orders.push(order);
     return this.cloneOrder(order);
@@ -110,15 +111,15 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     this.checkOrderCost(normalizedAmount, price);
 
     const id = `order-${++this.orderSequence}`;
-    const timestamp = Date.now();
+    const timestamp = this.candles.last().start;
     const cost = normalizedAmount * price;
 
     if (side === 'BUY') {
-      if (this.portfolio.currency < cost) throw new Error('Insufficient currency balance');
+      if (this.portfolio.currency < cost) throw new InvalidOrder('Insufficient currency balance');
       this.portfolio.currency -= cost * (1 + this.takerFee);
       this.portfolio.asset += normalizedAmount;
     } else {
-      if (this.portfolio.asset < normalizedAmount) throw new Error('Insufficient asset balance');
+      if (this.portfolio.asset < normalizedAmount) throw new InvalidOrder('Insufficient asset balance');
       this.portfolio.asset -= normalizedAmount;
       this.portfolio.currency += cost * (1 - this.takerFee);
     }
@@ -132,25 +133,17 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       amount: normalizedAmount,
       timestamp,
       side,
+      type: 'MARKET',
     };
 
     this.orders.push(order);
-
-    const trade: Trade = {
-      id: `trade-${++this.tradeSequence}`,
-      amount: normalizedAmount,
-      timestamp,
-      price,
-      fee: { rate: this.takerFee },
-    };
-    this.trades.push(trade);
 
     return this.cloneOrder(order);
   }
 
   protected async cancelOrderImpl(id: string): Promise<OrderState> {
     const order = this.orders.find(c => c.id === id);
-    if (!order) throw new Error(`Unknown order: ${id}`);
+    if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
 
     if (order.status === 'open') {
       this.releaseBalance(order);
@@ -164,7 +157,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
 
   protected async fetchOrderImpl(id: string): Promise<OrderState> {
     const order = this.orders.find(c => c.id === id);
-    if (!order) throw new Error(`Unknown order: ${id}`);
+    if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
     return this.cloneOrder(order);
   }
 
@@ -176,18 +169,13 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return false;
   }
 
-  private cloneOrder(order: DummyInternalOrder): OrderState {
-    const { id, status, filled, remaining, price, timestamp } = order;
-    return { id, status, filled, remaining, price, timestamp };
-  }
-
   private reserveBalance(side: OrderSide, amount: number, price: number) {
     if (side === 'BUY') {
       const cost = amount * price;
-      if (this.portfolio.currency < cost) throw new Error('Insufficient currency balance');
+      if (this.portfolio.currency < cost) throw new InvalidOrder('Insufficient currency balance');
       this.portfolio.currency -= cost;
     } else {
-      if (this.portfolio.asset < amount) throw new Error('Insufficient asset balance');
+      if (this.portfolio.asset < amount) throw new InvalidOrder('Insufficient asset balance');
       this.portfolio.asset -= amount;
     }
   }
@@ -221,15 +209,23 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       } else {
         this.portfolio.currency += order.amount * price;
       }
-
-      const trade: Trade = {
-        id: `trade-${++this.tradeSequence}`,
-        amount: order.amount,
-        timestamp: candle.start,
-        price,
-        fee: { rate: this.makerFee },
-      };
-      this.trades.push(trade);
     });
+  }
+
+  private cloneOrder(order: DummyInternalOrder): OrderState {
+    const { id, status, filled, remaining, price, timestamp } = order;
+    return { id, status, filled, remaining, price, timestamp };
+  }
+
+  private mapOrderToTrade(order: DummyInternalOrder): Trade {
+    const feeRate = order.type === 'MARKET' ? this.takerFee : this.makerFee;
+
+    return {
+      id: order.id,
+      amount: order.filled ?? 0,
+      price: order.price ?? 0,
+      timestamp: order.timestamp,
+      fee: { rate: feeRate },
+    };
   }
 }

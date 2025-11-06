@@ -5,7 +5,7 @@ import { PluginsNames } from '@plugins/plugin.types';
 import { config } from '@services/configuration/configuration';
 import { inject } from '@services/injecter/injecter';
 import { debug } from '@services/logger';
-import { keepDuplicates } from '@utils/array/array.utils';
+import { keepDuplicates } from '@utils/collection/array.utils';
 import { toCamelCase } from '@utils/string/string.utils';
 import { compact, each, filter, flatMap, map, some } from 'lodash-es';
 import { PluginsEmitSameEventError } from './pipeline.error';

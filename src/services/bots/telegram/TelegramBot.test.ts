@@ -17,7 +17,6 @@ describe('TelegramBot', () => {
 
   beforeEach(() => {
     bot = new TelegramBot(token, username);
-    vi.clearAllMocks();
   });
 
   it('fetchUpdates should return updates and update offset', async () => {

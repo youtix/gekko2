@@ -34,7 +34,6 @@ beforeAll(async () => {
 
 describe('performanceAnalyzer.utils', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
     toISOStringMock.mockImplementation((value: EpochTimeStamp) => `iso(${value})`);
     roundMock.mockImplementation(
       (value: number, decimals: number, mode?: string) => `rounded(${value},${decimals},${mode ?? 'default'})`,
@@ -134,7 +133,7 @@ describe('performanceAnalyzer.utils', () => {
       portfolio: { asset: 1.23456789, currency: 4321.12345678 },
       balance: 1000,
       requestedAmount: 1,
-      cost: 10,
+      fee: 10,
       amount: 1,
       price: 10,
       effectivePrice: 10,

@@ -5,7 +5,7 @@ import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
 import { WMA } from '@indicators/movingAverages/wma/wma.indicator';
 import { Candle } from '@models/candle.types';
-import { RingBuffer } from '@utils/array/ringBuffer';
+import { RingBuffer } from '@utils/collection/ringBuffer';
 import { stdev } from '@utils/math/math.utils';
 
 const MOVING_AVERAGES = {

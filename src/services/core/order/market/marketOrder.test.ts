@@ -1,6 +1,6 @@
 import { OrderState } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '../order.const';
 import { MarketOrder } from './marketOrder';
 
@@ -19,10 +19,6 @@ describe('MarketOrder', () => {
     cancelLimitOrder: vi.fn(),
     fetchOrder: vi.fn(),
   };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
 
   it('emits completion when market order is filled immediately', async () => {
     const orderResponse: OrderState = { id: 'order-1', status: 'closed', filled: 1, timestamp: 1_700_000_000_000 };

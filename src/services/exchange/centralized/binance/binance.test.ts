@@ -105,7 +105,6 @@ const createExchange = (overrides: Partial<ConstructorParameters<typeof BinanceE
   });
 
 beforeEach(() => {
-  vi.clearAllMocks();
   mainClientMock = createMainClientMock();
   websocketMock = createWebsocketMock();
   state.mainClientMock = mainClientMock;

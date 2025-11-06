@@ -39,6 +39,12 @@ const sampleCandle = (start: number, overrides: Partial<Candle> = {}): Candle =>
   ...overrides,
 });
 
+const seedExchangeWithBaseCandle = (exchange: DummyCentralizedExchange, overrides: Partial<Candle> = {}) => {
+  const candle = sampleCandle(Date.now() - 60_000, overrides);
+  exchange.addCandle(candle);
+  return candle;
+};
+
 describe('DummyCentralizedExchange', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -70,6 +76,7 @@ describe('DummyCentralizedExchange', () => {
   it('manages order lifecycle including reservation, fill, and cancellation', async () => {
     const exchange = createExchange({ simulationBalance: { asset: 2, currency: 1_000 } });
     await exchange.loadMarkets();
+    seedExchangeWithBaseCandle(exchange);
 
     const buyOrder = await exchange.createLimitOrder('BUY', 1);
     const reservedPortfolio = await exchange.fetchPortfolio();
@@ -121,16 +128,18 @@ describe('DummyCentralizedExchange', () => {
   it('executes market orders immediately and applies taker fees to balances', async () => {
     const exchange = createExchange();
     await exchange.loadMarkets();
+    seedExchangeWithBaseCandle(exchange);
 
     const initialPortfolio = await exchange.fetchPortfolio();
     const takerFeeRate = baseConfig.feeTaker ?? 0;
+    const { ask, bid } = await exchange.fetchTicker();
 
     const buyOrder = await exchange.createMarketOrder('BUY', 2);
     expect(buyOrder.status).toBe('closed');
     expect(buyOrder.remaining).toBe(0);
 
     const afterBuy = await exchange.fetchPortfolio();
-    const expectedBuyCurrency = initialPortfolio.currency - 2 * baseConfig.initialTicker.ask * (1 + takerFeeRate);
+    const expectedBuyCurrency = initialPortfolio.currency - 2 * ask * (1 + takerFeeRate);
     expect(afterBuy.asset).toBeCloseTo(initialPortfolio.asset + 2, 8);
     expect(afterBuy.currency).toBeCloseTo(expectedBuyCurrency, 8);
 
@@ -138,7 +147,7 @@ describe('DummyCentralizedExchange', () => {
     expect(sellOrder.status).toBe('closed');
 
     const afterSell = await exchange.fetchPortfolio();
-    const expectedSellCurrency = expectedBuyCurrency + 1 * baseConfig.initialTicker.bid * (1 - takerFeeRate);
+    const expectedSellCurrency = expectedBuyCurrency + 1 * bid * (1 - takerFeeRate);
     expect(afterSell.asset).toBeCloseTo(initialPortfolio.asset + 1, 8);
     expect(afterSell.currency).toBeCloseTo(expectedSellCurrency, 8);
 
@@ -151,6 +160,7 @@ describe('DummyCentralizedExchange', () => {
   it('derives candles from trades when queue is empty', async () => {
     const exchange = createExchange();
     await exchange.loadMarkets();
+    seedExchangeWithBaseCandle(exchange);
 
     const order = await exchange.createLimitOrder('BUY', 0.5);
     const candle = sampleCandle(Date.now(), {

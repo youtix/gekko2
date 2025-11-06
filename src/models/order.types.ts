@@ -33,7 +33,7 @@ export type OrderInitiated = OrderCanceled & {
 export type OrderAborted = OrderInitiated & OrderErrored;
 
 export type OrderCompleted = OrderInitiated & {
-  cost: number;
+  fee: number;
   amount: number;
   price: number;
   effectivePrice: number;
