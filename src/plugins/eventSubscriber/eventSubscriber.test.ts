@@ -94,7 +94,7 @@ describe('EventSubscriber', () => {
         side: 'BUY',
         amount: 1,
         balance: 1,
-        cost: 1,
+        fee: 1,
         date: toTimestamp('2022-01-01T00:00:00Z'),
         effectivePrice: 1,
         portfolio: { asset: 0, currency: 0 },

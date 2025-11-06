@@ -39,6 +39,11 @@ export class BacktestStream extends Readable {
     );
   }
   public _read(_size: number): void {
+    // Release Bun loop to let execute setInterval methods
+    setImmediate(() => this.processNextBatch());
+  }
+
+  private processNextBatch() {
     if (this.iteration >= this.dateranges.length) {
       this.push(null);
       return;

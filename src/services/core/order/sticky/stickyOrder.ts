@@ -26,10 +26,9 @@ export class StickyOrder extends Order {
     this.amount = amount;
 
     // Creating initial order
-    const filledAmount = sumBy(this.transactions, 'filled');
-    this.createLimitOrder(action, amount - filledAmount);
+    this.createLimitOrder(action, amount);
 
-    bindAll(this, ['checkOrder']);
+    bindAll(this, [this.checkOrder.name]);
 
     this.interval = setInterval(this.checkOrder, this.exchange.getInterval());
   }

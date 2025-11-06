@@ -228,12 +228,16 @@ describe('Trader', () => {
       expect(setIntervalSpy).toHaveBeenCalledWith(trader['synchronize'], SYNCHRONIZATION_INTERVAL);
     });
 
-    it('does not schedule synchronization when running in backtest mode', () => {
+    it('schedules synchronization even when running in backtest mode and cleans it up on finalize', () => {
       setIntervalSpy.mockClear();
+      clearIntervalSpy.mockClear();
       getWatchMock.mockReturnValue({ ...cloneWatch(), mode: 'backtest' });
       const backtestTrader = new Trader();
-      expect(setIntervalSpy).not.toHaveBeenCalled();
+
+      expect(setIntervalSpy).toHaveBeenCalledWith(backtestTrader['synchronize'], SYNCHRONIZATION_INTERVAL);
       backtestTrader['processFinalize']();
+      expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
+      expect(backtestTrader['syncInterval']).toBeUndefined();
     });
   });
 
@@ -558,8 +562,8 @@ describe('Trader', () => {
       order.createSummary.mockResolvedValue(summary);
 
       const processCostSpy = vi
-        .spyOn(traderUtils, 'processCostAndPrice')
-        .mockReturnValue({ effectivePrice: 101, cost: 2 });
+        .spyOn(traderUtils, 'computeOrderPricing')
+        .mockReturnValue({ effectivePrice: 101, fee: 2, base: 100, total: 102 });
       const synchronizeSpy = vi
         .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
         .mockResolvedValue(undefined);
@@ -581,7 +585,7 @@ describe('Trader', () => {
           price: summary.price,
           feePercent: summary.feePercent,
           effectivePrice: 101,
-          cost: 2,
+          fee: 2,
           type: advice.order.type,
           requestedAmount: 2,
           portfolio: trader['portfolio'],

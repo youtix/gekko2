@@ -1,5 +1,5 @@
 import { Tag } from '@models/tag.types';
-import { RingBuffer } from '@utils/array/ringBuffer';
+import { RingBuffer } from '@utils/collection/ringBuffer';
 import { isString, upperCase } from 'lodash-es';
 import { createLogger, format, transports } from 'winston';
 import { BufferedLog, LogInput } from './logger.types';

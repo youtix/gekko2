@@ -53,7 +53,7 @@ describe('TradingAdvisor', () => {
     portfolio: { asset: 100, currency: 200 },
     balance: 1000,
     price: 100,
-    cost: 1,
+    fee: 1,
     amount: 30,
     effectivePrice: 31,
     feePercent: 0.33,

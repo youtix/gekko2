@@ -7,4 +7,5 @@ export type DummyCentralizedExchangeConfig = z.infer<typeof dummyExchangeSchema>
 export type DummyInternalOrder = OrderState & {
   side: OrderSide;
   amount: number;
+  type: 'MARKET' | 'LIMIT';
 };

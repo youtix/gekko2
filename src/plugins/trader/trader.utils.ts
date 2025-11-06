@@ -1,3 +1,4 @@
+import { GekkoError } from '@errors/gekko.error';
 import { OrderSide } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { warning } from '@services/logger';
@@ -31,13 +32,33 @@ export const findWhyWeCannotSell = (amount: number, price: number, assetAmount: 
       : `need ${amount.toFixed(8)} ${assetSymbol}, have ${assetAmount.toFixed(8)} ${assetSymbol}, shortfall ${shortfall.toFixed(8)} ${assetSymbol}`;
 };
 
-export const processCostAndPrice = (side: OrderSide, price: number, amount: number, feePercent?: number) => {
-  if (!isNil(feePercent)) {
-    const cost = (feePercent / 100) * amount * price;
-    if (side === 'BUY') return { effectivePrice: price * (feePercent / 100 + 1), cost };
-    else return { effectivePrice: price * (1 - feePercent / 100), cost };
+export interface OrderPricing {
+  effectivePrice: number; // per unit, post-fee
+  base: number; // amount * price
+  fee: number; // base * feeRate
+  total: number; // BUY: base+fee, SELL: base-fee
+}
+
+export const computeOrderPricing = (
+  side: OrderSide,
+  price: number,
+  amount: number,
+  feePercent?: number,
+): OrderPricing => {
+  if (!(price > 0) || !(amount > 0)) {
+    throw new GekkoError('trader', 'Invalid order inputs: price must be > 0 and amount must be > 0');
   }
 
-  warning('trader', 'Exchange did not provide fee information, assuming no fees..');
-  return { effectivePrice: price, cost: price * amount };
+  const base = amount * price;
+
+  if (!isNil(feePercent) && Number.isFinite(feePercent)) {
+    const feeRate = Math.max(0, feePercent) / 100;
+    const fee = base * feeRate;
+    const total = side === 'BUY' ? base + fee : side === 'SELL' ? base - fee : base;
+    const effectivePrice = total / amount;
+    return { effectivePrice, base, fee, total };
+  }
+
+  warning('trader', 'Exchange did not provide fee information, assuming no fees.');
+  return { effectivePrice: price, base, fee: 0, total: base };
 };
