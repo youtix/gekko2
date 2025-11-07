@@ -117,7 +117,7 @@ export class Trader extends Plugin {
     // Handle Cancel Error hook
     orderInstance.once(ORDER_ERRORED_EVENT, async reason => {
       this.removeOrder(id);
-      this.deferredEmit<OrderErrored>(ORDER_CANCELED_EVENT, {
+      this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
         orderId: id,
         date: Date.now(),
         type,
