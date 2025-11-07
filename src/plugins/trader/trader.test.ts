@@ -540,6 +540,35 @@ describe('Trader', () => {
       );
       expect(synchronizeSpy).toHaveBeenCalled();
     });
+
+    it('removes order and emits error when cancellation fails', async () => {
+      const advice = buildAdvice();
+      const synchronizeSpy = vi
+        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
+        .mockResolvedValue(undefined);
+
+      await trader['createOrder'](advice, 1);
+      const order = (trader as any).orders[0];
+
+      trader.onStrategyCancelOrder(advice.id);
+
+      expect(order.removeAllListeners).toHaveBeenCalled();
+      expect(order.cancel).toHaveBeenCalled();
+
+      order.emit(ORDER_ERRORED_EVENT, 'exchange timeout');
+      await Promise.resolve();
+
+      expect((trader as any).orders).toHaveLength(0);
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+        ORDER_ERRORED_EVENT,
+        expect.objectContaining({
+          orderId: advice.id,
+          type: advice.order.type,
+          reason: 'exchange timeout',
+        }),
+      );
+      expect(synchronizeSpy).toHaveBeenCalled();
+    });
   });
 
   describe('handleOrderCompletedEvent', () => {
