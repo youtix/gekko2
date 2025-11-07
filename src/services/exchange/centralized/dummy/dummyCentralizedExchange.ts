@@ -172,8 +172,9 @@ export class DummyCentralizedExchange extends CentralizedExchange {
   private reserveBalance(side: OrderSide, amount: number, price: number) {
     if (side === 'BUY') {
       const cost = amount * price;
-      if (this.portfolio.currency < cost) throw new InvalidOrder('Insufficient currency balance');
-      this.portfolio.currency -= cost;
+      const totalCost = cost * (1 + this.makerFee);
+      if (this.portfolio.currency < totalCost) throw new InvalidOrder('Insufficient currency balance');
+      this.portfolio.currency -= totalCost;
     } else {
       if (this.portfolio.asset < amount) throw new InvalidOrder('Insufficient asset balance');
       this.portfolio.asset -= amount;
@@ -186,7 +187,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     if (remaining <= 0) return;
 
     if (order.side === 'BUY') {
-      this.portfolio.currency += remaining * (order.price ?? 0);
+      this.portfolio.currency += remaining * (order.price ?? 0) * (1 + this.makerFee);
     } else {
       this.portfolio.asset += remaining;
     }
@@ -207,7 +208,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       if (order.side === 'BUY') {
         this.portfolio.asset += order.amount;
       } else {
-        this.portfolio.currency += order.amount * price;
+        this.portfolio.currency += order.amount * price * (1 - this.makerFee);
       }
     });
   }
