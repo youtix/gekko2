@@ -79,8 +79,9 @@ describe('DummyCentralizedExchange', () => {
     seedExchangeWithBaseCandle(exchange);
 
     const buyOrder = await exchange.createLimitOrder('BUY', 1);
+    const makerFeeRate = baseConfig.feeMaker ?? 0;
     const reservedPortfolio = await exchange.fetchPortfolio();
-    expect(reservedPortfolio.currency).toBeCloseTo(1_000 - (buyOrder.price ?? 0));
+    expect(reservedPortfolio.currency).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
     expect(reservedPortfolio.asset).toBe(2);
 
     const fillCandle = sampleCandle(Date.now(), {
@@ -97,6 +98,7 @@ describe('DummyCentralizedExchange', () => {
 
     const portfolioAfterFill = await exchange.fetchPortfolio();
     expect(portfolioAfterFill.asset).toBeCloseTo(3);
+    expect(portfolioAfterFill.currency).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
 
     const sellOrder = await exchange.createLimitOrder('SELL', 1);
     const reservedAfterSell = await exchange.fetchPortfolio();
@@ -155,6 +157,56 @@ describe('DummyCentralizedExchange', () => {
     expect(trades).toHaveLength(2);
     expect(trades[0]?.fee?.rate).toBeCloseTo(baseConfig.feeTaker);
     expect(trades[1]?.fee?.rate).toBeCloseTo(baseConfig.feeTaker);
+  });
+
+  it('applies maker fees when settling limit orders', async () => {
+    const exchange = createExchange({ simulationBalance: { asset: 5, currency: 10_000 } });
+    await exchange.loadMarkets();
+    seedExchangeWithBaseCandle(exchange);
+
+    const makerFeeRate = baseConfig.feeMaker ?? 0;
+
+    const buyOrder = await exchange.createLimitOrder('BUY', 2);
+    const buyPrice = buyOrder.price ?? 0;
+    const buyCost = buyPrice * 2;
+
+    const afterBuyReservation = await exchange.fetchPortfolio();
+    expect(afterBuyReservation.currency).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
+    expect(afterBuyReservation.asset).toBeCloseTo(5);
+
+    const buyFillCandle = sampleCandle(Date.now(), {
+      low: buyPrice,
+      high: buyPrice,
+      close: buyPrice,
+    });
+    exchange.addCandle(buyFillCandle);
+
+    const afterBuyFill = await exchange.fetchPortfolio();
+    expect(afterBuyFill.asset).toBeCloseTo(7);
+    expect(afterBuyFill.currency).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
+
+    const sellOrder = await exchange.createLimitOrder('SELL', 1);
+    const sellPrice = sellOrder.price ?? 0;
+    const afterSellReservation = await exchange.fetchPortfolio();
+    expect(afterSellReservation.asset).toBeCloseTo(6);
+    expect(afterSellReservation.currency).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
+
+    const sellFillCandle = sampleCandle(Date.now() + 60_000, {
+      high: sellPrice,
+      low: sellPrice,
+      close: sellPrice,
+    });
+    exchange.addCandle(sellFillCandle);
+
+    const afterSellFill = await exchange.fetchPortfolio();
+    const expectedCurrencyAfterSell = 10_000 - buyCost * (1 + makerFeeRate) + sellPrice * (1 - makerFeeRate);
+    expect(afterSellFill.asset).toBeCloseTo(6);
+    expect(afterSellFill.currency).toBeCloseTo(expectedCurrencyAfterSell);
+
+    const trades = await exchange.fetchTrades();
+    expect(trades).toHaveLength(2);
+    expect(trades[0]?.fee?.rate).toBeCloseTo(baseConfig.feeMaker);
+    expect(trades[1]?.fee?.rate).toBeCloseTo(baseConfig.feeMaker);
   });
 
   it('derives candles from trades when queue is empty', async () => {
