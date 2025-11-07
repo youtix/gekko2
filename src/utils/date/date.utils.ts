@@ -33,7 +33,7 @@ export const isDaterangeValid = (startDate: string, endDate: string) => {
 
 export const splitIntervals = (startDate: number, endDate: number, batchSize = 1440) => {
   const alignedStart = startOfMinute(new Date(startDate));
-  const alignedEnd = subMilliseconds(startOfMinute(new Date(endDate)), 1);
+  const alignedEnd = subMilliseconds(addMinutes(startOfMinute(new Date(endDate)), 1), 1);
   const totalMinutes = differenceInMinutes(alignedEnd, alignedStart) + 1;
 
   const chunkMaxDuration = batchSize;

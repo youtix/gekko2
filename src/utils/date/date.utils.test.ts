@@ -1,4 +1,4 @@
-import { startOfMinute, subMilliseconds } from 'date-fns';
+import { addMinutes, startOfMinute, subMilliseconds } from 'date-fns';
 import { describe, expect, it } from 'vitest';
 import { Time } from './date.types';
 import { isDaterangeValid, resetDateParts, splitIntervals } from './date.utils';
@@ -51,11 +51,11 @@ describe('', () => {
 
     it.each`
       startDate                 | endDate                   | expectedChunkCount | expectedDurations
-      ${'2020-01-01T00:00:00Z'} | ${'2020-01-01T00:15:00Z'} | ${1}               | ${[15]}
-      ${'2020-01-01T00:00:00Z'} | ${'2020-01-01T01:00:00Z'} | ${1}               | ${[60]}
-      ${'2020-01-01T00:00:00Z'} | ${'2020-01-01T16:00:00Z'} | ${1}               | ${[960]}
-      ${'2020-01-01T00:00:00Z'} | ${'2020-01-01T17:00:00Z'} | ${2}               | ${[1000, 20]}
-      ${'2020-01-01T00:00:00Z'} | ${'2020-01-02T09:20:00Z'} | ${2}               | ${[1000, 1000]}
+      ${'2020-01-01T00:00:00Z'} | ${'2020-01-01T00:15:00Z'} | ${1}               | ${[16]}
+      ${'2020-01-01T00:00:00Z'} | ${'2020-01-01T01:00:00Z'} | ${1}               | ${[61]}
+      ${'2020-01-01T00:00:00Z'} | ${'2020-01-01T16:00:00Z'} | ${1}               | ${[961]}
+      ${'2020-01-01T00:00:00Z'} | ${'2020-01-01T17:00:00Z'} | ${2}               | ${[1000, 21]}
+      ${'2020-01-01T00:00:00Z'} | ${'2020-01-02T09:20:00Z'} | ${3}               | ${[1000, 1000, 1]}
     `(
       'splitting from $startDate to $endDate should yield $expectedChunkCount chunk(s)',
       ({ startDate, endDate, expectedChunkCount, expectedDurations }) => {
@@ -63,7 +63,7 @@ describe('', () => {
         const tsEnd = new Date(endDate).getTime();
 
         const alignedStart = startOfMinute(new Date(tsStart)).getTime();
-        const alignedEnd = subMilliseconds(startOfMinute(new Date(tsEnd)), 1).getTime();
+        const alignedEnd = subMilliseconds(addMinutes(startOfMinute(new Date(tsEnd)), 1), 1).getTime();
         const intervals = splitIntervals(tsStart, tsEnd, 1000);
 
         expect(intervals).toHaveLength(expectedChunkCount);
