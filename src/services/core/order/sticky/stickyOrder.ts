@@ -25,12 +25,24 @@ export class StickyOrder extends Order {
     this.checking = false;
     this.amount = amount;
 
-    // Creating initial order
-    this.createLimitOrder(action, amount);
-
     bindAll(this, [this.checkOrder.name]);
 
     this.interval = setInterval(this.checkOrder, this.exchange.getInterval());
+
+    this.createStickyOrder();
+  }
+
+  private async createStickyOrder() {
+    const { ask, bid } = await this.exchange.fetchTicker();
+
+    const limits = this.exchange.getMarketLimits();
+    const minimalPrice = limits?.price?.min ?? 0;
+
+    const price = this.side === 'BUY' ? bid + minimalPrice : ask - minimalPrice;
+    const filledAmount = sumBy(this.transactions, 'filled');
+
+    // Creating initial order
+    this.createLimitOrder(this.side, this.amount - filledAmount, price);
   }
 
   public async cancel() {
@@ -77,10 +89,8 @@ export class StickyOrder extends Order {
     await this.cancelOrder(this.id);
 
     // If order cancelation is a success let's keep going the move
-    if (this.getStatus() !== 'error' && !this.isOrderCompleted()) {
-      const filledAmount = sumBy(this.transactions, 'filled');
-      await this.createLimitOrder(this.side, this.amount - filledAmount);
-    }
+    if (this.getStatus() !== 'error' && !this.isOrderCompleted()) await this.createStickyOrder();
+
     this.moving = false;
   }
 

@@ -81,19 +81,19 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return { ...this.portfolio };
   }
 
-  protected async createLimitOrderImpl(side: OrderSide, amount: number): Promise<OrderState> {
-    const price = await this.checkOrderPrice(side);
+  protected async createLimitOrderImpl(side: OrderSide, amount: number, price: number): Promise<OrderState> {
+    const checkedPrice = await this.checkOrderPrice(price);
     const normalizedAmount = this.checkOrderAmount(amount);
-    this.checkOrderCost(normalizedAmount, price);
+    this.checkOrderCost(normalizedAmount, checkedPrice);
 
-    this.reserveBalance(side, normalizedAmount, price);
+    this.reserveBalance(side, normalizedAmount, checkedPrice);
 
     const id = `order-${++this.orderSequence}`;
     const timestamp = this.candles.last().start;
     const order: DummyInternalOrder = {
       id,
       status: 'open',
-      price,
+      price: checkedPrice,
       filled: 0,
       remaining: normalizedAmount,
       amount: normalizedAmount,
@@ -162,7 +162,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return this.cloneOrder(order);
   }
 
-  protected getMarketLimits(): MarketLimits | undefined {
+  public getMarketLimits(): MarketLimits | undefined {
     return this.marketLimits;
   }
 
@@ -227,7 +227,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       amount: order.filled ?? 0,
       price: order.price ?? 0,
       timestamp: order.timestamp,
-      fee: { rate: feeRate },
+      fee: { rate: feeRate * 100 },
     };
   }
 }

@@ -43,6 +43,7 @@ export const computeOrderPricing = (
   side: OrderSide,
   price: number,
   amount: number,
+  /** in % */
   feePercent?: number,
 ): OrderPricing => {
   if (!(price > 0) || !(amount > 0)) {

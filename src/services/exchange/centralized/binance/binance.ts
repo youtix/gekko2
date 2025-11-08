@@ -189,8 +189,8 @@ export class BinanceExchange extends CentralizedExchange {
     }
   }
 
-  protected async createLimitOrderImpl(side: OrderSide, amount: number) {
-    const orderPrice = await this.checkOrderPrice(side);
+  protected async createLimitOrderImpl(side: OrderSide, amount: number, price: number) {
+    const orderPrice = await this.checkOrderPrice(price);
     const orderAmount = this.checkOrderAmount(amount);
     this.checkOrderCost(orderAmount, orderPrice);
 
@@ -235,7 +235,7 @@ export class BinanceExchange extends CentralizedExchange {
     }
   }
 
-  protected getMarketLimits() {
+  public getMarketLimits() {
     return this.marketLimits;
   }
 

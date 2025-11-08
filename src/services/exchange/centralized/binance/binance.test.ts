@@ -403,7 +403,8 @@ describe('BinanceExchange', () => {
       const mapped = { status: 'ok' };
       mainClientMock.submitNewOrder.mockResolvedValue({ raw: true } as unknown);
       mapSpotOrderToOrderMock.mockReturnValue(mapped);
-      const order = await exchange['createLimitOrderImpl']('BUY', 1);
+      const userPrice = 310;
+      const order = await exchange['createLimitOrderImpl']('BUY', 1, userPrice);
       expect({
         order,
         submitPayload: mainClientMock.submitNewOrder.mock.calls[0]?.[0],
@@ -420,7 +421,7 @@ describe('BinanceExchange', () => {
           quantity: 0.5,
           price: 275,
         },
-        priceCalls: [['BUY']],
+        priceCalls: [[userPrice]],
         amountCalls: [[1]],
         costCalls: [[0.5, 275]],
       });

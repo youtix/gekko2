@@ -42,10 +42,10 @@ export abstract class Order extends EventEmitter {
     return this.type;
   }
 
-  protected async createLimitOrder(action: OrderSide, amount: number) {
+  protected async createLimitOrder(action: OrderSide, amount: number, price: number) {
     try {
-      debug('core', `Creating ${action} limit order with amount: ${amount}`);
-      const order = await this.exchange.createLimitOrder(action, amount);
+      debug('core', `Creating ${action} limit order with amount: ${amount} with price ${price}`);
+      const order = await this.exchange.createLimitOrder(action, amount, price);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
       await this.handleCreateOrderError(error);

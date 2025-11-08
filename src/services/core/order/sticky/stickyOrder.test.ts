@@ -22,6 +22,7 @@ const fakeExchange = {
   fetchMyTrades: vi.fn(),
   fetchTicker: vi.fn(),
   getInterval: vi.fn(() => 50),
+  getMarketLimits: vi.fn(),
 };
 
 vi.useFakeTimers();
@@ -36,8 +37,10 @@ describe('StickyOrder', () => {
     timestamp: toTimestamp('2025'),
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
+    fakeExchange.fetchTicker.mockResolvedValue({ bid: 100, ask: 101 });
+    fakeExchange.getMarketLimits.mockReturnValue({ price: { min: 0.5 } });
     stickyOrder = new StickyOrder(
       'ee21e130-48bc-405f-be0c-46e9bf17b52e',
       'BUY',
@@ -51,11 +54,42 @@ describe('StickyOrder', () => {
   });
 
   describe('constructor', () => {
-    it('should create an initial order', async () => {
-      expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BUY', 10);
+    it('should create an initial order using ticker-based price', () => {
+      expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BUY', 10, 100.5);
     });
     it('should set an interval', async () => {
       expect(stickyOrder['interval']).toBeDefined();
+    });
+  });
+
+  describe('createStickyOrder', () => {
+    it('should deduct filled amount and use bid plus minimal price for buy orders', async () => {
+      stickyOrder['createLimitOrder'] = vi.fn();
+      stickyOrder['transactions'] = [{ id: 'tx-1', filled: 3, timestamp: 1710000000000 }];
+      stickyOrder['amount'] = 10;
+      fakeExchange.fetchTicker.mockResolvedValue({ bid: 200, ask: 205 });
+      fakeExchange.getMarketLimits.mockReturnValue({ price: { min: 2 } });
+
+      await stickyOrder['createStickyOrder']();
+
+      expect(stickyOrder['createLimitOrder']).toHaveBeenCalledWith('BUY', 7, 202);
+    });
+
+    it('should use ask minus minimal price for sell orders', async () => {
+      fakeExchange.fetchTicker.mockResolvedValue({ bid: 300, ask: 310 });
+      fakeExchange.getMarketLimits.mockReturnValue({ price: { min: 1 } });
+      const sellOrder = new StickyOrder(
+        'f3b1c21d-58c6-4a58-9fb6-d3a8876ad710',
+        'SELL',
+        4,
+        fakeExchange as unknown as Exchange,
+      );
+      sellOrder['createLimitOrder'] = vi.fn();
+      sellOrder['transactions'] = [{ id: 'sell-transaction', filled: 1, timestamp: 1710000000000 }];
+
+      await sellOrder['createStickyOrder']();
+
+      expect(sellOrder['createLimitOrder']).toHaveBeenCalledWith('SELL', 3, 309);
     });
   });
 
@@ -164,7 +198,7 @@ describe('StickyOrder', () => {
         stickyOrder['amount'] = 10;
         stickyOrder['transactions'] = [{ id: 'tx1', filled: filledAmount, timestamp: 1710000000000 }];
         await stickyOrder['move']();
-        expect(stickyOrder['createLimitOrder']).toHaveBeenCalledWith('BUY', expectedAmount);
+        expect(stickyOrder['createLimitOrder']).toHaveBeenCalledWith('BUY', expectedAmount, expect.any(Number));
       },
     );
 

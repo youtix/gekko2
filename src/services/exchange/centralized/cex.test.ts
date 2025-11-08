@@ -10,6 +10,8 @@ import { BinanceExchangeConfig } from './binance/binance.types';
 import { CentralizedExchange } from './cex';
 import { CentralizedExchangeConfig } from './cex.types';
 
+vi.mock('@services/logger', () => ({ warning: vi.fn(), error: vi.fn() }));
+
 vi.mock('@services/configuration/configuration', () => ({
   config: {
     getWatch: () => ({ asset: 'BTC', currency: 'USDT' }),
@@ -69,17 +71,17 @@ class TestCentralizedExchange extends CentralizedExchange {
     return { asset: 0, currency: 0 };
   }
 
-  protected async createLimitOrderImpl(side: OrderSide, amount: number): Promise<OrderState> {
+  protected async createLimitOrderImpl(side: OrderSide, amount: number, price: number): Promise<OrderState> {
     this.createLimitOrderImplCalls += 1;
     const behavior = this.createOrderBehaviors.shift();
     if (behavior === 'error') throw new RetryableError('temporary failure');
-    const price = await this.checkOrderPrice(side);
+    const validatedPrice = await this.checkOrderPrice(price);
     const normalizedAmount = this.checkOrderAmount(amount);
-    this.checkOrderCost(normalizedAmount, price);
+    this.checkOrderCost(normalizedAmount, validatedPrice);
     return {
       id: `order-${this.createLimitOrderImplCalls}`,
       status: 'open',
-      price,
+      price: validatedPrice,
       remaining: normalizedAmount,
       timestamp: 0,
     };
@@ -111,7 +113,7 @@ class TestCentralizedExchange extends CentralizedExchange {
     return { id: '1', status: 'open', timestamp: 0 };
   }
 
-  protected getMarketLimits(): MarketLimits | undefined {
+  public getMarketLimits(): MarketLimits | undefined {
     return this.limits;
   }
 
@@ -123,8 +125,8 @@ class TestCentralizedExchange extends CentralizedExchange {
     // avoid real timers in tests
   }
 
-  public calculatePricePublic(side: OrderSide) {
-    return this.checkOrderPrice(side);
+  public checkPricePublic(price: number) {
+    return this.checkOrderPrice(price);
   }
 
   public calculateAmountPublic(amount: number) {
@@ -157,13 +159,11 @@ describe('CentralizedExchange', () => {
     expect(exchange.fetchTickerImplCalls).toBe(2);
   });
 
-  it('calculates BUY and SELL prices within configured limits', async () => {
+  it('validates limit prices against configured bounds', async () => {
     const exchange = new TestCentralizedExchange(config, baseLimits);
-    exchange.enqueueTicker({ bid: 100, ask: 110 });
-    await expect(exchange.calculatePricePublic('BUY')).resolves.toBe(101);
-
-    exchange.enqueueTicker({ bid: 100, ask: 110 });
-    await expect(exchange.calculatePricePublic('SELL')).resolves.toBe(109);
+    await expect(exchange.checkPricePublic(50)).resolves.toBe(50);
+    await expect(exchange.checkPricePublic(0.5)).rejects.toThrow(OrderOutOfRangeError);
+    await expect(exchange.checkPricePublic(5000)).rejects.toThrow(OrderOutOfRangeError);
   });
 
   it('enforces amount limits when calculating order quantity', () => {
@@ -182,9 +182,7 @@ describe('CentralizedExchange', () => {
     const exchange = new TestCentralizedExchange(config, baseLimits);
     exchange.enqueueCreateOrderBehavior('error');
     exchange.enqueueCreateOrderBehavior('success');
-    exchange.enqueueTicker({ bid: 100, ask: 105 });
-
-    const order = await exchange.createLimitOrder('BUY', 0.2);
+    const order = await exchange.createLimitOrder('BUY', 0.2, 101);
 
     expect(exchange.createLimitOrderImplCalls).toBe(2);
     expect(order.price).toBe(101);
@@ -193,9 +191,7 @@ describe('CentralizedExchange', () => {
 
   it('rejects limit orders that violate cost limits', async () => {
     const exchange = new TestCentralizedExchange(config, baseLimits);
-    exchange.enqueueTicker({ bid: 10, ask: 12 });
-
-    await expect(exchange.createLimitOrder('BUY', 0.2)).rejects.toThrow(OrderOutOfRangeError);
+    await expect(exchange.createLimitOrder('BUY', 0.2, 12)).rejects.toThrow(OrderOutOfRangeError);
   });
 
   it('retries market order creation and returns executed order details', async () => {
