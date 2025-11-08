@@ -46,7 +46,6 @@ The **EventSubscriber** plugin listens to a variety of events in order to send n
 | `onStrategyCreateOrder`  | Sends a message when new advice is received from a strategy.               |
 | `onOrderInitiated`       | Notifies when an order is about to be placed.                               |
 | `onOrderCompleted`       | Sends detailed info once an order is successfully executed.                 |
-| `onOrderAborted`         | Sends a message when an order is aborted due to portfolio constraints.      |
 | `onOrderCanceled`        | Notifies when a pending order is canceled before execution.                |
 | `onOrderErrored`         | Reports an error that occurred during order execution.                     |
 
@@ -62,7 +61,6 @@ Each event can be toggled with `/subscribe_to_<event>`:
 - `/subscribe_to_strategy_advice`
 - `/subscribe_to_order_initiated`
 - `/subscribe_to_order_canceled`
-- `/subscribe_to_order_aborted`
 - `/subscribe_to_order_errored`
 - `/subscribe_to_order_completed`
 

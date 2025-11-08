@@ -4,9 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DummyCentralizedExchange } from './dummyCentralizedExchange';
 import type { DummyCentralizedExchangeConfig } from './dummyCentralizedExchange.types';
 
+const mockStartDate = '2024-01-01T00:00:00Z';
+
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: () => ({ asset: 'BTC', currency: 'USDT', timeframe: '1m' }),
+    getWatch: () => ({
+      asset: 'BTC',
+      currency: 'USDT',
+      timeframe: '1m',
+      daterange: { start: mockStartDate },
+    }),
   },
 }));
 

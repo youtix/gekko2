@@ -1,5 +1,4 @@
 import {
-  ORDER_ABORTED_EVENT,
   ORDER_CANCELED_EVENT,
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,
@@ -10,7 +9,7 @@ import {
 import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { OrderAborted, OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '@models/order.types';
+import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Plugin } from '@plugins/plugin';
 import { Order } from '@services/core/order/order';
@@ -22,7 +21,7 @@ import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { ORDER_FACTORY, SYNCHRONIZATION_INTERVAL } from './trader.const';
 import { traderSchema } from './trader.schema';
-import { computeOrderPricing, findWhyWeCannotBuy, findWhyWeCannotSell, resolveOrderAmount } from './trader.utils';
+import { computeOrderPricing, resolveOrderAmount } from './trader.utils';
 
 export class Trader extends Plugin {
   private readonly orders: Order[];
@@ -134,59 +133,7 @@ export class Trader extends Plugin {
     const price = this.price;
     const requestedAmount = resolveOrderAmount(this.portfolio, price, side, quantity);
 
-    if (side === 'BUY') {
-      const currency = this.portfolio.currency;
-      const insufficient = requestedAmount <= 0 || price <= 0 || currency < requestedAmount * price;
-      if (insufficient) {
-        const reason = findWhyWeCannotBuy(requestedAmount, price, currency, this.currency);
-        warning(
-          'trader',
-          `NOT buying ${requestedAmount} ${this.asset} @ ${price} ${this.currency}/${this.asset} [${type} order]: ${reason}`,
-        );
-        return this.deferredEmit<OrderAborted>(ORDER_ABORTED_EVENT, {
-          orderId: id,
-          side: side,
-          portfolio: this.portfolio,
-          balance: this.balance,
-          date,
-          reason,
-          type,
-          requestedAmount,
-        });
-      }
-      info('trader', `Received BUY ${type} order advice. Buying ${requestedAmount} ${this.asset}`);
-    }
-
-    if (side === 'SELL') {
-      const asset = this.portfolio.asset;
-      const insufficient = requestedAmount <= 0 || price <= 0 || asset < requestedAmount;
-      if (insufficient) {
-        const reason = findWhyWeCannotSell(requestedAmount, price, asset, this.asset);
-        warning(
-          'trader',
-          `NOT selling ${requestedAmount} ${this.asset} @ ${price} ${this.currency}/${this.asset} [${type} order]: ${reason}`,
-        );
-        return this.deferredEmit<OrderAborted>(ORDER_ABORTED_EVENT, {
-          orderId: id,
-          side: side,
-          portfolio: this.portfolio,
-          balance: this.balance,
-          date,
-          reason,
-          type,
-          requestedAmount,
-        });
-      }
-      info('trader', `Received SELL ${type} order advice. Selling ${requestedAmount} ${this.asset}`);
-    }
-
-    this.createOrder(advice, requestedAmount);
-  }
-
-  private async createOrder(advice: Advice, amount: number) {
-    const { order, date, id } = advice;
-    const { side, type } = order;
-    info('trader', `Creating ${type} order to ${side} ${amount} ${this.asset}`);
+    info('trader', `Creating ${type} order to ${side} ${requestedAmount} ${this.asset}`);
     this.deferredEmit<OrderInitiated>(ORDER_INITIATED_EVENT, {
       orderId: id,
       side: side,
@@ -194,11 +141,11 @@ export class Trader extends Plugin {
       balance: this.balance,
       date,
       type,
-      requestedAmount: amount,
+      requestedAmount,
     });
     const exchange = this.getExchange();
 
-    const orderInstance = new ORDER_FACTORY[type](id, side, amount, exchange);
+    const orderInstance = new ORDER_FACTORY[type](id, side, requestedAmount, exchange);
     this.orders.push(orderInstance);
 
     orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
@@ -218,7 +165,7 @@ export class Trader extends Plugin {
     });
     orderInstance.on(ORDER_COMPLETED_EVENT, async () => {
       try {
-        await this.handleOrderCompletedEvent(advice, amount);
+        await this.handleOrderCompletedEvent(advice, requestedAmount);
       } catch (err) {
         if (err instanceof Error) {
           error('trader', err.message);
@@ -257,6 +204,8 @@ export class Trader extends Plugin {
       ].join(' '),
     );
 
+    if (!date) throw new GekkoError('trader', 'Inconsistent state: No timestamp returned from order creation');
+
     this.deferredEmit<OrderCompleted>(ORDER_COMPLETED_EVENT, {
       orderId: id,
       side,
@@ -265,7 +214,7 @@ export class Trader extends Plugin {
       price,
       portfolio: this.portfolio,
       balance: this.balance,
-      date: date ?? 0,
+      date,
       feePercent: feePercent,
       effectivePrice,
       type: order.type,
@@ -305,7 +254,6 @@ export class Trader extends Plugin {
     if (!this.sendInitialPortfolio) {
       this.sendInitialPortfolio = true;
       await this.synchronize();
-      this.emitPortfolioChangeEvent();
     }
 
     if (this.balance !== previousBalance) {
@@ -333,7 +281,6 @@ export class Trader extends Plugin {
       eventsEmitted: [
         PORTFOLIO_CHANGE_EVENT,
         PORTFOLIO_VALUE_CHANGE_EVENT,
-        ORDER_ABORTED_EVENT,
         ORDER_CANCELED_EVENT,
         ORDER_COMPLETED_EVENT,
         ORDER_ERRORED_EVENT,

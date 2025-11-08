@@ -1,6 +1,6 @@
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { OrderAborted, OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '@models/order.types';
+import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
@@ -90,19 +90,6 @@ export class EventSubscriber extends Plugin {
     const message = [
       `${type} order canceled (${orderId})`,
       `At time: ${toISOString(date)}`,
-      `Current price: ${this.price} ${this.currency}`,
-    ].join('\n');
-    this.bot.sendMessage(message);
-  }
-
-  public onOrderAborted({ orderId, type, side, balance, date, portfolio, reason }: OrderAborted) {
-    if (!this.subscriptions.has('order_aborted')) return;
-    const message = [
-      `${side} ${type} order aborted (${orderId})`,
-      `Due to ${reason}`,
-      `At time: ${toISOString(date)}`,
-      `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
-      `Current balance: ${balance}`,
       `Current price: ${this.price} ${this.currency}`,
     ].join('\n');
     this.bot.sendMessage(message);

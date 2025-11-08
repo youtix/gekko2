@@ -65,7 +65,9 @@ export abstract class Exchange {
     if (amount < minimalAmount)
       throw new OrderOutOfRangeError('exchange', 'amount', amount, minimalAmount, maximalAmount);
 
-    if (!isNil(maximalAmount) && amount > maximalAmount) return maximalAmount;
+    if (!isNil(maximalAmount) && amount > maximalAmount)
+      throw new OrderOutOfRangeError('exchange', 'amount', amount, minimalAmount, maximalAmount);
+
     return amount;
   }
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Advice } from '../../models/advice.types';
-import { OrderAborted, OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '../../models/order.types';
+import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '../../models/order.types';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { EventSubscriber } from './eventSubscriber';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
@@ -70,17 +70,6 @@ describe('EventSubscriber', () => {
         date: toTimestamp('2022-01-01T00:00:00Z'),
         type: 'STICKY',
       } as OrderCanceled);
-    const onOrderAborted = (p: EventSubscriber) =>
-      p.onOrderAborted({
-        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-        side: 'BUY',
-        balance: 0,
-        date: toTimestamp('2022-01-01T00:00:00Z'),
-        portfolio: { asset: 0, currency: 0 },
-        reason: 'r',
-        type: 'STICKY',
-        requestedAmount: 1,
-      } as OrderAborted);
     const onOrderErrored = (p: EventSubscriber) =>
       p.onOrderErrored({
         orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
@@ -108,7 +97,6 @@ describe('EventSubscriber', () => {
       ${'strategy_advice'} | ${onStrategyCreateOrder}
       ${'order_initiated'} | ${onOrderInitiated}
       ${'order_canceled'}  | ${onOrderCanceled}
-      ${'order_aborted'}   | ${onOrderAborted}
       ${'order_errored'}   | ${onOrderErrored}
       ${'order_completed'} | ${onOrderCompleted}
     `('sends message only when subscribed for $name', ({ name, handler }) => {
@@ -195,7 +183,6 @@ describe('EventSubscriber', () => {
 /subscribe_to_strategy_advice
 /subscribe_to_order_initiated
 /subscribe_to_order_canceled
-/subscribe_to_order_aborted
 /subscribe_to_order_errored
 /subscribe_to_order_completed
 /subscribe_to_all

@@ -13,25 +13,6 @@ export const resolveOrderAmount = (portfolio: Portfolio, currentPrice: number, s
   return portfolio.asset;
 };
 
-export const findWhyWeCannotBuy = (amount: number, price: number, currencyAmount: number, currencySymbol: string) => {
-  const needed = amount * price;
-  const shortfall = Math.max(0, needed - currencyAmount);
-  return amount <= 0
-    ? `invalid amount (${amount})`
-    : price <= 0
-      ? `invalid price (${price})`
-      : `need ${needed.toFixed(8)} ${currencySymbol}, have ${currencyAmount.toFixed(8)} ${currencySymbol}, shortfall ${shortfall.toFixed(8)} ${currencySymbol}`;
-};
-
-export const findWhyWeCannotSell = (amount: number, price: number, assetAmount: number, assetSymbol: string) => {
-  const shortfall = Math.max(0, amount - assetAmount);
-  return amount <= 0
-    ? `invalid amount (${amount})`
-    : price <= 0
-      ? `invalid price (${price})`
-      : `need ${amount.toFixed(8)} ${assetSymbol}, have ${assetAmount.toFixed(8)} ${assetSymbol}, shortfall ${shortfall.toFixed(8)} ${assetSymbol}`;
-};
-
 export interface OrderPricing {
   effectivePrice: number; // per unit, post-fee
   base: number; // amount * price
