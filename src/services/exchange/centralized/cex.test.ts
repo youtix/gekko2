@@ -169,7 +169,7 @@ describe('CentralizedExchange', () => {
   it('enforces amount limits when calculating order quantity', () => {
     const exchange = new TestCentralizedExchange(config, baseLimits);
     expect(() => exchange.calculateAmountPublic(0.01)).toThrow(OrderOutOfRangeError);
-    expect(exchange.calculateAmountPublic(10)).toBe(5);
+    expect(() => exchange.calculateAmountPublic(10)).toThrow(OrderOutOfRangeError);
   });
 
   it('validates order cost before submission', () => {

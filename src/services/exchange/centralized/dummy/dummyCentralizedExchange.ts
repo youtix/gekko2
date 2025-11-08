@@ -1,12 +1,15 @@
+import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
+import { config } from '@services/configuration/configuration';
 import { DUMMY_DEFAULT_BUFFER_SIZE } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { MarketLimits } from '@services/exchange/exchange.types';
 import { RingBuffer } from '@utils/collection/ringBuffer';
+import { toTimestamp } from '@utils/date/date.utils';
 import { bindAll, isNil } from 'lodash-es';
 import { CentralizedExchange } from '../cex';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
@@ -21,23 +24,28 @@ export class DummyCentralizedExchange extends CentralizedExchange {
   private readonly marketLimits: MarketLimits;
   private portfolio: Portfolio;
   private ticker: Ticker;
+  private currentTimestamp: EpochTimeStamp;
 
   private orderSequence = 0;
 
-  constructor(config: DummyCentralizedExchangeConfig) {
-    super(config);
-    this.makerFee = (config.feeMaker ?? 0) / 100;
-    this.takerFee = (config.feeTaker ?? 0) / 100;
-    this.marketLimits = config.limits;
-    this.portfolio = { ...config.simulationBalance };
-    this.ticker = { ...config.initialTicker };
+  constructor(exchangeConfig: DummyCentralizedExchangeConfig) {
+    super(exchangeConfig);
+    this.makerFee = (exchangeConfig.feeMaker ?? 0) / 100;
+    this.takerFee = (exchangeConfig.feeTaker ?? 0) / 100;
+    this.marketLimits = exchangeConfig.limits;
+    this.portfolio = { ...exchangeConfig.simulationBalance };
+    this.ticker = { ...exchangeConfig.initialTicker };
     this.candles = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
     this.orders = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
+    const start = config.getWatch().daterange?.start;
+    if (!start) throw new GekkoError('exchange', 'Inconsistent state: In backtest mode dateranges are mandatory');
+    this.currentTimestamp = toTimestamp(start);
 
     bindAll(this, [this.mapOrderToTrade.name]);
   }
 
   public addCandle(candle: Candle): void {
+    this.currentTimestamp = candle.start;
     this.candles.push(candle);
     this.ticker = { bid: candle.close, ask: candle.close };
     this.settleOrdersWithCandle(candle);
@@ -89,7 +97,6 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     this.reserveBalance(side, normalizedAmount, checkedPrice);
 
     const id = `order-${++this.orderSequence}`;
-    const timestamp = this.candles.last().start;
     const order: DummyInternalOrder = {
       id,
       status: 'open',
@@ -97,7 +104,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       filled: 0,
       remaining: normalizedAmount,
       amount: normalizedAmount,
-      timestamp,
+      timestamp: this.currentTimestamp,
       side,
       type: 'LIMIT',
     };
@@ -111,7 +118,6 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     this.checkOrderCost(normalizedAmount, price);
 
     const id = `order-${++this.orderSequence}`;
-    const timestamp = this.candles.last().start;
     const cost = normalizedAmount * price;
     const totalCost = cost * (1 + this.takerFee);
 
@@ -132,7 +138,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       filled: normalizedAmount,
       remaining: 0,
       amount: normalizedAmount,
-      timestamp,
+      timestamp: this.currentTimestamp,
       side,
       type: 'MARKET',
     };

@@ -3,7 +3,6 @@ export const PORTFOLIO_VALUE_CHANGE_EVENT = 'portfolioValueChange';
 
 export const ORDER_INITIATED_EVENT = 'orderInitiated';
 export const ORDER_ERRORED_EVENT = 'orderErrored';
-export const ORDER_ABORTED_EVENT = 'orderAborted';
 export const ORDER_CANCELED_EVENT = 'orderCanceled';
 export const ORDER_COMPLETED_EVENT = 'orderCompleted';
 

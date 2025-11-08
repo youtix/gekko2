@@ -6,7 +6,6 @@ export const EVENT_NAMES = [
   'strategy_advice',
   'order_initiated',
   'order_canceled',
-  'order_aborted',
   'order_errored',
   'order_completed',
 ] as const;
