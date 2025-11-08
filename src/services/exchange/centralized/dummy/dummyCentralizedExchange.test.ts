@@ -159,6 +159,16 @@ describe('DummyCentralizedExchange', () => {
     expect(trades[1]?.fee?.rate).toBeCloseTo(baseConfig.feeTaker);
   });
 
+  it('rejects market buy orders when balance cannot cover taker fees', async () => {
+    const exchange = createExchange({
+      simulationBalance: { asset: 0, currency: 100 },
+    });
+    await exchange.loadMarkets();
+    seedExchangeWithBaseCandle(exchange, { close: 100, low: 100, high: 100 });
+
+    await expect(exchange.createMarketOrder('BUY', 1)).rejects.toThrow('Insufficient currency balance');
+  });
+
   it('applies maker fees when settling limit orders', async () => {
     const exchange = createExchange({ simulationBalance: { asset: 5, currency: 10_000 } });
     await exchange.loadMarkets();
