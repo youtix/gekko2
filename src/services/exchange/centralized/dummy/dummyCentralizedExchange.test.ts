@@ -79,7 +79,7 @@ describe('DummyCentralizedExchange', () => {
     seedExchangeWithBaseCandle(exchange);
 
     const buyOrder = await exchange.createLimitOrder('BUY', 1);
-    const makerFeeRate = baseConfig.feeMaker ?? 0;
+    const makerFeeRate = (baseConfig.feeMaker ?? 0) / 100;
     const reservedPortfolio = await exchange.fetchPortfolio();
     expect(reservedPortfolio.currency).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
     expect(reservedPortfolio.asset).toBe(2);
@@ -133,7 +133,7 @@ describe('DummyCentralizedExchange', () => {
     seedExchangeWithBaseCandle(exchange);
 
     const initialPortfolio = await exchange.fetchPortfolio();
-    const takerFeeRate = baseConfig.feeTaker ?? 0;
+    const takerFeeRate = (baseConfig.feeTaker ?? 0) / 100;
     const { ask, bid } = await exchange.fetchTicker();
 
     const buyOrder = await exchange.createMarketOrder('BUY', 2);
@@ -155,8 +155,8 @@ describe('DummyCentralizedExchange', () => {
 
     const trades = await exchange.fetchTrades();
     expect(trades).toHaveLength(2);
-    expect(trades[0]?.fee?.rate).toBeCloseTo(baseConfig.feeTaker);
-    expect(trades[1]?.fee?.rate).toBeCloseTo(baseConfig.feeTaker);
+    expect(trades[0]?.fee?.rate).toBeCloseTo((baseConfig.feeTaker ?? 0) / 100);
+    expect(trades[1]?.fee?.rate).toBeCloseTo((baseConfig.feeTaker ?? 0) / 100);
   });
 
   it('rejects market buy orders when balance cannot cover taker fees', async () => {
@@ -174,7 +174,7 @@ describe('DummyCentralizedExchange', () => {
     await exchange.loadMarkets();
     seedExchangeWithBaseCandle(exchange);
 
-    const makerFeeRate = baseConfig.feeMaker ?? 0;
+    const makerFeeRate = (baseConfig.feeMaker ?? 0) / 100;
 
     const buyOrder = await exchange.createLimitOrder('BUY', 2);
     const buyPrice = buyOrder.price ?? 0;
@@ -215,8 +215,8 @@ describe('DummyCentralizedExchange', () => {
 
     const trades = await exchange.fetchTrades();
     expect(trades).toHaveLength(2);
-    expect(trades[0]?.fee?.rate).toBeCloseTo(baseConfig.feeMaker);
-    expect(trades[1]?.fee?.rate).toBeCloseTo(baseConfig.feeMaker);
+    expect(trades[0]?.fee?.rate).toBeCloseTo((baseConfig.feeMaker ?? 0) / 100);
+    expect(trades[1]?.fee?.rate).toBeCloseTo((baseConfig.feeMaker ?? 0) / 100);
   });
 
   it('derives candles from trades when queue is empty', async () => {

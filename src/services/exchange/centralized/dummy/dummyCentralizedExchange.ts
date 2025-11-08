@@ -14,9 +14,9 @@ import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentr
 export class DummyCentralizedExchange extends CentralizedExchange {
   private readonly orders: RingBuffer<DummyInternalOrder>;
   private readonly candles: RingBuffer<Candle>;
-  /** Maker fee in % */
+  /** Maker fee as decimal fraction */
   private readonly makerFee: number;
-  /** Taker fee in % */
+  /** Taker fee as decimal fraction */
   private readonly takerFee: number;
   private readonly marketLimits: MarketLimits;
   private portfolio: Portfolio;
@@ -26,8 +26,8 @@ export class DummyCentralizedExchange extends CentralizedExchange {
 
   constructor(config: DummyCentralizedExchangeConfig) {
     super(config);
-    this.makerFee = config.feeMaker ?? 0;
-    this.takerFee = config.feeTaker ?? 0;
+    this.makerFee = (config.feeMaker ?? 0) / 100;
+    this.takerFee = (config.feeTaker ?? 0) / 100;
     this.marketLimits = config.limits;
     this.portfolio = { ...config.simulationBalance };
     this.ticker = { ...config.initialTicker };
