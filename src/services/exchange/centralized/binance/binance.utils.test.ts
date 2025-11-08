@@ -1,6 +1,6 @@
 import { Candle } from '@models/candle.types';
-import { describe, expect, it } from 'vitest';
 import type { RawAccountTrade, RawTrade } from 'binance';
+import { describe, expect, it } from 'vitest';
 import {
   mapAccountTradeToTrade,
   mapKlinesToCandles,
@@ -77,7 +77,7 @@ describe('binance.utils', () => {
         amount: 0.1,
         price: 30000,
         timestamp: 123456,
-        fee: { rate: 0.0005 },
+        fee: { rate: 0.05 },
       });
     });
   });

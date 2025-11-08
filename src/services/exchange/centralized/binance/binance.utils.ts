@@ -36,7 +36,7 @@ export const mapAccountTradeToTrade = (trade: RawAccountTrade): Trade => {
   const price = parseNumber(trade.price) ?? 0;
   const quoteQuantity = parseNumber(trade.quoteQty) ?? amount * price;
   const commission = parseNumber(trade.commission) ?? 0;
-  const feeRate = quoteQuantity ? commission / quoteQuantity : 0;
+  const feeRate = quoteQuantity ? (commission / quoteQuantity) * 100 : 0;
 
   return {
     id: String(trade.orderId ?? trade.id),
