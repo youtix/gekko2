@@ -40,19 +40,18 @@ export abstract class Exchange {
   }
 
   // Protected functions
-  protected async checkOrderPrice(side: OrderSide) {
+  protected async checkOrderPrice(price: number) {
     const limits = this.getMarketLimits();
     const priceLimits = limits?.price;
     const minimalPrice = priceLimits?.min;
     const maximalPrice = priceLimits?.max;
 
-    if (isNil(minimalPrice)) throw new UndefinedLimitsError('price', minimalPrice, maximalPrice);
+    if (!isNil(minimalPrice) && price < minimalPrice)
+      throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
 
-    const ticker = await this.fetchTicker();
-    const price = side === 'BUY' ? ticker.bid + minimalPrice : ticker.ask - minimalPrice;
-    if (price < minimalPrice) throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
     if (!isNil(maximalPrice) && price > maximalPrice)
       throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
+
     return price;
   }
 
@@ -90,11 +89,11 @@ export abstract class Exchange {
   public abstract fetchTrades(): Promise<Trade[]>;
   public abstract fetchMyTrades(from?: EpochTimeStamp): Promise<Trade[]>;
   public abstract fetchPortfolio(): Promise<Portfolio>;
-  public abstract createLimitOrder(side: OrderSide, amount: number): Promise<OrderState>;
+  public abstract createLimitOrder(side: OrderSide, amount: number, price: number): Promise<OrderState>;
   public abstract createMarketOrder(side: OrderSide, amount: number): Promise<OrderState>;
   public abstract cancelOrder(id: string): Promise<OrderState>;
   public abstract fetchOrder(id: string): Promise<OrderState>;
-  protected abstract getMarketLimits(): MarketLimits | undefined;
+  public abstract getMarketLimits(): MarketLimits | undefined;
 
   public abstract onNewCandle(onNewCandle: (candle: Candle) => void): () => void;
 }

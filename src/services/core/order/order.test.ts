@@ -129,14 +129,14 @@ describe('order', () => {
     it('should call exchange.createLimitOrder and then handleCreateOrderSuccess on success', async () => {
       const orderResponse = { id: 'order1', status: 'open', filled: 0, price: 100 };
       fakeExchange.createLimitOrder.mockResolvedValue(orderResponse);
-      await testOrder['createLimitOrder']('BUY', 10);
+      await testOrder['createLimitOrder']('BUY', 10, 99);
       expect(testOrder.handleCreateOrderSuccess).toHaveBeenCalledWith(orderResponse);
     });
 
     it('should call handleCreateOrderError when exchange.createLimitOrder rejects', async () => {
       const error = new Error('create failed');
       fakeExchange.createLimitOrder.mockRejectedValue(error);
-      await testOrder['createLimitOrder']('BUY', 10);
+      await testOrder['createLimitOrder']('BUY', 10, 100);
       expect(testOrder.handleCreateOrderError).toHaveBeenCalledWith(error);
     });
   });

@@ -10,6 +10,8 @@ vi.mock('@services/configuration/configuration', () => ({
   },
 }));
 
+vi.mock('@services/logger', () => ({ error: vi.fn() }));
+
 const baseConfig: DummyCentralizedExchangeConfig = {
   name: 'dummy-cex',
   interval: 200,
@@ -78,7 +80,7 @@ describe('DummyCentralizedExchange', () => {
     await exchange.loadMarkets();
     seedExchangeWithBaseCandle(exchange);
 
-    const buyOrder = await exchange.createLimitOrder('BUY', 1);
+    const buyOrder = await exchange.createLimitOrder('BUY', 1, 100);
     const makerFeeRate = (baseConfig.feeMaker ?? 0) / 100;
     const reservedPortfolio = await exchange.fetchPortfolio();
     expect(reservedPortfolio.currency).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
@@ -100,7 +102,7 @@ describe('DummyCentralizedExchange', () => {
     expect(portfolioAfterFill.asset).toBeCloseTo(3);
     expect(portfolioAfterFill.currency).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
 
-    const sellOrder = await exchange.createLimitOrder('SELL', 1);
+    const sellOrder = await exchange.createLimitOrder('SELL', 1, 100);
     const reservedAfterSell = await exchange.fetchPortfolio();
     expect(reservedAfterSell.asset).toBeCloseTo(2);
 
@@ -115,7 +117,7 @@ describe('DummyCentralizedExchange', () => {
     const exchange = createExchange({ limits: baseConfig.limits });
     await exchange.loadMarkets();
 
-    await expect(exchange.createLimitOrder('BUY', 0.01)).rejects.toBeInstanceOf(OrderOutOfRangeError);
+    await expect(exchange.createLimitOrder('BUY', 0.01, 100)).rejects.toBeInstanceOf(OrderOutOfRangeError);
 
     const tickerSpy = vi.spyOn(exchange as unknown as { fetchTickerImpl: () => Promise<never> }, 'fetchTickerImpl');
     tickerSpy.mockImplementation(async () => {
@@ -155,8 +157,8 @@ describe('DummyCentralizedExchange', () => {
 
     const trades = await exchange.fetchTrades();
     expect(trades).toHaveLength(2);
-    expect(trades[0]?.fee?.rate).toBeCloseTo((baseConfig.feeTaker ?? 0) / 100);
-    expect(trades[1]?.fee?.rate).toBeCloseTo((baseConfig.feeTaker ?? 0) / 100);
+    expect(trades[0]?.fee?.rate).toBeCloseTo(baseConfig.feeTaker ?? 0);
+    expect(trades[1]?.fee?.rate).toBeCloseTo(baseConfig.feeTaker ?? 0);
   });
 
   it('rejects market buy orders when balance cannot cover taker fees', async () => {
@@ -176,7 +178,7 @@ describe('DummyCentralizedExchange', () => {
 
     const makerFeeRate = (baseConfig.feeMaker ?? 0) / 100;
 
-    const buyOrder = await exchange.createLimitOrder('BUY', 2);
+    const buyOrder = await exchange.createLimitOrder('BUY', 2, 100);
     const buyPrice = buyOrder.price ?? 0;
     const buyCost = buyPrice * 2;
 
@@ -195,7 +197,7 @@ describe('DummyCentralizedExchange', () => {
     expect(afterBuyFill.asset).toBeCloseTo(7);
     expect(afterBuyFill.currency).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
 
-    const sellOrder = await exchange.createLimitOrder('SELL', 1);
+    const sellOrder = await exchange.createLimitOrder('SELL', 1, 100);
     const sellPrice = sellOrder.price ?? 0;
     const afterSellReservation = await exchange.fetchPortfolio();
     expect(afterSellReservation.asset).toBeCloseTo(6);
@@ -215,8 +217,8 @@ describe('DummyCentralizedExchange', () => {
 
     const trades = await exchange.fetchTrades();
     expect(trades).toHaveLength(2);
-    expect(trades[0]?.fee?.rate).toBeCloseTo((baseConfig.feeMaker ?? 0) / 100);
-    expect(trades[1]?.fee?.rate).toBeCloseTo((baseConfig.feeMaker ?? 0) / 100);
+    expect(trades[0]?.fee?.rate).toBeCloseTo(baseConfig.feeMaker ?? 0);
+    expect(trades[1]?.fee?.rate).toBeCloseTo(baseConfig.feeMaker ?? 0);
   });
 
   it('derives candles from trades when queue is empty', async () => {
@@ -224,7 +226,7 @@ describe('DummyCentralizedExchange', () => {
     await exchange.loadMarkets();
     seedExchangeWithBaseCandle(exchange);
 
-    const order = await exchange.createLimitOrder('BUY', 0.5);
+    const order = await exchange.createLimitOrder('BUY', 0.5, 100);
     const candle = sampleCandle(Date.now(), {
       low: order.price ?? 0,
       high: order.price ?? 0,

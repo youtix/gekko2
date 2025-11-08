@@ -48,8 +48,8 @@ export abstract class CentralizedExchange extends Exchange {
     return this.retry(() => this.fetchPortfolioImpl());
   }
 
-  public async createLimitOrder(side: OrderSide, amount: number) {
-    return this.retry(() => this.createLimitOrderImpl(side, amount));
+  public async createLimitOrder(side: OrderSide, amount: number, price: number) {
+    return this.retry(() => this.createLimitOrderImpl(side, amount, price));
   }
 
   public async createMarketOrder(side: OrderSide, amount: number) {
@@ -74,7 +74,7 @@ export abstract class CentralizedExchange extends Exchange {
   protected abstract fetchTradesImpl(): Promise<Trade[]>;
   protected abstract fetchMyTradesImpl(from?: EpochTimeStamp): Promise<Trade[]>;
   protected abstract fetchPortfolioImpl(): Promise<Portfolio>;
-  protected abstract createLimitOrderImpl(side: OrderSide, amount: number): Promise<OrderState>;
+  protected abstract createLimitOrderImpl(side: OrderSide, amount: number, price: number): Promise<OrderState>;
   protected abstract createMarketOrderImpl(side: OrderSide, amount: number): Promise<OrderState>;
   protected abstract cancelOrderImpl(id: string): Promise<OrderState>;
   protected abstract fetchOrderImpl(id: string): Promise<OrderState>;
