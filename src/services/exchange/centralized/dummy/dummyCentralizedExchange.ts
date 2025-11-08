@@ -113,10 +113,11 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     const id = `order-${++this.orderSequence}`;
     const timestamp = this.candles.last().start;
     const cost = normalizedAmount * price;
+    const totalCost = cost * (1 + this.takerFee);
 
     if (side === 'BUY') {
-      if (this.portfolio.currency < cost) throw new InvalidOrder('Insufficient currency balance');
-      this.portfolio.currency -= cost * (1 + this.takerFee);
+      if (this.portfolio.currency < totalCost) throw new InvalidOrder('Insufficient currency balance');
+      this.portfolio.currency -= totalCost;
       this.portfolio.asset += normalizedAmount;
     } else {
       if (this.portfolio.asset < normalizedAmount) throw new InvalidOrder('Insufficient asset balance');
