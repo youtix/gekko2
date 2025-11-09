@@ -505,7 +505,7 @@ describe('Trader', () => {
       trader.onStrategyCreateOrder(advice);
       const order = (trader as any).orders[0];
 
-      order.emit(ORDER_CANCELED_EVENT);
+      order.emit(ORDER_COMPLETED_EVENT);
       await Promise.resolve();
       await Promise.resolve();
 
@@ -535,7 +535,7 @@ describe('Trader', () => {
       const order = (trader as any).orders[0];
       (order.createSummary as Mock).mockRejectedValue(new Error('summary failed'));
 
-      order.emit(ORDER_CANCELED_EVENT);
+      order.emit(ORDER_COMPLETED_EVENT);
       await Promise.resolve();
       await Promise.resolve();
 
