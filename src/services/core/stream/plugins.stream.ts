@@ -25,7 +25,7 @@ export class PluginsStream extends Writable {
     const flushEvents = this.flushEvents().bind(this);
     try {
       // Forward candle to dummy exchange (if set by user) before all plugins
-      this.dummyExchange?.addCandle(chunk);
+      this.dummyExchange?.processOneMinuteCandle(chunk);
       // Forward candle to all plugins
       for (const plugin of this.plugins) await plugin.processInputStream(chunk, flushEvents);
       done();

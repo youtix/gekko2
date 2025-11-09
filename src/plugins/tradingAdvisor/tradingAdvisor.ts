@@ -68,6 +68,7 @@ export class TradingAdvisor extends Plugin {
     if (!this.candle) throw new GekkoError('trading advisor', 'No candle when relaying advice');
     this.deferredEmit(STRATEGY_CREATE_ORDER_EVENT, {
       ...advice,
+      // I need the close time of the candle
       date: addMinutes(this.candle.start, 1).getTime(),
     });
   }

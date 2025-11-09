@@ -43,14 +43,14 @@ const sampleCandle = (start: number, overrides: Partial<Candle> = {}): Candle =>
   open: 100,
   high: 110,
   low: 90,
-  close: 105,
+  close: 10,
   volume: 10,
   ...overrides,
 });
 
 const seedExchangeWithBaseCandle = (exchange: DummyCentralizedExchange, overrides: Partial<Candle> = {}) => {
   const candle = sampleCandle(Date.now() - 60_000, overrides);
-  exchange.addCandle(candle);
+  exchange.processOneMinuteCandle(candle);
   return candle;
 };
 
@@ -98,7 +98,7 @@ describe('DummyCentralizedExchange', () => {
       high: buyOrder.price ?? 0,
       close: buyOrder.price ?? 0,
     });
-    exchange.addCandle(fillCandle);
+    exchange.processOneMinuteCandle(fillCandle);
 
     const filledOrder = await exchange.fetchOrder(buyOrder.id);
     expect(filledOrder.status).toBe('closed');
@@ -198,7 +198,7 @@ describe('DummyCentralizedExchange', () => {
       high: buyPrice,
       close: buyPrice,
     });
-    exchange.addCandle(buyFillCandle);
+    exchange.processOneMinuteCandle(buyFillCandle);
 
     const afterBuyFill = await exchange.fetchPortfolio();
     expect(afterBuyFill.asset).toBeCloseTo(7);
@@ -215,7 +215,7 @@ describe('DummyCentralizedExchange', () => {
       low: sellPrice,
       close: sellPrice,
     });
-    exchange.addCandle(sellFillCandle);
+    exchange.processOneMinuteCandle(sellFillCandle);
 
     const afterSellFill = await exchange.fetchPortfolio();
     const expectedCurrencyAfterSell = 10_000 - buyCost * (1 + makerFeeRate) + sellPrice * (1 - makerFeeRate);
@@ -239,7 +239,7 @@ describe('DummyCentralizedExchange', () => {
       high: order.price ?? 0,
       close: order.price ?? 0,
     });
-    exchange.addCandle(candle);
+    exchange.processOneMinuteCandle(candle);
 
     const unsubscribe = exchange.onNewCandle(() => {});
     vi.advanceTimersByTime(baseConfig.interval ?? 0);
@@ -250,5 +250,28 @@ describe('DummyCentralizedExchange', () => {
 
     const trades = await exchange.fetchTrades();
     expect(trades).toHaveLength(1);
+  });
+
+  it('aligns order timestamps with candle closes and simulated time', async () => {
+    const exchange = createExchange();
+    await exchange.loadMarkets();
+    const firstCandle = seedExchangeWithBaseCandle(exchange);
+
+    const limitOrder = await exchange.createLimitOrder('BUY', 1, 100);
+    expect(limitOrder.timestamp).toBe(firstCandle.start + 60_000);
+
+    const fillCandle = sampleCandle(firstCandle.start + 60_000, {
+      low: limitOrder.price ?? 0,
+      high: limitOrder.price ?? 0,
+      close: limitOrder.price ?? 0,
+    });
+    exchange.processOneMinuteCandle(fillCandle);
+
+    const closedOrder = await exchange.fetchOrder(limitOrder.id);
+    expect(closedOrder.timestamp).toBe(fillCandle.start + 60_000);
+
+    const orderToCancel = await exchange.createLimitOrder('SELL', 1, 110);
+    const canceledOrder = await exchange.cancelOrder(orderToCancel.id);
+    expect(canceledOrder.timestamp).toBe(fillCandle.start + 60_000);
   });
 });
