@@ -1,3 +1,4 @@
+import { ORDER_CANCELED_EVENT } from '@constants/event.const';
 import { OrderSide, OrderState, OrderType } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { debug, error, info } from '@services/logger';
@@ -88,20 +89,19 @@ export abstract class Order extends EventEmitter {
 
   protected setStatus(status: OrderStatus, reason?: string) {
     this.status = status;
-    this.emit(ORDER_STATUS_CHANGED_EVENT, this.status);
+    this.emit(ORDER_STATUS_CHANGED_EVENT, { status, reason });
     if (reason) error('core', `${this.type} order ${status}: ${reason}`);
     else info('core', `${this.type} order ${status}`);
   }
 
   protected orderCanceled(partiallyFilled = false) {
     this.setStatus('canceled');
-    this.emit(ORDER_COMPLETED_EVENT, { status: this.status, partiallyFilled });
+    this.emit(ORDER_CANCELED_EVENT, { status: this.status, partiallyFilled });
   }
 
   protected orderRejected(reason: string) {
-    this.emit(ORDER_INVALID_EVENT, reason);
     this.setStatus('rejected', reason);
-    this.emit(ORDER_COMPLETED_EVENT, { status: this.status, filled: false });
+    this.emit(ORDER_INVALID_EVENT, { status: this.status, filled: false, reason });
   }
 
   protected orderPartiallyFilled(orderId: string, filled: number) {
