@@ -8,10 +8,12 @@ import {
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/advice.types';
+import { OrderSide } from '@models/order.types';
 import * as lodash from 'lodash-es';
 import type { Mock } from 'vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../services/configuration/configuration';
+import { ORDER_INVALID_EVENT } from '../../services/core/order/order.const';
 import * as logger from '../../services/logger';
 import * as processUtils from '../../utils/process/process.utils';
 import { Trader } from './trader';
@@ -416,7 +418,7 @@ describe('Trader', () => {
       const initiated = getInitiatedPayload();
       expect(initiated?.orderId).toBe(advice.id);
       expect(initiated?.type).toBe(advice.order.type);
-      expect(initiated?.requestedAmount).toBeCloseTo(9.5, 5);
+      expect(initiated?.amount).toBeCloseTo(9.5, 5);
     });
 
     it('computes SELL order amount from asset holdings', () => {
@@ -426,7 +428,25 @@ describe('Trader', () => {
       trader.onStrategyCreateOrder(advice);
 
       const initiated = getInitiatedPayload();
-      expect(initiated?.requestedAmount).toBeCloseTo(2.5, 5);
+      expect(initiated?.amount).toBeCloseTo(2.5, 5);
+    });
+
+    it('emits ORDER_ERRORED_EVENT when requested amount is non-positive', () => {
+      trader['portfolio'] = { asset: 0, currency: 0 };
+      const advice = buildAdvice();
+
+      trader.onStrategyCreateOrder(advice);
+
+      expect(logger.error).toHaveBeenCalledWith('trader', 'Trying to create an order with 0 amount');
+      expect((trader as any).orders).toHaveLength(0);
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+        ORDER_ERRORED_EVENT,
+        expect.objectContaining({
+          orderId: advice.id,
+          type: advice.order.type,
+          reason: 'Trying to create an order with 0 amount',
+        }),
+      );
     });
 
     it('handles ORDER_ERRORED_EVENT by emitting error and removing order', async () => {
@@ -455,47 +475,74 @@ describe('Trader', () => {
       expect(synchronizeSpy).toHaveBeenCalled();
     });
 
-    it('delegates ORDER_COMPLETED_EVENT to handleOrderCompletedEvent', async () => {
+    it('removes order and synchronizes when receiving ORDER_INVALID_EVENT', async () => {
       const advice = buildAdvice();
-      const handleSpy = vi
-        .spyOn(
-          trader as unknown as { handleOrderCompletedEvent: (a: Advice, amount: number) => Promise<void> },
-          'handleOrderCompletedEvent',
-        )
+      const synchronizeSpy = vi
+        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
         .mockResolvedValue(undefined);
+
+      trader.onStrategyCreateOrder(advice);
+      const order = (trader as any).orders[0];
+
+      order.emit(ORDER_INVALID_EVENT, { reason: 'limit too low' });
+      await Promise.resolve();
+
+      expect(logger.info).toHaveBeenCalledWith('trader', 'Order rejected : limit too low');
+      expect(synchronizeSpy).toHaveBeenCalled();
+      expect((trader as any).orders).toHaveLength(0);
+    });
+
+    it('delegates ORDER_COMPLETED_EVENT to emitOrderCompletedEvent', async () => {
+      const advice = buildAdvice();
+      const synchronizeSpy = vi
+        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
+        .mockResolvedValue(undefined);
+      const emitSpy = vi.spyOn(
+        trader as unknown as { emitOrderCompletedEvent: (id: string, type: string, summary: unknown) => void },
+        'emitOrderCompletedEvent',
+      );
 
       trader.onStrategyCreateOrder(advice);
       const order = (trader as any).orders[0];
 
       order.emit(ORDER_COMPLETED_EVENT);
       await Promise.resolve();
+      await Promise.resolve();
 
-      expect(handleSpy).toHaveBeenCalledWith(advice, expect.any(Number));
-      expect(handleSpy.mock.calls[0][1]).toBeCloseTo(9.5, 5);
+      expect(order.createSummary).toHaveBeenCalledTimes(1);
+      expect(synchronizeSpy).toHaveBeenCalled();
+      expect(emitSpy).toHaveBeenCalledWith(
+        advice.id,
+        advice.order.type,
+        expect.objectContaining({ side: advice.order.side }),
+      );
+      expect((trader as any).orders).toHaveLength(0);
     });
 
-    it('logs error, removes order, and synchronizes when handleOrderCompletedEvent rejects', async () => {
+    it('logs error and removes order when order summary creation fails', async () => {
       const advice = buildAdvice();
       const errorMock = logger.error as Mock;
       errorMock.mockClear();
       const synchronizeSpy = vi
         .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
         .mockResolvedValue(undefined);
-
-      vi.spyOn(
-        trader as unknown as { handleOrderCompletedEvent: (a: Advice, amount: number) => Promise<void> },
-        'handleOrderCompletedEvent',
-      ).mockRejectedValue(new Error('summary failed'));
+      const emitSpy = vi.spyOn(
+        trader as unknown as { emitOrderCompletedEvent: (id: string, type: string, summary: unknown) => void },
+        'emitOrderCompletedEvent',
+      );
 
       trader.onStrategyCreateOrder(advice);
       const order = (trader as any).orders[0];
+      (order.createSummary as Mock).mockRejectedValue(new Error('summary failed'));
 
       order.emit(ORDER_COMPLETED_EVENT);
       await Promise.resolve();
+      await Promise.resolve();
 
       expect(errorMock).toHaveBeenCalledWith('trader', 'summary failed');
+      expect(emitSpy).not.toHaveBeenCalled();
+      expect(synchronizeSpy).not.toHaveBeenCalled();
       expect((trader as any).orders).toHaveLength(0);
-      expect(synchronizeSpy).toHaveBeenCalled();
     });
   });
 
@@ -565,26 +612,27 @@ describe('Trader', () => {
     });
   });
 
-  describe('handleOrderCompletedEvent', () => {
-    it('throws error when order cannot be found', async () => {
-      await expect(trader['handleOrderCompletedEvent'](buildAdvice(), 1)).rejects.toThrow(GekkoError);
+  describe('emitOrderCompletedEvent', () => {
+    it('throws error when order summary is missing timestamp', () => {
+      const summary = {
+        amount: 1,
+        price: 100,
+        feePercent: 0.5,
+        side: 'BUY',
+        date: undefined,
+      } as any;
+
+      expect(() => trader['emitOrderCompletedEvent']('order-id' as any, 'MARKET', summary)).toThrow(GekkoError);
     });
 
     it('emits completion summary with computed pricing', async () => {
-      const advice = buildAdvice();
       const summary = {
         amount: 2,
         price: 100,
         feePercent: 0.5,
-        side: 'BUY',
+        side: 'BUY' as OrderSide,
         date: 1_700_000_111_000,
       };
-      const order = {
-        getGekkoOrderId: () => advice.id,
-        createSummary: vi.fn().mockResolvedValue(summary),
-      };
-      (trader as any).orders.push(order);
-
       const processCostSpy = vi
         .spyOn(traderUtils, 'computeOrderPricing')
         .mockReturnValue({ effectivePrice: 101, fee: 2, base: 100, total: 102 });
@@ -592,21 +640,20 @@ describe('Trader', () => {
       trader['portfolio'] = { asset: 5, currency: 10 };
       trader['balance'] = 510;
 
-      await trader['handleOrderCompletedEvent'](advice, 2);
+      trader['emitOrderCompletedEvent']('order-id' as any, 'STICKY', summary);
 
       expect(processCostSpy).toHaveBeenCalledWith(summary.side, summary.price, summary.amount, summary.feePercent);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_COMPLETED_EVENT,
         expect.objectContaining({
-          orderId: advice.id,
+          orderId: 'order-id',
           side: summary.side,
           amount: summary.amount,
           price: summary.price,
           feePercent: summary.feePercent,
           effectivePrice: 101,
           fee: 2,
-          type: advice.order.type,
-          requestedAmount: 2,
+          type: 'STICKY',
           portfolio: trader['portfolio'],
           balance: trader['balance'],
         }),

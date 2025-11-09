@@ -43,7 +43,6 @@ describe('PerformanceAnalyzer', () => {
     effectivePrice: 100,
     feePercent: 0.2,
     type: 'STICKY',
-    requestedAmount: 5,
   };
 
   const sellTrade: OrderCompleted = {
@@ -58,7 +57,6 @@ describe('PerformanceAnalyzer', () => {
     effectivePrice: 110,
     feePercent: 0.2,
     type: 'STICKY',
-    requestedAmount: 5,
   };
 
   beforeEach(async () => {

@@ -62,7 +62,7 @@ describe('EventSubscriber', () => {
         orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
         portfolio: { asset: 0, currency: 0 },
         type: 'STICKY',
-        requestedAmount: 1,
+        amount: 1,
       } as OrderInitiated);
     const onOrderCanceled = (p: EventSubscriber) =>
       p.onOrderCanceled({
@@ -88,7 +88,6 @@ describe('EventSubscriber', () => {
         effectivePrice: 1,
         portfolio: { asset: 0, currency: 0 },
         type: 'STICKY',
-        requestedAmount: 1,
         price: 100,
       } as OrderCompleted);
     it.each`
@@ -129,7 +128,7 @@ describe('EventSubscriber', () => {
         date: toTimestamp('2022-01-01T00:00:00Z'),
         portfolio: { asset: 1, currency: 2 },
         type: 'MARKET',
-        requestedAmount: 5,
+        amount: 5,
       } as OrderInitiated);
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(
         expect.stringContaining('MARKET order created (ee21e130-48bc-405f-be0c-46e9bf17b52e)'),

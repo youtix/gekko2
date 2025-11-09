@@ -58,7 +58,6 @@ describe('TradingAdvisor', () => {
     effectivePrice: 31,
     feePercent: 0.33,
     type: 'STICKY',
-    requestedAmount: 30,
   };
 
   let advisor: TradingAdvisor;
