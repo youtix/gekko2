@@ -144,7 +144,7 @@ export class Trader extends Plugin {
     orderInstance.removeAllListeners();
 
     // Handle Cancel Success hook
-    orderInstance.once(ORDER_COMPLETED_EVENT, async () => {
+    orderInstance.once(ORDER_CANCELED_EVENT, async () => {
       this.removeOrder(id);
       this.deferredEmit<OrderCanceled>(ORDER_CANCELED_EVENT, {
         orderId: id,
