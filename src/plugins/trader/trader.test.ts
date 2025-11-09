@@ -253,13 +253,13 @@ describe('Trader', () => {
 
     it('skips ticker fetch when price is already known', async () => {
       trader['price'] = 250;
-      const setBalanceSpy = vi.spyOn(trader as unknown as { setBalance: () => void }, 'setBalance');
+      const updateBalanceSpy = vi.spyOn(trader as unknown as { updateBalance: () => void }, 'updateBalance');
 
       await trader['synchronize']();
 
       expect(fakeExchange.fetchTicker).not.toHaveBeenCalled();
       expect(waitSpy).not.toHaveBeenCalled();
-      expect(setBalanceSpy).toHaveBeenCalledTimes(1);
+      expect(updateBalanceSpy).toHaveBeenCalledTimes(1);
     });
 
     it('emits portfolio change when initial portfolio was sent and values differ', async () => {
@@ -310,17 +310,17 @@ describe('Trader', () => {
     });
   });
 
-  describe('setBalance', () => {
+  describe('updateBalance', () => {
     it.each`
-      description                                      | price  | portfolio                     | initialBalance | expectedBalance
-      ${'keeps balance unchanged for empty portfolio'} | ${150} | ${{ asset: 0, currency: 0 }}  | ${123}         | ${123}
-      ${'recalculates balance when holdings exist'}    | ${100} | ${{ asset: 2, currency: 10 }} | ${0}           | ${210}
+      description                                    | price  | portfolio                     | initialBalance | expectedBalance
+      ${'computes zero balance for empty portfolio'} | ${150} | ${{ asset: 0, currency: 0 }}  | ${123}         | ${0}
+      ${'recalculates balance when holdings exist'}  | ${100} | ${{ asset: 2, currency: 10 }} | ${0}           | ${210}
     `(' $description', ({ price, portfolio, initialBalance, expectedBalance }) => {
       trader['price'] = price;
       trader['portfolio'] = portfolio;
       trader['balance'] = initialBalance;
 
-      trader['setBalance']();
+      trader['updateBalance']();
 
       expect(trader['balance']).toBeCloseTo(expectedBalance);
     });
@@ -440,6 +440,7 @@ describe('Trader', () => {
       const order = (trader as any).orders[0];
 
       order.emit(ORDER_ERRORED_EVENT, 'boom');
+      await Promise.resolve();
 
       expect(logger.error).toHaveBeenCalledWith('trader', 'Gekko received error: boom');
       expect((trader as any).orders).toHaveLength(0);
@@ -473,10 +474,13 @@ describe('Trader', () => {
       expect(handleSpy.mock.calls[0][1]).toBeCloseTo(9.5, 5);
     });
 
-    it('emits error when handleOrderCompletedEvent rejects', async () => {
+    it('logs error, removes order, and synchronizes when handleOrderCompletedEvent rejects', async () => {
       const advice = buildAdvice();
       const errorMock = logger.error as Mock;
       errorMock.mockClear();
+      const synchronizeSpy = vi
+        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
+        .mockResolvedValue(undefined);
 
       vi.spyOn(
         trader as unknown as { handleOrderCompletedEvent: (a: Advice, amount: number) => Promise<void> },
@@ -490,14 +494,8 @@ describe('Trader', () => {
       await Promise.resolve();
 
       expect(errorMock).toHaveBeenCalledWith('trader', 'summary failed');
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(
-        ORDER_ERRORED_EVENT,
-        expect.objectContaining({
-          orderId: advice.id,
-          type: advice.order.type,
-          reason: 'summary failed',
-        }),
-      );
+      expect((trader as any).orders).toHaveLength(0);
+      expect(synchronizeSpy).toHaveBeenCalled();
     });
   });
 
@@ -572,7 +570,7 @@ describe('Trader', () => {
       await expect(trader['handleOrderCompletedEvent'](buildAdvice(), 1)).rejects.toThrow(GekkoError);
     });
 
-    it('removes order, synchronizes, and emits completion summary', async () => {
+    it('emits completion summary with computed pricing', async () => {
       const advice = buildAdvice();
       const summary = {
         amount: 2,
@@ -590,17 +588,12 @@ describe('Trader', () => {
       const processCostSpy = vi
         .spyOn(traderUtils, 'computeOrderPricing')
         .mockReturnValue({ effectivePrice: 101, fee: 2, base: 100, total: 102 });
-      const synchronizeSpy = vi
-        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
-        .mockResolvedValue(undefined);
 
       trader['portfolio'] = { asset: 5, currency: 10 };
       trader['balance'] = 510;
 
       await trader['handleOrderCompletedEvent'](advice, 2);
 
-      expect((trader as any).orders).toHaveLength(0);
-      expect(synchronizeSpy).toHaveBeenCalled();
       expect(processCostSpy).toHaveBeenCalledWith(summary.side, summary.price, summary.amount, summary.feePercent);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_COMPLETED_EVENT,

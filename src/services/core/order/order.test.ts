@@ -1,3 +1,4 @@
+import { ORDER_CANCELED_EVENT } from '@constants/event.const';
 import { OrderState } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { toTimestamp } from '@utils/date/date.utils';
@@ -6,6 +7,7 @@ import { Order } from './order';
 import {
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,
+  ORDER_INVALID_EVENT,
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
 } from './order.const';
@@ -62,15 +64,18 @@ describe('order', () => {
     it('should emit a ORDER_STATUS_CHANGED_EVENT when setStatus is called', () => {
       const spy = vi.spyOn(testOrder, 'emit');
       testOrder['setStatus']('open');
-      expect(spy).toHaveBeenCalledWith(ORDER_STATUS_CHANGED_EVENT, 'open');
+      expect(spy).toHaveBeenCalledWith(ORDER_STATUS_CHANGED_EVENT, {
+        status: 'open',
+        reason: undefined,
+      });
     });
   });
 
   describe('orderCanceled', () => {
-    it('should call setStatus with "canceled" and emit ORDER_COMPLETED_EVENT on orderCanceled', () => {
+    it('should call setStatus with "canceled" and emit ORDER_CANCELED_EVENT on orderCanceled', () => {
       const spy = vi.spyOn(testOrder, 'emit');
       testOrder['orderCanceled'](true);
-      expect(spy).toHaveBeenCalledWith(ORDER_COMPLETED_EVENT, {
+      expect(spy).toHaveBeenCalledWith(ORDER_CANCELED_EVENT, {
         status: 'canceled',
         partiallyFilled: true,
       });
@@ -78,12 +83,13 @@ describe('order', () => {
   });
 
   describe('orderRejected', () => {
-    it('should call setStatus with "rejected" and emit ORDER_COMPLETED_EVENT with filled false', () => {
+    it('should call setStatus with "rejected" and emit ORDER_INVALID_EVENT with filled false and a reason', () => {
       const spy = vi.spyOn(testOrder, 'emit');
       testOrder['orderRejected']('error reason');
-      expect(spy).toHaveBeenCalledWith(ORDER_COMPLETED_EVENT, {
+      expect(spy).toHaveBeenCalledWith(ORDER_INVALID_EVENT, {
         status: 'rejected',
         filled: false,
+        reason: 'error reason',
       });
     });
   });

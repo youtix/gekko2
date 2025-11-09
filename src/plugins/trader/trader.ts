@@ -13,10 +13,15 @@ import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '@mo
 import { Portfolio } from '@models/portfolio.types';
 import { Plugin } from '@plugins/plugin';
 import { Order } from '@services/core/order/order';
-import { ORDER_PARTIALLY_FILLED_EVENT, ORDER_STATUS_CHANGED_EVENT } from '@services/core/order/order.const';
+import {
+  ORDER_INVALID_EVENT,
+  ORDER_PARTIALLY_FILLED_EVENT,
+  ORDER_STATUS_CHANGED_EVENT,
+} from '@services/core/order/order.const';
 import { debug, error, info, warning } from '@services/logger';
-import { toISOString } from '@utils/date/date.utils';
+import { toISOString, toTimestamp } from '@utils/date/date.utils';
 import { wait } from '@utils/process/process.utils';
+import { addMinutes } from 'date-fns';
 import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { ORDER_FACTORY, SYNCHRONIZATION_INTERVAL } from './trader.const';
@@ -33,6 +38,7 @@ export class Trader extends Plugin {
   private price: number;
   // Timer controlling periodic synchronization with the exchange.
   private syncInterval?: Timer;
+  private currentTimestamp: EpochTimeStamp;
 
   constructor() {
     super(Trader.name);
@@ -43,6 +49,8 @@ export class Trader extends Plugin {
     this.portfolio = { asset: 0, currency: 0 };
     this.balance = 0;
     this.price = 0;
+    // Let's use the start date when using backtest mode
+    this.currentTimestamp = this.daterange ? toTimestamp(this.daterange?.start) : Date.now();
 
     bindAll(this, [this.synchronize.name]);
 
@@ -65,7 +73,7 @@ export class Trader extends Plugin {
       `Current portfolio: ${this.portfolio.asset} ${this.asset} / ${this.portfolio.currency} ${this.currency}`,
     );
 
-    this.setBalance();
+    this.updateBalance();
     if (this.sendInitialPortfolio && !isEqual(oldPortfolio, this.portfolio)) this.emitPortfolioChangeEvent();
   }
 
@@ -82,8 +90,7 @@ export class Trader extends Plugin {
     });
   }
 
-  private setBalance() {
-    if (!this.portfolio.asset && !this.portfolio.currency) return;
+  private updateBalance() {
     this.balance = this.price * this.portfolio.asset + this.portfolio.currency;
   }
 
@@ -107,7 +114,7 @@ export class Trader extends Plugin {
       this.removeOrder(id);
       this.deferredEmit<OrderCanceled>(ORDER_CANCELED_EVENT, {
         orderId: id,
-        date: Date.now(),
+        date: this.currentTimestamp,
         type,
       });
       await this.synchronize();
@@ -118,7 +125,7 @@ export class Trader extends Plugin {
       this.removeOrder(id);
       this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
         orderId: id,
-        date: Date.now(),
+        date: this.currentTimestamp,
         type,
         reason,
       });
@@ -159,46 +166,50 @@ export class Trader extends Plugin {
     const orderInstance = new ORDER_FACTORY[type](id, side, requestedAmount, exchange);
     this.orders.push(orderInstance);
 
+    // UPDATE EVENTS
     orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
-      info('trader', `Partial ${side} fill, total filled: ${filled}`),
+      info('trader', `Partial ${side} order fill, total filled: ${filled}`),
     );
-    orderInstance.on(ORDER_STATUS_CHANGED_EVENT, status => debug('trader', `status changed: ${status}`));
-    orderInstance.on(ORDER_ERRORED_EVENT, reason => {
+    orderInstance.on(ORDER_STATUS_CHANGED_EVENT, status => info('trader', `status changed: ${status}`));
+
+    // ERROR EVENTS
+    orderInstance.on(ORDER_INVALID_EVENT, async ({ reason }) => {
+      info('trader', `Order rejected : ${reason}`);
+      this.removeOrder(id);
+      await this.synchronize();
+    });
+
+    orderInstance.on(ORDER_ERRORED_EVENT, async reason => {
       error('trader', `Gekko received error: ${reason}`);
       this.removeOrder(id);
+      await this.synchronize();
       this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
         orderId: id,
         type,
-        date: Date.now(),
+        date: this.currentTimestamp,
         reason,
       });
-      this.synchronize();
     });
+
+    // SUCCES EVENTS
     orderInstance.on(ORDER_COMPLETED_EVENT, async () => {
       try {
         await this.handleOrderCompletedEvent(advice, requestedAmount);
       } catch (err) {
-        if (err instanceof Error) {
-          error('trader', err.message);
-          return this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
-            orderId: id,
-            type,
-            date: Date.now(),
-            reason: err.message,
-          });
-        }
+        error('trader', err instanceof Error ? err.message : 'Unknown error on order completed');
+      } finally {
+        this.removeOrder(id);
+        await this.synchronize();
       }
     });
   }
 
   private async handleOrderCompletedEvent({ id, order }: Advice, requestedAmount: number) {
     const orderInstance = this.getOrder(id);
-    if (!orderInstance) throw new GekkoError('trader', 'Missing order when handling order completed event');
+    if (!orderInstance)
+      throw new GekkoError('trader', 'Inconsistent state: Missing order when handling order completed event');
 
     const summary = await orderInstance.createSummary();
-
-    this.removeOrder(id);
-    await this.synchronize();
 
     const { amount, price, feePercent, side, date } = summary;
     const { effectivePrice, fee } = computeOrderPricing(side, price, amount, feePercent);
@@ -253,6 +264,7 @@ export class Trader extends Plugin {
   }
 
   protected async processOneMinuteCandle(candle: Candle) {
+    this.currentTimestamp = addMinutes(candle.start, 1).getTime();
     if (!this.warmupCompleted) {
       this.warmupCandle = candle;
       return;
@@ -260,7 +272,7 @@ export class Trader extends Plugin {
 
     this.price = candle.close;
     const previousBalance = this.balance;
-    this.setBalance();
+    this.updateBalance();
 
     if (!this.sendInitialPortfolio) {
       this.sendInitialPortfolio = true;
