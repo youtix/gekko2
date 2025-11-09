@@ -72,11 +72,11 @@ export class EventSubscriber extends Plugin {
     this.bot.sendMessage(message);
   }
 
-  public onOrderInitiated({ orderId, type, side, balance, date, portfolio, requestedAmount }: OrderInitiated) {
+  public onOrderInitiated({ orderId, type, side, balance, date, portfolio, amount }: OrderInitiated) {
     if (!this.subscriptions.has('order_initiated')) return;
     const message = [
       `${side} ${type} order created (${orderId})`,
-      `Requested amount: ${requestedAmount}`,
+      `Requested amount: ${amount}`,
       `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
       `Current balance: ${balance}`,
       `Target price: ${this.price}`,

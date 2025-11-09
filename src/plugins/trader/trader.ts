@@ -9,7 +9,7 @@ import {
 import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '@models/order.types';
+import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated, OrderType } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Plugin } from '@plugins/plugin';
 import { Order } from '@services/core/order/order';
@@ -18,6 +18,7 @@ import {
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
 } from '@services/core/order/order.const';
+import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString, toTimestamp } from '@utils/date/date.utils';
 import { wait } from '@utils/process/process.utils';
@@ -87,6 +88,39 @@ export class Trader extends Plugin {
   private emitPortfolioValueChangeEvent() {
     this.deferredEmit(PORTFOLIO_VALUE_CHANGE_EVENT, {
       balance: this.balance,
+    });
+  }
+
+  private emitOrderCompletedEvent(id: UUID, type: OrderType, summary: OrderSummary) {
+    const { amount, price, feePercent, side, date } = summary;
+    const { effectivePrice, fee } = computeOrderPricing(side, price, amount, feePercent);
+
+    info(
+      'trader',
+      [
+        `${side} ${type} order summary '${id}':`,
+        `Completed at: ${toISOString(date)}`,
+        `Order amount: ${amount},`,
+        `Effective price: ${effectivePrice},`,
+        `Fee: ${fee},`,
+        `Fee percent: ${feePercent},`,
+      ].join(' '),
+    );
+
+    if (!date) throw new GekkoError('trader', 'Inconsistent state: No timestamp returned from order creation');
+
+    this.deferredEmit<OrderCompleted>(ORDER_COMPLETED_EVENT, {
+      orderId: id,
+      side,
+      fee,
+      amount,
+      price,
+      portfolio: this.portfolio,
+      balance: this.balance,
+      date,
+      feePercent: feePercent,
+      effectivePrice,
+      type,
     });
   }
 
@@ -160,7 +194,7 @@ export class Trader extends Plugin {
       balance: this.balance,
       date,
       type,
-      requestedAmount,
+      amount: requestedAmount,
     });
 
     const orderInstance = new ORDER_FACTORY[type](id, side, requestedAmount, exchange);
@@ -194,53 +228,14 @@ export class Trader extends Plugin {
     // SUCCES EVENTS
     orderInstance.on(ORDER_COMPLETED_EVENT, async () => {
       try {
-        await this.handleOrderCompletedEvent(advice, requestedAmount);
+        const summary = await orderInstance.createSummary();
+        await this.synchronize();
+        this.emitOrderCompletedEvent(id, order.type, summary);
       } catch (err) {
         error('trader', err instanceof Error ? err.message : 'Unknown error on order completed');
       } finally {
         this.removeOrder(id);
-        await this.synchronize();
       }
-    });
-  }
-
-  private async handleOrderCompletedEvent({ id, order }: Advice, requestedAmount: number) {
-    const orderInstance = this.getOrder(id);
-    if (!orderInstance)
-      throw new GekkoError('trader', 'Inconsistent state: Missing order when handling order completed event');
-
-    const summary = await orderInstance.createSummary();
-
-    const { amount, price, feePercent, side, date } = summary;
-    const { effectivePrice, fee } = computeOrderPricing(side, price, amount, feePercent);
-
-    info(
-      'trader',
-      [
-        `${side} ${order.type} order summary '${id}':`,
-        `Completed at: ${toISOString(date)}`,
-        `Order amount: ${amount},`,
-        `Effective price: ${effectivePrice},`,
-        `Fee: ${fee},`,
-        `Fee percent: ${feePercent},`,
-      ].join(' '),
-    );
-
-    if (!date) throw new GekkoError('trader', 'Inconsistent state: No timestamp returned from order creation');
-
-    this.deferredEmit<OrderCompleted>(ORDER_COMPLETED_EVENT, {
-      orderId: id,
-      side,
-      fee,
-      amount,
-      price,
-      portfolio: this.portfolio,
-      balance: this.balance,
-      date,
-      feePercent: feePercent,
-      effectivePrice,
-      type: order.type,
-      requestedAmount,
     });
   }
 

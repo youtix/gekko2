@@ -27,12 +27,11 @@ export type OrderInitiated = OrderCanceled & {
   side: OrderSide;
   portfolio: Portfolio;
   balance: number;
-  requestedAmount: number;
+  amount: number;
 };
 
 export type OrderCompleted = OrderInitiated & {
   fee: number;
-  amount: number;
   price: number;
   effectivePrice: number;
   feePercent?: number;
