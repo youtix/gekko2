@@ -10,6 +10,7 @@ import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { MarketLimits } from '@services/exchange/exchange.types';
 import { RingBuffer } from '@utils/collection/ringBuffer';
 import { toTimestamp } from '@utils/date/date.utils';
+import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
 import { CentralizedExchange } from '../cex';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
@@ -44,8 +45,10 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     bindAll(this, [this.mapOrderToTrade.name]);
   }
 
-  public addCandle(candle: Candle): void {
-    this.currentTimestamp = candle.start;
+  /** Because dummy exchange is not a plugin, I need to call this function manualy in the plugins stream */
+  public processOneMinuteCandle(candle: Candle): void {
+    // I need the close time of the candle
+    this.currentTimestamp = addMinutes(candle.start, 1).getTime();
     this.candles.push(candle);
     this.ticker = { bid: candle.close, ask: candle.close };
     this.settleOrdersWithCandle(candle);
@@ -155,7 +158,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     if (order.status === 'open') {
       this.releaseBalance(order);
       order.status = 'canceled';
-      order.timestamp = Date.now();
+      order.timestamp = this.currentTimestamp;
       order.remaining = 0;
     }
 
@@ -210,7 +213,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       order.status = 'closed';
       order.filled = order.amount;
       order.remaining = 0;
-      order.timestamp = candle.start;
+      order.timestamp = this.currentTimestamp;
 
       if (order.side === 'BUY') {
         this.portfolio.asset += order.amount;

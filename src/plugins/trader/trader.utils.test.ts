@@ -10,13 +10,15 @@ const warningMock = vi.mocked(warning);
 
 describe('resolveOrderAmount', () => {
   it.each`
-    description                                                 | portfolio                        | currentPrice | side      | quantity     | expected
-    ${'return the provided quantity when quantity is positive'} | ${{ currency: 120, asset: 5 }}   | ${50}        | ${'BUY'}  | ${3}         | ${3}
-    ${'return zero for BUY side when price is not positive'}    | ${{ currency: 120, asset: 5 }}   | ${0}         | ${'BUY'}  | ${undefined} | ${0}
-    ${'return discounted currency-based amount for BUY side'}   | ${{ currency: 190, asset: 5 }}   | ${20}        | ${'BUY'}  | ${undefined} | ${9.025}
-    ${'return the asset balance for SELL side'}                 | ${{ currency: 120, asset: 7.5 }} | ${42}        | ${'SELL'} | ${undefined} | ${7.5}
-  `('should $description', ({ portfolio, currentPrice, side, quantity, expected }) => {
-    expect(resolveOrderAmount(portfolio, currentPrice, side, quantity)).toBeCloseTo(expected);
+    description                                                     | portfolio                        | currentPrice | side      | quantity     | marketLimits                                                                                            | expected
+    ${'return the provided quantity when quantity is positive'}     | ${{ currency: 120, asset: 5 }}   | ${50}        | ${'BUY'}  | ${3}         | ${undefined}                                                                                            | ${3}
+    ${'return zero for BUY side when price is not positive'}        | ${{ currency: 120, asset: 5 }}   | ${0}         | ${'BUY'}  | ${undefined} | ${undefined}                                                                                            | ${0}
+    ${'return discounted currency-based amount for BUY side'}       | ${{ currency: 190, asset: 5 }}   | ${20}        | ${'BUY'}  | ${undefined} | ${undefined}                                                                                            | ${9.025}
+    ${'respect min cost when buffer would go below limit'}          | ${{ currency: 10.2, asset: 5 }}  | ${1}         | ${'BUY'}  | ${undefined} | ${{ price: { min: 1, max: 10_000 }, amount: { min: 0.0001, max: 100 }, cost: { min: 10, max: 1_000 } }} | ${10}
+    ${'fallback to affordable amount when min cost is unreachable'} | ${{ currency: 5, asset: 5 }}     | ${1}         | ${'BUY'}  | ${undefined} | ${{ price: { min: 1, max: 10_000 }, amount: { min: 0.0001, max: 100 }, cost: { min: 10, max: 1_000 } }} | ${5}
+    ${'return the asset balance for SELL side'}                     | ${{ currency: 120, asset: 7.5 }} | ${42}        | ${'SELL'} | ${undefined} | ${undefined}                                                                                            | ${7.5}
+  `('should $description', ({ portfolio, currentPrice, side, quantity, marketLimits, expected }) => {
+    expect(resolveOrderAmount(portfolio, currentPrice, side, quantity, marketLimits)).toBeCloseTo(expected);
   });
 });
 
