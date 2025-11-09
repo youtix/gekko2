@@ -131,7 +131,19 @@ export class Trader extends Plugin {
     const { order, date, id } = advice;
     const { side, type, quantity } = order;
     const price = this.price;
-    const requestedAmount = resolveOrderAmount(this.portfolio, price, side, quantity);
+    const exchange = this.getExchange();
+    const requestedAmount = resolveOrderAmount(this.portfolio, price, side, quantity, exchange.getMarketLimits());
+
+    if (!(requestedAmount > 0)) {
+      const reason = `Trying to create an order with ${requestedAmount} amount`;
+      error('trader', reason);
+      return this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
+        orderId: id,
+        type,
+        date,
+        reason,
+      });
+    }
 
     info('trader', `Creating ${type} order to ${side} ${requestedAmount} ${this.asset}`);
     this.deferredEmit<OrderInitiated>(ORDER_INITIATED_EVENT, {
@@ -143,7 +155,6 @@ export class Trader extends Plugin {
       type,
       requestedAmount,
     });
-    const exchange = this.getExchange();
 
     const orderInstance = new ORDER_FACTORY[type](id, side, requestedAmount, exchange);
     this.orders.push(orderInstance);

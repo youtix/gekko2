@@ -72,7 +72,7 @@ describe('PluginsStream', () => {
   it('forwards candles to the dummy exchange before plugin processing', async () => {
     const callOrder: string[] = [];
     const dummyExchange = {
-      addCandle: vi.fn(() => {
+      processOneMinuteCandle: vi.fn(() => {
         callOrder.push('exchange');
       }),
       getExchangeName: () => 'dummy-cex',

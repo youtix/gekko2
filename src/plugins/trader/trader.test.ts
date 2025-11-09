@@ -145,6 +145,7 @@ describe('Trader', () => {
     getInterval: Mock;
     fetchTicker: Mock;
     fetchPortfolio: Mock;
+    getMarketLimits: Mock;
   };
   let setIntervalSpy: ReturnType<typeof vi.spyOn>;
   let clearIntervalSpy: ReturnType<typeof vi.spyOn>;
@@ -192,6 +193,7 @@ describe('Trader', () => {
       getInterval: vi.fn(() => 42),
       fetchTicker: vi.fn().mockResolvedValue({ bid: 123 }),
       fetchPortfolio: vi.fn().mockResolvedValue({ asset: 1, currency: 2 }),
+      getMarketLimits: vi.fn(() => undefined),
     };
 
     trader['getExchange'] = vi.fn().mockReturnValue(fakeExchange);

@@ -22,4 +22,4 @@ export interface MarketLimits {
   cost?: MarketLimitRange;
 }
 
-export type DummyExchange = Exchange & { addCandle: (candle: Candle) => void };
+export type DummyExchange = Exchange & { processOneMinuteCandle: (candle: Candle) => void };

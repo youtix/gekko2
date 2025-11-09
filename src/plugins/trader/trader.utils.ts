@@ -1,14 +1,33 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderSide } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
+import { MarketLimits } from '@services/exchange/exchange.types';
 import { warning } from '@services/logger';
 import { isNil } from 'lodash-es';
+import { DEFAULT_FEE_BUFFER } from './trader.const';
 
-export const resolveOrderAmount = (portfolio: Portfolio, currentPrice: number, side: OrderSide, quantity = 0) => {
+export const resolveOrderAmount = (
+  portfolio: Portfolio,
+  currentPrice: number,
+  side: OrderSide,
+  quantity = 0,
+  marketLimits?: MarketLimits,
+) => {
   if (quantity > 0) return quantity;
   if (side === 'BUY') {
-    if (!currentPrice) return 0;
-    return (portfolio.currency / currentPrice) * 0.95;
+    const spendable = portfolio.currency;
+    if (!(currentPrice > 0) || !(spendable > 0)) return 0;
+
+    const maxAffordableAmount = spendable / currentPrice;
+    const bufferedAmount = maxAffordableAmount * (1 - DEFAULT_FEE_BUFFER);
+
+    const minimalCost = marketLimits?.cost?.min;
+    if (!minimalCost || bufferedAmount * currentPrice >= minimalCost) return bufferedAmount;
+
+    const minimalAmount = minimalCost / currentPrice;
+    if (minimalAmount <= maxAffordableAmount) return minimalAmount;
+
+    return maxAffordableAmount;
   }
   return portfolio.asset;
 };
