@@ -322,25 +322,6 @@ describe('BinanceExchange', () => {
     });
   });
 
-  describe('fetchTradesImpl', () => {
-    it('limits and maps public trades', async () => {
-      const exchange = createExchange();
-      const trades = [{ id: 1 }, { id: 2 }];
-      mainClientMock.getRecentTrades.mockResolvedValue(trades as unknown);
-      mapPublicTradeToTradeMock.mockImplementation((trade: any) => ({ external: trade.id }));
-      const result = await exchange['fetchTradesImpl']();
-      expect({
-        result,
-        request: mainClientMock.getRecentTrades.mock.calls[0]?.[0],
-        mapped: mapPublicTradeToTradeMock.mock.calls.map(call => call[0]),
-      }).toEqual({
-        result: [{ external: 1 }, { external: 2 }],
-        request: { symbol: 'BTCUSDT', limit: 1000 },
-        mapped: trades,
-      });
-    });
-  });
-
   describe('fetchMyTradesImpl', () => {
     it('requests account trades with optional start time', async () => {
       const exchange = createExchange();

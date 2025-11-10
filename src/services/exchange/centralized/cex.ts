@@ -36,10 +36,6 @@ export abstract class CentralizedExchange extends Exchange {
     return this.retry(() => this.getKlinesImpl(from, timeframe, limits));
   }
 
-  public async fetchTrades() {
-    return this.retry(() => this.fetchTradesImpl());
-  }
-
   public async fetchMyTrades(from?: EpochTimeStamp) {
     return this.retry(() => this.fetchMyTradesImpl(from));
   }
@@ -71,7 +67,6 @@ export abstract class CentralizedExchange extends Exchange {
   protected abstract loadMarketsImpl(): Promise<void>;
   protected abstract fetchTickerImpl(): Promise<Ticker>;
   protected abstract getKlinesImpl(from?: EpochTimeStamp, timeframe?: string, limits?: number): Promise<Candle[]>;
-  protected abstract fetchTradesImpl(): Promise<Trade[]>;
   protected abstract fetchMyTradesImpl(from?: EpochTimeStamp): Promise<Trade[]>;
   protected abstract fetchPortfolioImpl(): Promise<Portfolio>;
   protected abstract createLimitOrderImpl(side: OrderSide, amount: number, price: number): Promise<OrderState>;

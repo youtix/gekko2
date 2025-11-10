@@ -60,7 +60,7 @@ describe('StrategyManager', () => {
   const trade = { id: '1' } as any;
 
   beforeEach(() => {
-    manager = new StrategyManager(1);
+    manager = new StrategyManager(2);
   });
 
   describe('createStrategy', () => {
@@ -141,7 +141,7 @@ describe('StrategyManager', () => {
   });
 
   describe('warmup', () => {
-    it('should emit warmup completed after exceeding period', () => {
+    it('should emit warmup completed when reaching period', () => {
       const listener = vi.fn();
       manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, listener);
       (manager as any).warmup(candle);

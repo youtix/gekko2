@@ -25,9 +25,9 @@ import { wait } from '@utils/process/process.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
-import { ORDER_FACTORY, SYNCHRONIZATION_INTERVAL } from './trader.const';
+import { DEFAULT_FEE_BUFFER, ORDER_FACTORY, SYNCHRONIZATION_INTERVAL } from './trader.const';
 import { traderSchema } from './trader.schema';
-import { computeOrderPricing, resolveOrderAmount } from './trader.utils';
+import { computeOrderPricing } from './trader.utils';
 
 export class Trader extends Plugin {
   private readonly orders: Order[];
@@ -171,22 +171,11 @@ export class Trader extends Plugin {
   public onStrategyCreateOrder(advice: Advice) {
     const { order, date, id } = advice;
     const { side, type, quantity } = order;
-    const price = this.price;
-    const exchange = this.getExchange();
-    const requestedAmount = resolveOrderAmount(this.portfolio, price, side, quantity, exchange.getMarketLimits());
+    const { asset, currency } = this.portfolio;
+    // We delegate the order validation (notional, lot, amount) to the exchange
+    const amount = quantity ?? (side === 'BUY' ? currency * (1 - DEFAULT_FEE_BUFFER) : asset);
 
-    if (!(requestedAmount > 0)) {
-      const reason = `Trying to create an order with ${requestedAmount} amount`;
-      error('trader', reason);
-      return this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
-        orderId: id,
-        type,
-        date,
-        reason,
-      });
-    }
-
-    info('trader', `Creating ${type} order to ${side} ${requestedAmount} ${this.asset}`);
+    info('trader', `Creating ${type} order to ${side} ${amount} ${this.asset}`);
     this.deferredEmit<OrderInitiated>(ORDER_INITIATED_EVENT, {
       orderId: id,
       side: side,
@@ -194,10 +183,11 @@ export class Trader extends Plugin {
       balance: this.balance,
       date,
       type,
-      amount: requestedAmount,
+      amount: amount,
     });
 
-    const orderInstance = new ORDER_FACTORY[type](id, side, requestedAmount, exchange);
+    const exchange = this.getExchange();
+    const orderInstance = new ORDER_FACTORY[type](id, side, amount, exchange);
     this.orders.push(orderInstance);
 
     // UPDATE EVENTS

@@ -162,7 +162,7 @@ describe('DummyCentralizedExchange', () => {
     expect(afterSell.asset).toBeCloseTo(initialPortfolio.asset + 1, 8);
     expect(afterSell.currency).toBeCloseTo(expectedSellCurrency, 8);
 
-    const trades = await exchange.fetchTrades();
+    const trades = await exchange.fetchMyTrades();
     expect(trades).toHaveLength(2);
     expect(trades[0]?.fee?.rate).toBeCloseTo(baseConfig.feeTaker ?? 0);
     expect(trades[1]?.fee?.rate).toBeCloseTo(baseConfig.feeTaker ?? 0);
@@ -222,7 +222,7 @@ describe('DummyCentralizedExchange', () => {
     expect(afterSellFill.asset).toBeCloseTo(6);
     expect(afterSellFill.currency).toBeCloseTo(expectedCurrencyAfterSell);
 
-    const trades = await exchange.fetchTrades();
+    const trades = await exchange.fetchMyTrades();
     expect(trades).toHaveLength(2);
     expect(trades[0]?.fee?.rate).toBeCloseTo(baseConfig.feeMaker ?? 0);
     expect(trades[1]?.fee?.rate).toBeCloseTo(baseConfig.feeMaker ?? 0);
@@ -248,7 +248,7 @@ describe('DummyCentralizedExchange', () => {
     const derived = await exchange.getKlines(undefined, '1m');
     expect(derived).not.toHaveLength(0);
 
-    const trades = await exchange.fetchTrades();
+    const trades = await exchange.fetchMyTrades();
     expect(trades).toHaveLength(1);
   });
 

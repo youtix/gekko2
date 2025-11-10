@@ -78,10 +78,6 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return filtered;
   }
 
-  protected async fetchTradesImpl(): Promise<Trade[]> {
-    return this.orders.toArray().map(this.mapOrderToTrade);
-  }
-
   protected async fetchMyTradesImpl(from?: EpochTimeStamp): Promise<Trade[]> {
     const arr = this.orders.toArray();
     const filtered = isNil(from) ? arr : arr.filter(order => order.timestamp >= from);

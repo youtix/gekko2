@@ -21,12 +21,7 @@ import { LIMITS } from '../../exchange.const';
 import { InvalidOrder, OrderNotFound } from '../../exchange.error';
 import { CentralizedExchange } from '../cex';
 import { BinanceExchangeConfig, BinanceSpotOrder } from './binance.types';
-import {
-  mapAccountTradeToTrade,
-  mapKlinesToCandles,
-  mapPublicTradeToTrade,
-  mapSpotOrderToOrder,
-} from './binance.utils';
+import { mapAccountTradeToTrade, mapKlinesToCandles, mapSpotOrderToOrder } from './binance.utils';
 
 export class BinanceExchange extends CentralizedExchange {
   private ws: WebsocketClient;
@@ -130,20 +125,6 @@ export class BinanceExchange extends CentralizedExchange {
       );
 
       return candles;
-    } catch (error) {
-      throw this.toError(error);
-    }
-  }
-
-  protected async fetchTradesImpl() {
-    const symbol = this.getRestSymbol();
-    const limit = LIMITS[this.exchangeName]?.trades;
-    try {
-      const trades = await this.client.getRecentTrades({
-        symbol,
-        ...(limit ? { limit } : {}),
-      });
-      return trades.map(mapPublicTradeToTrade);
     } catch (error) {
       throw this.toError(error);
     }

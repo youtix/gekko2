@@ -59,10 +59,6 @@ class TestCentralizedExchange extends CentralizedExchange {
     return [];
   }
 
-  protected async fetchTradesImpl(): Promise<Trade[]> {
-    return [];
-  }
-
   protected async fetchMyTradesImpl(): Promise<Trade[]> {
     return [];
   }
