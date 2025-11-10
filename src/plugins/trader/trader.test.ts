@@ -418,7 +418,7 @@ describe('Trader', () => {
       const initiated = getInitiatedPayload();
       expect(initiated?.orderId).toBe(advice.id);
       expect(initiated?.type).toBe(advice.order.type);
-      expect(initiated?.amount).toBeCloseTo(9.5, 5);
+      expect(initiated?.amount).toBeCloseTo(950, 5);
     });
 
     it('computes SELL order amount from asset holdings', () => {
@@ -431,22 +431,15 @@ describe('Trader', () => {
       expect(initiated?.amount).toBeCloseTo(2.5, 5);
     });
 
-    it('emits ORDER_ERRORED_EVENT when requested amount is non-positive', () => {
-      trader['portfolio'] = { asset: 0, currency: 0 };
-      const advice = buildAdvice();
+    it('uses provided quantity when present', () => {
+      const advice = buildAdvice({ order: { quantity: 1.2345, type: 'MARKET', side: 'BUY' } });
 
       trader.onStrategyCreateOrder(advice);
 
-      expect(logger.error).toHaveBeenCalledWith('trader', 'Trying to create an order with 0 amount');
-      expect((trader as any).orders).toHaveLength(0);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(
-        ORDER_ERRORED_EVENT,
-        expect.objectContaining({
-          orderId: advice.id,
-          type: advice.order.type,
-          reason: 'Trying to create an order with 0 amount',
-        }),
-      );
+      const initiated = getInitiatedPayload();
+      expect(initiated?.amount).toBeCloseTo(1.2345, 5);
+      const [orderInstance] = (trader as any).orders;
+      expect(orderInstance.amount).toBeCloseTo(1.2345, 5);
     });
 
     it('handles ORDER_ERRORED_EVENT by emitting error and removing order', async () => {

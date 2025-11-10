@@ -88,7 +88,7 @@ export abstract class Exchange {
   public abstract loadMarkets(): Promise<void>;
   public abstract fetchTicker(): Promise<Ticker>;
   public abstract getKlines(from?: EpochTimeStamp, timeframe?: string, limits?: number): Promise<Candle[]>;
-  public abstract fetchTrades(): Promise<Trade[]>;
+  /** fetch all trades made by the user */
   public abstract fetchMyTrades(from?: EpochTimeStamp): Promise<Trade[]>;
   public abstract fetchPortfolio(): Promise<Portfolio>;
   public abstract createLimitOrder(side: OrderSide, amount: number, price: number): Promise<OrderState>;

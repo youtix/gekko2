@@ -147,7 +147,7 @@ export class StrategyManager extends EventEmitter {
 
   private warmup(candle: Candle) {
     this.age++;
-    if (this.warmupPeriod < this.age) {
+    if (this.warmupPeriod <= this.age) {
       this.isWarmupCompleted = true;
       info('strategy', `Strategy warmup done ! Sending first candle (${toISOString(candle.start)}) to strategy`);
       this.emit(STRATEGY_WARMUP_COMPLETED_EVENT, candle);
