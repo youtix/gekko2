@@ -21,7 +21,7 @@ export class TMA implements Strategy<TMAStrategyParams> {
       log('debug', `No clear trend detected: ${short}/${medium}/${long}`);
     }
   }
-  init(addIndicator: AddIndicatorFn, strategyParams: TMAStrategyParams): void {
+  init({ strategyParams }: Tools<TMAStrategyParams>, addIndicator: AddIndicatorFn): void {
     const { long, medium, short, src } = strategyParams;
     addIndicator('SMA', { period: short, src });
     addIndicator('SMA', { period: medium, src });

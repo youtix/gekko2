@@ -1,6 +1,6 @@
 import type { AdviceOrder } from '@models/advice.types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UUID } from 'node:crypto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMARibbon } from './emaRibbon.strategy';
 
 const makeIndicator = (results?: number[], spread = 0) => (results ? [{ results, spread }] : [undefined]);
@@ -26,7 +26,7 @@ describe('EMARibbon', () => {
 
   it('init() adds the EMARibbon indicator with passed params', () => {
     const params = { src: 'close' as const, count: 6, start: 8, step: 2 };
-    strategy.init(addIndicator, params);
+    strategy.init({ strategyParams: params } as any, addIndicator);
     expect(addIndicator).toHaveBeenCalledWith('EMARibbon', { src: 'close', count: 6, start: 8, step: 2 });
   });
 

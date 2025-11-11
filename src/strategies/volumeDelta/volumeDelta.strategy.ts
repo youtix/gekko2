@@ -5,7 +5,7 @@ import type { VolumeDeltaStrategyParams, VolumeDeltaTrend } from './volumeDelta.
 export class VolumeDelta implements Strategy<VolumeDeltaStrategyParams> {
   private trend?: VolumeDeltaTrend;
 
-  init(addIndicator: AddIndicatorFn, strategyParams: VolumeDeltaStrategyParams): void {
+  init({ strategyParams }: Tools<VolumeDeltaStrategyParams>, addIndicator: AddIndicatorFn): void {
     const { src, signal } = strategyParams;
     addIndicator('VolumeDelta', { src, signal });
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };

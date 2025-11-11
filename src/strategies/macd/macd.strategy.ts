@@ -7,7 +7,7 @@ import { MACDStrategyParams, MACDTrend } from './macd.types';
 export class MACD implements Strategy<MACDStrategyParams> {
   private trend?: MACDTrend;
 
-  init(addIndicator: AddIndicatorFn, strategyParams: MACDStrategyParams): void {
+  init({ strategyParams }: Tools<MACDStrategyParams>, addIndicator: AddIndicatorFn): void {
     addIndicator('MACD', { short: strategyParams.short, long: strategyParams.long, signal: strategyParams.signal });
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };
   }

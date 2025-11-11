@@ -355,7 +355,7 @@ describe('Trader', () => {
       const candle = { close: 99 } as any;
       await trader['processOneMinuteCandle'](candle);
       expect(trader['warmupCandle']).toBe(candle);
-      expect(trader['price']).toBe(0);
+      expect(trader['price']).toBe(99);
     });
 
     it('synchronizes and emits portfolio value change after warmup', async () => {

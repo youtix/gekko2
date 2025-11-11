@@ -43,7 +43,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
     }
   }
 
-  init(addIndicator: AddIndicatorFn, strategyParams: RSIStrategyParams): void {
+  init({ strategyParams }: Tools<RSIStrategyParams>, addIndicator: AddIndicatorFn): void {
     const { period, src } = strategyParams;
     addIndicator('RSI', { period, src });
   }
