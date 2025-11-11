@@ -1,4 +1,4 @@
-import { OrderCompleted, OrderErrored } from '@models/order.types';
+import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { DEMAStrategyParams } from './dema.types';
@@ -59,6 +59,7 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
   // NOT USED
   onEachCandle(_tools: Tools<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
   onOrderCompleted(_order: OrderCompleted): void {}
+  onOrderCanceled(_order: OrderCanceled): void {}
   onOrderErrored(_order: OrderErrored): void {}
   end(): void {}
 }

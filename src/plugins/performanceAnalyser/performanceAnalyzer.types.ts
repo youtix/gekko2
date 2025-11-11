@@ -5,6 +5,11 @@ import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 
 export type PerformanceAnalyzerConfig = z.infer<typeof performanceAnalyzerSchema>;
 
+export type TradeBalances = {
+  startBalance?: number;
+  previousBalance?: number;
+};
+
 export type Start = {
   balance: number;
   portfolio: Nullable<Portfolio>;

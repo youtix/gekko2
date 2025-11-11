@@ -21,13 +21,16 @@ vi.mock('@utils/math/round.utils', () => ({
   round: roundMock,
 }));
 
-vi.mock('@utils/string/string.utils', () => ({
-  formatRatio: formatRatioMock,
-}));
+vi.mock('@utils/string/string.utils', async () => {
+  const actual = await vi.importActual<typeof import('@utils/string/string.utils')>('@utils/string/string.utils');
+  return {
+    ...actual,
+    formatRatio: formatRatioMock,
+  };
+});
 
 let logFinalize: typeof import('./performanceAnalyzer.utils').logFinalize;
 let logTrade: typeof import('./performanceAnalyzer.utils').logTrade;
-
 beforeAll(async () => {
   ({ logFinalize, logTrade } = await import('./performanceAnalyzer.utils'));
 });
@@ -35,9 +38,17 @@ beforeAll(async () => {
 describe('performanceAnalyzer.utils', () => {
   beforeEach(() => {
     toISOStringMock.mockImplementation((value: EpochTimeStamp) => `iso(${value})`);
-    roundMock.mockImplementation(
-      (value: number, decimals: number, mode?: string) => `rounded(${value},${decimals},${mode ?? 'default'})`,
-    );
+    roundMock.mockImplementation((value: number, decimals = 0, mode: 'down' | 'up' | 'halfEven' = 'up') => {
+      const factor = 10 ** decimals;
+      if (mode === 'down') return Math.floor(value * factor) / factor;
+      if (mode === 'up') return Math.round(value * factor) / factor;
+      const scaled = value * factor;
+      const floor = Math.floor(scaled);
+      const fraction = scaled - floor;
+      if (fraction > 0.5) return (floor + 1) / factor;
+      if (fraction < 0.5) return floor / factor;
+      return (floor % 2 === 0 ? floor : floor + 1) / factor;
+    });
     formatRatioMock.mockImplementation((ratio: number) => `ratio(${ratio})`);
   });
 
@@ -103,19 +114,19 @@ describe('performanceAnalyzer.utils', () => {
         startTime: 'iso(1700000000)',
         endtime: 'iso(1700100000)',
         duration: '1h',
-        exposure: 'rounded(55.678,2,halfEven)% of time exposed',
+        exposure: '55.68% of time exposed',
         startPrice: 'formatted(21000) EUR',
         endPrice: 'formatted(22250) EUR',
-        market: 'rounded(12.34,2,down)%',
-        alpha: 'rounded(2.56,2,down)%',
-        simulatedYearlyProfit: 'formatted(730) EUR (rounded(15.12,2,down)%)',
+        market: '12.34%',
+        alpha: '2.56%',
+        simulatedYearlyProfit: 'formatted(730) EUR (15.12%)',
         amountOfOrders: 7,
         originalBalance: 'formatted(4800) EUR',
         currentbalance: 'formatted(5050) EUR',
         sharpeRatio: 'ratio(1.5)',
         sortinoRatio: 'ratio(1.1)',
         standardDeviation: 'ratio(0.75)',
-        expectedDownside: 'rounded(9.87,2,down)%',
+        expectedDownside: '9.86%',
       });
     });
 
@@ -140,27 +151,67 @@ describe('performanceAnalyzer.utils', () => {
       feePercent: 0.2,
     };
 
+    let consoleTableMock: ReturnType<typeof vi.fn>;
+    let numberFormatSpy: ReturnType<typeof vi.spyOn>;
+    let numberFormatFormatMock: ReturnType<typeof vi.fn>;
+    let consoleTableSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      consoleTableMock = vi.fn();
+      numberFormatFormatMock = vi.fn((value: number) => `formatted(${value})`);
+      // @ts-expect-error to fix one day
+      numberFormatSpy = vi
+        .spyOn(Intl, 'NumberFormat')
+        .mockImplementation(() => ({ format: numberFormatFormatMock }) as unknown as Intl.NumberFormat);
+      consoleTableSpy = vi.spyOn(console, 'table').mockImplementation(consoleTableMock);
+    });
+
+    afterEach(() => {
+      numberFormatSpy.mockRestore();
+      consoleTableSpy.mockRestore();
+    });
+
     it.each`
-      side      | amountField   | quantityLabel                         | expectedAsset
-      ${'BUY'}  | ${'asset'}    | ${'rounded(1.23456789,8,default)'}    | ${'BTC'}
-      ${'SELL'} | ${'currency'} | ${'rounded(4321.12345678,8,default)'} | ${'USD'}
-    `('logs a normalized $side trade report', ({ side, amountField, quantityLabel, expectedAsset }) => {
+      side      | quantityLabel      | expectedAsset
+      ${'BUY'}  | ${'1.23456789'}    | ${'BTC'}
+      ${'SELL'} | ${'4321.12345678'} | ${'USD'}
+    `('logs a normalized $side trade report', ({ side, quantityLabel, expectedAsset }) => {
       const trade = { ...baseTrade, side, portfolio: { ...baseTrade.portfolio } } as OrderCompleted;
-      logTrade(trade, 'USD', 'BTC');
-      expect({
-        roundCalls: roundMock.mock.calls,
-        message: debugMock.mock.calls[0],
-        amountField,
-        usedSide: trade.side,
-      }).toEqual({
-        roundCalls: [[trade.portfolio[amountField as 'asset' | 'currency'], 8]],
-        message: [
-          'performance analyzer',
-          `${side === 'BUY' ? 'Bought' : 'Sold'} ${quantityLabel} ${expectedAsset} at iso(1700200000)`,
-        ],
-        amountField,
-        usedSide: side,
+      logTrade(trade, 'USD', 'BTC', false, { startBalance: 1000 });
+      expect(debugMock.mock.calls[0]).toEqual([
+        'performance analyzer',
+        `${side === 'BUY' ? 'Bought' : 'Sold'} ${quantityLabel} ${expectedAsset} at iso(1700200000)`,
+      ]);
+      expect(consoleTableMock).not.toHaveBeenCalled();
+    });
+
+    it('renders a console table with portfolio deltas when enabled', () => {
+      logTrade(baseTrade, 'EUR', 'BTC', true, { startBalance: 900, previousBalance: 950 });
+
+      expect(consoleTableMock).toHaveBeenCalledTimes(1);
+      expect(consoleTableMock.mock.calls[0][0]).toEqual({
+        label: 'TRADE SNAPSHOT',
+        timestamp: 'iso(1700200000)',
+        side: 'BUY',
+        amount: '1 BTC',
+        price: 'formatted(10) EUR',
+        effectivePrice: 'formatted(10) EUR',
+        volume: 'formatted(10) EUR',
+        balance: 'formatted(1000) EUR',
+        portfolioChange: 'since last trade: +formatted(50) EUR (+5.26%)',
+        totalSinceStart: 'since start: +formatted(100) EUR (+11.11%)',
+        feePaid: 'formatted(10) EUR (0.2%)',
       });
+    });
+
+    it('falls back to the initial balance when no previous trade is available', () => {
+      logTrade(baseTrade, 'USD', 'BTC', true, { startBalance: 1000 });
+      expect(consoleTableMock.mock.calls[0][0]).toEqual(
+        expect.objectContaining({
+          portfolioChange: 'since start: formatted(0) USD (0%)',
+          totalSinceStart: 'since start: formatted(0) USD (0%)',
+        }),
+      );
     });
   });
 });

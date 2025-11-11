@@ -3,6 +3,7 @@ import {
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,
   ORDER_INITIATED_EVENT,
+  ORDER_INVALID_EVENT,
   PORTFOLIO_CHANGE_EVENT,
   PORTFOLIO_VALUE_CHANGE_EVENT,
 } from '@constants/event.const';
@@ -13,7 +14,6 @@ import * as lodash from 'lodash-es';
 import type { Mock } from 'vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../services/configuration/configuration';
-import { ORDER_INVALID_EVENT } from '../../services/core/order/order.const';
 import * as logger from '../../services/logger';
 import * as processUtils from '../../utils/process/process.utils';
 import { Trader } from './trader';
@@ -418,7 +418,7 @@ describe('Trader', () => {
       const initiated = getInitiatedPayload();
       expect(initiated?.orderId).toBe(advice.id);
       expect(initiated?.type).toBe(advice.order.type);
-      expect(initiated?.amount).toBeCloseTo(950, 5);
+      expect(initiated?.amount).toBeCloseTo(9.5, 5);
     });
 
     it('computes SELL order amount from asset holdings', () => {

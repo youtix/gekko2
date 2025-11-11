@@ -1,4 +1,4 @@
-import { OrderCompleted, OrderErrored } from '@models/order.types';
+import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
 import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber } from 'lodash-es';
@@ -51,6 +51,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
   // NOT USED
   onEachCandle(_tools: Tools<RSIStrategyParams>, ..._indicators: unknown[]): void {}
   onOrderCompleted(_order: OrderCompleted): void {}
+  onOrderCanceled(_order: OrderCanceled): void {}
   onOrderErrored(_order: OrderErrored): void {}
   log(_tools: Tools<RSIStrategyParams>, ..._indicators: unknown[]): void {}
   end(): void {}

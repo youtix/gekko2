@@ -1,5 +1,5 @@
+import { round } from '@utils/math/round.utils';
 import { camelCase } from 'lodash-es';
-import { round } from '../math/round.utils';
 import { END_Y_WORDS, IRREGULAR } from './string.const';
 
 export const toCamelCase = (...args: string[]) => {
@@ -37,6 +37,18 @@ export function formatRatio(x: number | null | undefined): string {
   return ratioFormatter.format(rounded);
 }
 
-export const formatPercentageList = (values: ReadonlyArray<number> | undefined): string => {
-  return values?.length ? `[${values.map(value => `${round(value, 2, 'down')}%`).join(', ')}]` : '[]';
+export const formatSignedAmount = (value: number, currency: string, formatter: Intl.NumberFormat) => {
+  const absolute = formatter.format(Math.abs(value));
+  if (value > 0) return `+${absolute} ${currency}`;
+  if (value < 0) return `-${absolute} ${currency}`;
+  return `${absolute} ${currency}`;
+};
+
+export const formatSignedPercent = (value: number | null | undefined) => {
+  if (value === null || value === undefined || Number.isNaN(value) || !Number.isFinite(value)) return 'n/a';
+  const roundedValue = round(value, 2, 'halfEven');
+  const absolute = Math.abs(roundedValue);
+  if (roundedValue > 0) return `+${absolute}%`;
+  if (roundedValue < 0) return `-${absolute}%`;
+  return '0%';
 };

@@ -1,4 +1,5 @@
 import {
+  STRATEGY_CANCEL_ORDER_EVENT,
   STRATEGY_CREATE_ORDER_EVENT,
   STRATEGY_INFO_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
@@ -7,7 +8,7 @@ import {
 import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { OrderCompleted } from '@models/order.types';
+import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -59,6 +60,15 @@ describe('TradingAdvisor', () => {
     feePercent: 0.33,
     type: 'STICKY',
   };
+  const defaultCanceledOrder: OrderCanceled = {
+    orderId: '91f8d591-1a72-4d26-9477-5455e8d88111',
+    date: 0,
+    type: 'STICKY',
+  };
+  const defaultErroredOrder: OrderErrored = {
+    ...defaultCanceledOrder,
+    reason: 'Order errored',
+  };
 
   let advisor: TradingAdvisor;
 
@@ -67,106 +77,150 @@ describe('TradingAdvisor', () => {
     advisor['deferredEmit'] = vi.fn();
   });
 
-  describe('processInit', () => {
-    it('should throw StrategyNotFoundError if an invalid strategy name is provided', async () => {
-      const badAdvisor = new TradingAdvisor({
-        name: 'TradingAdvisor',
-        strategyName: 'NonExistentStrategy',
+  describe('life cycle functions', () => {
+    describe('processInit', () => {
+      it('should throw StrategyNotFoundError if an invalid strategy name is provided', async () => {
+        const badAdvisor = new TradingAdvisor({
+          name: 'TradingAdvisor',
+          strategyName: 'NonExistentStrategy',
+        });
+        await expect(() => badAdvisor['processInit']()).rejects.toThrowError(GekkoError);
       });
-      await expect(() => badAdvisor['processInit']()).rejects.toThrowError(GekkoError);
+      it('should create a strategy manager when a valid strategy name is provided', async () => {
+        await advisor['processInit']();
+        expect(advisor['strategyManager']).toBeDefined();
+      });
     });
-    it('should create a strategy manager when a valid strategy name is provided', async () => {
-      await advisor['processInit']();
-      expect(advisor['strategyManager']).toBeDefined();
+
+    describe('processOneMinuteCandle', () => {
+      beforeEach(async () => {
+        await advisor['processInit']();
+      });
+      it('should update the candle property when processOneMinuteCandle is called', () => {
+        advisor['processOneMinuteCandle'](defaultCandle);
+        expect(advisor['candle']).toEqual(defaultCandle);
+      });
+
+      it('should call strategyManager.onNewCandle when addSmallCandle returns a new candle', () => {
+        advisor['candleBatcher'].addSmallCandle = vi.fn(() => defaultCandle);
+        advisor['strategyManager']!.onNewCandle = vi.fn();
+        advisor['processOneMinuteCandle'](defaultCandle);
+        expect(advisor['strategyManager']?.onNewCandle).toHaveBeenCalledWith(defaultCandle);
+      });
+
+      it('should NOT call strategyManager.onNewCandle when addSmallCandle returns a falsy value', () => {
+        advisor['candleBatcher'].addSmallCandle = vi.fn(() => undefined);
+        advisor['strategyManager']!.onNewCandle = vi.fn();
+        advisor['processOneMinuteCandle'](defaultCandle);
+        expect(advisor['strategyManager']?.onNewCandle).not.toHaveBeenCalled();
+      });
+
+      it('should emit STRATEGY_TIMEFRAME_CANDLE_EVENT when addSmallCandle returns a new candle', () => {
+        advisor['candleBatcher']['addSmallCandle'] = vi.fn(() => defaultCandle);
+        advisor['strategyManager']!.onNewCandle = vi.fn();
+        advisor['processOneMinuteCandle'](defaultCandle);
+        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_CANDLE_EVENT, defaultCandle);
+      });
+    });
+
+    describe('processFinalize', () => {
+      beforeEach(async () => {
+        await advisor['processInit']();
+      });
+      it('should call strategyManager.finish when processFinalize is called', () => {
+        advisor['strategyManager']!.finish = vi.fn();
+        advisor['processFinalize']();
+        expect(advisor['strategyManager']?.finish).toHaveBeenCalled();
+      });
     });
   });
 
-  describe('processOneMinuteCandle', () => {
-    beforeEach(async () => {
-      await advisor['processInit']();
-    });
-    it('should update the candle property when processOneMinuteCandle is called', () => {
-      advisor['processOneMinuteCandle'](defaultCandle);
-      expect(advisor['candle']).toEqual(defaultCandle);
-    });
-
-    it('should call strategyManager.onNewCandle when addSmallCandle returns a new candle', () => {
-      advisor['candleBatcher'].addSmallCandle = vi.fn(() => defaultCandle);
-      advisor['strategyManager']!.onNewCandle = vi.fn();
-      advisor['processOneMinuteCandle'](defaultCandle);
-      expect(advisor['strategyManager']?.onNewCandle).toHaveBeenCalledWith(defaultCandle);
-    });
-
-    it('should NOT call strategyManager.onNewCandle when addSmallCandle returns a falsy value', () => {
-      advisor['candleBatcher'].addSmallCandle = vi.fn(() => undefined);
-      advisor['strategyManager']!.onNewCandle = vi.fn();
-      advisor['processOneMinuteCandle'](defaultCandle);
-      expect(advisor['strategyManager']?.onNewCandle).not.toHaveBeenCalled();
-    });
-
-    it('should emit STRATEGY_TIMEFRAME_CANDLE_EVENT when addSmallCandle returns a new candle', () => {
-      advisor['candleBatcher']['addSmallCandle'] = vi.fn(() => defaultCandle);
-      advisor['strategyManager']!.onNewCandle = vi.fn();
-      advisor['processOneMinuteCandle'](defaultCandle);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_CANDLE_EVENT, defaultCandle);
-    });
-  });
-
-  describe('onOrderCompleted', () => {
-    beforeEach(async () => {
-      await advisor['processInit']();
-    });
-    it('should call strategyManager.onOrderCompleted when onOrderCompleted is called', () => {
-      advisor['strategyManager']!.onOrderCompleted = vi.fn();
-      advisor.onOrderCompleted(defaultBuyTradeEvent);
-      expect(advisor['strategyManager']?.onOrderCompleted).toHaveBeenCalledExactlyOnceWith(defaultBuyTradeEvent);
-    });
-  });
-
-  describe('processFinalize', () => {
-    beforeEach(async () => {
-      await advisor['processInit']();
-    });
-    it('should call strategyManager.finish when processFinalize is called', () => {
-      advisor['strategyManager']!.finish = vi.fn();
-      advisor['processFinalize']();
-      expect(advisor['strategyManager']?.finish).toHaveBeenCalled();
-    });
-  });
   describe('relay functions', () => {
     beforeEach(async () => {
       await advisor['processInit']();
     });
-    it('should emit STRATEGY_WARMUP_COMPLETED_EVENT in relayStrategyWarmupCompleted', () => {
-      const payload = { warmup: true };
-      advisor['relayStrategyWarmupCompleted'](payload);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_WARMUP_COMPLETED_EVENT, payload);
-    });
-
-    it('should throw GekkoError in relayCreateOrder if no candle is set', () => {
-      (advisor as any).candle = undefined;
-      expect(() => advisor['relayCreateOrder'](defaultAdvice)).toThrow(GekkoError);
-    });
-
-    it('should emit STRATEGY_CREATE_ORDER_EVENT in relayCreateOrder when a candle is set', () => {
-      const candleStart = toTimestamp('2025-01-01T00:00:00Z');
-      (advisor as any).candle = defaultCandle;
-      advisor['relayCreateOrder'](defaultAdvice);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CREATE_ORDER_EVENT, {
-        ...defaultAdvice,
-        date: addMinutes(candleStart, 1).getTime(),
+    describe('relayStrategyWarmupCompleted', () => {
+      it('should emit STRATEGY_WARMUP_COMPLETED_EVENT in relayStrategyWarmupCompleted', () => {
+        const payload = { warmup: true };
+        advisor['relayStrategyWarmupCompleted'](payload);
+        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_WARMUP_COMPLETED_EVENT, payload);
       });
     });
 
-    it('should emit STRATEGY_INFO_EVENT in relayStrategyinfo when strategy logs are emited', () => {
-      const strategyInfoPayload: StrategyInfo = {
-        level: 'debug',
-        message: 'Hello World !',
-        tag: 'strategy',
-        timestamp: 123456789,
-      };
-      advisor['relayStrategyInfo'](strategyInfoPayload);
-      expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_INFO_EVENT, strategyInfoPayload);
+    describe('relayCreateOrder', () => {
+      it('should throw GekkoError in relayCreateOrder if no candle is set', () => {
+        (advisor as any).candle = undefined;
+        expect(() => advisor['relayCreateOrder'](defaultAdvice)).toThrow(GekkoError);
+      });
+
+      it('should emit STRATEGY_CREATE_ORDER_EVENT in relayCreateOrder when a candle is set', () => {
+        const candleStart = toTimestamp('2025-01-01T00:00:00Z');
+        (advisor as any).candle = defaultCandle;
+        advisor['relayCreateOrder'](defaultAdvice);
+        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CREATE_ORDER_EVENT, {
+          ...defaultAdvice,
+          date: addMinutes(candleStart, 1).getTime(),
+        });
+      });
+    });
+
+    describe('relayStrategyinfo', () => {
+      it('should emit STRATEGY_INFO_EVENT in relayStrategyinfo when strategy logs are emited', () => {
+        const strategyInfoPayload: StrategyInfo = {
+          level: 'debug',
+          message: 'Hello World !',
+          tag: 'strategy',
+          timestamp: 123456789,
+        };
+        advisor['relayStrategyInfo'](strategyInfoPayload);
+        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_INFO_EVENT, strategyInfoPayload);
+      });
+    });
+
+    describe('relayCancelOrder', () => {
+      it('should throw GekkoError in relayCancelOrder if no candle is set', () => {
+        (advisor as any).candle = undefined;
+        expect(() => advisor['relayCancelOrder'](defaultCanceledOrder.orderId)).toThrow(GekkoError);
+      });
+
+      it('should emit STRATEGY_CANCEL_ORDER_EVENT in relayCancelOrder when a candle is set', () => {
+        (advisor as any).candle = defaultCandle;
+        advisor['relayCancelOrder'](defaultCanceledOrder.orderId);
+        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(
+          STRATEGY_CANCEL_ORDER_EVENT,
+          defaultCanceledOrder.orderId,
+        );
+      });
+    });
+  });
+
+  describe('listeners functions', () => {
+    beforeEach(async () => {
+      await advisor['processInit']();
+    });
+
+    describe('onOrderCompleted', () => {
+      it('should call strategyManager.onOrderCompleted when onOrderCompleted is called', () => {
+        advisor['strategyManager']!.onOrderCompleted = vi.fn();
+        advisor.onOrderCompleted(defaultBuyTradeEvent);
+        expect(advisor['strategyManager']?.onOrderCompleted).toHaveBeenCalledExactlyOnceWith(defaultBuyTradeEvent);
+      });
+    });
+
+    describe('onOrderCanceled', () => {
+      it('should call strategyManager.onOrderCanceled when onOrderCanceled is called', () => {
+        advisor['strategyManager']!.onOrderCanceled = vi.fn();
+        advisor.onOrderCanceled(defaultCanceledOrder);
+        expect(advisor['strategyManager']?.onOrderCanceled).toHaveBeenCalledExactlyOnceWith(defaultCanceledOrder);
+      });
+    });
+
+    describe('onOrderErrored', () => {
+      it('should call strategyManager.onOrderErrored when onOrderErrored is called', () => {
+        advisor['strategyManager']!.onOrderErrored = vi.fn();
+        advisor.onOrderErrored(defaultErroredOrder);
+        expect(advisor['strategyManager']?.onOrderErrored).toHaveBeenCalledExactlyOnceWith(defaultErroredOrder);
+      });
     });
   });
 });
