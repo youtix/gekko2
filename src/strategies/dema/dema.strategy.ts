@@ -6,7 +6,7 @@ import { DEMAStrategyParams } from './dema.types';
 export class DEMA implements Strategy<DEMAStrategyParams> {
   private currentTrend?: 'down' | 'up';
 
-  init(addIndicator: AddIndicatorFn, strategyParams: DEMAStrategyParams): void {
+  init({ strategyParams }: Tools<DEMAStrategyParams>, addIndicator: AddIndicatorFn): void {
     addIndicator('DEMA', { period: strategyParams.period });
     addIndicator('SMA', { period: strategyParams.period });
   }

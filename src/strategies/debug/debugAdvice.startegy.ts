@@ -26,7 +26,7 @@ export class DebugAdvice implements Strategy<DebugAdviceParams> {
     this.index++;
   }
 
-  init(_addIndicator: AddIndicatorFn, _strategyParams: unknown): void {}
+  init(_tools: Tools<DebugAdviceParams>, _addIndicator: AddIndicatorFn): void {}
   onEachCandle(_tools: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {}
   onOrderCompleted(_order: OrderCompleted): void {}
   onOrderCanceled(_order: OrderCanceled): void {}

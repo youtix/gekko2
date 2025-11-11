@@ -10,8 +10,8 @@ export class CCI implements Strategy<CCIStrategyParams> {
     this.trend = { direction: 'nodirection', duration: 0, persisted: false, adviced: false };
   }
 
-  init(addIndicator: AddIndicatorFn, strategySettings: CCIStrategyParams): void {
-    addIndicator('CCI', { period: strategySettings.period });
+  init({ strategyParams }: Tools<CCIStrategyParams>, addIndicator: AddIndicatorFn): void {
+    addIndicator('CCI', { period: strategyParams.period });
   }
 
   onCandleAfterWarmup(

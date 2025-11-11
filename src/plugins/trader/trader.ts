@@ -171,17 +171,7 @@ export class Trader extends Plugin {
     const { side, type, quantity } = order;
     const { asset, currency } = this.portfolio;
 
-    if (!quantity && side === 'BUY' && !this.price) {
-      const reason = 'Impossible to create order because the trading strategy is warming up';
-      error('trader', reason);
-      this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
-        orderId: id,
-        type,
-        date: this.currentTimestamp,
-        reason,
-      });
-    }
-
+    // Price cannot be zero here because we call processOneMinuteCandle before events (plugins stream)
     // We delegate the order validation (notional, lot, amount) to the exchange
     const amount = quantity ?? (side === 'BUY' ? (currency / this.price) * (1 - DEFAULT_FEE_BUFFER) : asset);
 
@@ -268,13 +258,11 @@ export class Trader extends Plugin {
 
   protected async processOneMinuteCandle(candle: Candle) {
     this.currentTimestamp = addMinutes(candle.start, 1).getTime();
-
-    if (!this.warmupCompleted) {
-      this.warmupCandle = candle;
-      return;
-    }
-
     this.price = candle.close;
+
+    // Return until warmup is done
+    if (!this.warmupCompleted) return (this.warmupCandle = candle);
+
     const previousBalance = this.balance;
     this.updateBalance();
 

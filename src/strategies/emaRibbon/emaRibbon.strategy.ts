@@ -5,7 +5,7 @@ import type { EMARibbonStrategyParams } from './emaRibbon.types';
 export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
   private isLong?: boolean;
 
-  init(addIndicator: AddIndicatorFn, strategyParams: EMARibbonStrategyParams): void {
+  init({ strategyParams }: Tools<EMARibbonStrategyParams>, addIndicator: AddIndicatorFn): void {
     const { src, count, start, step } = strategyParams;
     addIndicator('EMARibbon', { src, count, start, step });
   }

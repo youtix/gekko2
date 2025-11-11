@@ -17,7 +17,7 @@ export type Tools<T> = {
 };
 export interface Strategy<T> {
   /** Executed at the beginning of the strategy */
-  init(addIndicator: AddIndicatorFn, strategyParams: T): void;
+  init(tools: Tools<T>, addIndicator: AddIndicatorFn): void;
   /** On each candle from the beginning */
   onEachCandle(tools: Tools<T>, ...indicators: unknown[]): void;
   /** On each candle from the warmup event */

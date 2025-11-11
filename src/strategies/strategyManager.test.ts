@@ -1,13 +1,54 @@
 import {
+  STRATEGY_CANCEL_ORDER_EVENT,
   STRATEGY_CREATE_ORDER_EVENT,
   STRATEGY_INFO_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
+import { LogLevel } from '@models/logLevel.types';
 import { debug, error, info, warning } from '@services/logger';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrategyManager } from './strategyManager';
+
+const indicatorMocks = vi.hoisted(() => {
+  const indicatorInstances: Array<{
+    onNewCandle: ReturnType<typeof vi.fn>;
+    getResult: ReturnType<typeof vi.fn>;
+  }> = [];
+  const IndicatorMock = vi.fn().mockImplementation((_parameters: unknown) => {
+    const instance = {
+      onNewCandle: vi.fn(),
+      getResult: vi.fn().mockReturnValue('indicator-result'),
+    };
+    indicatorInstances.push(instance);
+    return instance;
+  });
+
+  return { IndicatorMock, indicatorInstances };
+});
+
+vi.mock('@indicators/index', () => ({
+  SMA: indicatorMocks.IndicatorMock,
+  UNKNOWN: undefined,
+}));
+
+const strategyMocks = vi.hoisted(() => {
+  class DummyStrategy {
+    init = vi.fn();
+    onEachCandle = vi.fn();
+    onCandleAfterWarmup = vi.fn();
+    onOrderCompleted = vi.fn();
+    onOrderCanceled = vi.fn();
+    onOrderErrored = vi.fn();
+    log = vi.fn();
+    end = vi.fn();
+  }
+
+  return { DummyStrategy, UnknownStrategy: undefined };
+});
+
+vi.mock('@strategies/index', () => strategyMocks);
 
 vi.mock('node:crypto', () => ({
   randomUUID: vi.fn(() => 'db2254e3-c749-448c-b7b6-aa28831bbae7'),
@@ -19,32 +60,26 @@ vi.mock('@services/logger', () => ({
   warning: vi.fn(),
   error: vi.fn(),
 }));
+
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
     getStrategy: vi.fn(() => ({ each: 1, wait: 0 })),
   }));
   return { config: new Configuration() };
 });
-vi.mock('@strategies/index', () => ({
-  DummyStrategy: class {
-    init = vi.fn();
-    onEachCandle = vi.fn();
-    onCandleAfterWarmup = vi.fn();
-    onOrderCompleted = vi.fn();
-    log = vi.fn();
-    end = vi.fn();
-  },
-  UnknownStrategy: undefined,
-}));
+
 vi.mock('./debug/debugAdvice.startegy.ts', () => ({
   DebugAdvice: class {
     init = vi.fn();
     onEachCandle = vi.fn();
     onCandleAfterWarmup = vi.fn();
     onOrderCompleted = vi.fn();
+    onOrderCanceled = vi.fn();
+    onOrderErrored = vi.fn();
     log = vi.fn();
     end = vi.fn();
   },
+  MissingStrategy: undefined,
 }));
 
 describe('StrategyManager', () => {
@@ -57,53 +92,55 @@ describe('StrategyManager', () => {
     close: 1,
     volume: 1,
   } as any;
-  const trade = { id: '1' } as any;
 
   beforeEach(() => {
-    manager = new StrategyManager(2);
+    manager = new StrategyManager(1);
   });
 
   describe('createStrategy', () => {
-    it('should instantiate strategy and mark as initialized', async () => {
+    it('instantiates a built-in strategy', async () => {
       await manager.createStrategy('DummyStrategy');
-      const strategy: any = (manager as any).strategy;
-      expect(strategy).toBeDefined();
-      expect((manager as any).isStartegyInitialized).toBe(true);
-      expect(strategy.init).toHaveBeenCalled();
+      expect(manager['strategy']).toBeInstanceOf(strategyMocks.DummyStrategy);
     });
 
-    it('should load strategy from provided path', async () => {
+    it('loads a strategy from a custom path', async () => {
       const strategyPath = path.resolve(__dirname, './debug/debugAdvice.startegy.ts');
       await manager.createStrategy('DebugAdvice', strategyPath);
-      const strategy: any = (manager as any).strategy;
+      const strategy: any = manager['strategy'];
       expect(strategy).toBeDefined();
-      expect(strategy.init).toHaveBeenCalled();
+      expect(strategy.constructor.name).toBe('DebugAdvice');
     });
 
-    it('should throw when strategy does not exist', async () => {
+    it('throws when built-in strategy is missing', async () => {
       await expect(manager.createStrategy('UnknownStrategy')).rejects.toThrow(GekkoError);
+    });
+
+    it('throws when external module does not expose the strategy', async () => {
+      const strategyPath = path.resolve(__dirname, './debug/debugAdvice.startegy.ts');
+      await expect(manager.createStrategy('MissingStrategy', strategyPath)).rejects.toThrow(GekkoError);
     });
   });
 
   describe('addIndicator', () => {
-    it('should add indicator before initialization', () => {
-      const indicator = (manager as any).addIndicator('SMA', { period: 1 });
-      expect(indicator).toBeDefined();
-      expect((manager as any).indicators).toHaveLength(1);
+    it('registers indicator instances from the registry', () => {
+      const indicator = manager['addIndicator']('SMA', { period: 10 });
+      expect(indicatorMocks.IndicatorMock).toHaveBeenCalledWith({ period: 10 });
+      expect(manager['indicators']).toContain(indicator);
     });
 
-    it('should throw when called after initialization', async () => {
-      await manager.createStrategy('DummyStrategy');
-      expect(() => (manager as any).addIndicator('SMA', { period: 1 })).toThrow(GekkoError);
+    it('throws when indicator is unknown', () => {
+      expect(() => manager['addIndicator']('UNKNOWN' as any, {})).toThrow(GekkoError);
     });
   });
 
-  describe('create order', () => {
-    it('should emit strategy advice event with incremented id', () => {
+  describe('order helpers', () => {
+    it('createOrder emits the advice event', () => {
       const listener = vi.fn();
       manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
       const order = { side: 'BUY', type: 'STICKY', quantity: 1 } as const;
+
       const id = manager['createOrder'](order);
+
       expect(id).toBe('db2254e3-c749-448c-b7b6-aa28831bbae7');
       expect(listener).toHaveBeenCalledWith({
         id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
@@ -111,83 +148,134 @@ describe('StrategyManager', () => {
       });
     });
 
-    it('should emit when quantity changes', () => {
+    it('cancelOrder emits the cancel event', () => {
       const listener = vi.fn();
-      manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
-      manager['createOrder']({ side: 'BUY', type: 'STICKY', quantity: 1 });
-      manager['createOrder']({ side: 'BUY', type: 'STICKY', quantity: 2 });
-      expect(listener).toHaveBeenCalledTimes(2);
+      manager.on(STRATEGY_CANCEL_ORDER_EVENT, listener);
+
+      manager['cancelOrder']('db2254e3-c749-448c-b7b6-aa28831bbae7');
+
+      expect(listener).toHaveBeenCalledWith('db2254e3-c749-448c-b7b6-aa28831bbae7');
     });
   });
 
   describe('log', () => {
-    it.each`
-      logFn      | level
-      ${debug}   | ${'debug'}
-      ${info}    | ${'info'}
-      ${warning} | ${'warn'}
-      ${error}   | ${'error'}
-    `('should call $level log function', ({ logFn, level }) => {
-      manager['log'](level, 'Hello World !');
-      expect(logFn).toHaveBeenCalledTimes(1);
+    it.each([
+      { level: 'debug' as LogLevel, logger: debug },
+      { level: 'info' as LogLevel, logger: info },
+      { level: 'warn' as LogLevel, logger: warning },
+      { level: 'error' as LogLevel, logger: error },
+    ])('calls $level logger', ({ level, logger }) => {
+      manager['log'](level, 'message');
+      expect(logger).toHaveBeenCalledWith('strategy', 'message');
     });
 
-    it('should emit strategy info event', () => {
-      const listener = vi.fn();
-      manager.on(STRATEGY_INFO_EVENT, listener);
-      (manager as any).log('error', 'Hello World !');
-      expect(listener).toHaveBeenCalledTimes(1);
-    });
-  });
+    it('emits STRATEGY_INFO_EVENT with metadata', () => {
+      vi.useFakeTimers();
+      try {
+        const timestamp = new Date('2024-01-01T00:00:00.000Z');
+        vi.setSystemTime(timestamp);
+        const listener = vi.fn();
+        manager.on(STRATEGY_INFO_EVENT, listener);
 
-  describe('warmup', () => {
-    it('should emit warmup completed when reaching period', () => {
-      const listener = vi.fn();
-      manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, listener);
-      (manager as any).warmup(candle);
-      expect(listener).not.toHaveBeenCalled();
-      (manager as any).warmup(candle);
-      expect(listener).toHaveBeenCalledWith(candle);
-      expect((manager as any).isWarmupCompleted).toBe(true);
+        manager['log']('error', 'Something happened');
+
+        expect(listener).toHaveBeenCalledWith({
+          timestamp: timestamp.getTime(),
+          level: 'error',
+          tag: 'strategy',
+          message: 'Something happened',
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
   describe('onNewCandle', () => {
-    it('should call indicator and strategy functions', () => {
-      const indicator = { onNewCandle: vi.fn(), getResult: vi.fn(() => 42) };
-      (manager as any).indicators.push(indicator);
-      const strategy: any = {
+    it('initializes strategy once, processes indicators, and emits warmup completion', () => {
+      const indicator = { onNewCandle: vi.fn(), getResult: vi.fn().mockReturnValue(42) };
+      manager['indicators'].push(indicator as any);
+      const strategy = {
+        init: vi.fn(),
         onEachCandle: vi.fn(),
-        onCandleAfterWarmup: vi.fn(),
         log: vi.fn(),
+        onCandleAfterWarmup: vi.fn(),
       };
-      (manager as any).strategy = strategy;
+      manager['strategy'] = strategy as any;
+      const warmupListener = vi.fn();
+      manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);
+
       manager.onNewCandle(candle);
+
+      expect(strategy.init).toHaveBeenCalledTimes(1);
       expect(indicator.onNewCandle).toHaveBeenCalledWith(candle);
       expect(indicator.getResult).toHaveBeenCalled();
-      expect(strategy.onEachCandle).toHaveBeenCalled();
+      expect(strategy.onEachCandle).toHaveBeenCalledTimes(1);
+
+      const [tools, indicatorResult] = strategy.onEachCandle.mock.calls[0] as [any, number];
+      expect(tools.candle).toBe(candle);
+      expect(tools.createOrder).toBe(manager['createOrder']);
+      expect(tools.cancelOrder).toBe(manager['cancelOrder']);
+      expect(tools.log).toBe(manager['log']);
+      expect(tools.strategyParams).toEqual({ each: 1, wait: 0 });
+      expect(indicatorResult).toBe(42);
       expect(strategy.log).not.toHaveBeenCalled();
       expect(strategy.onCandleAfterWarmup).not.toHaveBeenCalled();
+      expect(warmupListener).not.toHaveBeenCalled();
+
       manager.onNewCandle(candle);
-      expect(strategy.log).toHaveBeenCalled();
-      expect(strategy.onCandleAfterWarmup).toHaveBeenCalled();
+
+      expect(strategy.init).toHaveBeenCalledTimes(1);
+      expect(warmupListener).toHaveBeenCalledWith(candle);
+      expect(info).toHaveBeenCalledWith(
+        'strategy',
+        expect.stringContaining('Strategy warmup done ! Sending first candle (1970-01-01T00:00:00.000Z) to strategy'),
+      );
+      expect(strategy.log).toHaveBeenCalledTimes(1);
+      expect(strategy.onCandleAfterWarmup).toHaveBeenCalledTimes(1);
+      expect(strategy.onEachCandle).toHaveBeenCalledTimes(2);
     });
   });
 
-  describe('onOrderCompleted', () => {
-    it('should forward trade events to strategy', () => {
-      const strategy: any = { onOrderCompleted: vi.fn() };
-      (manager as any).strategy = strategy;
-      manager.onOrderCompleted(trade);
-      expect(strategy.onOrderCompleted).toHaveBeenCalledWith(trade);
+  describe('order lifecycle hooks', () => {
+    it('forwards completed orders to the strategy', () => {
+      const strategy = { onOrderCompleted: vi.fn() };
+      manager['strategy'] = strategy as any;
+      const order = { id: '1' } as any;
+
+      manager.onOrderCompleted(order);
+
+      expect(strategy.onOrderCompleted).toHaveBeenCalledWith(order);
+    });
+
+    it('forwards canceled orders to the strategy', () => {
+      const strategy = { onOrderCanceled: vi.fn() };
+      manager['strategy'] = strategy as any;
+      const order = { id: '2' } as any;
+
+      manager.onOrderCanceled(order);
+
+      expect(strategy.onOrderCanceled).toHaveBeenCalledWith(order);
+    });
+
+    it('forwards errored orders to the strategy', () => {
+      const strategy = { onOrderErrored: vi.fn() };
+      manager['strategy'] = strategy as any;
+      const order = { id: '3' } as any;
+
+      manager.onOrderErrored(order);
+
+      expect(strategy.onOrderErrored).toHaveBeenCalledWith(order);
     });
   });
 
   describe('finish', () => {
-    it('should end strategy when finishing', () => {
-      const strategy: any = { end: vi.fn() };
-      (manager as any).strategy = strategy;
+    it('ends the underlying strategy', () => {
+      const strategy = { end: vi.fn() };
+      manager['strategy'] = strategy as any;
+
       manager.finish();
+
       expect(strategy.end).toHaveBeenCalled();
     });
   });
