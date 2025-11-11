@@ -9,7 +9,7 @@ import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
 import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
 import { DateRange, PerformanceAnalyzerConfig, Report, Start } from './performanceAnalyzer.types';
-import { logFinalize } from './performanceAnalyzer.utils';
+import { logFinalize, logTrade } from './performanceAnalyzer.utils';
 
 const YEAR_MS = 1000 * 60 * 60 * 24 * 365;
 export class PerformanceAnalyzer extends Plugin {
@@ -72,6 +72,13 @@ export class PerformanceAnalyzer extends Plugin {
     this.orders++;
     this.balance = trade.balance;
     this.latestPortfolio = trade.portfolio;
+    const lastSample = this.balanceSamples[this.balanceSamples.length - 1];
+
+    logTrade(trade, this.currency, this.asset, this.enableConsoleTable, {
+      startBalance: this.start.balance || trade.balance,
+      previousBalance: lastSample?.balance,
+    });
+
     this.balanceSamples.push({ date: trade.date, balance: trade.balance });
 
     const isCurrentlyExposed = this.exposureActiveSince !== null;

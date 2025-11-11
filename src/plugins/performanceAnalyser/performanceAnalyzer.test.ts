@@ -5,14 +5,24 @@ import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
 
+const logFinalizeMock = vi.fn();
+const logTradeMock = vi.fn();
+const getWatchMock = vi.fn(() => ({
+  asset: 'BTC',
+  currency: 'USD',
+  timeframe: '1m',
+  warmup: { candleCount: 0 },
+  daterange: null,
+}));
+
 vi.mock('./performanceAnalyzer.utils', () => ({
-  logFinalize: vi.fn(),
-  logTrade: vi.fn(),
+  logFinalize: logFinalizeMock,
+  logTrade: logTradeMock,
 }));
 
 vi.mock('../../services/configuration/configuration', () => ({
   config: {
-    getWatch: vi.fn(() => ({ warmup: {} })),
+    getWatch: getWatchMock,
     getStrategy: vi.fn(() => ({})),
   },
 }));
@@ -138,6 +148,18 @@ describe('PerformanceAnalyzer', () => {
       analyzer.onOrderCompleted(sellTrade);
       expect(analyzer['exposure']).toBe(sellTrade.date - buyTrade.date);
       expect(analyzer['exposureActiveSince']).toBeNull();
+    });
+
+    it('logs each trade with portfolio deltas', () => {
+      analyzer['start'].balance = 1000;
+      analyzer['balanceSamples'] = [{ date: buyTrade.date - 1000, balance: 900 }];
+
+      analyzer.onOrderCompleted(buyTrade);
+
+      expect(logTradeMock).toHaveBeenCalledWith(buyTrade, 'USD', 'BTC', false, {
+        startBalance: 1000,
+        previousBalance: 900,
+      });
     });
   });
 

@@ -1,7 +1,7 @@
+import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '@constants/event.const';
 import { OrderState } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { describe, expect, it, vi } from 'vitest';
-import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '../order.const';
 import { MarketOrder } from './marketOrder';
 
 vi.mock('@services/logger', () => ({

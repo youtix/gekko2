@@ -3,6 +3,9 @@ import {
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,
   ORDER_INITIATED_EVENT,
+  ORDER_INVALID_EVENT,
+  ORDER_PARTIALLY_FILLED_EVENT,
+  ORDER_STATUS_CHANGED_EVENT,
   PORTFOLIO_CHANGE_EVENT,
   PORTFOLIO_VALUE_CHANGE_EVENT,
 } from '@constants/event.const';
@@ -13,11 +16,6 @@ import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated, OrderType 
 import { Portfolio } from '@models/portfolio.types';
 import { Plugin } from '@plugins/plugin';
 import { Order } from '@services/core/order/order';
-import {
-  ORDER_INVALID_EVENT,
-  ORDER_PARTIALLY_FILLED_EVENT,
-  ORDER_STATUS_CHANGED_EVENT,
-} from '@services/core/order/order.const';
 import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString, toTimestamp } from '@utils/date/date.utils';
@@ -172,8 +170,20 @@ export class Trader extends Plugin {
     const { order, date, id } = advice;
     const { side, type, quantity } = order;
     const { asset, currency } = this.portfolio;
+
+    if (!quantity && side === 'BUY' && !this.price) {
+      const reason = 'Impossible to create order because the trading strategy is warming up';
+      error('trader', reason);
+      this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
+        orderId: id,
+        type,
+        date: this.currentTimestamp,
+        reason,
+      });
+    }
+
     // We delegate the order validation (notional, lot, amount) to the exchange
-    const amount = quantity ?? (side === 'BUY' ? currency * (1 - DEFAULT_FEE_BUFFER) : asset);
+    const amount = quantity ?? (side === 'BUY' ? (currency / this.price) * (1 - DEFAULT_FEE_BUFFER) : asset);
 
     info('trader', `Creating ${type} order to ${side} ${amount} ${this.asset}`);
     this.deferredEmit<OrderInitiated>(ORDER_INITIATED_EVENT, {
@@ -194,13 +204,21 @@ export class Trader extends Plugin {
     orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
       info('trader', `Partial ${side} order fill, total filled: ${filled}`),
     );
-    orderInstance.on(ORDER_STATUS_CHANGED_EVENT, status => info('trader', `status changed: ${status}`));
+    orderInstance.on(ORDER_STATUS_CHANGED_EVENT, ({ status, reason }) =>
+      info('trader', `status changed: ${status}, reason: ${reason}`),
+    );
 
     // ERROR EVENTS
     orderInstance.on(ORDER_INVALID_EVENT, async ({ reason }) => {
       info('trader', `Order rejected : ${reason}`);
       this.removeOrder(id);
       await this.synchronize();
+      this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
+        orderId: id,
+        type,
+        date: this.currentTimestamp,
+        reason,
+      });
     });
 
     orderInstance.on(ORDER_ERRORED_EVENT, async reason => {
@@ -250,6 +268,7 @@ export class Trader extends Plugin {
 
   protected async processOneMinuteCandle(candle: Candle) {
     this.currentTimestamp = addMinutes(candle.start, 1).getTime();
+
     if (!this.warmupCompleted) {
       this.warmupCandle = candle;
       return;

@@ -1,16 +1,16 @@
-import { ORDER_CANCELED_EVENT } from '@constants/event.const';
-import { OrderSide, OrderState, OrderType } from '@models/order.types';
-import { Exchange } from '@services/exchange/exchange';
-import { debug, error, info } from '@services/logger';
-import { UUID } from 'node:crypto';
-import EventEmitter from 'node:events';
 import {
+  ORDER_CANCELED_EVENT,
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,
   ORDER_INVALID_EVENT,
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
-} from './order.const';
+} from '@constants/event.const';
+import { OrderSide, OrderState, OrderType } from '@models/order.types';
+import { Exchange } from '@services/exchange/exchange';
+import { debug, error, info } from '@services/logger';
+import { UUID } from 'node:crypto';
+import EventEmitter from 'node:events';
 import { OrderStatus, OrderSummary, Transaction } from './order.types';
 
 export abstract class Order extends EventEmitter {

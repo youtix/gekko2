@@ -1,16 +1,16 @@
-import { ORDER_CANCELED_EVENT } from '@constants/event.const';
-import { OrderState } from '@models/order.types';
-import { Exchange } from '@services/exchange/exchange';
-import { toTimestamp } from '@utils/date/date.utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Order } from './order';
 import {
+  ORDER_CANCELED_EVENT,
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,
   ORDER_INVALID_EVENT,
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
-} from './order.const';
+} from '@constants/event.const';
+import { OrderState } from '@models/order.types';
+import { Exchange } from '@services/exchange/exchange';
+import { toTimestamp } from '@utils/date/date.utils';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Order } from './order';
 
 vi.mock('@services/logger', () => ({
   debug: vi.fn(),

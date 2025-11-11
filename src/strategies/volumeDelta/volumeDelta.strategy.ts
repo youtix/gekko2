@@ -1,4 +1,4 @@
-import type { OrderCompleted, OrderErrored } from '@models/order.types';
+import type { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
 import type { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
 import type { VolumeDeltaStrategyParams, VolumeDeltaTrend } from './volumeDelta.types';
 
@@ -62,6 +62,7 @@ export class VolumeDelta implements Strategy<VolumeDeltaStrategyParams> {
   // NOT USED
   onEachCandle(_tools: Tools<VolumeDeltaStrategyParams>, ..._indicators: unknown[]): void {}
   onOrderCompleted(_order: OrderCompleted): void {}
+  onOrderCanceled(_order: OrderCanceled): void {}
   onOrderErrored(_order: OrderErrored): void {}
   end(): void {}
 }

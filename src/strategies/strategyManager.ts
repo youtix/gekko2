@@ -11,7 +11,7 @@ import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types
 import { Advice, AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { LogLevel } from '@models/logLevel.types';
-import { OrderCompleted, OrderErrored } from '@models/order.types';
+import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
@@ -45,7 +45,7 @@ export class StrategyManager extends EventEmitter {
     bindAll(this, [this.addIndicator.name, this.createOrder.name, this.cancelOrder.name, this.log.name]);
   }
 
-  // ---- Called by trading advisor ----
+  // ---- Called by trading advisor ---- //
   public async createStrategy(strategyName: string, strategyPath?: string) {
     if (strategyPath) {
       const resolvedPath = isAbsolute(strategyPath) ? strategyPath : resolve(process.cwd(), strategyPath);
@@ -62,6 +62,7 @@ export class StrategyManager extends EventEmitter {
     this.isStartegyInitialized = true;
   }
 
+  // ---- Strategy events received from trader plugin --- //
   public onNewCandle(candle: Candle) {
     const results = this.indicators.map(indicator => {
       indicator.onNewCandle(candle);
@@ -84,6 +85,10 @@ export class StrategyManager extends EventEmitter {
 
   public onOrderCompleted(order: OrderCompleted) {
     this.strategy?.onOrderCompleted(order);
+  }
+
+  public onOrderCanceled(order: OrderCanceled) {
+    this.strategy?.onOrderCanceled(order);
   }
 
   public onOrderErrored(order: OrderErrored) {

@@ -9,7 +9,7 @@ import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { OrderCompleted, OrderErrored } from '@models/order.types';
+import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { Plugin } from '@plugins/plugin';
 import { CandleBatcher } from '@services/core/batcher/candleBatcher/candleBatcher';
@@ -84,6 +84,10 @@ export class TradingAdvisor extends Plugin {
 
   public onOrderCompleted(order: OrderCompleted) {
     this.strategyManager?.onOrderCompleted(order);
+  }
+
+  public onOrderCanceled(order: OrderCanceled) {
+    this.strategyManager?.onOrderCanceled(order);
   }
 
   public onOrderErrored(order: OrderErrored) {
