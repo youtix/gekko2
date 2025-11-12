@@ -173,13 +173,14 @@ export class EventSubscriber extends Plugin {
 
   public static getStaticConfiguration() {
     return {
+      name: 'EventSubscriber',
       schema: eventSubscriberSchema,
       modes: ['realtime'],
       dependencies: [],
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(EventSubscriber.prototype), p => p.startsWith('on')),
       eventsEmitted: [],
-      name: 'EventSubscriber',
-    };
+      weight: 0,
+    } as const;
   }
 }

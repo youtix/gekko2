@@ -1,5 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderSide } from '@models/order.types';
+import { Portfolio } from '@models/portfolio.types';
 import { warning } from '@services/logger';
 import { isNil } from 'lodash-es';
 
@@ -39,4 +40,8 @@ export const computeOrderPricing: ComputeOrderPricingFn = (side, price, amount, 
 
   warning('trader', 'Exchange did not provide fee information, assuming no fees.');
   return { effectivePrice: price, base, fee: 0, total: base };
+};
+
+export const isEmptyPortfolio = (portfolio: Portfolio) => {
+  return portfolio.asset <= 0 && portfolio.currency <= 0;
 };

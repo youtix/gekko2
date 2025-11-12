@@ -12,6 +12,7 @@ import { Advice, AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { LogLevel } from '@models/logLevel.types';
 import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
+import { Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
@@ -28,6 +29,7 @@ export class StrategyManager extends EventEmitter {
   private warmupPeriod: number;
   private indicators: Indicator[];
   private strategyParams: object;
+  private portfolio: Portfolio;
   private strategy?: Strategy<object>;
 
   constructor(warmupPeriod: number) {
@@ -36,6 +38,7 @@ export class StrategyManager extends EventEmitter {
     this.age = 0;
     this.indicators = [];
     this.strategyParams = config.getStrategy() ?? {};
+    this.portfolio = { asset: 0, currency: 0 };
 
     bindAll(this, [this.addIndicator.name, this.createOrder.name, this.cancelOrder.name, this.log.name]);
   }
@@ -95,9 +98,14 @@ export class StrategyManager extends EventEmitter {
     this.strategy?.onOrderErrored(order);
   }
 
+  public onPortfolioChange(portfolio: Portfolio) {
+    this.portfolio = portfolio;
+  }
+
   public finish() {
     this.strategy?.end();
   }
+
   // -------------------------------
 
   // ---- User startegy tools functions ----
@@ -159,6 +167,7 @@ export class StrategyManager extends EventEmitter {
       cancelOrder: this.cancelOrder,
       log: this.log,
       strategyParams: this.strategyParams,
+      portfolio: this.portfolio,
     };
   }
 }

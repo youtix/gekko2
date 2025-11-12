@@ -100,13 +100,14 @@ export class PerformanceReporter extends Plugin {
 
   public static getStaticConfiguration() {
     return {
+      name: 'PerformanceReporter',
       schema: performanceReporterSchema,
       modes: ['backtest'],
       dependencies: [],
       inject: [],
       eventsHandlers: [...Object.getOwnPropertyNames(PerformanceReporter.prototype).filter(n => n.startsWith('on'))],
       eventsEmitted: [],
-      name: 'PerformanceReporter',
+      weight: 0,
     } as const;
   }
 }

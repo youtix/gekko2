@@ -27,13 +27,14 @@ export class CandleWriter extends Plugin {
 
   public static getStaticConfiguration() {
     return {
+      name: 'CandleWriter',
       schema: candleWriterSchema,
       modes: ['realtime', 'importer'],
       dependencies: [],
       inject: ['storage'],
       eventsHandlers: [],
       eventsEmitted: [],
-      name: 'CandleWriter',
-    };
+      weight: 0,
+    } as const;
   }
 }

@@ -2,6 +2,7 @@ import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types
 import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { LogLevel } from '@models/logLevel.types';
+import { Portfolio } from '@models/portfolio.types';
 import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
 import { UUID } from 'node:crypto';
 
@@ -11,6 +12,7 @@ export type LoggerFn = (level: LogLevel, msg: string) => void;
 export type Tools<T> = {
   candle: Candle;
   strategyParams: T;
+  portfolio: Portfolio;
   log: LoggerFn;
   createOrder: (order: AdviceOrder) => UUID;
   cancelOrder: (orderId: UUID) => void;

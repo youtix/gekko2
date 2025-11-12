@@ -1,4 +1,3 @@
-import { StopGekkoError } from '@errors/stopGekko.error';
 import { Candle } from '@models/candle.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
@@ -10,8 +9,7 @@ import { after, find } from 'lodash-es';
 import { Writable } from 'node:stream';
 
 export class PluginsStream extends Writable {
-  plugins: Plugin[];
-  private hasClosed = false;
+  private readonly plugins: Plugin[];
   private readonly dummyExchange?: DummyExchange;
 
   constructor(plugins: Plugin[]) {
@@ -21,32 +19,23 @@ export class PluginsStream extends Writable {
     if (isDummyExchange(exchange)) this.dummyExchange = exchange;
   }
 
-  public async _write(chunk: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
+  public async _write(candle: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
     const flushEvents = this.flushEvents().bind(this);
     try {
       // Forward candle to dummy exchange (if set by user) before all plugins
-      this.dummyExchange?.processOneMinuteCandle(chunk);
+      this.dummyExchange?.processOneMinuteCandle(candle);
       // Forward candle to all plugins
-      for (const plugin of this.plugins) await plugin.processInputStream(chunk, flushEvents);
+      for (const plugin of this.plugins) await plugin.processInputStream(candle, flushEvents);
       done();
     } catch (error) {
-      if (error instanceof StopGekkoError) {
-        try {
-          await this.closePlugins();
-        } catch (closeError) {
-          done(closeError as Error);
-          return;
-        }
-        done(error);
-        return;
-      }
       done(error as Error);
     }
   }
 
   public async _final(done: (error?: Nullable<Error>) => void) {
     try {
-      await this.closePlugins();
+      for (const plugin of this.plugins) await plugin.processCloseStream();
+      info('stream', 'Gekko is closing the application !');
       done();
     } catch (error) {
       if (error instanceof Error) done(error);
@@ -63,12 +52,5 @@ export class PluginsStream extends Writable {
     while (find(this.plugins, p => p.broadcastDeferredEmit())) {
       // continue looping while at least one plugin emitted an event
     }
-  }
-
-  private async closePlugins() {
-    if (this.hasClosed) return;
-    this.hasClosed = true;
-    for (const plugin of this.plugins) await plugin.processCloseStream();
-    info('stream', 'Gekko is closing the application !');
   }
 }

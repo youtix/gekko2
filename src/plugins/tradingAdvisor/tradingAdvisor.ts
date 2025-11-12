@@ -10,6 +10,7 @@ import { GekkoError } from '@errors/gekko.error';
 import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
+import { Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { Plugin } from '@plugins/plugin';
 import { CandleBatcher } from '@services/core/batcher/candleBatcher/candleBatcher';
@@ -94,6 +95,14 @@ export class TradingAdvisor extends Plugin {
     this.strategyManager?.onOrderErrored(order);
   }
 
+  public onPortfolioChange(portfolio: Portfolio) {
+    this.strategyManager?.onPortfolioChange(portfolio);
+  }
+
+  public onTimeframeCandle(newCandle: Candle) {
+    this.strategyManager?.onNewCandle(newCandle);
+  }
+
   // --------------------------------------------------------------------------
   //                           PLUGIN LIFECYCLE HOOKS
   // --------------------------------------------------------------------------
@@ -107,10 +116,7 @@ export class TradingAdvisor extends Plugin {
   protected processOneMinuteCandle(candle: Candle) {
     this.candle = candle;
     const newCandle = this.candleBatcher.addSmallCandle(candle);
-    if (newCandle) {
-      this.deferredEmit(TIMEFRAME_CANDLE_EVENT, newCandle);
-      this.strategyManager?.onNewCandle(newCandle);
-    }
+    if (newCandle) this.deferredEmit(TIMEFRAME_CANDLE_EVENT, newCandle);
   }
 
   protected processFinalize() {
@@ -132,6 +138,7 @@ export class TradingAdvisor extends Plugin {
         STRATEGY_WARMUP_COMPLETED_EVENT,
         TIMEFRAME_CANDLE_EVENT,
       ],
-    };
+      weight: 0,
+    } as const;
   }
 }

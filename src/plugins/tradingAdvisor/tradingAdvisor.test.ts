@@ -109,23 +109,20 @@ describe('TradingAdvisor', () => {
         expect(advisor['candle']).toEqual(defaultCandle);
       });
 
-      it('should call strategyManager.onNewCandle when addSmallCandle returns a new candle', () => {
-        advisor['candleBatcher'].addSmallCandle = vi.fn(() => defaultCandle);
-        advisor['strategyManager']!.onNewCandle = vi.fn();
+      it('should pass received candle to the candle batcher', () => {
+        const addSpy = vi.spyOn(advisor['candleBatcher'], 'addSmallCandle').mockReturnValue(undefined as any);
         advisor['processOneMinuteCandle'](defaultCandle);
-        expect(advisor['strategyManager']?.onNewCandle).toHaveBeenCalledWith(defaultCandle);
+        expect(addSpy).toHaveBeenCalledWith(defaultCandle);
       });
 
-      it('should NOT call strategyManager.onNewCandle when addSmallCandle returns a falsy value', () => {
-        advisor['candleBatcher'].addSmallCandle = vi.fn(() => undefined);
-        advisor['strategyManager']!.onNewCandle = vi.fn();
+      it('should not emit timeframe candle event when addSmallCandle returns a falsy value', () => {
+        vi.spyOn(advisor['candleBatcher'], 'addSmallCandle').mockReturnValue(undefined as any);
         advisor['processOneMinuteCandle'](defaultCandle);
-        expect(advisor['strategyManager']?.onNewCandle).not.toHaveBeenCalled();
+        expect(advisor['deferredEmit']).not.toHaveBeenCalled();
       });
 
       it('should emit STRATEGY_TIMEFRAME_CANDLE_EVENT when addSmallCandle returns a new candle', () => {
-        advisor['candleBatcher']['addSmallCandle'] = vi.fn(() => defaultCandle);
-        advisor['strategyManager']!.onNewCandle = vi.fn();
+        vi.spyOn(advisor['candleBatcher'], 'addSmallCandle').mockReturnValue(defaultCandle);
         advisor['processOneMinuteCandle'](defaultCandle);
         expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_CANDLE_EVENT, defaultCandle);
       });
@@ -228,6 +225,33 @@ describe('TradingAdvisor', () => {
         advisor['strategyManager']!.onOrderErrored = vi.fn();
         advisor.onOrderErrored(defaultErroredOrder);
         expect(advisor['strategyManager']?.onOrderErrored).toHaveBeenCalledExactlyOnceWith(defaultErroredOrder);
+      });
+    });
+
+    describe('onPortfolioChange', () => {
+      it('should forward latest portfolio to the strategy manager', () => {
+        const portfolio = { asset: 5, currency: 10 };
+        advisor['strategyManager']!.onPortfolioChange = vi.fn();
+
+        advisor.onPortfolioChange(portfolio);
+
+        expect(advisor['strategyManager']?.onPortfolioChange).toHaveBeenCalledExactlyOnceWith(portfolio);
+      });
+    });
+
+    describe('onTimeframeCandle', () => {
+      it('should forward timeframe candles to the strategy manager', () => {
+        const timeframeCandle: Candle = { ...defaultCandle, close: 123 };
+        advisor['strategyManager']!.onNewCandle = vi.fn();
+
+        advisor.onTimeframeCandle(timeframeCandle);
+
+        expect(advisor['strategyManager']?.onNewCandle).toHaveBeenCalledExactlyOnceWith(timeframeCandle);
+      });
+
+      it('should ignore timeframe candles when strategy manager is not initialized', () => {
+        const notInitializedAdvisor = new TradingAdvisor(config);
+        expect(() => notInitializedAdvisor.onTimeframeCandle(defaultCandle)).not.toThrow();
       });
     });
   });
