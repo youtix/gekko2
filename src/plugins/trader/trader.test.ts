@@ -158,6 +158,7 @@ vi.mock('../../services/core/order/limit/limitOrder', () => ({
 }));
 
 describe('Trader', () => {
+  const defaultCandle = { close: 100, start: 1_700_000_000_000 } as any;
   let trader: Trader;
   let fakeExchange: {
     getExchangeName: Mock;
@@ -229,13 +230,12 @@ describe('Trader', () => {
 
   describe('constructor', () => {
     it.each`
-      field                     | expected
-      ${'sendInitialPortfolio'} | ${false}
-      ${'warmupCompleted'}      | ${false}
-      ${'warmupCandle'}         | ${undefined}
-      ${'portfolio'}            | ${{ asset: 0, currency: 0 }}
-      ${'balance'}              | ${0}
-      ${'price'}                | ${0}
+      field                | expected
+      ${'warmupCompleted'} | ${false}
+      ${'warmupCandle'}    | ${null}
+      ${'portfolio'}       | ${{ asset: 0, currency: 0 }}
+      ${'balance'}         | ${0}
+      ${'price'}           | ${0}
     `('initializes $field to $expected', ({ field, expected }) => {
       expect((trader as any)[field]).toEqual(expected);
     });
@@ -261,56 +261,71 @@ describe('Trader', () => {
       expect(setIntervalSpy).toHaveBeenCalledWith(backtestTrader['synchronize'], SYNCHRONIZATION_INTERVAL);
       backtestTrader['processFinalize']();
       expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
-      expect(backtestTrader['syncInterval']).toBeUndefined();
+      expect(backtestTrader['syncInterval']).toBeNull();
     });
   });
 
   describe('synchronize', () => {
-    it('updates price and waits for exchange interval when price is unset', async () => {
+    it('should fetch portfolio from exchange', async () => {
+      trader['currentTimestamp'] = 0;
+
       await trader['synchronize']();
 
-      expect(fakeExchange.fetchTicker).toHaveBeenCalledTimes(1);
-      expect(trader['price']).toBe(123);
-      expect(waitSpy).toHaveBeenCalledWith(42);
+      expect(fakeExchange.fetchPortfolio).toHaveBeenCalledTimes(1);
     });
-
-    it('skips ticker fetch when price is already known', async () => {
-      trader['price'] = 250;
-      const updateBalanceSpy = vi.spyOn(trader as unknown as { updateBalance: () => void }, 'updateBalance');
+    it('should update trader plugin portfolio with exchange portfolio', async () => {
+      trader['currentTimestamp'] = 0;
+      trader['portfolio'] = { asset: 0, currency: 0 };
+      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 3, currency: 50 });
 
       await trader['synchronize']();
 
-      expect(fakeExchange.fetchTicker).not.toHaveBeenCalled();
-      expect(waitSpy).not.toHaveBeenCalled();
-      expect(updateBalanceSpy).toHaveBeenCalledTimes(1);
+      expect(trader['portfolio']).toStrictEqual({ asset: 3, currency: 50 });
     });
-
-    it('emits portfolio change when initial portfolio was sent and values differ', async () => {
-      trader['sendInitialPortfolio'] = true;
-      trader['portfolio'] = { asset: 0.5, currency: 10 };
-      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 1, currency: 20 });
-      const emitSpy = vi.spyOn(
-        trader as unknown as { emitPortfolioChangeEvent: () => void },
-        'emitPortfolioChangeEvent',
-      );
+    it('should update balance', async () => {
+      trader['currentTimestamp'] = 0;
+      trader['balance'] = 0;
+      trader['portfolio'] = { asset: 0, currency: 0 };
+      trader['price'] = 200;
+      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 3, currency: 50 });
 
       await trader['synchronize']();
 
-      expect(emitSpy).toHaveBeenCalled();
+      expect(trader['balance']).toBeCloseTo(650);
     });
-
-    it('does not emit portfolio change when fetched portfolio matches current state', async () => {
-      trader['sendInitialPortfolio'] = true;
-      trader['portfolio'] = { asset: 1, currency: 2 };
-      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 1, currency: 2 });
-      const emitSpy = vi.spyOn(
-        trader as unknown as { emitPortfolioChangeEvent: () => void },
-        'emitPortfolioChangeEvent',
-      );
+    it.each`
+      action                                                                                     | timestamp     | oldPortfolio                  | newPortfolio                  | expectedEmit
+      ${'NOT emit portfolio change event because trader is initializing its data'}               | ${0}          | ${{ asset: 0, currency: 0 }}  | ${{ asset: 3, currency: 50 }} | ${false}
+      ${'NOT emit portfolio change event because portfolio did not change'}                      | ${Date.now()} | ${{ asset: 3, currency: 50 }} | ${{ asset: 3, currency: 50 }} | ${false}
+      ${'emit portfolio change event because trader plugin is initilized and portfolio changed'} | ${Date.now()} | ${{ asset: 0, currency: 0 }}  | ${{ asset: 3, currency: 50 }} | ${true}
+    `('should $action', async ({ timestamp, oldPortfolio, newPortfolio, expectedEmit }) => {
+      trader['emitPortfolioChangeEvent'] = vi.fn();
+      trader['currentTimestamp'] = timestamp;
+      trader['portfolio'] = oldPortfolio;
+      fakeExchange.fetchPortfolio.mockResolvedValue(newPortfolio);
 
       await trader['synchronize']();
 
-      expect(emitSpy).not.toHaveBeenCalled();
+      if (expectedEmit) expect(trader['emitPortfolioChangeEvent']).toHaveBeenCalledOnce();
+      else expect(trader['emitPortfolioChangeEvent']).not.toHaveBeenCalled();
+    });
+    it.each`
+      action                                                                                         | timestamp     | oldBalance | portfolio                     | price  | expectedEmit
+      ${'NOT emit portfolio value change event because trader is initializing its data'}             | ${0}          | ${0}       | ${{ asset: 3, currency: 50 }} | ${200} | ${false}
+      ${'NOT emit portfolio value change event because balance did not change'}                      | ${Date.now()} | ${650}     | ${{ asset: 3, currency: 50 }} | ${200} | ${false}
+      ${'emit portfolio value change event because trader plugin is initilized and balance changed'} | ${Date.now()} | ${100}     | ${{ asset: 3, currency: 50 }} | ${200} | ${true}
+    `('should $action', async ({ timestamp, oldBalance, portfolio, price, expectedEmit }) => {
+      trader['emitPortfolioValueChangeEvent'] = vi.fn();
+      trader['currentTimestamp'] = timestamp;
+      trader['balance'] = oldBalance;
+      trader['portfolio'] = portfolio;
+      trader['price'] = price;
+      fakeExchange.fetchPortfolio.mockResolvedValue(portfolio);
+
+      await trader['synchronize']();
+
+      if (expectedEmit) expect(trader['emitPortfolioValueChangeEvent']).toHaveBeenCalledOnce();
+      else expect(trader['emitPortfolioValueChangeEvent']).not.toHaveBeenCalled();
     });
   });
 
@@ -333,89 +348,113 @@ describe('Trader', () => {
     });
   });
 
-  describe('updateBalance', () => {
-    it.each`
-      description                                    | price  | portfolio                     | initialBalance | expectedBalance
-      ${'computes zero balance for empty portfolio'} | ${150} | ${{ asset: 0, currency: 0 }}  | ${123}         | ${0}
-      ${'recalculates balance when holdings exist'}  | ${100} | ${{ asset: 2, currency: 10 }} | ${0}           | ${210}
-    `(' $description', ({ price, portfolio, initialBalance, expectedBalance }) => {
-      trader['price'] = price;
-      trader['portfolio'] = portfolio;
-      trader['balance'] = initialBalance;
-
-      trader['updateBalance']();
-
-      expect(trader['balance']).toBeCloseTo(expectedBalance);
-    });
-  });
-
   describe('onStrategyWarmupCompleted', () => {
-    it('throws when warmup candle is missing', () => {
-      expect(() => trader.onStrategyWarmupCompleted()).toThrow(GekkoError);
+    it('should set warmupCompleted to true', async () => {
+      trader['warmupCompleted'] = false;
+      trader['warmupCandle'] = defaultCandle;
+      trader['processOneMinuteCandle'] = vi.fn();
+      trader['synchronize'] = vi.fn();
+
+      await trader.onStrategyWarmupCompleted();
+
+      expect(trader['warmupCompleted']).toBeTruthy();
     });
 
-    it('processes stored warmup candle and clears state', () => {
-      const candle = { close: 456 } as any;
-      trader['warmupCandle'] = candle;
-      const processSpy = vi
-        .spyOn(
-          trader as unknown as { processOneMinuteCandle: (c: typeof candle) => Promise<void> },
-          'processOneMinuteCandle',
-        )
-        .mockResolvedValue(undefined);
+    it('should reset warmupCandle to null', async () => {
+      trader['warmupCompleted'] = false;
+      trader['warmupCandle'] = defaultCandle;
+      trader['processOneMinuteCandle'] = vi.fn();
+      trader['synchronize'] = vi.fn();
 
-      trader.onStrategyWarmupCompleted();
+      await trader.onStrategyWarmupCompleted();
 
-      expect(processSpy).toHaveBeenCalledWith(candle);
-      expect(trader['warmupCandle']).toBeUndefined();
+      expect(trader['warmupCandle']).toBeNull();
+    });
+
+    it('should call processOneMinuteCandle when buffered candle is set', async () => {
+      trader['warmupCompleted'] = false;
+      trader['warmupCandle'] = defaultCandle;
+      trader['processOneMinuteCandle'] = vi.fn();
+      trader['synchronize'] = vi.fn();
+
+      await trader.onStrategyWarmupCompleted();
+
+      expect(trader['processOneMinuteCandle']).toHaveBeenCalledExactlyOnceWith(defaultCandle);
+    });
+
+    it('should NOT call processOneMinuteCandle when buffered candle is NOT set', async () => {
+      trader['warmupCompleted'] = false;
+      trader['warmupCandle'] = null;
+      trader['processOneMinuteCandle'] = vi.fn();
+      trader['synchronize'] = vi.fn();
+
+      await trader.onStrategyWarmupCompleted();
+
+      expect(trader['processOneMinuteCandle']).not.toHaveBeenCalled();
+    });
+
+    it('should synchronize with exchange', async () => {
+      trader['warmupCompleted'] = false;
+      trader['warmupCandle'] = defaultCandle;
+      trader['processOneMinuteCandle'] = vi.fn();
+      trader['synchronize'] = vi.fn();
+
+      await trader.onStrategyWarmupCompleted();
+
+      expect(trader['synchronize']).toHaveBeenCalledOnce();
     });
   });
 
   describe('processOneMinuteCandle', () => {
-    it('buffers candle until warmup completes', async () => {
-      const candle = { close: 99 } as any;
-      await trader['processOneMinuteCandle'](candle);
-      expect(trader['warmupCandle']).toBe(candle);
-      expect(trader['price']).toBe(99);
-    });
+    it('should update price', async () => {
+      trader['price'] = 0;
+      trader['synchronize'] = vi.fn();
 
-    it('synchronizes and emits portfolio value change after warmup', async () => {
-      trader['warmupCompleted'] = true;
-      trader['portfolio'] = { asset: 1, currency: 0 };
-      const syncSpy = vi
-        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
-        .mockResolvedValue(undefined);
-      const emitPortfolioChangeSpy = vi.spyOn(
-        trader as unknown as { emitPortfolioChangeEvent: () => void },
-        'emitPortfolioChangeEvent',
-      );
-      const emitPortfolioValueSpy = vi.spyOn(
-        trader as unknown as { emitPortfolioValueChangeEvent: () => void },
-        'emitPortfolioValueChangeEvent',
-      );
-
-      await trader['processOneMinuteCandle']({ close: 100 } as any);
+      await trader['processOneMinuteCandle'](defaultCandle);
 
       expect(trader['price']).toBe(100);
-      expect(trader['sendInitialPortfolio']).toBe(true);
-      expect(syncSpy).toHaveBeenCalled();
-      expect(emitPortfolioChangeSpy).not.toHaveBeenCalled();
-      expect(emitPortfolioValueSpy).toHaveBeenCalled();
     });
 
-    it('does not emit portfolio value event when balance stays constant', async () => {
+    it('should triggers synchronize when trader plugin is not initialized', async () => {
+      trader['currentTimestamp'] = 0; // => Means that trader plugin is not iitialized
+      trader['synchronize'] = vi.fn();
+
+      await trader['processOneMinuteCandle'](defaultCandle);
+
+      expect(trader['synchronize']).toHaveBeenCalledTimes(1);
+    });
+
+    it('should NOT triggers synchronize when trader plugin is initialized', async () => {
+      trader['currentTimestamp'] = Date.now(); // => Means trader plugin is iitialized
+      trader['synchronize'] = vi.fn();
+
+      await trader['processOneMinuteCandle'](defaultCandle);
+
+      expect(trader['synchronize']).not.toHaveBeenCalledTimes(1);
+    });
+
+    it('should update currentTimestamp', async () => {
+      trader['currentTimestamp'] = 0;
+      trader['synchronize'] = vi.fn();
+
+      await trader['processOneMinuteCandle'](defaultCandle);
+
+      expect(trader['currentTimestamp']).toBe(1700000060000); // +1 minute
+    });
+
+    it('should buffer candle until warmup completes', async () => {
+      trader['warmupCompleted'] = false;
+      await trader['processOneMinuteCandle'](defaultCandle);
+      expect(trader['warmupCandle']).toBe(defaultCandle);
+    });
+
+    it('should NOT buffer candle once warmup completes', async () => {
       trader['warmupCompleted'] = true;
-      trader['sendInitialPortfolio'] = true;
-      trader['balance'] = 50;
-      trader['portfolio'] = { asset: 0, currency: 50 };
-      const emitValueSpy = vi.spyOn(
-        trader as unknown as { emitPortfolioValueChangeEvent: () => void },
-        'emitPortfolioValueChangeEvent',
-      );
+      trader['warmupCandle'] = null;
 
-      await trader['processOneMinuteCandle']({ close: 10 } as any);
+      await trader['processOneMinuteCandle'](defaultCandle);
 
-      expect(emitValueSpy).not.toHaveBeenCalled();
+      expect(trader['warmupCandle']).toBeNull();
     });
   });
 
@@ -732,7 +771,7 @@ describe('Trader', () => {
       trader['syncInterval'] = 123 as unknown as NodeJS.Timer;
       trader['processFinalize']();
       expect(clearIntervalSpy).toHaveBeenCalledWith(123);
-      expect(trader['syncInterval']).toBeUndefined();
+      expect(trader['syncInterval']).toBeNull();
     });
   });
 

@@ -208,13 +208,14 @@ export class Supervision extends Plugin {
 
   public static getStaticConfiguration() {
     return {
+      name: 'Supervision',
       schema: supervisionSchema,
       modes: ['realtime'],
       dependencies: [],
       inject: ['exchange'],
       eventsHandlers: filter(Object.getOwnPropertyNames(Supervision.prototype), p => p.startsWith('on')),
       eventsEmitted: [],
-      name: 'Supervision',
+      weight: 0,
     } as const;
   }
 }

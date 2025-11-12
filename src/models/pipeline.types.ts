@@ -12,4 +12,5 @@ export type PipelineContext = {
   inject?: string[];
   modes?: string[];
   schema?: z.ZodTypeAny;
+  weight?: number;
 }[];

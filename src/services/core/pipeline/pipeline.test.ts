@@ -7,13 +7,16 @@ import {
   checkPluginsModesCompatibility,
   createPlugins,
   getPluginsStaticConfiguration,
+  sortPluginsByWeight,
 } from './pipeline';
 
 vi.mock('@services/configuration/configuration', () => ({
   config: { getWatch: vi.fn(() => ({ mode: 'realtime' })) },
 }));
 vi.mock('@services/injecter/injecter', () => ({ inject: {} }));
+
 vi.mock('@plugins/index');
+
 describe('Pipeline Steps', () => {
   describe('checkPluginsDuplicateEvents', () => {
     it('returns context when no duplicate events are present', async () => {
@@ -34,6 +37,21 @@ describe('Pipeline Steps', () => {
       ];
 
       await expect(checkPluginsDuplicateEvents(context)).rejects.toThrow('Multiple plugins');
+    });
+  });
+  describe('sortPluginsByWeight', () => {
+    it('sorts plugins descending with missing weights treated as zero', async () => {
+      const context: PipelineContext = [
+        { name: 'top', weight: 4 },
+        { name: 'middle', weight: 1 },
+        { name: 'defaultWeight' },
+        { name: 'low', weight: -2 },
+      ];
+
+      const result = await sortPluginsByWeight(context);
+
+      expect(result).toBe(context);
+      expect(context.map(plugin => plugin.name)).toEqual(['top', 'middle', 'defaultWeight', 'low']);
     });
   });
   describe('createPlugins', () => {
@@ -59,13 +77,14 @@ describe('Pipeline Steps', () => {
       class Plug {
         static getStaticConfiguration() {
           return {
-            modes: ['realtime'],
+            name: 'Plug',
             schema: undefined,
+            modes: ['realtime'],
             dependencies: [],
             eventsEmitted: [],
-            name: 'Plug',
             eventsHandlers: [],
             inject: [],
+            weight: 0,
           };
         }
       }
@@ -80,6 +99,7 @@ describe('Pipeline Steps', () => {
         name: 'Plug',
         eventsHandlers: [],
         inject: [],
+        weight: 0,
       });
     });
   });

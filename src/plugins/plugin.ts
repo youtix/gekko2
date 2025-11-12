@@ -1,5 +1,4 @@
 import { Watch } from '@models/configuration.types';
-import { Nullable } from '@models/utility.types';
 import { Exchange } from '@services/exchange/exchange';
 import { Storage } from '@services/storage/storage';
 import EventEmitter from 'node:events';
@@ -13,17 +12,16 @@ export abstract class Plugin extends EventEmitter {
   private storage?: Storage;
   private exchange?: Exchange;
 
-  protected asset: string;
-  protected currency: string;
-  protected timeframe: Watch['timeframe'];
-  protected warmupPeriod: number;
-  protected pluginName: string;
-  protected strategySettings: unknown;
-  protected daterange: Nullable<{ start: string; end: string }>;
+  protected readonly asset: string;
+  protected readonly currency: string;
+  protected readonly timeframe: Watch['timeframe'];
+  protected readonly warmupPeriod: number;
+  protected readonly pluginName: string;
+  protected readonly strategySettings: unknown;
 
   constructor(pluginName: string) {
     super();
-    const { asset, currency, timeframe, warmup, daterange } = config.getWatch();
+    const { asset, currency, timeframe, warmup } = config.getWatch();
     this.strategySettings = config.getStrategy();
 
     this.defferedEvents = [];
@@ -32,7 +30,6 @@ export abstract class Plugin extends EventEmitter {
     this.currency = currency;
     this.timeframe = timeframe;
     this.warmupPeriod = warmup.candleCount;
-    this.daterange = daterange;
   }
 
   // --------------------------------------------------------------------------

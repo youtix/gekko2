@@ -9,7 +9,7 @@ import { EVENT_NAMES } from './eventSubscriber.types';
 vi.mock('@services/logger', () => ({ debug: vi.fn() }));
 vi.mock('../../services/configuration/configuration', () => {
   const Configuration = vi.fn(() => ({
-    getWatch: vi.fn(() => ({ mode: 'realtime', warmup: {} })),
+    getWatch: vi.fn(() => ({ mode: 'realtime', warmup: {}, asset: 'BTC', currency: 'USD' })),
     getStrategy: vi.fn(() => ({})),
   }));
   return { config: new Configuration() };
@@ -23,8 +23,6 @@ describe('EventSubscriber', () => {
   beforeEach(() => {
     plugin = new EventSubscriber({ name: 'EventSubscriber', botUsername: 'bot_name', token: 't' });
     plugin['bot'] = fakeBot as any;
-    plugin['asset'] = 'BTC';
-    plugin['currency'] = 'USD';
   });
 
   it.each`

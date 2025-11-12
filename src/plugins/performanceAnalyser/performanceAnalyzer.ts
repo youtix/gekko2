@@ -208,13 +208,14 @@ export class PerformanceAnalyzer extends Plugin {
 
   public static getStaticConfiguration() {
     return {
+      name: 'PerformanceAnalyzer',
       schema: performanceAnalyzerSchema,
       modes: ['realtime', 'backtest'],
       dependencies: [],
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(PerformanceAnalyzer.prototype), p => p.startsWith('on')),
       eventsEmitted: [PERFORMANCE_REPORT_EVENT],
-      name: 'PerformanceAnalyzer',
-    };
+      weight: 0,
+    } as const;
   }
 }

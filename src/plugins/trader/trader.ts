@@ -14,42 +14,39 @@ import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated, OrderType } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
+import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
-import { toISOString, toTimestamp } from '@utils/date/date.utils';
-import { wait } from '@utils/process/process.utils';
+import { toISOString } from '@utils/date/date.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { DEFAULT_FEE_BUFFER, ORDER_FACTORY, SYNCHRONIZATION_INTERVAL } from './trader.const';
 import { traderSchema } from './trader.schema';
 import { TraderOrderMetadata } from './trader.types';
-import { computeOrderPricing } from './trader.utils';
+import { computeOrderPricing, isEmptyPortfolio } from './trader.utils';
 
 export class Trader extends Plugin {
   private readonly orders: Map<UUID, TraderOrderMetadata>;
-  private sendInitialPortfolio: boolean;
   private warmupCompleted: boolean;
-  private warmupCandle?: Candle;
+  private warmupCandle: Nullable<Candle>;
   private portfolio: Portfolio;
   private balance: number;
   private price: number;
   // Timer controlling periodic synchronization with the exchange.
-  private syncInterval?: Timer;
+  private syncInterval: Nullable<Timer>;
   private currentTimestamp: EpochTimeStamp;
 
   constructor() {
     super(Trader.name);
     this.orders = new Map();
-    this.sendInitialPortfolio = false;
     this.warmupCompleted = false;
-    this.warmupCandle = undefined;
+    this.warmupCandle = null;
     this.portfolio = { asset: 0, currency: 0 };
     this.balance = 0;
     this.price = 0;
-    // Let's use the start date when using backtest mode
-    this.currentTimestamp = this.daterange ? toTimestamp(this.daterange?.start) : Date.now();
+    this.currentTimestamp = 0;
 
     bindAll(this, [this.synchronize.name]);
 
@@ -59,21 +56,23 @@ export class Trader extends Plugin {
   private async synchronize() {
     const exchange = this.getExchange();
     info('trader', `Synchronizing data with ${exchange.getExchangeName()}`);
-    if (!this.price) {
-      const sleepInterval = exchange.getInterval();
-      const ticker = await exchange.fetchTicker();
-      this.price = ticker.bid;
-      await wait(sleepInterval);
-    }
+
+    // Save old porfolio and balance
     const oldPortfolio = this.portfolio;
+    const oldBalance = this.balance;
+
+    // Update portfolio and balance
     this.portfolio = await exchange.fetchPortfolio();
+    this.balance = this.price * this.portfolio.asset + this.portfolio.currency;
+
     debug(
       'trader',
       `Current portfolio: ${this.portfolio.asset} ${this.asset} / ${this.portfolio.currency} ${this.currency}`,
     );
 
-    this.updateBalance();
-    if (this.sendInitialPortfolio && !isEqual(oldPortfolio, this.portfolio)) this.emitPortfolioChangeEvent();
+    // Emit portfolio events if changes are detected
+    if (this.currentTimestamp && !isEqual(oldPortfolio, this.portfolio)) this.emitPortfolioChangeEvent();
+    if (this.currentTimestamp && oldBalance !== this.balance) this.emitPortfolioValueChangeEvent();
   }
 
   private emitPortfolioChangeEvent() {
@@ -122,16 +121,12 @@ export class Trader extends Plugin {
     });
   }
 
-  private updateBalance() {
-    this.balance = this.price * this.portfolio.asset + this.portfolio.currency;
-  }
-
-  public onStrategyWarmupCompleted() {
+  public async onStrategyWarmupCompleted() {
     this.warmupCompleted = true;
     const candle = this.warmupCandle;
-    this.warmupCandle = undefined;
-    if (!candle) throw new GekkoError('trader', 'No warmup candle on strategy warmup completed event');
-    void this.processOneMinuteCandle(candle);
+    this.warmupCandle = null;
+    if (candle) await this.processOneMinuteCandle(candle);
+    await this.synchronize();
   }
 
   public onStrategyCancelOrder(id: UUID) {
@@ -259,37 +254,29 @@ export class Trader extends Plugin {
   }
 
   protected async processOneMinuteCandle(candle: Candle) {
-    this.currentTimestamp = addMinutes(candle.start, 1).getTime();
+    // Update price first (needed in synchronize fn)
     this.price = candle.close;
 
-    // Return until warmup is done
-    if (!this.warmupCompleted) return (this.warmupCandle = candle);
+    // Then synchronize with exchange only the first execution of this function
+    if (this.currentTimestamp === 0 && isEmptyPortfolio(this.portfolio)) await this.synchronize();
 
-    const previousBalance = this.balance;
-    this.updateBalance();
+    // Then update current timestamp
+    this.currentTimestamp = addMinutes(candle.start, 1).getTime();
 
-    if (!this.sendInitialPortfolio) {
-      this.sendInitialPortfolio = true;
-      await this.synchronize();
-    }
-
-    if (this.balance !== previousBalance) {
-      // this can happen because:
-      // A) the price moved and we have > 0 asset
-      // B) portfolio got changed
-      this.emitPortfolioValueChangeEvent();
-    }
+    // Update warmup candle until warmup is completed
+    if (!this.warmupCompleted) this.warmupCandle = candle;
   }
 
   protected processFinalize(): void {
     if (this.syncInterval) {
       clearInterval(this.syncInterval);
-      this.syncInterval = undefined;
+      this.syncInterval = null;
     }
   }
 
   public static getStaticConfiguration() {
     return {
+      name: 'Trader',
       schema: traderSchema,
       modes: ['realtime', 'backtest'],
       dependencies: [],
@@ -303,7 +290,8 @@ export class Trader extends Plugin {
         ORDER_ERRORED_EVENT,
         ORDER_INITIATED_EVENT,
       ],
-      name: 'Trader',
-    };
+      // Trader is most important than other plugins. it must be executed first
+      weight: 1,
+    } as const;
   }
 }

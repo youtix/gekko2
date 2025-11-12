@@ -218,6 +218,7 @@ describe('StrategyManager', () => {
       expect(tools.cancelOrder).toBe(manager['cancelOrder']);
       expect(tools.log).toBe(manager['log']);
       expect(tools.strategyParams).toEqual({ each: 1, wait: 0 });
+      expect(tools.portfolio).toEqual({ asset: 0, currency: 0 });
       expect(indicatorResult).toBe(42);
       expect(strategy.log).not.toHaveBeenCalled();
       expect(strategy.onCandleAfterWarmup).not.toHaveBeenCalled();
@@ -277,6 +278,17 @@ describe('StrategyManager', () => {
       manager.finish();
 
       expect(strategy.end).toHaveBeenCalled();
+    });
+  });
+
+  describe('updatePortfolio', () => {
+    it('updates the portfolio reference used by tools', () => {
+      const portfolio = { asset: 2, currency: 3 };
+
+      manager.onPortfolioChange(portfolio);
+
+      const tools = manager['createTools'](candle);
+      expect(tools.portfolio).toEqual(portfolio);
     });
   });
 });
