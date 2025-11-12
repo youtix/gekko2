@@ -10,29 +10,35 @@ export type OrderState = {
   price?: number;
 };
 
-export type OrderType = 'MARKET' | 'STICKY';
+export type OrderType = 'MARKET' | 'STICKY' | 'LIMIT';
 export type OrderSide = 'SELL' | 'BUY';
 
-export type OrderCanceled = {
+type OrderLifecycleEvent = {
   orderId: UUID;
   date: EpochTimeStamp;
   type: OrderType;
+  side: OrderSide;
+  amount: number;
+  price?: number;
 };
 
-export type OrderErrored = OrderCanceled & {
+export type OrderCanceled = OrderLifecycleEvent & {
+  filled: number;
+  remaining: number;
+};
+
+export type OrderErrored = OrderLifecycleEvent & {
   reason: string;
 };
 
-export type OrderInitiated = OrderCanceled & {
-  side: OrderSide;
+export type OrderInitiated = OrderLifecycleEvent & {
   portfolio: Portfolio;
   balance: number;
-  amount: number;
 };
 
 export type OrderCompleted = OrderInitiated & {
-  fee: number;
-  price: number;
   effectivePrice: number;
+  fee: number;
   feePercent?: number;
+  price: number;
 };

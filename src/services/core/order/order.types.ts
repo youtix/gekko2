@@ -16,3 +16,11 @@ export type OrderSummary = {
   feePercent?: number;
   date?: EpochTimeStamp;
 };
+export type OrderCancelDetails = {
+  filled?: number;
+  remaining?: number;
+  price?: number;
+};
+export type OrderCancelEventPayload = {
+  status: OrderStatus;
+} & OrderCancelDetails;

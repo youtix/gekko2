@@ -64,10 +64,18 @@ describe('TradingAdvisor', () => {
     orderId: '91f8d591-1a72-4d26-9477-5455e8d88111',
     date: 0,
     type: 'STICKY',
+    side: 'BUY',
+    amount: 5,
+    filled: 2,
+    remaining: 3,
   };
   const defaultErroredOrder: OrderErrored = {
-    ...defaultCanceledOrder,
+    orderId: defaultCanceledOrder.orderId,
+    date: 0,
+    type: 'STICKY',
+    side: 'BUY',
     reason: 'Order errored',
+    amount: 2,
   };
 
   let advisor: TradingAdvisor;

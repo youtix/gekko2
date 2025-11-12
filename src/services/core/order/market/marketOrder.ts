@@ -11,7 +11,7 @@ export class MarketOrder extends Order {
   public readonly creation: Promise<void>;
   private id?: string;
 
-  constructor(gekkoOrderId: UUID, side: OrderSide, amount: number, exchange: Exchange) {
+  constructor(gekkoOrderId: UUID, side: OrderSide, amount: number, exchange: Exchange, _price?: number) {
     super(gekkoOrderId, exchange, side, 'MARKET');
     this.creation = this.createMarketOrder(side, amount);
   }
@@ -61,7 +61,7 @@ export class MarketOrder extends Order {
   }
 
   private applyOrderUpdate(order: OrderState) {
-    const { id, timestamp, filled = 0, status } = order;
+    const { id, timestamp, filled = 0, status, remaining = 0 } = order;
     if (!id) return;
 
     this.id = id;
@@ -74,7 +74,7 @@ export class MarketOrder extends Order {
     if (filled) this.orderPartiallyFilled(id, filled);
 
     if (status === 'closed') return this.orderFilled();
-    if (status === 'canceled') return this.orderCanceled(filled > 0);
+    if (status === 'canceled') return this.orderCanceled({ filled, remaining });
     if (status === 'open') return this.setStatus('open');
 
     warning('core', `Order update returned unexpected status: ${status ?? 'unknown'}`);

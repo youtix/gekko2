@@ -2,9 +2,10 @@ import { UUID } from 'node:crypto';
 import { OrderSide, OrderType } from './order.types';
 
 export type AdviceOrder = {
-  type: OrderType;
   side: OrderSide;
+  type: OrderType;
   quantity?: number;
+  price?: number;
 };
 
 export type Advice = {
