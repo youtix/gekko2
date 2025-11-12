@@ -52,7 +52,7 @@ vi.mock('../../services/configuration/configuration', () => {
   return { config: { getWatch, getStrategy, getExchange } };
 });
 
-function createOrderMock(type: 'STICKY' | 'MARKET') {
+function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = false) {
   const listenersStore = new WeakMap<object, Map<string, Set<OrderListener>>>();
 
   const ensureStore = (instance: object) => {
@@ -82,11 +82,20 @@ function createOrderMock(type: 'STICKY' | 'MARKET') {
     if (!handlers.size) store.delete(event);
   };
 
-  function MockOrder(this: any, id: string, side: string, amount: number, _exchange: unknown) {
+  function MockOrder(
+    this: any,
+    id: string,
+    side: string,
+    amount: number,
+    priceOrExchange: unknown,
+    maybeExchange?: unknown,
+  ) {
     ensureStore(this);
     this.id = id;
     this.side = side;
     this.amount = amount;
+    this.price = requiresPrice ? priceOrExchange : undefined;
+    this.exchange = requiresPrice ? maybeExchange : priceOrExchange;
     this.cancel = vi.fn();
     this.createSummary = vi.fn().mockResolvedValue({
       amount: this.amount,
@@ -106,6 +115,10 @@ function createOrderMock(type: 'STICKY' | 'MARKET') {
 
   MockOrder.prototype.getType = function () {
     return type;
+  };
+
+  MockOrder.prototype.getSide = function () {
+    return this.side;
   };
 
   MockOrder.prototype.on = function (event: string, handler: OrderListener) {
@@ -140,6 +153,10 @@ vi.mock('../../services/core/order/market/marketOrder', () => ({
   MarketOrder: createOrderMock('MARKET'),
 }));
 
+vi.mock('../../services/core/order/limit/limitOrder', () => ({
+  LimitOrder: createOrderMock('LIMIT', true),
+}));
+
 describe('Trader', () => {
   let trader: Trader;
   let fakeExchange: {
@@ -155,6 +172,10 @@ describe('Trader', () => {
   const getWatchMock = config.getWatch as unknown as Mock;
   const getExchangeMock = config.getExchange as unknown as Mock;
   const getStrategyMock = config.getStrategy as unknown as Mock;
+
+  const getOrdersMap = () => (trader as any).orders;
+  const getOrderMetadata = (id: string) => getOrdersMap().get(id);
+  const getOrderInstance = (id: string) => getOrderMetadata(id)?.orderInstance;
 
   const buildAdvice = (overrides?: Partial<Advice>): Advice => {
     const orderOverrides = overrides?.order ?? {};
@@ -219,10 +240,10 @@ describe('Trader', () => {
       expect((trader as any)[field]).toEqual(expected);
     });
 
-    it('initializes orders collection as empty array', () => {
-      const orders = (trader as any).orders;
-      expect(Array.isArray(orders)).toBe(true);
-      expect(orders).toHaveLength(0);
+    it('initializes orders collection as empty map', () => {
+      const orders = getOrdersMap();
+      expect(orders).toBeInstanceOf(Map);
+      expect(orders.size).toBe(0);
     });
 
     it('binds synchronize and schedules interval when running in realtime mode', () => {
@@ -414,7 +435,7 @@ describe('Trader', () => {
 
       trader.onStrategyCreateOrder(advice);
 
-      expect((trader as any).orders).toHaveLength(1);
+      expect(getOrdersMap().size).toBe(1);
       const initiated = getInitiatedPayload();
       expect(initiated?.orderId).toBe(advice.id);
       expect(initiated?.type).toBe(advice.order.type);
@@ -438,8 +459,22 @@ describe('Trader', () => {
 
       const initiated = getInitiatedPayload();
       expect(initiated?.amount).toBeCloseTo(1.2345, 5);
-      const [orderInstance] = (trader as any).orders;
-      expect(orderInstance.amount).toBeCloseTo(1.2345, 5);
+      const metadata = getOrderMetadata(advice.id);
+      expect(metadata?.amount).toBeCloseTo(1.2345, 5);
+      expect(metadata?.orderInstance.amount).toBeCloseTo(1.2345, 5);
+    });
+
+    it('creates limit order with requested price and no amount buffer when quantity missing', () => {
+      trader['portfolio'] = { asset: 0, currency: 1000 };
+      const advice = buildAdvice({ order: { type: 'LIMIT', side: 'BUY', price: 95 } });
+
+      trader.onStrategyCreateOrder(advice);
+
+      const initiated = getInitiatedPayload();
+      expect(initiated?.price).toBe(95);
+      expect(initiated?.amount).toBeCloseTo(10, 5);
+      const metadata = getOrderMetadata(advice.id);
+      expect(metadata?.price).toBe(95);
     });
 
     it('handles ORDER_ERRORED_EVENT by emitting error and removing order', async () => {
@@ -450,19 +485,20 @@ describe('Trader', () => {
       (logger.error as Mock).mockClear();
 
       trader.onStrategyCreateOrder(advice);
-      const order = (trader as any).orders[0];
+      const order = getOrderInstance(advice.id)!;
 
       order.emit(ORDER_ERRORED_EVENT, 'boom');
       await Promise.resolve();
 
       expect(logger.error).toHaveBeenCalledWith('trader', 'Gekko received error: boom');
-      expect((trader as any).orders).toHaveLength(0);
+      expect(getOrdersMap().size).toBe(0);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
           orderId: advice.id,
           reason: 'boom',
           type: advice.order.type,
+          side: advice.order.side,
         }),
       );
       expect(synchronizeSpy).toHaveBeenCalled();
@@ -475,14 +511,23 @@ describe('Trader', () => {
         .mockResolvedValue(undefined);
 
       trader.onStrategyCreateOrder(advice);
-      const order = (trader as any).orders[0];
+      const order = getOrderInstance(advice.id)!;
 
       order.emit(ORDER_INVALID_EVENT, { reason: 'limit too low' });
       await Promise.resolve();
 
       expect(logger.info).toHaveBeenCalledWith('trader', 'Order rejected : limit too low');
       expect(synchronizeSpy).toHaveBeenCalled();
-      expect((trader as any).orders).toHaveLength(0);
+      expect(getOrdersMap().size).toBe(0);
+      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+        ORDER_ERRORED_EVENT,
+        expect.objectContaining({
+          orderId: advice.id,
+          type: advice.order.type,
+          side: advice.order.side,
+          reason: 'limit too low',
+        }),
+      );
     });
 
     it('delegates ORDER_COMPLETED_EVENT to emitOrderCompletedEvent', async () => {
@@ -496,7 +541,7 @@ describe('Trader', () => {
       );
 
       trader.onStrategyCreateOrder(advice);
-      const order = (trader as any).orders[0];
+      const order = getOrderInstance(advice.id)!;
 
       order.emit(ORDER_COMPLETED_EVENT);
       await Promise.resolve();
@@ -509,7 +554,7 @@ describe('Trader', () => {
         advice.order.type,
         expect.objectContaining({ side: advice.order.side }),
       );
-      expect((trader as any).orders).toHaveLength(0);
+      expect(getOrdersMap().size).toBe(0);
     });
 
     it('logs error and removes order when order summary creation fails', async () => {
@@ -525,7 +570,7 @@ describe('Trader', () => {
       );
 
       trader.onStrategyCreateOrder(advice);
-      const order = (trader as any).orders[0];
+      const order = getOrderInstance(advice.id)!;
       (order.createSummary as Mock).mockRejectedValue(new Error('summary failed'));
 
       order.emit(ORDER_COMPLETED_EVENT);
@@ -535,7 +580,7 @@ describe('Trader', () => {
       expect(errorMock).toHaveBeenCalledWith('trader', 'summary failed');
       expect(emitSpy).not.toHaveBeenCalled();
       expect(synchronizeSpy).not.toHaveBeenCalled();
-      expect((trader as any).orders).toHaveLength(0);
+      expect(getOrdersMap().size).toBe(0);
     });
   });
 
@@ -553,25 +598,52 @@ describe('Trader', () => {
       trader['price'] = 100;
       trader['portfolio'] = { asset: 0, currency: 1000 };
       trader.onStrategyCreateOrder(advice);
-      const order = (trader as any).orders[0];
+      const order = getOrderInstance(advice.id)!;
 
       trader.onStrategyCancelOrder(advice.id);
 
       expect(order.removeAllListeners).toHaveBeenCalled();
       expect(order.cancel).toHaveBeenCalled();
 
-      order.emit(ORDER_CANCELED_EVENT);
+      order.emit(ORDER_CANCELED_EVENT, { filled: 2, remaining: 7.5, partiallyFilled: true });
       await Promise.resolve();
 
-      expect((trader as any).orders).toHaveLength(0);
+      expect(getOrdersMap().size).toBe(0);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_CANCELED_EVENT,
         expect.objectContaining({
           orderId: advice.id,
           type: advice.order.type,
+          side: advice.order.side,
+          amount: expect.any(Number),
+          filled: 2,
+          remaining: 7.5,
+          price: 100,
         }),
       );
+      const cancelPayload = (trader['deferredEmit'] as Mock).mock.calls
+        .filter(call => call[0] === ORDER_CANCELED_EVENT)
+        .pop()?.[1];
+      expect(cancelPayload?.amount).toBeCloseTo(9.5, 5);
       expect(synchronizeSpy).toHaveBeenCalled();
+    });
+
+    it('includes requested price when canceling limit orders', async () => {
+      trader['price'] = 100;
+      trader['portfolio'] = { asset: 0, currency: 1000 };
+      const advice = buildAdvice({ order: { type: 'LIMIT', side: 'SELL', price: 210 } });
+      trader.onStrategyCreateOrder(advice);
+      const order = getOrderInstance(advice.id)!;
+
+      trader.onStrategyCancelOrder(advice.id);
+      order.emit(ORDER_CANCELED_EVENT, { filled: 0, remaining: 5, partiallyFilled: false });
+      await Promise.resolve();
+
+      const payload = (trader['deferredEmit'] as Mock).mock.calls
+        .filter(call => call[0] === ORDER_CANCELED_EVENT)
+        .pop()?.[1];
+      expect(payload?.price).toBe(210);
+      expect(payload?.side).toBe('SELL');
     });
 
     it('removes order and emits error when cancellation fails', async () => {
@@ -582,7 +654,7 @@ describe('Trader', () => {
       trader['price'] = 100;
       trader['portfolio'] = { asset: 0, currency: 1000 };
       trader.onStrategyCreateOrder(advice);
-      const order = (trader as any).orders[0];
+      const order = getOrderInstance(advice.id)!;
 
       trader.onStrategyCancelOrder(advice.id);
 
@@ -592,12 +664,13 @@ describe('Trader', () => {
       order.emit(ORDER_ERRORED_EVENT, 'exchange timeout');
       await Promise.resolve();
 
-      expect((trader as any).orders).toHaveLength(0);
+      expect(getOrdersMap().size).toBe(0);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
           orderId: advice.id,
           type: advice.order.type,
+          side: advice.order.side,
           reason: 'exchange timeout',
         }),
       );

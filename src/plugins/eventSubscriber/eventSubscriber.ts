@@ -63,42 +63,63 @@ export class EventSubscriber extends Plugin {
 
   public onStrategyCreateOrder({ order, date }: Advice) {
     if (!this.subscriptions.has('strategy_advice')) return;
+    const priceLine =
+      order.type === 'LIMIT'
+        ? `Requested limit price: ${order.price} ${this.currency}`
+        : `Target price: ${this.price ?? 'unknown'} ${this.currency}`;
     const message = [
       `Received ${order.type} ${order.side} advice`,
       `Requested quantity: ${order.quantity ?? 'auto'}`,
       `At time: ${toISOString(date)}`,
-      `Target price: ${this.price}`,
+      priceLine,
     ].join('\n');
     this.bot.sendMessage(message);
   }
 
-  public onOrderInitiated({ orderId, type, side, balance, date, portfolio, amount }: OrderInitiated) {
+  public onOrderInitiated({
+    orderId,
+    type,
+    side,
+    balance,
+    date,
+    portfolio,
+    amount,
+    price: requestedPrice,
+  }: OrderInitiated) {
     if (!this.subscriptions.has('order_initiated')) return;
+    const priceLine = requestedPrice
+      ? `Requested limit price: ${requestedPrice} ${this.currency}`
+      : `Target price: ${this.price ?? 'unknown'} ${this.currency}`;
     const message = [
       `${side} ${type} order created (${orderId})`,
       `Requested amount: ${amount}`,
       `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
       `Current balance: ${balance}`,
-      `Target price: ${this.price}`,
+      priceLine,
       `At time: ${toISOString(date)}`,
     ].join('\n');
     this.bot.sendMessage(message);
   }
 
-  public onOrderCanceled({ orderId, date, type }: OrderCanceled) {
+  public onOrderCanceled({ orderId, date, type, side, amount, filled, remaining, price }: OrderCanceled) {
     if (!this.subscriptions.has('order_canceled')) return;
+    const priceLine = price
+      ? `Requested limit price: ${price} ${this.currency}`
+      : `Current price: ${this.price} ${this.currency}`;
     const message = [
-      `${type} order canceled (${orderId})`,
+      `${side} ${type} order canceled (${orderId})`,
       `At time: ${toISOString(date)}`,
-      `Current price: ${this.price} ${this.currency}`,
+      `Filled amount: ${filled} / ${amount} ${this.asset}`,
+      `Remaining amount: ${remaining} ${this.asset}`,
+      priceLine,
     ].join('\n');
     this.bot.sendMessage(message);
   }
 
-  public onOrderErrored({ orderId, type, date, reason }: OrderErrored) {
+  public onOrderErrored({ orderId, type, date, reason, side }: OrderErrored) {
     if (!this.subscriptions.has('order_errored')) return;
     const message = [
-      `${type} order errored (${orderId})`,
+      `${side} ${type} order errored (${orderId})`,
       `Due to ${reason}`,
       `At time: ${toISOString(date)}`,
       `Current price: ${this.price} ${this.currency}`,

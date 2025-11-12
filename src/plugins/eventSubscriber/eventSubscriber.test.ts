@@ -63,12 +63,19 @@ describe('EventSubscriber', () => {
         portfolio: { asset: 0, currency: 0 },
         type: 'STICKY',
         amount: 1,
+        price: 123,
       } as OrderInitiated);
     const onOrderCanceled = (p: EventSubscriber) =>
       p.onOrderCanceled({
         orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
         date: toTimestamp('2022-01-01T00:00:00Z'),
         type: 'STICKY',
+        side: 'SELL',
+        amount: 2,
+        filled: 1,
+        remaining: 1,
+        partiallyFilled: true,
+        price: 456,
       } as OrderCanceled);
     const onOrderErrored = (p: EventSubscriber) =>
       p.onOrderErrored({
@@ -76,6 +83,8 @@ describe('EventSubscriber', () => {
         date: toTimestamp('2022-01-01T00:00:00Z'),
         reason: 'r',
         type: 'STICKY',
+        side: 'SELL',
+        amount: 2,
       } as OrderErrored);
     const onOrderCompleted = (p: EventSubscriber) =>
       p.onOrderCompleted({
@@ -129,11 +138,31 @@ describe('EventSubscriber', () => {
         portfolio: { asset: 1, currency: 2 },
         type: 'MARKET',
         amount: 5,
+        price: 321,
       } as OrderInitiated);
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(
         expect.stringContaining('MARKET order created (ee21e130-48bc-405f-be0c-46e9bf17b52e)'),
       );
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested amount: 5'));
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested limit price: 321 USD'));
+    });
+
+    it('includes fill details when reporting canceled orders', () => {
+      fakeBot.sendMessage.mockReset();
+      plugin['handleCommand']('/subscribe_to_order_canceled');
+      plugin.onOrderCanceled({
+        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+        date: toTimestamp('2022-01-01T00:00:00Z'),
+        type: 'LIMIT',
+        side: 'SELL',
+        amount: 2,
+        filled: 1,
+        remaining: 1,
+        partiallyFilled: true,
+        price: 999,
+      } as OrderCanceled);
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Filled amount: 1 / 2 BTC'));
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested limit price: 999 USD'));
     });
   });
 

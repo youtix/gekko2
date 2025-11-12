@@ -18,7 +18,7 @@ export class StickyOrder extends Order {
   private id?: string;
   private interval?: Timer;
 
-  constructor(gekkoOrderId: UUID, action: OrderSide, amount: number, exchange: Exchange) {
+  constructor(gekkoOrderId: UUID, action: OrderSide, amount: number, exchange: Exchange, _price?: number) {
     super(gekkoOrderId, exchange, action, 'STICKY');
     this.completing = false;
     this.moving = false;
@@ -143,7 +143,9 @@ export class StickyOrder extends Order {
 
     if (status === 'canceled') {
       clearInterval(this.interval);
-      return Promise.resolve(this.orderCanceled(!!filled));
+      const totalFilled = sumBy(this.transactions, 'filled');
+      const remainingAmount = Math.max(this.amount - totalFilled, 0);
+      return Promise.resolve(this.orderCanceled({ filled: totalFilled, remaining: remainingAmount }));
     }
 
     if (status === 'open') return Promise.resolve(this.setStatus('open'));
@@ -188,7 +190,10 @@ export class StickyOrder extends Order {
     this.updateTransactionPartialFilledAmount(id, filled);
 
     // No need to clear interval here, it will be done in cancel function
-    if (!this.moving) this.orderCanceled(totalFilledOfAllTransactions > 0);
+    if (!this.moving) {
+      const remainingAmount = Math.max(this.amount - totalFilledOfAllTransactions, 0);
+      this.orderCanceled({ filled: totalFilledOfAllTransactions, remaining: remainingAmount });
+    }
     return Promise.resolve();
   }
 
@@ -224,7 +229,9 @@ export class StickyOrder extends Order {
 
     if (status === 'canceled') {
       clearInterval(this.interval);
-      return Promise.resolve(this.orderCanceled(!!filled));
+      const totalFilled = sumBy(this.transactions, 'filled');
+      const remainingAmount = Math.max(this.amount - totalFilled, 0);
+      return Promise.resolve(this.orderCanceled({ filled: totalFilled, remaining: remainingAmount }));
     }
 
     if (status === 'open') {

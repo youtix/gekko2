@@ -15,7 +15,6 @@ import { Candle } from '@models/candle.types';
 import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated, OrderType } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Plugin } from '@plugins/plugin';
-import { Order } from '@services/core/order/order';
 import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString, toTimestamp } from '@utils/date/date.utils';
@@ -25,10 +24,11 @@ import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { DEFAULT_FEE_BUFFER, ORDER_FACTORY, SYNCHRONIZATION_INTERVAL } from './trader.const';
 import { traderSchema } from './trader.schema';
+import { TraderOrderMetadata } from './trader.types';
 import { computeOrderPricing } from './trader.utils';
 
 export class Trader extends Plugin {
-  private readonly orders: Order[];
+  private readonly orders: Map<UUID, TraderOrderMetadata>;
   private sendInitialPortfolio: boolean;
   private warmupCompleted: boolean;
   private warmupCandle?: Candle;
@@ -41,7 +41,7 @@ export class Trader extends Plugin {
 
   constructor() {
     super(Trader.name);
-    this.orders = [];
+    this.orders = new Map();
     this.sendInitialPortfolio = false;
     this.warmupCompleted = false;
     this.warmupCandle = undefined;
@@ -135,31 +135,38 @@ export class Trader extends Plugin {
   }
 
   public onStrategyCancelOrder(id: UUID) {
-    const orderInstance = this.getOrder(id);
-    if (!orderInstance) return warning('trader', 'Impossible to cancel order: Unknown Order');
+    const orderMetadata = this.orders.get(id);
+    if (!orderMetadata) return warning('trader', 'Impossible to cancel order: Unknown Order');
+    const { orderInstance, side, amount, type, price } = orderMetadata;
 
-    const type = orderInstance.getType();
     orderInstance.removeAllListeners();
 
     // Handle Cancel Success hook
-    orderInstance.once(ORDER_CANCELED_EVENT, async () => {
-      this.removeOrder(id);
+    orderInstance.once(ORDER_CANCELED_EVENT, async ({ filled = 0, remaining = Math.max(0, amount - filled) }) => {
+      this.orders.delete(id);
       this.deferredEmit<OrderCanceled>(ORDER_CANCELED_EVENT, {
         orderId: id,
         date: this.currentTimestamp,
         type,
+        side,
+        amount,
+        filled,
+        remaining,
+        price,
       });
       await this.synchronize();
     });
 
     // Handle Cancel Error hook
     orderInstance.once(ORDER_ERRORED_EVENT, async reason => {
-      this.removeOrder(id);
+      this.orders.delete(id);
       this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
         orderId: id,
         date: this.currentTimestamp,
         type,
+        side,
         reason,
+        amount,
       });
       await this.synchronize();
     });
@@ -168,27 +175,29 @@ export class Trader extends Plugin {
 
   public onStrategyCreateOrder(advice: Advice) {
     const { order, date, id } = advice;
-    const { side, type, quantity } = order;
+    const { side, type, quantity, price = this.price } = order;
     const { asset, currency } = this.portfolio;
 
     // Price cannot be zero here because we call processOneMinuteCandle before events (plugins stream)
     // We delegate the order validation (notional, lot, amount) to the exchange
-    const amount = quantity ?? (side === 'BUY' ? (currency / this.price) * (1 - DEFAULT_FEE_BUFFER) : asset);
+    const computedAmount = side === 'BUY' ? (currency / price) * (1 - DEFAULT_FEE_BUFFER) : asset;
+    const amount = quantity ?? computedAmount;
 
     info('trader', `Creating ${type} order to ${side} ${amount} ${this.asset}`);
     this.deferredEmit<OrderInitiated>(ORDER_INITIATED_EVENT, {
       orderId: id,
-      side: side,
-      portfolio: this.portfolio,
-      balance: this.balance,
+      side,
       date,
       type,
-      amount: amount,
+      amount,
+      price,
+      balance: this.balance,
+      portfolio: this.portfolio,
     });
 
     const exchange = this.getExchange();
-    const orderInstance = new ORDER_FACTORY[type](id, side, amount, exchange);
-    this.orders.push(orderInstance);
+    const orderInstance = new ORDER_FACTORY[type](id, side, amount, exchange, price);
+    this.orders.set(id, { amount, side, type, price, orderInstance });
 
     // UPDATE EVENTS
     orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
@@ -201,25 +210,29 @@ export class Trader extends Plugin {
     // ERROR EVENTS
     orderInstance.on(ORDER_INVALID_EVENT, async ({ reason }) => {
       info('trader', `Order rejected : ${reason}`);
-      this.removeOrder(id);
+      this.orders.delete(id);
       await this.synchronize();
       this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
         orderId: id,
         type,
+        side,
         date: this.currentTimestamp,
         reason,
+        amount,
       });
     });
 
     orderInstance.on(ORDER_ERRORED_EVENT, async reason => {
       error('trader', `Gekko received error: ${reason}`);
-      this.removeOrder(id);
+      this.orders.delete(id);
       await this.synchronize();
       this.deferredEmit<OrderErrored>(ORDER_ERRORED_EVENT, {
         orderId: id,
         type,
+        side,
         date: this.currentTimestamp,
         reason,
+        amount,
       });
     });
 
@@ -232,20 +245,9 @@ export class Trader extends Plugin {
       } catch (err) {
         error('trader', err instanceof Error ? err.message : 'Unknown error on order completed');
       } finally {
-        this.removeOrder(id);
+        this.orders.delete(id);
       }
     });
-  }
-
-  private removeOrder(id: UUID) {
-    const index = this.orders.findIndex(o => o.getGekkoOrderId() === id);
-    if (index >= 0) this.orders.splice(index, 1);
-  }
-
-  private getOrder(id: UUID) {
-    const orderIndex = this.orders.findIndex(o => o.getGekkoOrderId() === id);
-    if (orderIndex === -1) return;
-    return this.orders[orderIndex];
   }
 
   // --------------------------------------------------------------------------

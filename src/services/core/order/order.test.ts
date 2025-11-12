@@ -74,10 +74,10 @@ describe('order', () => {
   describe('orderCanceled', () => {
     it('should call setStatus with "canceled" and emit ORDER_CANCELED_EVENT on orderCanceled', () => {
       const spy = vi.spyOn(testOrder, 'emit');
-      testOrder['orderCanceled'](true);
+      testOrder['orderCanceled']({ filled: 100 });
       expect(spy).toHaveBeenCalledWith(ORDER_CANCELED_EVENT, {
         status: 'canceled',
-        partiallyFilled: true,
+        filled: 100,
       });
     });
   });

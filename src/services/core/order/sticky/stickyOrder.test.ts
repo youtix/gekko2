@@ -386,15 +386,17 @@ describe('StickyOrder', () => {
     });
 
     it.each`
-      filled | expectedArg
-      ${0}   | ${false}
-      ${5}   | ${true}
+      filled | expFilled | expRemaining
+      ${0}   | ${0}      | ${10}
+      ${5}   | ${5}      | ${5}
     `(
       'should call orderCanceled with $expectedArg when status is "canceled" and filled is $filled',
-      ({ filled, expectedArg }) => {
+      ({ filled, expFilled, expRemaining }) => {
         stickyOrder['orderCanceled'] = vi.fn();
         stickyOrder['handleCreateOrderSuccess']({ ...defaultOrder, status: 'canceled', filled });
-        expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(expectedArg);
+        expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(
+          expect.objectContaining({ filled: expFilled, remaining: expRemaining }),
+        );
       },
     );
 
@@ -504,8 +506,16 @@ describe('StickyOrder', () => {
     it('should call orderCanceled when no prior branch is triggered and moving is false', () => {
       stickyOrder['orderCanceled'] = vi.fn();
       stickyOrder['transactions'] = [{ id: 'test', filled: 2, timestamp: 1710000000000 }];
-      stickyOrder['handleCancelOrderSuccess']({ ...defaultOrder, filled: 1, remaining: 10 });
-      expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(true);
+      const baseFilled = stickyOrder['transactions'].reduce((sum, tx) => sum + (tx.filled ?? 0), 0);
+      const newFill = 1;
+      stickyOrder['handleCancelOrderSuccess']({ ...defaultOrder, filled: newFill, remaining: 10 });
+      const expectedFilled = baseFilled + newFill;
+      expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filled: expectedFilled,
+          remaining: Math.max(stickyOrder['amount'] - expectedFilled, 0),
+        }),
+      );
     });
 
     it('should NOT call orderCanceled when the moving flag is true', () => {
@@ -576,8 +586,15 @@ describe('StickyOrder', () => {
       ${5}
     `('should call orderCanceled when status is "canceled" and filled is $filled', async ({ filled }) => {
       stickyOrder['orderCanceled'] = vi.fn();
+      stickyOrder['transactions'] = [{ id: defaultOrder.id, filled: 0, timestamp: 1710000000000 }];
       await stickyOrder['handleFetchOrderSuccess']({ ...defaultOrder, status: 'canceled', filled });
-      expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(!!filled);
+      const totalFilled = stickyOrder['transactions'].reduce((sum, tx) => sum + (tx.filled ?? 0), 0);
+      expect(stickyOrder['orderCanceled']).toHaveBeenCalledWith(
+        expect.objectContaining({
+          filled: totalFilled,
+          remaining: Math.max(stickyOrder['amount'] - totalFilled, 0),
+        }),
+      );
     });
 
     it('should call move when status is "open" and ticker price mismatches order price', async () => {

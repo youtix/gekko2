@@ -9,9 +9,10 @@ import {
 import { OrderSide, OrderState, OrderType } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { debug, error, info } from '@services/logger';
+import { isNil } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
-import { OrderStatus, OrderSummary, Transaction } from './order.types';
+import { OrderCancelDetails, OrderCancelEventPayload, OrderStatus, OrderSummary, Transaction } from './order.types';
 
 export abstract class Order extends EventEmitter {
   private status: OrderStatus;
@@ -37,10 +38,6 @@ export abstract class Order extends EventEmitter {
 
   public getSide() {
     return this.side;
-  }
-
-  public getType() {
-    return this.type;
   }
 
   protected async createLimitOrder(action: OrderSide, amount: number, price: number) {
@@ -94,9 +91,14 @@ export abstract class Order extends EventEmitter {
     else info('core', `${this.type} order ${status}`);
   }
 
-  protected orderCanceled(partiallyFilled = false) {
+  protected orderCanceled({ filled, remaining, price }: OrderCancelDetails = {}) {
     this.setStatus('canceled');
-    this.emit(ORDER_CANCELED_EVENT, { status: this.status, partiallyFilled });
+    this.emit<OrderCancelEventPayload>(ORDER_CANCELED_EVENT, {
+      status: this.status,
+      ...(!isNil(filled) && { filled }),
+      ...(!isNil(remaining) && { remaining }),
+      ...(!isNil(price) && { price }),
+    });
   }
 
   protected orderRejected(reason: string) {
