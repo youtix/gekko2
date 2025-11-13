@@ -4,6 +4,7 @@ import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
+import { Nullable } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { isNil } from 'lodash-es';
 import { INTERVAL_BETWEEN_CALLS_IN_MS } from './exchange.const';
@@ -95,7 +96,7 @@ export abstract class Exchange {
   public abstract createMarketOrder(side: OrderSide, amount: number): Promise<OrderState>;
   public abstract cancelOrder(id: string): Promise<OrderState>;
   public abstract fetchOrder(id: string): Promise<OrderState>;
-  public abstract getMarketLimits(): MarketLimits | undefined;
+  public abstract getMarketLimits(): Nullable<MarketLimits>;
 
   public abstract onNewCandle(onNewCandle: (candle: Candle) => void): () => void;
 }

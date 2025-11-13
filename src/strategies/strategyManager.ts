@@ -14,7 +14,9 @@ import { LogLevel } from '@models/logLevel.types';
 import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
+import { Nullable } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
+import { MarketLimits } from '@services/exchange/exchange.types';
 import { debug, error, info, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { toISOString } from '@utils/date/date.utils';
@@ -29,6 +31,7 @@ export class StrategyManager extends EventEmitter {
   private warmupPeriod: number;
   private indicators: Indicator[];
   private strategyParams: object;
+  private marketLimits: Nullable<MarketLimits>;
   private portfolio: Portfolio;
   private strategy?: Strategy<object>;
 
@@ -39,11 +42,11 @@ export class StrategyManager extends EventEmitter {
     this.indicators = [];
     this.strategyParams = config.getStrategy() ?? {};
     this.portfolio = { asset: 0, currency: 0 };
+    this.marketLimits = null;
 
     bindAll(this, [this.addIndicator.name, this.createOrder.name, this.cancelOrder.name, this.log.name]);
   }
 
-  // ---- Called by trading advisor ---- //
   public async createStrategy(strategyName: string, strategyPath?: string) {
     if (strategyPath) {
       const resolvedPath = isAbsolute(strategyPath) ? strategyPath : resolve(process.cwd(), strategyPath);
@@ -58,7 +61,10 @@ export class StrategyManager extends EventEmitter {
     }
   }
 
-  // ---- Strategy events received from trader plugin --- //
+  /* -------------------------------------------------------------------------- */
+  /*                                  EVENTS                                    */
+  /* -------------------------------------------------------------------------- */
+
   public onNewCandle(candle: Candle) {
     const tools = this.createTools(candle);
 
@@ -98,17 +104,26 @@ export class StrategyManager extends EventEmitter {
     this.strategy?.onOrderErrored(order);
   }
 
-  public onPortfolioChange(portfolio: Portfolio) {
-    this.portfolio = portfolio;
-  }
-
-  public finish() {
+  public onStrategyEnd() {
     this.strategy?.end();
   }
 
-  // -------------------------------
+  /* -------------------------------------------------------------------------- */
+  /*                                  SETTERS                                   */
+  /* -------------------------------------------------------------------------- */
 
-  // ---- User startegy tools functions ----
+  public setPortfolio(portfolio: Portfolio) {
+    this.portfolio = portfolio;
+  }
+
+  public setMarketLimits(marketLimits: Nullable<MarketLimits>) {
+    this.marketLimits = marketLimits;
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /*                  FUNCTIONS USED IN TRADER STRATEGIES                       */
+  /* -------------------------------------------------------------------------- */
+
   private addIndicator<T extends IndicatorNames>(name: T, parameters: IndicatorParamaters<T>) {
     const Indicator = indicators[name];
     if (!Indicator) throw new GekkoError('strategy', `${name} indicator not found.`);
@@ -153,7 +168,10 @@ export class StrategyManager extends EventEmitter {
       message,
     });
   }
-  // -------------------------------
+
+  /* -------------------------------------------------------------------------- */
+  /*                            UTILS FUNCTIONS                                 */
+  /* -------------------------------------------------------------------------- */
 
   private emitWarmupCompletedEvent(candle: Candle) {
     info('strategy', `Strategy warmup done ! Sending first candle (${toISOString(candle.start)}) to strategy`);
@@ -161,6 +179,7 @@ export class StrategyManager extends EventEmitter {
   }
 
   private createTools(candle: Candle): Tools<object> {
+    if (!this.marketLimits) throw new GekkoError('strategy', 'Market limits are not defined');
     return {
       candle,
       createOrder: this.createOrder,
@@ -168,6 +187,7 @@ export class StrategyManager extends EventEmitter {
       log: this.log,
       strategyParams: this.strategyParams,
       portfolio: this.portfolio,
+      marketLimits: this.marketLimits,
     };
   }
 }

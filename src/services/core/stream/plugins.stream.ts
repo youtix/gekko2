@@ -19,6 +19,16 @@ export class PluginsStream extends Writable {
     if (isDummyExchange(exchange)) this.dummyExchange = exchange;
   }
 
+  public async _construct(callback: (error?: Error | null) => void): Promise<void> {
+    try {
+      for (const plugin of this.plugins) await plugin.processInitStream();
+      callback();
+    } catch (error) {
+      if (error instanceof Error) callback(error);
+      else callback(new Error(`Error when initializing stream plugin: ${error}`));
+    }
+  }
+
   public async _write(candle: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
     const flushEvents = this.flushEvents().bind(this);
     try {

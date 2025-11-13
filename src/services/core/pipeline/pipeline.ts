@@ -17,11 +17,6 @@ export const launchStream = async (context: PipelineContext) => {
   return context;
 };
 
-export const initPlugins = async (context: PipelineContext) => {
-  await Promise.all(context.map(pipeline => pipeline.plugin?.processInitStream()));
-  return context;
-};
-
 export const injectServices = async (context: PipelineContext) =>
   each(context, pipeline => {
     each(pipeline.inject, async serviceName => {
@@ -136,6 +131,5 @@ export const gekkoPipeline = () =>
     createPlugins,
     wirePlugins,
     injectServices,
-    initPlugins,
     launchStream,
   ].reduce(async (params, fn) => fn(await params), Promise.resolve(config.getPlugins()));

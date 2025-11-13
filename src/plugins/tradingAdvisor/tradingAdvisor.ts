@@ -96,7 +96,7 @@ export class TradingAdvisor extends Plugin {
   }
 
   public onPortfolioChange(portfolio: Portfolio) {
-    this.strategyManager?.onPortfolioChange(portfolio);
+    this.strategyManager?.setPortfolio(portfolio);
   }
 
   public onTimeframeCandle(newCandle: Candle) {
@@ -110,6 +110,7 @@ export class TradingAdvisor extends Plugin {
   protected async processInit() {
     await this.setUpStrategy();
     this.setUpListeners();
+    this.strategyManager?.setMarketLimits(this.getExchange().getMarketLimits());
     info('trading advisor', `Using the strategy: ${this.strategyName}`);
   }
 
@@ -120,7 +121,7 @@ export class TradingAdvisor extends Plugin {
   }
 
   protected processFinalize() {
-    this.strategyManager?.finish();
+    this.strategyManager?.onStrategyEnd();
   }
 
   public static getStaticConfiguration() {
@@ -129,7 +130,7 @@ export class TradingAdvisor extends Plugin {
       schema: tradingAdvisorSchema,
       modes: ['realtime', 'backtest'],
       dependencies: [],
-      inject: [],
+      inject: ['exchange'],
       eventsHandlers: filter(Object.getOwnPropertyNames(TradingAdvisor.prototype), p => p.startsWith('on')),
       eventsEmitted: [
         STRATEGY_INFO_EVENT,

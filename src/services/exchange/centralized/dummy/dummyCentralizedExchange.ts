@@ -167,7 +167,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return this.cloneOrder(order);
   }
 
-  public getMarketLimits(): MarketLimits | undefined {
+  public getMarketLimits(): MarketLimits {
     return this.marketLimits;
   }
 

@@ -1,6 +1,7 @@
 import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { OrderSide } from '@models/order.types';
+import { Nullable } from '@models/utility.types';
 import { MarketLimits } from '@services/exchange/exchange.types';
 import { debug, error, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
@@ -26,7 +27,7 @@ import { mapAccountTradeToTrade, mapKlinesToCandles, mapSpotOrderToOrder } from 
 export class BinanceExchange extends CentralizedExchange {
   private ws: WebsocketClient;
   private client: MainClient;
-  private marketLimits?: MarketLimits;
+  private marketLimits: Nullable<MarketLimits>;
 
   constructor(exchangeConfig: BinanceExchangeConfig) {
     super(exchangeConfig);
@@ -44,6 +45,7 @@ export class BinanceExchange extends CentralizedExchange {
         error: (params: unknown) => error('exchange', params),
       },
     );
+    this.marketLimits = null;
   }
 
   public onNewCandle(onNewCandle: (candle: Candle) => void) {
