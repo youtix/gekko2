@@ -10,17 +10,31 @@ import { Advice } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
+import { Exchange } from '@services/exchange/exchange';
+import { MarketLimits } from '@services/exchange/exchange.types';
+import { StrategyManager } from '@strategies/strategyManager';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { TradingAdvisor } from './tradingAdvisor';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
+const attachMockExchange = (instance: TradingAdvisor) => {
+  instance.setExchange({
+    getExchangeName: (): string => 'binance',
+    getMarketLimits: (): MarketLimits => ({ amount: { min: 3 } }),
+  } as unknown as Exchange);
+};
+
 vi.mock('@strategies/index', () => ({
   DummyStrategy: class {
     init = vi.fn();
     onNewCandle = vi.fn();
+    onOrderCanceled = vi.fn();
     onOrderCompleted = vi.fn();
+    onOrderErrored = vi.fn();
+    onPortfolioChange = vi.fn();
+    setUpMarketLimits = vi.fn();
     finish = vi.fn();
     on() {
       return this;
@@ -82,6 +96,7 @@ describe('TradingAdvisor', () => {
 
   beforeEach(() => {
     advisor = new TradingAdvisor(config);
+    attachMockExchange(advisor);
     advisor['deferredEmit'] = vi.fn();
   });
 
@@ -92,11 +107,18 @@ describe('TradingAdvisor', () => {
           name: 'TradingAdvisor',
           strategyName: 'NonExistentStrategy',
         });
+        attachMockExchange(badAdvisor);
         await expect(() => badAdvisor['processInit']()).rejects.toThrowError(GekkoError);
       });
       it('should create a strategy manager when a valid strategy name is provided', async () => {
         await advisor['processInit']();
         expect(advisor['strategyManager']).toBeDefined();
+      });
+      it('should set up market limits in strategy manager', async () => {
+        const setUpSpy = vi.spyOn(StrategyManager.prototype, 'setMarketLimits');
+        await advisor['processInit']();
+        expect(setUpSpy).toHaveBeenCalledExactlyOnceWith({ amount: { min: 3 } });
+        setUpSpy.mockRestore();
       });
     });
 
@@ -133,9 +155,9 @@ describe('TradingAdvisor', () => {
         await advisor['processInit']();
       });
       it('should call strategyManager.finish when processFinalize is called', () => {
-        advisor['strategyManager']!.finish = vi.fn();
+        advisor['strategyManager']!.onStrategyEnd = vi.fn();
         advisor['processFinalize']();
-        expect(advisor['strategyManager']?.finish).toHaveBeenCalled();
+        expect(advisor['strategyManager']?.onStrategyEnd).toHaveBeenCalled();
       });
     });
   });
@@ -231,11 +253,11 @@ describe('TradingAdvisor', () => {
     describe('onPortfolioChange', () => {
       it('should forward latest portfolio to the strategy manager', () => {
         const portfolio = { asset: 5, currency: 10 };
-        advisor['strategyManager']!.onPortfolioChange = vi.fn();
+        advisor['strategyManager']!.setPortfolio = vi.fn();
 
         advisor.onPortfolioChange(portfolio);
 
-        expect(advisor['strategyManager']?.onPortfolioChange).toHaveBeenCalledExactlyOnceWith(portfolio);
+        expect(advisor['strategyManager']?.setPortfolio).toHaveBeenCalledExactlyOnceWith(portfolio);
       });
     });
 
@@ -251,6 +273,7 @@ describe('TradingAdvisor', () => {
 
       it('should ignore timeframe candles when strategy manager is not initialized', () => {
         const notInitializedAdvisor = new TradingAdvisor(config);
+        attachMockExchange(notInitializedAdvisor);
         expect(() => notInitializedAdvisor.onTimeframeCandle(defaultCandle)).not.toThrow();
       });
     });

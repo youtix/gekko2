@@ -4,6 +4,7 @@ import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
+import { Nullable } from '@models/utility.types';
 import { describe, expect, it, vi } from 'vitest';
 import { MarketLimits } from '../exchange.types';
 import { BinanceExchangeConfig } from './binance/binance.types';
@@ -21,14 +22,14 @@ vi.mock('@services/configuration/configuration', () => ({
 class RetryableError extends Error {}
 
 class TestCentralizedExchange extends CentralizedExchange {
-  private readonly limits?: MarketLimits;
+  private readonly limits: Nullable<MarketLimits>;
   private readonly tickerQueue: Array<Ticker | Error> = [];
   private readonly createOrderBehaviors: Array<'error' | 'success'> = [];
   public fetchTickerImplCalls = 0;
   public createLimitOrderImplCalls = 0;
   public createMarketOrderImplCalls = 0;
 
-  constructor(config: CentralizedExchangeConfig, limits?: MarketLimits) {
+  constructor(config: CentralizedExchangeConfig, limits: Nullable<MarketLimits>) {
     super(config);
     this.limits = limits;
   }
@@ -109,7 +110,7 @@ class TestCentralizedExchange extends CentralizedExchange {
     return { id: '1', status: 'open', timestamp: 0 };
   }
 
-  public getMarketLimits(): MarketLimits | undefined {
+  public getMarketLimits(): Nullable<MarketLimits> {
     return this.limits;
   }
 
