@@ -30,7 +30,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
   private orderSequence = 0;
 
   constructor(exchangeConfig: DummyCentralizedExchangeConfig) {
-    super(exchangeConfig);
+    super();
     this.makerFee = (exchangeConfig.feeMaker ?? 0) / 100;
     this.takerFee = (exchangeConfig.feeTaker ?? 0) / 100;
     this.marketLimits = exchangeConfig.limits;

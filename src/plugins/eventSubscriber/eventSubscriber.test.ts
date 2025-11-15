@@ -1,6 +1,7 @@
+import { AdviceOrder } from '@models/advice.types';
+import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
+import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Advice } from '../../models/advice.types';
-import { OrderCanceled, OrderCompleted, OrderErrored, OrderInitiated } from '../../models/order.types';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { EventSubscriber } from './eventSubscriber';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
@@ -44,59 +45,100 @@ describe('EventSubscriber', () => {
   });
 
   describe('event notifications', () => {
+    const eventTimestamp = toTimestamp('2022-01-01T00:00:00Z');
+    const baseOrder = {
+      id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e' as UUID,
+      side: 'BUY' as const,
+      type: 'STICKY' as const,
+      amount: 1,
+      price: 123,
+    };
+    const baseExchange = {
+      price: 123,
+      balance: 1,
+      portfolio: { asset: 0, currency: 0 },
+    };
     const onStrategyInfo = (p: EventSubscriber) =>
-      p.onStrategyInfo({ timestamp: 1, level: 'debug', message: 'M', tag: 'strategy' });
-    const onStrategyCreateOrder = (p: EventSubscriber) =>
+      p.onStrategyInfo({ timestamp: eventTimestamp, level: 'debug', message: 'M', tag: 'strategy' });
+    const onStrategyCreateOrder = (p: EventSubscriber, overrides: Partial<AdviceOrder> = {}) =>
       p.onStrategyCreateOrder({
-        order: { type: 'STICKY', side: 'BUY', quantity: 1 },
-        date: toTimestamp('2022-01-01T00:00:00Z'),
-        id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      } as Advice);
-    const onOrderInitiated = (p: EventSubscriber) =>
-      p.onOrderInitiated({
-        side: 'BUY',
-        balance: 1,
-        date: toTimestamp('2022-01-01T00:00:00Z'),
-        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-        portfolio: { asset: 0, currency: 0 },
-        type: 'STICKY',
-        amount: 1,
-        price: 123,
-      } as OrderInitiated);
-    const onOrderCanceled = (p: EventSubscriber) =>
-      p.onOrderCanceled({
-        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-        date: toTimestamp('2022-01-01T00:00:00Z'),
-        type: 'STICKY',
-        side: 'SELL',
-        amount: 2,
-        filled: 1,
-        remaining: 1,
-        partiallyFilled: true,
-        price: 456,
-      } as OrderCanceled);
-    const onOrderErrored = (p: EventSubscriber) =>
-      p.onOrderErrored({
-        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-        date: toTimestamp('2022-01-01T00:00:00Z'),
-        reason: 'r',
-        type: 'STICKY',
-        side: 'SELL',
-        amount: 2,
-      } as OrderErrored);
-    const onOrderCompleted = (p: EventSubscriber) =>
-      p.onOrderCompleted({
-        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-        side: 'BUY',
-        amount: 1,
-        balance: 1,
-        fee: 1,
-        date: toTimestamp('2022-01-01T00:00:00Z'),
-        effectivePrice: 1,
-        portfolio: { asset: 0, currency: 0 },
-        type: 'STICKY',
-        price: 100,
-      } as OrderCompleted);
+        ...baseOrder,
+        orderCreationDate: eventTimestamp,
+        ...overrides,
+      });
+    const makeOrderInitiatedEvent = (
+      overrides: {
+        order?: Partial<OrderInitiatedEvent['order']>;
+        exchange?: Partial<OrderInitiatedEvent['exchange']>;
+      } = {},
+    ): OrderInitiatedEvent => ({
+      order: { ...baseOrder, orderCreationDate: eventTimestamp, ...overrides.order },
+      exchange: { ...baseExchange, ...overrides.exchange },
+    });
+    const onOrderInitiated = (p: EventSubscriber, overrides = {}) =>
+      p.onOrderInitiated(makeOrderInitiatedEvent(overrides));
+    const makeOrderCanceledEvent = (
+      overrides: {
+        order?: Partial<OrderCanceledEvent['order']>;
+        exchange?: Partial<OrderCanceledEvent['exchange']>;
+      } = {},
+    ): OrderCanceledEvent => {
+      const initiated = makeOrderInitiatedEvent(overrides);
+      return {
+        ...initiated,
+        order: {
+          ...initiated.order,
+          orderCancelationDate: eventTimestamp,
+          filled: 1,
+          remaining: 1,
+          ...overrides.order,
+        },
+        exchange: { ...initiated.exchange, ...overrides.exchange },
+      };
+    };
+    const onOrderCanceled = (p: EventSubscriber, overrides = {}) =>
+      p.onOrderCanceled(makeOrderCanceledEvent(overrides));
+    const makeOrderErroredEvent = (
+      overrides: {
+        order?: Partial<OrderErroredEvent['order']>;
+        exchange?: Partial<OrderErroredEvent['exchange']>;
+      } = {},
+    ): OrderErroredEvent => {
+      const initiated = makeOrderInitiatedEvent(overrides);
+      return {
+        ...initiated,
+        order: {
+          ...initiated.order,
+          reason: 'r',
+          orderErrorDate: eventTimestamp,
+          ...overrides.order,
+        },
+        exchange: { ...initiated.exchange, ...overrides.exchange },
+      };
+    };
+    const onOrderErrored = (p: EventSubscriber, overrides = {}) => p.onOrderErrored(makeOrderErroredEvent(overrides));
+    const makeOrderCompletedEvent = (
+      overrides: {
+        order?: Partial<OrderCompletedEvent['order']>;
+        exchange?: Partial<OrderCompletedEvent['exchange']>;
+      } = {},
+    ): OrderCompletedEvent => {
+      const initiated = makeOrderInitiatedEvent(overrides);
+      return {
+        ...initiated,
+        order: {
+          ...initiated.order,
+          orderExecutionDate: eventTimestamp,
+          effectivePrice: 1,
+          fee: 1,
+          feePercent: 0.1,
+          ...overrides.order,
+        },
+        exchange: { ...initiated.exchange, ...overrides.exchange },
+      };
+    };
+    const onOrderCompleted = (p: EventSubscriber, overrides = {}) =>
+      p.onOrderCompleted(makeOrderCompletedEvent(overrides));
     it.each`
       name                 | handler
       ${'strategy_info'}   | ${onStrategyInfo}
@@ -116,28 +158,18 @@ describe('EventSubscriber', () => {
     it('formats strategy advice message with order metadata', () => {
       fakeBot.sendMessage.mockReset();
       plugin['handleCommand']('/subscribe_to_strategy_advice');
-      plugin.onStrategyCreateOrder({
-        id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-        date: toTimestamp('2022-01-01T00:00:00Z'),
-        order: { type: 'MARKET', side: 'SELL', quantity: 3 },
-      } as Advice);
+      onStrategyCreateOrder(plugin, { type: 'MARKET', side: 'SELL', amount: 3 });
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('MARKET SELL advice'));
-      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested quantity: 3'));
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested amount: 3'));
     });
 
     it('reports trade initiation details including order type and requested amount', () => {
       fakeBot.sendMessage.mockReset();
       plugin['handleCommand']('/subscribe_to_order_initiated');
-      plugin.onOrderInitiated({
-        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-        side: 'BUY',
-        balance: 10,
-        date: toTimestamp('2022-01-01T00:00:00Z'),
-        portfolio: { asset: 1, currency: 2 },
-        type: 'MARKET',
-        amount: 5,
-        price: 321,
-      } as OrderInitiated);
+      onOrderInitiated(plugin, {
+        order: { type: 'MARKET', amount: 5, price: 321 },
+        exchange: { balance: 10, portfolio: { asset: 1, currency: 2 } },
+      });
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(
         expect.stringContaining('MARKET order created (ee21e130-48bc-405f-be0c-46e9bf17b52e)'),
       );
@@ -148,17 +180,9 @@ describe('EventSubscriber', () => {
     it('includes fill details when reporting canceled orders', () => {
       fakeBot.sendMessage.mockReset();
       plugin['handleCommand']('/subscribe_to_order_canceled');
-      plugin.onOrderCanceled({
-        orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-        date: toTimestamp('2022-01-01T00:00:00Z'),
-        type: 'LIMIT',
-        side: 'SELL',
-        amount: 2,
-        filled: 1,
-        remaining: 1,
-        partiallyFilled: true,
-        price: 999,
-      } as OrderCanceled);
+      onOrderCanceled(plugin, {
+        order: { type: 'LIMIT', side: 'SELL', amount: 2, filled: 1, remaining: 1, price: 999 },
+      });
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Filled amount: 1 / 2 BTC'));
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested limit price: 999 USD'));
     });

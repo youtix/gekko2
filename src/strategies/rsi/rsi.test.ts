@@ -22,7 +22,7 @@ describe('RSI Strategy', () => {
     strategy = new RSI();
     advices = [];
     const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, quantity: order.quantity ?? 1 });
+      advices.push({ ...order, amount: order.amount ?? 1 });
       return '00000000-0000-0000-0000-000000000000' as UUID;
     });
     tools = {
@@ -35,30 +35,30 @@ describe('RSI Strategy', () => {
   });
 
   it('should not emit advice before persistence on high trend', () => {
-    strategy.onCandleAfterWarmup(tools, 75);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
     expect(advices).toHaveLength(0);
   });
 
   it('should emit short advice after persistence on high trend', () => {
-    strategy.onCandleAfterWarmup(tools, 75);
-    strategy.onCandleAfterWarmup(tools, 75);
-    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', quantity: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', amount: 1 }]);
   });
 
   it('should emit long advice after persistence on low trend', () => {
-    strategy.onCandleAfterWarmup(tools, 20);
-    strategy.onCandleAfterWarmup(tools, 20);
-    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', quantity: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 20);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 20);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1 }]);
   });
 
   it('should reset trend when switching from high to low', () => {
-    strategy.onCandleAfterWarmup(tools, 75);
-    strategy.onCandleAfterWarmup(tools, 75);
-    strategy.onCandleAfterWarmup(tools, 20);
-    strategy.onCandleAfterWarmup(tools, 20);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 20);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 20);
     expect(advices).toEqual([
-      { type: 'STICKY', side: 'SELL', quantity: 1 },
-      { type: 'STICKY', side: 'BUY', quantity: 1 },
+      { type: 'STICKY', side: 'SELL', amount: 1 },
+      { type: 'STICKY', side: 'BUY', amount: 1 },
     ]);
   });
 });

@@ -1,6 +1,5 @@
 import { ORDER_CANCELED_EVENT, ORDER_COMPLETED_EVENT, ORDER_INVALID_EVENT } from '@constants/event.const';
 import { OrderState } from '@models/order.types';
-import { Exchange } from '@services/exchange/exchange';
 import { InvalidOrder } from '@services/exchange/exchange.error';
 import { toTimestamp } from '@utils/date/date.utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +12,20 @@ vi.mock('@services/logger', () => ({
   error: vi.fn(),
 }));
 
+const fakeExchange = {
+  createLimitOrder: vi.fn(),
+  cancelOrder: vi.fn(),
+  fetchOrder: vi.fn(),
+  fetchMyTrades: vi.fn(),
+  getInterval: vi.fn(() => 10),
+};
+
+vi.mock('@services/injecter/injecter', () => ({
+  inject: {
+    exchange: () => fakeExchange,
+  },
+}));
+
 describe('LimitOrder', () => {
   const defaultOrder: OrderState = {
     id: 'order-1',
@@ -21,14 +34,6 @@ describe('LimitOrder', () => {
     remaining: 1,
     price: 100,
     timestamp: toTimestamp('2025'),
-  };
-
-  const fakeExchange = {
-    createLimitOrder: vi.fn(),
-    cancelOrder: vi.fn(),
-    fetchOrder: vi.fn(),
-    fetchMyTrades: vi.fn(),
-    getInterval: vi.fn(() => 10),
   };
 
   beforeEach(() => {
@@ -44,18 +49,14 @@ describe('LimitOrder', () => {
 
   it('creates a limit order with the provided price and amount', async () => {
     fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
-    const order = new LimitOrder(
-      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      'BUY',
-      1.5,
-      fakeExchange as unknown as Exchange,
-      101,
-    );
+    const order = new LimitOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 1.5, 101);
 
     await order.creation;
 
     expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BUY', 1.5, 101);
-    expect(order['transactions']).toEqual([{ id: 'order-1', timestamp: defaultOrder.timestamp, filled: 0 }]);
+    expect([...order['transactions'].values()]).toEqual([
+      { id: 'order-1', timestamp: defaultOrder.timestamp, filled: 0, status: 'open' },
+    ]);
   });
 
   it('marks the order as filled when exchange reports closed status', async () => {
@@ -64,13 +65,7 @@ describe('LimitOrder', () => {
     fakeExchange.fetchMyTrades.mockResolvedValue([
       { id: 'order-1', amount: 1.5, price: 100, timestamp: filledOrder.timestamp, fee: { rate: 0.1 } },
     ]);
-    const order = new LimitOrder(
-      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      'SELL',
-      1.5,
-      fakeExchange as unknown as Exchange,
-      99,
-    );
+    const order = new LimitOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'SELL', 1.5, 99);
 
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
     await order.creation;
@@ -85,13 +80,7 @@ describe('LimitOrder', () => {
     const error = new InvalidOrder('too small');
     fakeExchange.createLimitOrder.mockRejectedValue(error);
 
-    const order = new LimitOrder(
-      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      'BUY',
-      2,
-      fakeExchange as unknown as Exchange,
-      105,
-    );
+    const order = new LimitOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 2, 105);
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
 
     await expect(order.creation).resolves.toBeUndefined();
@@ -107,13 +96,7 @@ describe('LimitOrder', () => {
 
   it('emits cancel event with filled amount when order is canceled after a partial fill', async () => {
     fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
-    const order = new LimitOrder(
-      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      'BUY',
-      2,
-      fakeExchange as unknown as Exchange,
-      100,
-    );
+    const order = new LimitOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 2, 100);
     await order.creation;
 
     order['handleFetchOrderSuccess']({ ...defaultOrder, filled: 1, remaining: 1, status: 'open' });
@@ -125,6 +108,7 @@ describe('LimitOrder', () => {
       filled: 1,
       remaining: 1,
       price: 100,
+      timestamp: defaultOrder.timestamp,
     });
   });
 });

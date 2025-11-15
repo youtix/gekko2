@@ -11,14 +11,14 @@ describe('EMARibbon', () => {
   const log = vi.fn();
   let advices: AdviceOrder[];
   let tools: any;
-  const longAdvice: AdviceOrder = { type: 'STICKY', side: 'BUY', quantity: 1 };
-  const shortAdvice: AdviceOrder = { type: 'STICKY', side: 'SELL', quantity: 1 };
+  const longAdvice = { type: 'STICKY', side: 'BUY', amount: 1 } satisfies Partial<AdviceOrder>;
+  const shortAdvice = { type: 'STICKY', side: 'SELL', amount: 1 } satisfies Partial<AdviceOrder>;
 
   beforeEach(() => {
     strategy = new EMARibbon();
     advices = [];
     const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, quantity: order.quantity ?? 1 });
+      advices.push({ ...order, amount: order.amount ?? 1 });
       return '00000000-0000-0000-0000-000000000000' as UUID;
     });
     tools = { createOrder, log } as any;
@@ -26,7 +26,7 @@ describe('EMARibbon', () => {
 
   it('init() adds the EMARibbon indicator with passed params', () => {
     const params = { src: 'close' as const, count: 6, start: 8, step: 2 };
-    strategy.init({ strategyParams: params } as any, addIndicator);
+    strategy.init({ tools: { strategyParams: params }, addIndicator } as any);
     expect(addIndicator).toHaveBeenCalledWith('EMARibbon', { src: 'close', count: 6, start: 8, step: 2 });
   });
 
@@ -36,35 +36,35 @@ describe('EMARibbon', () => {
     ${'not bullish: equal pair'} | ${[50, 50, 40, 30]} | ${''}
     ${'not bullish: asc step'}   | ${[30, 35, 33, 31]} | ${''}
   `('onCandleAfterWarmup advises long when $case', ({ results, expectedCalls }) => {
-    strategy.onCandleAfterWarmup(tools, ...makeIndicator(results));
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, ...makeIndicator(results));
 
     if (expectedCalls) expect(advices).toEqual([expectedCalls === 'long' ? longAdvice : shortAdvice]);
     else expect(advices).toHaveLength(0);
   });
 
   it('onCandleAfterWarmup goes long then flips short when ribbon loses bullish order', () => {
-    strategy.onCandleAfterWarmup(tools, ...makeIndicator([10, 9, 8, 7]));
-    strategy.onCandleAfterWarmup(tools, ...makeIndicator([10, 11, 9, 8])); // break order
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, ...makeIndicator([10, 9, 8, 7]));
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, ...makeIndicator([10, 11, 9, 8])); // break order
 
     expect(advices).toEqual([longAdvice, shortAdvice]);
   });
 
   it('onCandleAfterWarmup does nothing when indicator is missing', () => {
-    strategy.onCandleAfterWarmup(tools, ...makeIndicator(undefined));
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, ...makeIndicator(undefined));
 
     expect(advices).toHaveLength(0);
   });
 
   it('onCandleAfterWarmup does not reissue long while already long and still bullish', () => {
-    strategy.onCandleAfterWarmup(tools, ...makeIndicator([100, 90, 80]));
-    strategy.onCandleAfterWarmup(tools, ...makeIndicator([90, 80, 70]));
-    strategy.onCandleAfterWarmup(tools, ...makeIndicator([70, 60, 50]));
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, ...makeIndicator([100, 90, 80]));
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, ...makeIndicator([90, 80, 70]));
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, ...makeIndicator([70, 60, 50]));
 
     expect(advices).toEqual([longAdvice]);
   });
 
   it('log() prints ribbon results and spread', () => {
-    strategy.log(tools, ...makeIndicator([5, 4, 3], 0.42));
+    strategy.log({ tools } as any, ...makeIndicator([5, 4, 3], 0.42));
 
     expect(tools.log).toHaveBeenNthCalledWith(1, 'debug', 'Ribbon results: [5 / 4 / 3]');
     expect(tools.log).toHaveBeenNthCalledWith(2, 'debug', 'Ribbon Spread: 0.42');
@@ -73,8 +73,8 @@ describe('EMARibbon', () => {
   it('end(), onEachCandle(), onOrderCompleted() are no-ops', () => {
     // These should not throw and should not log/advice.
     expect(() => {
-      strategy.onEachCandle(tools);
-      strategy.onOrderCompleted({} as any);
+      strategy.onEachTimeframeCandle({ tools } as any);
+      strategy.onOrderCompleted({ tools } as any);
       strategy.end();
     }).not.toThrow();
   });

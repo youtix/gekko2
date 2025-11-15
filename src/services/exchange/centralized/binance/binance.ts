@@ -21,7 +21,7 @@ import { first, isNil, last } from 'lodash-es';
 import { LIMITS } from '../../exchange.const';
 import { InvalidOrder, OrderNotFound } from '../../exchange.error';
 import { CentralizedExchange } from '../cex';
-import { BinanceExchangeConfig, BinanceSpotOrder } from './binance.types';
+import { BinanceSpotOrder } from './binance.types';
 import { mapAccountTradeToTrade, mapKlinesToCandles, mapSpotOrderToOrder } from './binance.utils';
 
 export class BinanceExchange extends CentralizedExchange {
@@ -29,8 +29,8 @@ export class BinanceExchange extends CentralizedExchange {
   private client: MainClient;
   private marketLimits: Nullable<MarketLimits>;
 
-  constructor(exchangeConfig: BinanceExchangeConfig) {
-    super(exchangeConfig);
+  constructor() {
+    super();
     this.client = new MainClient({
       api_key: this.apiKey,
       api_secret: this.apiSecret,

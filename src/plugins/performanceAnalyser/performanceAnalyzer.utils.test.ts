@@ -1,4 +1,4 @@
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompletedEvent } from '@models/event.types';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Report } from './performanceAnalyzer.types';
 
@@ -137,18 +137,24 @@ describe('performanceAnalyzer.utils', () => {
   });
 
   describe('logTrade', () => {
-    const baseTrade: OrderCompleted = {
-      side: 'BUY',
-      orderId: '98c324a8-e8ad-490b-8baf-96eafc6ddc50',
-      date: 1_700_200_000,
-      portfolio: { asset: 1.23456789, currency: 4321.12345678 },
-      balance: 1000,
-      amount: 1,
-      fee: 10,
-      price: 10,
-      effectivePrice: 10,
-      type: 'MARKET',
-      feePercent: 0.2,
+    const baseTrade: OrderCompletedEvent = {
+      order: {
+        id: '98c324a8-e8ad-490b-8baf-96eafc6ddc50',
+        side: 'BUY',
+        type: 'MARKET',
+        amount: 1,
+        fee: 10,
+        price: 10,
+        effectivePrice: 10,
+        feePercent: 0.2,
+        orderCreationDate: 1_700_200_000,
+        orderExecutionDate: 1_700_200_000,
+      },
+      exchange: {
+        portfolio: { asset: 1.23456789, currency: 4321.12345678 },
+        balance: 1000,
+        price: 10,
+      },
     };
 
     let consoleTableMock: ReturnType<typeof vi.fn>;
@@ -176,8 +182,11 @@ describe('performanceAnalyzer.utils', () => {
       ${'BUY'}  | ${'1.23456789'}    | ${'BTC'}
       ${'SELL'} | ${'4321.12345678'} | ${'USD'}
     `('logs a normalized $side trade report', ({ side, quantityLabel, expectedAsset }) => {
-      const trade = { ...baseTrade, side, portfolio: { ...baseTrade.portfolio } } as OrderCompleted;
-      logTrade(trade, 'USD', 'BTC', false, { startBalance: 1000 });
+      const trade = {
+        order: { ...baseTrade.order, side },
+        exchange: { ...baseTrade.exchange, portfolio: { ...baseTrade.exchange.portfolio } },
+      } as OrderCompletedEvent;
+      logTrade(trade.order, trade.exchange, 'USD', 'BTC', false, { startBalance: 1000 });
       expect(debugMock.mock.calls[0]).toEqual([
         'performance analyzer',
         `${side === 'BUY' ? 'Bought' : 'Sold'} ${quantityLabel} ${expectedAsset} at iso(1700200000)`,
@@ -186,7 +195,7 @@ describe('performanceAnalyzer.utils', () => {
     });
 
     it('renders a console table with portfolio deltas when enabled', () => {
-      logTrade(baseTrade, 'EUR', 'BTC', true, { startBalance: 900, previousBalance: 950 });
+      logTrade(baseTrade.order, baseTrade.exchange, 'EUR', 'BTC', true, { startBalance: 900, previousBalance: 950 });
 
       expect(consoleTableMock).toHaveBeenCalledTimes(1);
       expect(consoleTableMock.mock.calls[0][0]).toEqual({
@@ -205,7 +214,7 @@ describe('performanceAnalyzer.utils', () => {
     });
 
     it('falls back to the initial balance when no previous trade is available', () => {
-      logTrade(baseTrade, 'USD', 'BTC', true, { startBalance: 1000 });
+      logTrade(baseTrade.order, baseTrade.exchange, 'USD', 'BTC', true, { startBalance: 1000 });
       expect(consoleTableMock.mock.calls[0][0]).toEqual(
         expect.objectContaining({
           portfolioChange: 'since start: formatted(0) USD (0%)',

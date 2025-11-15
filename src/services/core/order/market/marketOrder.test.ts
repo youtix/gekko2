@@ -1,7 +1,6 @@
 import { ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT } from '@constants/event.const';
 import { OrderState } from '@models/order.types';
-import { Exchange } from '@services/exchange/exchange';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MarketOrder } from './marketOrder';
 
 vi.mock('@services/logger', () => ({
@@ -11,31 +10,39 @@ vi.mock('@services/logger', () => ({
   error: vi.fn(),
 }));
 
+const fakeExchange = {
+  createMarketOrder: vi.fn(),
+  fetchMyTrades: vi.fn(),
+  cancelOrder: vi.fn(),
+  fetchOrder: vi.fn(),
+};
+
+vi.mock('@services/injecter/injecter', () => ({
+  inject: {
+    exchange: () => fakeExchange,
+  },
+}));
+
 describe('MarketOrder', () => {
-  const fakeExchange = {
-    createMarketOrder: vi.fn(),
-    fetchMyTrades: vi.fn(),
-    createLimitOrder: vi.fn(),
-    cancelLimitOrder: vi.fn(),
-    fetchOrder: vi.fn(),
-  };
+  beforeEach(() => {
+    Object.values(fakeExchange).forEach(value => {
+      if (typeof value === 'function') value.mockReset?.();
+    });
+  });
 
   it('emits completion when market order is filled immediately', async () => {
     const orderResponse: OrderState = { id: 'order-1', status: 'closed', filled: 1, timestamp: 1_700_000_000_000 };
     fakeExchange.createMarketOrder.mockResolvedValue(orderResponse);
 
-    const order = new MarketOrder(
-      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      'BUY',
-      1,
-      fakeExchange as unknown as Exchange,
-    );
+    const order = new MarketOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 1);
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
 
     await order.creation;
 
     expect(fakeExchange.createMarketOrder).toHaveBeenCalledWith('BUY', 1);
-    expect(order['transactions']).toEqual([{ id: 'order-1', timestamp: orderResponse.timestamp, filled: 1 }]);
+    expect([...order['transactions'].values()]).toEqual([
+      { id: 'order-1', timestamp: orderResponse.timestamp, filled: 1, status: 'closed' },
+    ]);
     expect(emitSpy).toHaveBeenCalledWith(ORDER_COMPLETED_EVENT, { status: 'filled', filled: true });
   });
 
@@ -43,12 +50,7 @@ describe('MarketOrder', () => {
     const error = new Error('exchange down');
     fakeExchange.createMarketOrder.mockRejectedValue(error);
 
-    const order = new MarketOrder(
-      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      'SELL',
-      2,
-      fakeExchange as unknown as Exchange,
-    );
+    const order = new MarketOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'SELL', 2);
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
 
     await expect(order.creation).rejects.toThrow('exchange down');
@@ -65,12 +67,7 @@ describe('MarketOrder', () => {
       { id: 'other-order', amount: 5, timestamp: timestamp + 2, price: 20, fee: { rate: 0.3 } },
     ]);
 
-    const order = new MarketOrder(
-      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      'BUY',
-      2,
-      fakeExchange as unknown as Exchange,
-    );
+    const order = new MarketOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 2);
     await order.creation;
 
     const summary = await order.createSummary();
@@ -79,7 +76,7 @@ describe('MarketOrder', () => {
     expect(summary.amount).toBe(2);
     expect(summary.price).toBe(11);
     expect(summary.side).toBe('BUY');
-    expect(summary.date).toBe(timestamp + 1);
+    expect(summary.orderExecutionDate).toBe(timestamp + 1);
     expect(summary.feePercent).toBeCloseTo(0.15);
   });
 });

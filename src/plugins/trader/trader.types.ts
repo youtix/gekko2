@@ -6,9 +6,16 @@ import { traderSchema } from './trader.schema';
 export type Trader = z.infer<typeof traderSchema>;
 
 export type TraderOrderMetadata = {
-  amount: number;
-  side: OrderSide;
-  type: OrderType;
+  /** Order instance */
   orderInstance: Order;
+  /** Order creation date */
+  orderCreationDate: EpochTimeStamp;
+  /** Order amount */
+  amount: number;
+  /** Order side (SELL | BUY)*/
+  side: OrderSide;
+  /** Order type ('MARKET' | 'STICKY' | 'LIMIT')*/
+  type: OrderType;
+  /** Order price in currency */
   price?: number;
 };

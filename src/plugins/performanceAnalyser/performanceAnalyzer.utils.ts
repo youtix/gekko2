@@ -1,4 +1,4 @@
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompletedEvent } from '@models/event.types';
 import { debug, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
@@ -52,7 +52,8 @@ export const logFinalize = (report: Report, currency: string, enableConsoleTable
 };
 
 export const logTrade = (
-  trade: OrderCompleted,
+  order: OrderCompletedEvent['order'],
+  exchange: OrderCompletedEvent['exchange'],
   currency: string,
   asset: string,
   enableConsoleTable: boolean,
@@ -60,30 +61,30 @@ export const logTrade = (
 ) => {
   if (enableConsoleTable) {
     const formatter = new Intl.NumberFormat();
-    const executedPrice = trade.effectivePrice ?? trade.price;
+    const executedPrice = order.effectivePrice ?? order.price;
     const baselineLabel = balances.previousBalance !== undefined ? 'since last trade' : 'since start';
     const baselineForChange = balances.previousBalance ?? balances.startBalance;
 
     // eslint-disable-next-line no-console
     console.table({
       label: 'TRADE SNAPSHOT',
-      timestamp: toISOString(trade.date),
-      side: trade.side,
-      amount: `${round(trade.amount, ROUND)} ${asset}`,
-      price: `${formatter.format(trade.price)} ${currency}`,
+      timestamp: toISOString(order.orderExecutionDate),
+      side: order.side,
+      amount: `${round(order.amount, ROUND)} ${asset}`,
+      price: `${formatter.format(order.effectivePrice)} ${currency}`,
       effectivePrice: `${formatter.format(executedPrice)} ${currency}`,
-      volume: `${formatter.format(trade.amount * executedPrice)} ${currency}`,
-      balance: `${formatter.format(trade.balance)} ${currency}`,
-      portfolioChange: describePortfolioChange(baselineLabel, trade.balance, baselineForChange, currency, formatter),
+      volume: `${formatter.format(order.amount * executedPrice)} ${currency}`,
+      balance: `${formatter.format(exchange.balance)} ${currency}`,
+      portfolioChange: describePortfolioChange(baselineLabel, exchange.balance, baselineForChange, currency, formatter),
       totalSinceStart: describePortfolioChange(
         'since start',
-        trade.balance,
+        exchange.balance,
         balances.startBalance,
         currency,
         formatter,
       ),
-      feePaid: `${formatter.format(trade.fee)} ${currency}${
-        typeof trade.feePercent === 'number' ? ` (${round(trade.feePercent, 2, 'halfEven')}%)` : ''
+      feePaid: `${formatter.format(order.fee)} ${currency}${
+        typeof order.feePercent === 'number' ? ` (${round(order.feePercent, 2, 'halfEven')}%)` : ''
       }`,
     });
   }
@@ -91,10 +92,10 @@ export const logTrade = (
   debug(
     'performance analyzer',
     [
-      `${trade.side === 'BUY' ? 'Bought' : 'Sold'}`,
-      `${trade.side === 'BUY' ? round(trade.portfolio.asset, ROUND) : round(trade.portfolio.currency, ROUND)}`,
-      `${trade.side === 'BUY' ? asset : currency}`,
-      `at ${toISOString(trade.date)}`,
+      `${order.side === 'BUY' ? 'Bought' : 'Sold'}`,
+      `${order.side === 'BUY' ? round(exchange.portfolio.asset, ROUND) : round(exchange.portfolio.currency, ROUND)}`,
+      `${order.side === 'BUY' ? asset : currency}`,
+      `at ${toISOString(order.orderCreationDate)}`,
     ].join(' '),
   );
 };

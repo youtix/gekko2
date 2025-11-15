@@ -3,11 +3,12 @@ import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
+import { config } from '@services/configuration/configuration';
 import { error, warning } from '@services/logger';
 import { getRetryDelay } from '@utils/fetch/fetch.utils';
+import { wait } from '@utils/process/process.utils';
 import { Exchange } from '../exchange';
 import { BROKER_MAX_RETRIES_ON_FAILURE } from '../exchange.const';
-import { CentralizedExchangeConfig } from './cex.types';
 
 export abstract class CentralizedExchange extends Exchange {
   protected readonly sandbox: boolean;
@@ -15,9 +16,9 @@ export abstract class CentralizedExchange extends Exchange {
   protected readonly apiSecret?: string;
   protected readonly verbose: boolean;
 
-  constructor(config: CentralizedExchangeConfig) {
-    const { key, secret, sandbox, verbose } = config;
-    super({ name: config.name, interval: config.interval });
+  constructor() {
+    super();
+    const { sandbox, verbose, key, secret } = config.getExchange();
     this.sandbox = sandbox ?? false;
     this.apiKey = key ?? undefined;
     this.apiSecret = secret ?? undefined;
@@ -60,10 +61,6 @@ export abstract class CentralizedExchange extends Exchange {
     return this.retry(() => this.fetchOrderImpl(id));
   }
 
-  protected async sleep(delay: number) {
-    await new Promise(resolve => setTimeout(resolve, delay));
-  }
-
   protected abstract loadMarketsImpl(): Promise<void>;
   protected abstract fetchTickerImpl(): Promise<Ticker>;
   protected abstract getKlinesImpl(from?: EpochTimeStamp, timeframe?: string, limits?: number): Promise<Candle[]>;
@@ -81,7 +78,7 @@ export abstract class CentralizedExchange extends Exchange {
     } catch (err) {
       if (err instanceof Error) error('exchange', `${this.getExchangeName()} call failed due to ${err.message}`);
       if (!this.isRetryableError(err) || currRetry > BROKER_MAX_RETRIES_ON_FAILURE) throw err;
-      await this.sleep(getRetryDelay(currRetry));
+      await wait(getRetryDelay(currRetry));
       warning('exchange', `Retrying to fetch (attempt ${currRetry})`);
       return this.retry(fn, currRetry + 1);
     }

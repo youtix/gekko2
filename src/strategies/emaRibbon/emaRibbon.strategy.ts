@@ -1,16 +1,26 @@
-import type { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
-import type { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import type {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+} from '@strategies/strategy.types';
 import type { EMARibbonStrategyParams } from './emaRibbon.types';
 
 export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
   private isLong?: boolean;
 
-  init({ strategyParams }: Tools<EMARibbonStrategyParams>, addIndicator: AddIndicatorFn): void {
-    const { src, count, start, step } = strategyParams;
+  init({ tools, addIndicator }: InitParams<EMARibbonStrategyParams>): void {
+    const { src, count, start, step } = tools.strategyParams;
     addIndicator('EMARibbon', { src, count, start, step });
   }
 
-  onCandleAfterWarmup({ createOrder }: Tools<EMARibbonStrategyParams>, ...indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup(
+    { tools }: OnCandleEventParams<EMARibbonStrategyParams>,
+    ...indicators: unknown[]
+  ): void {
+    const { createOrder } = tools;
     const [emaRibbon] = indicators as [{ results: number[]; spread: number }];
     if (emaRibbon === undefined || emaRibbon === null) return;
 
@@ -28,7 +38,8 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
     }
   }
 
-  log({ log }: Tools<EMARibbonStrategyParams>, ...indicators: unknown[]): void {
+  log({ tools }: OnCandleEventParams<EMARibbonStrategyParams>, ...indicators: unknown[]): void {
+    const { log } = tools;
     const [emaRibbon] = indicators as [{ results: number[]; spread: number }];
     if (emaRibbon === undefined || emaRibbon === null) return;
     log('debug', `Ribbon results: [${emaRibbon.results.join(' / ')}]`);
@@ -36,9 +47,9 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
   }
 
   // NOT USED
-  onEachCandle(_tools: Tools<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_order: OrderCompleted): void {}
-  onOrderCanceled(_order: OrderCanceled): void {}
-  onOrderErrored(_order: OrderErrored): void {}
+  onEachTimeframeCandle(_params: OnCandleEventParams<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCompleted(_params: OnOrderCompletedEventParams<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCanceled(_params: OnOrderCanceledEventParams<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderErrored(_params: OnOrderErroredEventParams<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }

@@ -4,27 +4,27 @@ import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
-import { Nullable } from '@models/utility.types';
+import { Minute, Nullable } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { isNil } from 'lodash-es';
-import { INTERVAL_BETWEEN_CALLS_IN_MS } from './exchange.const';
 import { UndefinedLimitsError } from './exchange.error';
-import { ExchangeConfig, MarketLimits } from './exchange.types';
+import { MarketLimits } from './exchange.types';
 
 export abstract class Exchange {
   protected readonly exchangeName: string;
   protected readonly asset: string;
   protected readonly currency: string;
-  protected readonly symbol: string;
-  protected readonly interval: number;
+  protected readonly exchangeSynchInterval: Minute;
+  protected readonly orderSynchInterval: Minute;
 
-  constructor({ name, interval }: ExchangeConfig) {
+  constructor() {
     const { asset, currency } = config.getWatch();
+    const { name, exchangeSynchInterval, orderSynchInterval } = config.getExchange();
     this.exchangeName = name;
     this.asset = asset;
     this.currency = currency;
-    this.symbol = `${asset}/${currency}`;
-    this.interval = interval ?? INTERVAL_BETWEEN_CALLS_IN_MS;
+    this.exchangeSynchInterval = exchangeSynchInterval;
+    this.orderSynchInterval = orderSynchInterval;
   }
 
   // Public exchange API
@@ -32,12 +32,8 @@ export abstract class Exchange {
     return this.exchangeName;
   }
 
-  public getSymbol() {
-    return this.symbol;
-  }
-
-  public getInterval() {
-    return this.interval;
+  public getIntervals() {
+    return { orderSync: this.orderSynchInterval, exchangeSync: this.exchangeSynchInterval };
   }
 
   // Protected functions

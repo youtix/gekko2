@@ -1,5 +1,11 @@
-import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
-import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+} from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { CCIStrategyParams, CCITrend } from './cci.types';
 
@@ -10,18 +16,16 @@ export class CCI implements Strategy<CCIStrategyParams> {
     this.trend = { direction: 'nodirection', duration: 0, persisted: false, adviced: false };
   }
 
-  init({ strategyParams }: Tools<CCIStrategyParams>, addIndicator: AddIndicatorFn): void {
-    addIndicator('CCI', { period: strategyParams.period });
+  init({ tools, addIndicator }: InitParams<CCIStrategyParams>): void {
+    addIndicator('CCI', { period: tools.strategyParams.period });
   }
 
-  onCandleAfterWarmup(
-    { createOrder, strategyParams: strategySettings, log }: Tools<CCIStrategyParams>,
-    ...indicators: unknown[]
-  ): void {
+  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<CCIStrategyParams>, ...indicators: unknown[]): void {
+    const { strategyParams, createOrder, log } = tools;
     const [cci] = indicators;
     if (!isNumber(cci)) return;
 
-    const { up, down, persistence } = strategySettings.thresholds;
+    const { up, down, persistence } = strategyParams.thresholds;
 
     if (cci >= up) {
       if (this.trend.direction !== 'overbought') {
@@ -66,15 +70,15 @@ export class CCI implements Strategy<CCIStrategyParams> {
     log('debug', `Trend: ${this.trend.direction} for ${this.trend.duration}`);
   }
 
-  log({ log }: Tools<CCIStrategyParams>, ...indicators: unknown[]): void {
+  log({ tools }: OnCandleEventParams<CCIStrategyParams>, ...indicators: unknown[]): void {
     const [cci] = indicators;
     if (!isNumber(cci)) return;
-    log('debug', `CCI: ${cci.toFixed(2)}`);
+    tools.log('debug', `CCI: ${cci.toFixed(2)}`);
   }
   // NOT USED
-  onEachCandle(_tools: Tools<CCIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_order: OrderCompleted): void {}
-  onOrderCanceled(_order: OrderCanceled): void {}
-  onOrderErrored(_order: OrderErrored): void {}
+  onEachTimeframeCandle(_params: OnCandleEventParams<CCIStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCompleted(_params: OnOrderCompletedEventParams<CCIStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCanceled(_params: OnOrderCanceledEventParams<CCIStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderErrored(_params: OnOrderErroredEventParams<CCIStrategyParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }

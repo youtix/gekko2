@@ -1,7 +1,6 @@
 import { ExchangeDataLimits } from './exchange.types';
 
 export const BROKER_MAX_RETRIES_ON_FAILURE = 3;
-export const INTERVAL_BETWEEN_CALLS_IN_MS = 1500;
 
 export const DUMMY_DEFAULT_BUFFER_SIZE = Number.MAX_SAFE_INTEGER;
 

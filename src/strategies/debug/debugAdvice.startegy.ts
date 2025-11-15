@@ -1,21 +1,28 @@
-import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
-import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+} from '@strategies/strategy.types';
 import { DebugAdviceParams } from './debugAdvice.types';
 
 export class DebugAdvice implements Strategy<DebugAdviceParams> {
   private index = 0;
 
-  onCandleAfterWarmup({ strategyParams, log, createOrder }: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {
+    const { strategyParams, log, createOrder } = tools;
     if (strategyParams.wait > this.index) return;
 
     log('debug', `Iteration: ${this.index}`);
 
     if (this.index % strategyParams.each === 0) {
       log('debug', 'Trigger SHORT');
-      createOrder({ type: 'STICKY', side: 'SELL', quantity: 1 });
+      createOrder({ type: 'STICKY', side: 'SELL', amount: 1 });
     } else if (this.index % strategyParams.each === strategyParams.each / 2) {
       log('debug', 'Trigger LONG');
-      createOrder({ type: 'STICKY', side: 'BUY', quantity: 1 });
+      createOrder({ type: 'STICKY', side: 'BUY', amount: 1 });
     }
 
     // if(i % 2 === 0)
@@ -25,12 +32,11 @@ export class DebugAdvice implements Strategy<DebugAdviceParams> {
 
     this.index++;
   }
-
-  init(_tools: Tools<DebugAdviceParams>, _addIndicator: AddIndicatorFn): void {}
-  onEachCandle(_tools: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_order: OrderCompleted): void {}
-  onOrderCanceled(_order: OrderCanceled): void {}
-  onOrderErrored(_order: OrderErrored): void {}
-  log(_tools: Tools<DebugAdviceParams>, ..._indicators: unknown[]): void {}
+  init(_params: InitParams<DebugAdviceParams>): void {}
+  onEachTimeframeCandle(_params: OnCandleEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {}
+  log(_params: OnCandleEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {}
+  onOrderCompleted(_params: OnOrderCompletedEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {}
+  onOrderCanceled(_params: OnOrderCanceledEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {}
+  onOrderErrored(_params: OnOrderErroredEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }

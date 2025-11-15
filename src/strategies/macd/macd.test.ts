@@ -24,7 +24,7 @@ describe('MACD Strategy', () => {
     strategy = new MACD();
     advices = [];
     const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, quantity: order.quantity ?? 1 });
+      advices.push({ ...order, amount: order.amount ?? 1 });
       return '00000000-0000-0000-0000-000000000000' as UUID;
     });
     tools = {
@@ -43,35 +43,35 @@ describe('MACD Strategy', () => {
   });
 
   it('should not emit advice before persistence on uptrend', () => {
-    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
     expect(advices).toHaveLength(0);
   });
 
   it('should emit long advice after persistence on uptrend', () => {
-    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
-    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
-    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', quantity: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1 }]);
   });
 
   it('should emit short advice after persistence on downtrend', () => {
-    strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
-    strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
-    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', quantity: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: -1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: -1, signal: 0, hist: 0 });
+    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', amount: 1 }]);
   });
 
   it('should reset trend when switching from up to down', () => {
-    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
-    strategy.onCandleAfterWarmup(tools, { macd: 1, signal: 0, hist: 0 });
-    strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
-    strategy.onCandleAfterWarmup(tools, { macd: -1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: -1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: -1, signal: 0, hist: 0 });
     expect(advices).toEqual([
-      { type: 'STICKY', side: 'BUY', quantity: 1 },
-      { type: 'STICKY', side: 'SELL', quantity: 1 },
+      { type: 'STICKY', side: 'BUY', amount: 1 },
+      { type: 'STICKY', side: 'SELL', amount: 1 },
     ]);
   });
 
   it('should do nothing when MACD result is invalid', () => {
-    strategy.onCandleAfterWarmup(tools, null);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, null);
     expect(advices).toHaveLength(0);
   });
 });

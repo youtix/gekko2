@@ -8,15 +8,21 @@ export type OrderStatus =
   | 'open' // Order is open on the exchange
   | 'rejected'; // Order was rejected by the exchange
 
-export type Transaction = { id: string; timestamp: EpochTimeStamp; filled?: number };
+export type Transaction = {
+  id: string;
+  timestamp: EpochTimeStamp;
+  filled?: number;
+  status: 'open' | 'canceled' | 'closed';
+};
 export type OrderSummary = {
   amount: number;
   price: number;
   side: OrderSide;
   feePercent?: number;
-  date?: EpochTimeStamp;
+  orderExecutionDate: EpochTimeStamp;
 };
 export type OrderCancelDetails = {
+  timestamp: EpochTimeStamp;
   filled?: number;
   remaining?: number;
   price?: number;

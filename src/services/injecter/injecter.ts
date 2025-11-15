@@ -24,7 +24,7 @@ class Injecter {
     if (!exchangeConfig?.name) throw new GekkoError('injecter', 'Missing or unknown exchange.');
     switch (exchangeConfig.name) {
       case 'binance':
-        this.exchangeInstance = new BinanceExchange(exchangeConfig);
+        this.exchangeInstance = new BinanceExchange();
         break;
       case 'dummy-cex':
         this.exchangeInstance = new DummyCentralizedExchange(exchangeConfig);

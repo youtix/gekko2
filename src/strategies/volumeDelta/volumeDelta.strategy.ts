@@ -1,20 +1,27 @@
-import type { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
-import type { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import type {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+} from '@strategies/strategy.types';
 import type { VolumeDeltaStrategyParams, VolumeDeltaTrend } from './volumeDelta.types';
 
 export class VolumeDelta implements Strategy<VolumeDeltaStrategyParams> {
   private trend?: VolumeDeltaTrend;
 
-  init({ strategyParams }: Tools<VolumeDeltaStrategyParams>, addIndicator: AddIndicatorFn): void {
-    const { src, signal } = strategyParams;
+  init({ tools, addIndicator }: InitParams<VolumeDeltaStrategyParams>): void {
+    const { src, signal } = tools.strategyParams;
     addIndicator('VolumeDelta', { src, signal });
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };
   }
 
-  onCandleAfterWarmup(
-    { createOrder, log, strategyParams }: Tools<VolumeDeltaStrategyParams>,
+  onTimeframeCandleAfterWarmup(
+    { tools }: OnCandleEventParams<VolumeDeltaStrategyParams>,
     indicator: IndicatorRegistry['VolumeDelta']['output'],
   ): void {
+    const { strategyParams, log, createOrder } = tools;
     const { output } = strategyParams;
     if (indicator === null || indicator[output] === null) return;
 
@@ -51,7 +58,11 @@ export class VolumeDelta implements Strategy<VolumeDeltaStrategyParams> {
     }
   }
 
-  log({ log }: Tools<VolumeDeltaStrategyParams>, indicator: IndicatorRegistry['VolumeDelta']['output']): void {
+  log(
+    { tools }: OnCandleEventParams<VolumeDeltaStrategyParams>,
+    indicator: IndicatorRegistry['VolumeDelta']['output'],
+  ): void {
+    const { log } = tools;
     if (indicator === null) return;
     log('debug', `volumeDelta: ${indicator.volumeDelta?.toFixed(8)}`);
     log('debug', `macd: ${indicator.macd?.toFixed(8)}`);
@@ -60,9 +71,9 @@ export class VolumeDelta implements Strategy<VolumeDeltaStrategyParams> {
   }
 
   // NOT USED
-  onEachCandle(_tools: Tools<VolumeDeltaStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_order: OrderCompleted): void {}
-  onOrderCanceled(_order: OrderCanceled): void {}
-  onOrderErrored(_order: OrderErrored): void {}
+  onEachTimeframeCandle(_params: OnCandleEventParams<VolumeDeltaStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCompleted(_params: OnOrderCompletedEventParams<VolumeDeltaStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCanceled(_params: OnOrderCanceledEventParams<VolumeDeltaStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderErrored(_params: OnOrderErroredEventParams<VolumeDeltaStrategyParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }

@@ -1,6 +1,5 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderSide, OrderState } from '@models/order.types';
-import { Exchange } from '@services/exchange/exchange';
 import { InvalidOrder } from '@services/exchange/exchange.error';
 import { warning } from '@services/logger';
 import { UUID } from 'node:crypto';
@@ -11,8 +10,8 @@ export class MarketOrder extends Order {
   public readonly creation: Promise<void>;
   private id?: string;
 
-  constructor(gekkoOrderId: UUID, side: OrderSide, amount: number, exchange: Exchange, _price?: number) {
-    super(gekkoOrderId, exchange, side, 'MARKET');
+  constructor(gekkoOrderId: UUID, side: OrderSide, amount: number, _price?: number) {
+    super(gekkoOrderId, side, 'MARKET');
     this.creation = this.createMarketOrder(side, amount);
   }
 
@@ -28,8 +27,13 @@ export class MarketOrder extends Order {
       exchange: this.exchange,
       type: 'MARKET',
       side: this.side,
-      transactions: this.transactions,
+      transactions: this.transactions.values().toArray(),
     });
+  }
+
+  public checkOrder(): Promise<void> {
+    // No need to follow order evolution for this kind of order.
+    return Promise.resolve();
   }
 
   protected handleCreateOrderSuccess(order: OrderState) {
@@ -64,20 +68,24 @@ export class MarketOrder extends Order {
     const { id, timestamp, filled = 0, status, remaining = 0 } = order;
     if (!id) return;
 
-    this.id = id;
+    const oldTransaction = this.transactions.get(id);
 
-    const transaction = { id, timestamp, filled };
-    const index = this.transactions.findIndex(t => t.id === id);
-    if (index >= 0) this.transactions[index] = transaction;
-    else this.transactions.push(transaction);
+    this.id = id;
+    this.transactions.set(id, { id, timestamp, filled, status });
 
     if (filled) this.orderPartiallyFilled(id, filled);
 
-    if (status === 'closed') return this.orderFilled();
-    if (status === 'canceled') return this.orderCanceled({ filled, remaining });
-    if (status === 'open') return this.setStatus('open');
-
-    warning('core', `Order update returned unexpected status: ${status ?? 'unknown'}`);
+    switch (status) {
+      case 'closed':
+        return this.orderFilled();
+      case 'canceled':
+        return this.orderCanceled({ filled, remaining, timestamp });
+      case 'open':
+        if (oldTransaction?.status !== status) return this.setStatus('open');
+        break;
+      default:
+        warning('core', `Order update returned unexpected status: ${status ?? 'unknown'}`);
+    }
   }
 
   private isOrderCompleted() {

@@ -2,14 +2,16 @@ import { UUID } from 'node:crypto';
 import { OrderSide, OrderType } from './order.types';
 
 export type AdviceOrder = {
-  side: OrderSide;
-  type: OrderType;
-  quantity?: number;
-  price?: number;
-};
-
-export type Advice = {
+  /** Gekko order id */
   id: UUID;
-  date: EpochTimeStamp;
-  order: AdviceOrder;
+  /** Order creation date */
+  orderCreationDate: EpochTimeStamp;
+  /** Order side */
+  side: OrderSide;
+  /** Order type */
+  type: OrderType;
+  /** Order amount */
+  amount?: number;
+  /** Order price */
+  price?: number;
 };

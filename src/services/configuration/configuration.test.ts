@@ -14,6 +14,7 @@ vi.mock('fs', () => ({
       },
       plugins: [{ name: 'PerformanceAnalyzer' }],
       strategy: { name: 'demo' },
+      exchange: { name: 'dummy-cex' },
     }),
   ),
 }));

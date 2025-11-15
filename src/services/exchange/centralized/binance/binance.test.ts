@@ -74,6 +74,7 @@ vi.mock('@services/logger', () => ({
 vi.mock('@services/configuration/configuration', () => ({
   config: {
     getWatch: vi.fn(),
+    getExchange: vi.fn(),
   },
 }));
 
@@ -85,6 +86,7 @@ vi.mock('./binance.utils', () => ({
 }));
 
 const getWatchMock = config.getWatch as unknown as Mock;
+const getExchangeMock = config.getExchange as unknown as Mock;
 const mapAccountTradeToTradeMock = mapAccountTradeToTrade as unknown as Mock;
 const mapKlinesToCandlesMock = mapKlinesToCandles as unknown as Mock;
 const mapPublicTradeToTradeMock = mapPublicTradeToTrade as unknown as Mock;
@@ -93,8 +95,8 @@ const debugMock = debug as unknown as Mock;
 const infoMock = info as unknown as Mock;
 const errorMock = error as unknown as Mock;
 
-const createExchange = (overrides: Partial<ConstructorParameters<typeof BinanceExchange>[0]> = {}) =>
-  new BinanceExchange({
+const createExchange = (overrides: Record<string, unknown> = {}) => {
+  getExchangeMock.mockReturnValue({
     name: 'binance',
     interval: 250,
     key: 'api-key',
@@ -103,6 +105,8 @@ const createExchange = (overrides: Partial<ConstructorParameters<typeof BinanceE
     verbose: true,
     ...overrides,
   });
+  return new BinanceExchange();
+};
 
 beforeEach(() => {
   mainClientMock = createMainClientMock();
@@ -112,6 +116,7 @@ beforeEach(() => {
   mainClientCtor.mockImplementation(() => mainClientMock);
   websocketCtor.mockImplementation(() => websocketMock);
   getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT', mode: 'realtime' });
+  getExchangeMock.mockReturnValue({ name: 'binance', exchangeSynchInterval: 10, orderSynchInterval: 1 });
   mapKlinesToCandlesMock.mockImplementation((value: unknown) => value);
   mapPublicTradeToTradeMock.mockImplementation((trade: any) => ({ mapped: true, trade }));
   mapAccountTradeToTradeMock.mockImplementation((trade: any) => ({ mapped: true, trade }));

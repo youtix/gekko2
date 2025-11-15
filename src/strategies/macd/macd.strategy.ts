@@ -1,5 +1,11 @@
-import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
-import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+} from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
@@ -7,12 +13,14 @@ import { MACDStrategyParams, MACDTrend } from './macd.types';
 export class MACD implements Strategy<MACDStrategyParams> {
   private trend?: MACDTrend;
 
-  init({ strategyParams }: Tools<MACDStrategyParams>, addIndicator: AddIndicatorFn): void {
+  init({ tools, addIndicator }: InitParams<MACDStrategyParams>): void {
+    const { strategyParams } = tools;
     addIndicator('MACD', { short: strategyParams.short, long: strategyParams.long, signal: strategyParams.signal });
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };
   }
 
-  onCandleAfterWarmup({ strategyParams, createOrder, log }: Tools<MACDStrategyParams>, ...indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<MACDStrategyParams>, ...indicators: unknown[]): void {
+    const { strategyParams, log, createOrder } = tools;
     const { macdSrc } = strategyParams;
     const [macd] = indicators;
 
@@ -51,7 +59,8 @@ export class MACD implements Strategy<MACDStrategyParams> {
     }
   }
 
-  log({ log }: Tools<MACDStrategyParams>, ...indicators: unknown[]): void {
+  log({ tools }: OnCandleEventParams<MACDStrategyParams>, ...indicators: unknown[]): void {
+    const { log } = tools;
     const [macd] = indicators;
     if (!this.isMacd(macd)) return;
 
@@ -73,9 +82,9 @@ export class MACD implements Strategy<MACDStrategyParams> {
   }
 
   // NOT USED
-  onEachCandle(_tools: Tools<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_order: OrderCompleted): void {}
-  onOrderCanceled(_order: OrderCanceled): void {}
-  onOrderErrored(_order: OrderErrored): void {}
+  onEachTimeframeCandle(_params: OnCandleEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCompleted(_params: OnOrderCompletedEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCanceled(_params: OnOrderCanceledEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderErrored(_params: OnOrderErroredEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }
