@@ -1,9 +1,7 @@
-import { Candle } from '@models/candle.types';
 import { config } from '@services/configuration/configuration';
 import { inject } from '@services/injecter/injecter';
 import { debug, info, warning } from '@services/logger';
 import { Storage } from '@services/storage/storage';
-import { Fifo } from '@utils/collection/fifo';
 import { splitIntervals, toISOString } from '@utils/date/date.utils';
 import { differenceInMinutes, Interval } from 'date-fns';
 import { Readable } from 'node:stream';
@@ -13,7 +11,6 @@ export class BacktestStream extends Readable {
   private storage: Storage;
   private dateranges: Interval<EpochTimeStamp, EpochTimeStamp>[];
   private iteration: number;
-  private candles?: Fifo<Candle>;
 
   constructor(daterange: Interval<EpochTimeStamp, EpochTimeStamp>) {
     super({ objectMode: true });
@@ -42,11 +39,6 @@ export class BacktestStream extends Readable {
     );
   }
   public _read(_size: number): void {
-    // Release Bun loop to let execute setInterval methods
-    setImmediate(() => this.processNextBatch());
-  }
-
-  private processNextBatch() {
     if (this.iteration >= this.dateranges.length) {
       this.push(null);
       return;
@@ -55,19 +47,14 @@ export class BacktestStream extends Readable {
     const daterange = this.dateranges[this.iteration];
 
     if (daterange) {
-      if (!this.candles?.size()) {
-        debug(
-          'stream',
-          `Reading database data from ${toISOString(daterange.start)} -> to ${toISOString(daterange.end)}`,
-        );
-        this.candles = new Fifo(this.storage.getCandles(daterange));
-        const expectedCandles = differenceInMinutes(daterange.end, daterange.start) + 1;
-        if (this.candles.size() !== expectedCandles) throw new MissingCandlesError(daterange);
-        this.iteration++;
-      }
-      while (this.candles && this.candles.size() > 0 && this.push(this.candles.shift())) {
-        // Let's read until backpressure
-      }
+      const candles = this.storage.getCandles(daterange);
+      const expectedCandles = differenceInMinutes(daterange.end, daterange.start) + 1;
+      if (candles.length === expectedCandles) candles.forEach(candle => this.push(candle));
+      else throw new MissingCandlesError(daterange);
+
+      debug('stream', `Reading database data from ${toISOString(daterange.start)} -> to ${toISOString(daterange.end)}`);
     }
+
+    this.iteration++;
   }
 }

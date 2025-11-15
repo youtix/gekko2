@@ -51,11 +51,7 @@ export const configurationSchema = z
   .object({
     showLogo: z.boolean().default(true),
     watch: watchSchema,
-    exchange: z
-      .discriminatedUnion('name', [dummyExchangeSchema, binanceExchangeSchema])
-      .nullable()
-      .optional()
-      .default(null),
+    exchange: z.discriminatedUnion('name', [dummyExchangeSchema, binanceExchangeSchema]),
     storage: storageSchema.nullable().optional().default(null),
     plugins: z.array(z.looseObject({ name: z.string() })),
     strategy: z.looseObject({ name: z.string() }).optional(),

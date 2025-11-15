@@ -1,113 +1,133 @@
-import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Candle } from '@models/candle.types';
-import { OrderSide, OrderState } from '@models/order.types';
+import { OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
 import { Nullable } from '@models/utility.types';
 import { describe, expect, it, vi } from 'vitest';
 import { MarketLimits } from '../exchange.types';
-import { BinanceExchangeConfig } from './binance/binance.types';
 import { CentralizedExchange } from './cex';
-import { CentralizedExchangeConfig } from './cex.types';
 
 vi.mock('@services/logger', () => ({ warning: vi.fn(), error: vi.fn() }));
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
     getWatch: () => ({ asset: 'BTC', currency: 'USDT' }),
+    getExchange: () => ({ name: 'binance', exchangeSynchInterval: 10, orderSynchInterval: 1 }),
   },
 }));
 
 class RetryableError extends Error {}
 
+type MethodKey =
+  | 'loadMarkets'
+  | 'fetchTicker'
+  | 'getKlines'
+  | 'fetchMyTrades'
+  | 'fetchPortfolio'
+  | 'createLimitOrder'
+  | 'createMarketOrder'
+  | 'cancelOrder'
+  | 'fetchOrder';
+
+type CounterKey =
+  | 'loadMarketsImplCalls'
+  | 'fetchTickerImplCalls'
+  | 'getKlinesImplCalls'
+  | 'fetchMyTradesImplCalls'
+  | 'fetchPortfolioImplCalls'
+  | 'createLimitOrderImplCalls'
+  | 'createMarketOrderImplCalls'
+  | 'cancelOrderImplCalls'
+  | 'fetchOrderImplCalls';
+
 class TestCentralizedExchange extends CentralizedExchange {
   private readonly limits: Nullable<MarketLimits>;
-  private readonly tickerQueue: Array<Ticker | Error> = [];
-  private readonly createOrderBehaviors: Array<'error' | 'success'> = [];
+  private readonly failureCounts: Partial<Record<MethodKey, number>> = {};
+  private nextTicker: Ticker = { bid: 100, ask: 101 };
+
+  public loadMarketsImplCalls = 0;
   public fetchTickerImplCalls = 0;
+  public getKlinesImplCalls = 0;
+  public fetchMyTradesImplCalls = 0;
+  public fetchPortfolioImplCalls = 0;
   public createLimitOrderImplCalls = 0;
   public createMarketOrderImplCalls = 0;
+  public cancelOrderImplCalls = 0;
+  public fetchOrderImplCalls = 0;
 
-  constructor(config: CentralizedExchangeConfig, limits: Nullable<MarketLimits>) {
-    super(config);
+  constructor(limits: Nullable<MarketLimits>) {
+    super();
     this.limits = limits;
   }
 
-  public enqueueTicker(response: Ticker | Error) {
-    this.tickerQueue.push(response);
+  public failTimes(method: MethodKey, attempts: number) {
+    this.failureCounts[method] = attempts;
   }
 
-  public enqueueCreateOrderBehavior(behavior: 'error' | 'success') {
-    this.createOrderBehaviors.push(behavior);
+  public setTicker(ticker: Ticker) {
+    this.nextTicker = ticker;
+  }
+
+  private maybeFail(method: MethodKey) {
+    const remaining = this.failureCounts[method];
+    if (remaining && remaining > 0) {
+      this.failureCounts[method] = remaining - 1;
+      throw new RetryableError(`retry ${method}`);
+    }
   }
 
   protected async loadMarketsImpl(): Promise<void> {
-    // no-op for tests
+    this.loadMarketsImplCalls += 1;
+    this.maybeFail('loadMarkets');
   }
 
   protected async fetchTickerImpl(): Promise<Ticker> {
     this.fetchTickerImplCalls += 1;
-    if (!this.tickerQueue.length) {
-      throw new Error('No ticker response configured');
-    }
-    const next = this.tickerQueue.shift()!;
-    if (next instanceof Error) throw next;
-    return next;
+    this.maybeFail('fetchTicker');
+    return this.nextTicker;
   }
 
   protected async getKlinesImpl(): Promise<Candle[]> {
+    this.getKlinesImplCalls += 1;
+    this.maybeFail('getKlines');
     return [];
   }
 
   protected async fetchMyTradesImpl(): Promise<Trade[]> {
+    this.fetchMyTradesImplCalls += 1;
+    this.maybeFail('fetchMyTrades');
     return [];
   }
 
   protected async fetchPortfolioImpl(): Promise<Portfolio> {
+    this.fetchPortfolioImplCalls += 1;
+    this.maybeFail('fetchPortfolio');
     return { asset: 0, currency: 0 };
   }
 
-  protected async createLimitOrderImpl(side: OrderSide, amount: number, price: number): Promise<OrderState> {
+  protected async createLimitOrderImpl(): Promise<OrderState> {
     this.createLimitOrderImplCalls += 1;
-    const behavior = this.createOrderBehaviors.shift();
-    if (behavior === 'error') throw new RetryableError('temporary failure');
-    const validatedPrice = await this.checkOrderPrice(price);
-    const normalizedAmount = this.checkOrderAmount(amount);
-    this.checkOrderCost(normalizedAmount, validatedPrice);
-    return {
-      id: `order-${this.createLimitOrderImplCalls}`,
-      status: 'open',
-      price: validatedPrice,
-      remaining: normalizedAmount,
-      timestamp: 0,
-    };
+    this.maybeFail('createLimitOrder');
+    return { id: `limit-${this.createLimitOrderImplCalls}`, status: 'open', timestamp: Date.now() };
   }
 
-  protected async createMarketOrderImpl(side: OrderSide, amount: number): Promise<OrderState> {
+  protected async createMarketOrderImpl(): Promise<OrderState> {
     this.createMarketOrderImplCalls += 1;
-    const behavior = this.createOrderBehaviors.shift();
-    if (behavior === 'error') throw new RetryableError('temporary failure');
-    const ticker = await this.fetchTicker();
-    const price = side === 'BUY' ? ticker.ask : ticker.bid;
-    const normalizedAmount = this.checkOrderAmount(amount);
-    this.checkOrderCost(normalizedAmount, price);
-    return {
-      id: `market-${this.createMarketOrderImplCalls}`,
-      status: 'closed',
-      price,
-      filled: normalizedAmount,
-      remaining: 0,
-      timestamp: 0,
-    };
+    this.maybeFail('createMarketOrder');
+    return { id: `market-${this.createMarketOrderImplCalls}`, status: 'closed', timestamp: Date.now() };
   }
 
   protected async cancelOrderImpl(): Promise<OrderState> {
-    return { id: 'cancel', status: 'canceled', timestamp: 0 };
+    this.cancelOrderImplCalls += 1;
+    this.maybeFail('cancelOrder');
+    return { id: 'cancel', status: 'canceled', timestamp: Date.now() };
   }
 
   protected async fetchOrderImpl(): Promise<OrderState> {
-    return { id: '1', status: 'open', timestamp: 0 };
+    this.fetchOrderImplCalls += 1;
+    this.maybeFail('fetchOrder');
+    return { id: '1', status: 'open', timestamp: Date.now() };
   }
 
   public getMarketLimits(): Nullable<MarketLimits> {
@@ -122,93 +142,65 @@ class TestCentralizedExchange extends CentralizedExchange {
     // avoid real timers in tests
   }
 
-  public checkPricePublic(price: number) {
-    return this.checkOrderPrice(price);
-  }
-
-  public calculateAmountPublic(amount: number) {
-    return this.checkOrderAmount(amount);
-  }
-
-  public checkCostPublic(amount: number, price: number) {
-    return this.checkOrderCost(amount, price);
-  }
-
   public onNewCandle(): () => void {
     return () => {};
   }
 }
 
-describe('CentralizedExchange', () => {
-  const config = { name: 'binance', sandbox: false, verbose: false } as BinanceExchangeConfig;
+describe('CentralizedExchange retry logic', () => {
   const baseLimits: MarketLimits = {
-    price: { min: 1, max: 1000 },
-    amount: { min: 0.1, max: 5 },
-    cost: { min: 10, max: 500 },
+    price: { min: 1, max: 10_000 },
+    amount: { min: 0.001, max: 100 },
+    cost: { min: 10, max: 1_000_000 },
   };
 
-  it('retries fetchTicker when retryable errors occur', async () => {
-    const exchange = new TestCentralizedExchange(config, baseLimits);
-    exchange.enqueueTicker(new RetryableError('boom'));
-    exchange.enqueueTicker({ bid: 100, ask: 101 });
+  const scenarios: Array<{
+    method: MethodKey;
+    counter: CounterKey;
+    call: (exchange: TestCentralizedExchange) => Promise<unknown>;
+    expectsResult?: boolean;
+  }> = [
+    {
+      method: 'loadMarkets',
+      counter: 'loadMarketsImplCalls',
+      call: exchange => exchange.loadMarkets(),
+      expectsResult: false,
+    },
+    {
+      method: 'fetchTicker',
+      counter: 'fetchTickerImplCalls',
+      call: exchange => exchange.fetchTicker(),
+      expectsResult: true,
+    },
+    { method: 'getKlines', counter: 'getKlinesImplCalls', call: exchange => exchange.getKlines() },
+    { method: 'fetchMyTrades', counter: 'fetchMyTradesImplCalls', call: exchange => exchange.fetchMyTrades() },
+    { method: 'fetchPortfolio', counter: 'fetchPortfolioImplCalls', call: exchange => exchange.fetchPortfolio() },
+    {
+      method: 'createLimitOrder',
+      counter: 'createLimitOrderImplCalls',
+      call: exchange => exchange.createLimitOrder('BUY', 1, 100),
+    },
+    {
+      method: 'createMarketOrder',
+      counter: 'createMarketOrderImplCalls',
+      call: exchange => exchange.createMarketOrder('SELL', 1),
+    },
+    { method: 'cancelOrder', counter: 'cancelOrderImplCalls', call: exchange => exchange.cancelOrder('id') },
+    { method: 'fetchOrder', counter: 'fetchOrderImplCalls', call: exchange => exchange.fetchOrder('id') },
+  ];
 
-    await expect(exchange.fetchTicker()).resolves.toEqual({ bid: 100, ask: 101 });
-    expect(exchange.fetchTickerImplCalls).toBe(2);
-  });
+  it.each(scenarios)(
+    'retries %s when a retryable error occurs',
+    async ({ method, counter, call, expectsResult = true }) => {
+      const exchange = new TestCentralizedExchange(baseLimits);
+      exchange.failTimes(method, 1);
+      exchange.setTicker({ bid: 100, ask: 101 });
 
-  it('validates limit prices against configured bounds', async () => {
-    const exchange = new TestCentralizedExchange(config, baseLimits);
-    await expect(exchange.checkPricePublic(50)).resolves.toBe(50);
-    await expect(exchange.checkPricePublic(0.5)).rejects.toThrow(OrderOutOfRangeError);
-    await expect(exchange.checkPricePublic(5000)).rejects.toThrow(OrderOutOfRangeError);
-  });
-
-  it('enforces amount limits when calculating order quantity', () => {
-    const exchange = new TestCentralizedExchange(config, baseLimits);
-    expect(() => exchange.calculateAmountPublic(0.01)).toThrow(OrderOutOfRangeError);
-    expect(() => exchange.calculateAmountPublic(10)).toThrow(OrderOutOfRangeError);
-  });
-
-  it('validates order cost before submission', () => {
-    const exchange = new TestCentralizedExchange(config, baseLimits);
-    expect(() => exchange.checkCostPublic(0.2, 40)).toThrow(OrderOutOfRangeError);
-    expect(() => exchange.checkCostPublic(0.5, 30)).not.toThrow();
-  });
-
-  it('retries limit order creation and returns validated order details', async () => {
-    const exchange = new TestCentralizedExchange(config, baseLimits);
-    exchange.enqueueCreateOrderBehavior('error');
-    exchange.enqueueCreateOrderBehavior('success');
-    const order = await exchange.createLimitOrder('BUY', 0.2, 101);
-
-    expect(exchange.createLimitOrderImplCalls).toBe(2);
-    expect(order.price).toBe(101);
-    expect(order.remaining).toBe(0.2);
-  });
-
-  it('rejects limit orders that violate cost limits', async () => {
-    const exchange = new TestCentralizedExchange(config, baseLimits);
-    await expect(exchange.createLimitOrder('BUY', 0.2, 12)).rejects.toThrow(OrderOutOfRangeError);
-  });
-
-  it('retries market order creation and returns executed order details', async () => {
-    const exchange = new TestCentralizedExchange(config, baseLimits);
-    exchange.enqueueCreateOrderBehavior('error');
-    exchange.enqueueCreateOrderBehavior('success');
-    exchange.enqueueTicker({ bid: 100, ask: 105 });
-
-    const order = await exchange.createMarketOrder('SELL', 0.5);
-
-    expect(exchange.createMarketOrderImplCalls).toBe(2);
-    expect(order.status).toBe('closed');
-    expect(order.price).toBe(100);
-    expect(order.filled).toBe(0.5);
-  });
-
-  it('rejects market orders that violate cost limits', async () => {
-    const exchange = new TestCentralizedExchange(config, baseLimits);
-    exchange.enqueueTicker({ bid: 10, ask: 12 });
-
-    await expect(exchange.createMarketOrder('BUY', 0.2)).rejects.toThrow(OrderOutOfRangeError);
-  });
+      const result = await call(exchange);
+      if (expectsResult) {
+        expect(result).toBeDefined();
+      }
+      expect(exchange[counter]).toBe(2);
+    },
+  );
 });

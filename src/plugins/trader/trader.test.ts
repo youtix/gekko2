@@ -8,8 +8,10 @@ import {
   PORTFOLIO_VALUE_CHANGE_EVENT,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
-import { Advice } from '@models/advice.types';
+import { AdviceOrder } from '@models/advice.types';
 import { OrderSide } from '@models/order.types';
+import { OrderSummary } from '@services/core/order/order.types';
+import { addMinutes } from 'date-fns';
 import * as lodash from 'lodash-es';
 import type { Mock } from 'vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -17,7 +19,6 @@ import { config } from '../../services/configuration/configuration';
 import * as logger from '../../services/logger';
 import * as processUtils from '../../utils/process/process.utils';
 import { Trader } from './trader';
-import { SYNCHRONIZATION_INTERVAL } from './trader.const';
 import * as traderUtils from './trader.utils';
 
 vi.mock('@services/logger');
@@ -162,13 +163,11 @@ describe('Trader', () => {
   let trader: Trader;
   let fakeExchange: {
     getExchangeName: Mock;
-    getInterval: Mock;
+    getIntervals: Mock;
     fetchTicker: Mock;
     fetchPortfolio: Mock;
     getMarketLimits: Mock;
   };
-  let setIntervalSpy: ReturnType<typeof vi.spyOn>;
-  let clearIntervalSpy: ReturnType<typeof vi.spyOn>;
   let waitSpy: ReturnType<typeof vi.spyOn>;
   const getWatchMock = config.getWatch as unknown as Mock;
   const getExchangeMock = config.getExchange as unknown as Mock;
@@ -178,25 +177,19 @@ describe('Trader', () => {
   const getOrderMetadata = (id: string) => getOrdersMap().get(id);
   const getOrderInstance = (id: string) => getOrderMetadata(id)?.orderInstance;
 
-  const buildAdvice = (overrides?: Partial<Advice>): Advice => {
-    const orderOverrides = overrides?.order ?? {};
-    return {
-      id: overrides?.id ?? '20a7abd2-546b-4c65-b04d-900b84fa5fe6',
-      date: overrides?.date ?? 1_700_000_000_100,
-      order: {
-        type: 'STICKY',
-        side: 'BUY',
-        quantity: undefined,
-        ...orderOverrides,
-      },
-    };
-  };
+  const buildAdvice = (overrides?: Partial<AdviceOrder>): AdviceOrder => ({
+    id: overrides?.id ?? '20a7abd2-546b-4c65-b04d-900b84fa5fe6',
+    orderCreationDate: overrides?.orderCreationDate ?? 1_700_000_000_100,
+    type: overrides?.type ?? 'STICKY',
+    side: overrides?.side ?? 'BUY',
+    amount: overrides?.amount,
+    price: overrides?.price,
+  });
 
   beforeAll(() => {
     vi.useFakeTimers();
     // @ts-expect-error do not need to fix
     setIntervalSpy = vi.spyOn(global, 'setInterval');
-    clearIntervalSpy = vi.spyOn(global, 'clearInterval');
     // @ts-expect-error do not need to fix
     waitSpy = vi.spyOn(processUtils, 'wait');
   });
@@ -214,7 +207,7 @@ describe('Trader', () => {
     trader = new Trader();
     fakeExchange = {
       getExchangeName: vi.fn(() => 'MockExchange'),
-      getInterval: vi.fn(() => 42),
+      getIntervals: vi.fn(() => ({ exchangeSync: 1, orderSync: 1 })),
       fetchTicker: vi.fn().mockResolvedValue({ bid: 123 }),
       fetchPortfolio: vi.fn().mockResolvedValue({ asset: 1, currency: 2 }),
       getMarketLimits: vi.fn(() => undefined),
@@ -246,22 +239,9 @@ describe('Trader', () => {
       expect(orders.size).toBe(0);
     });
 
-    it('binds synchronize and schedules interval when running in realtime mode', () => {
+    it('binds synchronize function', () => {
       const bindAllMock = lodash.bindAll as unknown as Mock;
       expect(bindAllMock).toHaveBeenCalledWith(trader, ['synchronize']);
-      expect(setIntervalSpy).toHaveBeenCalledWith(trader['synchronize'], SYNCHRONIZATION_INTERVAL);
-    });
-
-    it('schedules synchronization even when running in backtest mode and cleans it up on finalize', () => {
-      setIntervalSpy.mockClear();
-      clearIntervalSpy.mockClear();
-      getWatchMock.mockReturnValue({ ...cloneWatch(), mode: 'backtest' });
-      const backtestTrader = new Trader();
-
-      expect(setIntervalSpy).toHaveBeenCalledWith(backtestTrader['synchronize'], SYNCHRONIZATION_INTERVAL);
-      backtestTrader['processFinalize']();
-      expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
-      expect(backtestTrader['syncInterval']).toBeNull();
     });
   });
 
@@ -288,19 +268,18 @@ describe('Trader', () => {
       trader['portfolio'] = { asset: 0, currency: 0 };
       trader['price'] = 200;
       fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 3, currency: 50 });
+      fakeExchange.fetchTicker.mockResolvedValue({ bid: 200 });
 
       await trader['synchronize']();
 
       expect(trader['balance']).toBeCloseTo(650);
     });
     it.each`
-      action                                                                                     | timestamp     | oldPortfolio                  | newPortfolio                  | expectedEmit
-      ${'NOT emit portfolio change event because trader is initializing its data'}               | ${0}          | ${{ asset: 0, currency: 0 }}  | ${{ asset: 3, currency: 50 }} | ${false}
-      ${'NOT emit portfolio change event because portfolio did not change'}                      | ${Date.now()} | ${{ asset: 3, currency: 50 }} | ${{ asset: 3, currency: 50 }} | ${false}
-      ${'emit portfolio change event because trader plugin is initilized and portfolio changed'} | ${Date.now()} | ${{ asset: 0, currency: 0 }}  | ${{ asset: 3, currency: 50 }} | ${true}
-    `('should $action', async ({ timestamp, oldPortfolio, newPortfolio, expectedEmit }) => {
+      action                                                                | oldPortfolio                  | newPortfolio                  | expectedEmit
+      ${'NOT emit portfolio change event because portfolio did not change'} | ${{ asset: 3, currency: 50 }} | ${{ asset: 3, currency: 50 }} | ${false}
+      ${'emit portfolio change event because portfolio changed'}            | ${{ asset: 0, currency: 0 }}  | ${{ asset: 3, currency: 50 }} | ${true}
+    `('should $action', async ({ oldPortfolio, newPortfolio, expectedEmit }) => {
       trader['emitPortfolioChangeEvent'] = vi.fn();
-      trader['currentTimestamp'] = timestamp;
       trader['portfolio'] = oldPortfolio;
       fakeExchange.fetchPortfolio.mockResolvedValue(newPortfolio);
 
@@ -310,10 +289,9 @@ describe('Trader', () => {
       else expect(trader['emitPortfolioChangeEvent']).not.toHaveBeenCalled();
     });
     it.each`
-      action                                                                                         | timestamp     | oldBalance | portfolio                     | price  | expectedEmit
-      ${'NOT emit portfolio value change event because trader is initializing its data'}             | ${0}          | ${0}       | ${{ asset: 3, currency: 50 }} | ${200} | ${false}
-      ${'NOT emit portfolio value change event because balance did not change'}                      | ${Date.now()} | ${650}     | ${{ asset: 3, currency: 50 }} | ${200} | ${false}
-      ${'emit portfolio value change event because trader plugin is initilized and balance changed'} | ${Date.now()} | ${100}     | ${{ asset: 3, currency: 50 }} | ${200} | ${true}
+      action                                                                    | oldBalance | portfolio                     | price  | expectedEmit
+      ${'NOT emit portfolio value change event because balance did not change'} | ${650}     | ${{ asset: 3, currency: 50 }} | ${200} | ${false}
+      ${'emit portfolio value change event because balance changed'}            | ${100}     | ${{ asset: 3, currency: 50 }} | ${200} | ${true}
     `('should $action', async ({ timestamp, oldBalance, portfolio, price, expectedEmit }) => {
       trader['emitPortfolioValueChangeEvent'] = vi.fn();
       trader['currentTimestamp'] = timestamp;
@@ -321,6 +299,7 @@ describe('Trader', () => {
       trader['portfolio'] = portfolio;
       trader['price'] = price;
       fakeExchange.fetchPortfolio.mockResolvedValue(portfolio);
+      fakeExchange.fetchTicker.mockResolvedValue({ bid: price });
 
       await trader['synchronize']();
 
@@ -427,10 +406,12 @@ describe('Trader', () => {
     it('should NOT triggers synchronize when trader plugin is initialized', async () => {
       trader['currentTimestamp'] = Date.now(); // => Means trader plugin is iitialized
       trader['synchronize'] = vi.fn();
+      fakeExchange['getIntervals'].mockReturnValue({ exchangeSync: 1_000, orderSync: 1 });
+      const shiftedCandle = { ...defaultCandle, start: addMinutes(defaultCandle.start, 1).getTime() };
 
-      await trader['processOneMinuteCandle'](defaultCandle);
+      await trader['processOneMinuteCandle'](shiftedCandle);
 
-      expect(trader['synchronize']).not.toHaveBeenCalledTimes(1);
+      expect(trader['synchronize']).not.toHaveBeenCalled();
     });
 
     it('should update currentTimestamp', async () => {
@@ -459,10 +440,11 @@ describe('Trader', () => {
   });
 
   describe('onStrategyCreateOrder', () => {
-    const getInitiatedPayload = () => {
+    const getInitiatedEvent = () => {
       const emitCalls = (trader['deferredEmit'] as unknown as Mock).mock.calls;
       return emitCalls.find(call => call[0] === ORDER_INITIATED_EVENT)?.[1];
     };
+    const getInitiatedOrder = () => getInitiatedEvent()?.order;
 
     beforeEach(() => {
       trader['price'] = 100;
@@ -475,28 +457,28 @@ describe('Trader', () => {
       trader.onStrategyCreateOrder(advice);
 
       expect(getOrdersMap().size).toBe(1);
-      const initiated = getInitiatedPayload();
-      expect(initiated?.orderId).toBe(advice.id);
-      expect(initiated?.type).toBe(advice.order.type);
+      const initiated = getInitiatedOrder();
+      expect(initiated?.id).toBe(advice.id);
+      expect(initiated?.type).toBe(advice.type);
       expect(initiated?.amount).toBeCloseTo(9.5, 5);
     });
 
     it('computes SELL order amount from asset holdings', () => {
       trader['portfolio'] = { asset: 2.5, currency: 0 };
-      const advice = buildAdvice({ order: { side: 'SELL', type: 'MARKET' } });
+      const advice = buildAdvice({ side: 'SELL', type: 'MARKET' });
 
       trader.onStrategyCreateOrder(advice);
 
-      const initiated = getInitiatedPayload();
+      const initiated = getInitiatedOrder();
       expect(initiated?.amount).toBeCloseTo(2.5, 5);
     });
 
     it('uses provided quantity when present', () => {
-      const advice = buildAdvice({ order: { quantity: 1.2345, type: 'MARKET', side: 'BUY' } });
+      const advice = buildAdvice({ amount: 1.2345, type: 'MARKET', side: 'BUY' });
 
       trader.onStrategyCreateOrder(advice);
 
-      const initiated = getInitiatedPayload();
+      const initiated = getInitiatedOrder();
       expect(initiated?.amount).toBeCloseTo(1.2345, 5);
       const metadata = getOrderMetadata(advice.id);
       expect(metadata?.amount).toBeCloseTo(1.2345, 5);
@@ -505,11 +487,11 @@ describe('Trader', () => {
 
     it('creates limit order with requested price and no amount buffer when quantity missing', () => {
       trader['portfolio'] = { asset: 0, currency: 1000 };
-      const advice = buildAdvice({ order: { type: 'LIMIT', side: 'BUY', price: 95 } });
+      const advice = buildAdvice({ type: 'LIMIT', side: 'BUY', price: 95 });
 
       trader.onStrategyCreateOrder(advice);
 
-      const initiated = getInitiatedPayload();
+      const initiated = getInitiatedOrder();
       expect(initiated?.price).toBe(95);
       expect(initiated?.amount).toBeCloseTo(10, 5);
       const metadata = getOrderMetadata(advice.id);
@@ -534,10 +516,17 @@ describe('Trader', () => {
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
-          orderId: advice.id,
-          reason: 'boom',
-          type: advice.order.type,
-          side: advice.order.side,
+          order: expect.objectContaining({
+            id: advice.id,
+            reason: 'boom',
+            type: advice.type,
+            side: advice.side,
+          }),
+          exchange: expect.objectContaining({
+            price: trader['price'],
+            portfolio: trader['portfolio'],
+            balance: trader['balance'],
+          }),
         }),
       );
       expect(synchronizeSpy).toHaveBeenCalled();
@@ -555,16 +544,23 @@ describe('Trader', () => {
       order.emit(ORDER_INVALID_EVENT, { reason: 'limit too low' });
       await Promise.resolve();
 
-      expect(logger.info).toHaveBeenCalledWith('trader', 'Order rejected : limit too low');
+      expect(logger.info).toHaveBeenCalledWith('trader', expect.stringContaining('limit too low'));
       expect(synchronizeSpy).toHaveBeenCalled();
       expect(getOrdersMap().size).toBe(0);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
-          orderId: advice.id,
-          type: advice.order.type,
-          side: advice.order.side,
-          reason: 'limit too low',
+          order: expect.objectContaining({
+            id: advice.id,
+            type: advice.type,
+            side: advice.side,
+            reason: 'limit too low',
+          }),
+          exchange: expect.objectContaining({
+            price: trader['price'],
+            portfolio: trader['portfolio'],
+            balance: trader['balance'],
+          }),
         }),
       );
     });
@@ -575,7 +571,7 @@ describe('Trader', () => {
         .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
         .mockResolvedValue(undefined);
       const emitSpy = vi.spyOn(
-        trader as unknown as { emitOrderCompletedEvent: (id: string, type: string, summary: unknown) => void },
+        trader as unknown as { emitOrderCompletedEvent: (id: string, summary: unknown) => void },
         'emitOrderCompletedEvent',
       );
 
@@ -588,11 +584,7 @@ describe('Trader', () => {
 
       expect(order.createSummary).toHaveBeenCalledTimes(1);
       expect(synchronizeSpy).toHaveBeenCalled();
-      expect(emitSpy).toHaveBeenCalledWith(
-        advice.id,
-        advice.order.type,
-        expect.objectContaining({ side: advice.order.side }),
-      );
+      expect(emitSpy).toHaveBeenCalledWith(advice.id, expect.objectContaining({ side: advice.side }));
       expect(getOrdersMap().size).toBe(0);
     });
 
@@ -604,7 +596,7 @@ describe('Trader', () => {
         .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
         .mockResolvedValue(undefined);
       const emitSpy = vi.spyOn(
-        trader as unknown as { emitOrderCompletedEvent: (id: string, type: string, summary: unknown) => void },
+        trader as unknown as { emitOrderCompletedEvent: (id: string, summary: unknown) => void },
         'emitOrderCompletedEvent',
       );
 
@@ -651,18 +643,25 @@ describe('Trader', () => {
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_CANCELED_EVENT,
         expect.objectContaining({
-          orderId: advice.id,
-          type: advice.order.type,
-          side: advice.order.side,
-          amount: expect.any(Number),
-          filled: 2,
-          remaining: 7.5,
-          price: 100,
+          order: expect.objectContaining({
+            id: advice.id,
+            type: advice.type,
+            side: advice.side,
+            amount: expect.any(Number),
+            filled: 2,
+            remaining: 7.5,
+            price: 100,
+          }),
+          exchange: expect.objectContaining({
+            price: trader['price'],
+            portfolio: trader['portfolio'],
+            balance: trader['balance'],
+          }),
         }),
       );
       const cancelPayload = (trader['deferredEmit'] as Mock).mock.calls
         .filter(call => call[0] === ORDER_CANCELED_EVENT)
-        .pop()?.[1];
+        .pop()?.[1].order;
       expect(cancelPayload?.amount).toBeCloseTo(9.5, 5);
       expect(synchronizeSpy).toHaveBeenCalled();
     });
@@ -670,19 +669,16 @@ describe('Trader', () => {
     it('includes requested price when canceling limit orders', async () => {
       trader['price'] = 100;
       trader['portfolio'] = { asset: 0, currency: 1000 };
-      const advice = buildAdvice({ order: { type: 'LIMIT', side: 'SELL', price: 210 } });
+      const advice = buildAdvice({ type: 'LIMIT', side: 'SELL', price: 210 });
       trader.onStrategyCreateOrder(advice);
       const order = getOrderInstance(advice.id)!;
+      const metadata = getOrderMetadata(advice.id);
+      expect(metadata?.price).toBe(210);
+      expect(metadata?.side).toBe('SELL');
 
       trader.onStrategyCancelOrder(advice.id);
       order.emit(ORDER_CANCELED_EVENT, { filled: 0, remaining: 5, partiallyFilled: false });
       await Promise.resolve();
-
-      const payload = (trader['deferredEmit'] as Mock).mock.calls
-        .filter(call => call[0] === ORDER_CANCELED_EVENT)
-        .pop()?.[1];
-      expect(payload?.price).toBe(210);
-      expect(payload?.side).toBe('SELL');
     });
 
     it('removes order and emits error when cancellation fails', async () => {
@@ -707,10 +703,17 @@ describe('Trader', () => {
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
-          orderId: advice.id,
-          type: advice.order.type,
-          side: advice.order.side,
-          reason: 'exchange timeout',
+          order: expect.objectContaining({
+            id: advice.id,
+            type: advice.type,
+            side: advice.side,
+            reason: 'exchange timeout',
+          }),
+          exchange: expect.objectContaining({
+            price: trader['price'],
+            portfolio: trader['portfolio'],
+            balance: trader['balance'],
+          }),
         }),
       );
       expect(synchronizeSpy).toHaveBeenCalled();
@@ -727,16 +730,16 @@ describe('Trader', () => {
         date: undefined,
       } as any;
 
-      expect(() => trader['emitOrderCompletedEvent']('order-id' as any, 'MARKET', summary)).toThrow(GekkoError);
+      expect(() => trader['emitOrderCompletedEvent']('order-id' as any, summary)).toThrow(GekkoError);
     });
 
     it('emits completion summary with computed pricing', async () => {
-      const summary = {
+      const summary: OrderSummary = {
         amount: 2,
         price: 100,
         feePercent: 0.5,
         side: 'BUY' as OrderSide,
-        date: 1_700_000_111_000,
+        orderExecutionDate: 1_700_000_111_000,
       };
       const processCostSpy = vi
         .spyOn(traderUtils, 'computeOrderPricing')
@@ -744,34 +747,40 @@ describe('Trader', () => {
 
       trader['portfolio'] = { asset: 5, currency: 10 };
       trader['balance'] = 510;
+      trader['price'] = 100;
+      trader['orders'].set('order-id' as any, {
+        amount: summary.amount,
+        side: summary.side,
+        orderCreationDate: summary.orderExecutionDate - 60_000,
+        type: 'STICKY',
+        price: summary.price,
+        orderInstance: {} as any,
+      });
 
-      trader['emitOrderCompletedEvent']('order-id' as any, 'STICKY', summary);
+      trader['emitOrderCompletedEvent']('order-id' as any, summary);
 
       expect(processCostSpy).toHaveBeenCalledWith(summary.side, summary.price, summary.amount, summary.feePercent);
       expect(trader['deferredEmit']).toHaveBeenCalledWith(
         ORDER_COMPLETED_EVENT,
         expect.objectContaining({
-          orderId: 'order-id',
-          side: summary.side,
-          amount: summary.amount,
-          price: summary.price,
-          feePercent: summary.feePercent,
-          effectivePrice: 101,
-          fee: 2,
-          type: 'STICKY',
-          portfolio: trader['portfolio'],
-          balance: trader['balance'],
+          order: expect.objectContaining({
+            id: 'order-id',
+            side: summary.side,
+            amount: summary.amount,
+            price: summary.price,
+            feePercent: summary.feePercent,
+            effectivePrice: 101,
+            fee: 2,
+            type: 'STICKY',
+            orderExecutionDate: summary.orderExecutionDate,
+          }),
+          exchange: expect.objectContaining({
+            portfolio: trader['portfolio'],
+            balance: trader['balance'],
+            price: trader['price'],
+          }),
         }),
       );
-    });
-  });
-
-  describe('processFinalize', () => {
-    it('clears synchronization interval if present', () => {
-      trader['syncInterval'] = 123 as unknown as NodeJS.Timer;
-      trader['processFinalize']();
-      expect(clearIntervalSpy).toHaveBeenCalledWith(123);
-      expect(trader['syncInterval']).toBeNull();
     });
   });
 

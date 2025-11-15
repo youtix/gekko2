@@ -1,5 +1,6 @@
 import { Candle } from '@models/candle.types';
 import { candleSchema } from '@models/schema/candle.schema';
+import { config } from '@services/configuration/configuration';
 import { Exchange } from '@services/exchange/exchange';
 import { inject } from '@services/injecter/injecter';
 import { debug } from '@services/logger';
@@ -10,10 +11,13 @@ import { Readable } from 'node:stream';
 export class RealtimeWebsocketStream extends Readable {
   private readonly exchange: Exchange;
   private readonly unsubscribe: () => void;
+  private readonly symbol: string;
 
   constructor() {
     super({ objectMode: true });
+    const { asset, currency } = config.getWatch();
     this.exchange = inject.exchange();
+    this.symbol = `${asset}/${currency}`;
 
     bindAll(this, ['onNewCandle']);
 
@@ -24,7 +28,7 @@ export class RealtimeWebsocketStream extends Readable {
     debug(
       'stream',
       [
-        `1m candle from ${this.exchange.getExchangeName()} for ${this.exchange.getSymbol()} @ ${toISOString(candle.start)} `,
+        `1m candle from ${this.exchange.getExchangeName()} for ${this.symbol} @ ${toISOString(candle.start)} `,
         `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`,
       ].join(' '),
     );

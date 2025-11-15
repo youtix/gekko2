@@ -1,11 +1,10 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderSide, OrderState } from '@models/order.types';
-import { Exchange } from '@services/exchange/exchange';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { debug, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { bindAll, find, map, reject, sumBy } from 'lodash-es';
+import { bindAll, sumBy } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { Order } from '../order';
 import { createOrderSummary } from '../order.utils';
@@ -16,18 +15,15 @@ export class StickyOrder extends Order {
   private checking: boolean;
   private amount: number;
   private id?: string;
-  private interval?: Timer;
 
-  constructor(gekkoOrderId: UUID, action: OrderSide, amount: number, exchange: Exchange, _price?: number) {
-    super(gekkoOrderId, exchange, action, 'STICKY');
+  constructor(gekkoOrderId: UUID, action: OrderSide, amount: number, _price?: number) {
+    super(gekkoOrderId, action, 'STICKY');
     this.completing = false;
     this.moving = false;
     this.checking = false;
     this.amount = amount;
 
     bindAll(this, [this.checkOrder.name]);
-
-    this.interval = setInterval(this.checkOrder, this.exchange.getInterval());
 
     this.createStickyOrder();
   }
@@ -39,7 +35,7 @@ export class StickyOrder extends Order {
     const minimalPrice = limits?.price?.min ?? 0;
 
     const price = this.side === 'BUY' ? bid + minimalPrice : ask - minimalPrice;
-    const filledAmount = sumBy(this.transactions, 'filled');
+    const filledAmount = sumBy(this.transactions.values().toArray(), 'filled');
 
     // Creating initial order
     this.createLimitOrder(this.side, this.amount - filledAmount, price);
@@ -51,10 +47,7 @@ export class StickyOrder extends Order {
     if (this.checking || this.getStatus() === 'initializing') return;
 
     if (this.id) await this.cancelOrder(this.id);
-    if (this.getStatus() !== 'error') {
-      clearInterval(this.interval);
-      this.completing = false;
-    }
+    if (this.getStatus() !== 'error') this.completing = false;
   }
 
   public async createSummary() {
@@ -64,15 +57,16 @@ export class StickyOrder extends Order {
       exchange: this.exchange,
       type: 'STICKY',
       side: this.side,
-      transactions: this.transactions,
+      transactions: this.transactions.values().toArray(),
     });
   }
 
-  private async checkOrder() {
+  public async checkOrder() {
+    if (this.isOrderCompleted() || !this.id) return;
     debug('core', `Starting checking order ${this.id} status`);
 
-    // If completed or canceling execute cancel() to clear interval.
-    if (this.isOrderCompleted() || this.completing) return await this.cancel();
+    // If canceling execute cancel().
+    if (this.completing) return await this.cancel();
     // No check when initializing the order or when already checking the order.
     if (this.getStatus() === 'initializing' || this.checking) return;
     this.checking = true;
@@ -95,7 +89,7 @@ export class StickyOrder extends Order {
   }
 
   private isOrderPartiallyFilled() {
-    return !this.isOrderCompleted() && sumBy(this.transactions, 'filled') > 0;
+    return !this.isOrderCompleted() && sumBy(this.transactions.values().toArray(), 'filled') > 0;
   }
 
   private isOrderCompleted() {
@@ -103,12 +97,10 @@ export class StickyOrder extends Order {
   }
 
   private updateTransactionPartialFilledAmount(id: string, filled = 0) {
-    const lastFilledValueOfCurrentTransaction = find(this.transactions, { id })?.filled ?? 0;
-    if (filled > lastFilledValueOfCurrentTransaction) {
-      this.transactions = map(this.transactions, t => ({
-        ...t,
-        ...(t.id === id && { filled }),
-      }));
+    const transaction = this.transactions.get(id);
+    const lastFilledValueOfCurrentTransaction = transaction?.filled ?? 0;
+    if (transaction && filled > lastFilledValueOfCurrentTransaction) {
+      this.transactions.set(id, { ...transaction, filled });
       this.orderPartiallyFilled(id, filled);
     }
   }
@@ -128,24 +120,19 @@ export class StickyOrder extends Order {
     );
 
     // Updating transactions
-    this.transactions = reject(this.transactions, t => t.id === this.id && t.filled === 0);
-    this.transactions.push({ id, timestamp, filled });
+    this.transactions.set(id, { id, timestamp, filled, status });
 
     // Updating current transaction ID
     this.id = id;
 
-    if (status === 'closed') {
-      clearInterval(this.interval);
-      return Promise.resolve(this.orderFilled());
-    }
+    if (status === 'closed') return Promise.resolve(this.orderFilled());
 
     if (filled) this.orderPartiallyFilled(id, filled);
 
     if (status === 'canceled') {
-      clearInterval(this.interval);
-      const totalFilled = sumBy(this.transactions, 'filled');
+      const totalFilled = sumBy(this.transactions.values().toArray(), 'filled');
       const remainingAmount = Math.max(this.amount - totalFilled, 0);
-      return Promise.resolve(this.orderCanceled({ filled: totalFilled, remaining: remainingAmount }));
+      return Promise.resolve(this.orderCanceled({ filled: totalFilled, remaining: remainingAmount, timestamp }));
     }
 
     if (status === 'open') return Promise.resolve(this.setStatus('open'));
@@ -154,8 +141,6 @@ export class StickyOrder extends Order {
   }
 
   protected handleCreateOrderError(error: unknown) {
-    clearInterval(this.interval);
-
     if (error instanceof OrderOutOfRangeError && this.isOrderPartiallyFilled())
       return Promise.resolve(this.orderFilled());
 
@@ -181,9 +166,8 @@ export class StickyOrder extends Order {
       ].join(' '),
     );
 
-    const totalFilledOfAllTransactions = sumBy(this.transactions, 'filled') + (filled ?? 0);
+    const totalFilledOfAllTransactions = sumBy(this.transactions.values().toArray(), 'filled') + (filled ?? 0);
     if (remaining === 0 || this.amount === totalFilledOfAllTransactions) {
-      clearInterval(this.interval);
       return Promise.resolve(this.orderFilled());
     }
 
@@ -192,7 +176,7 @@ export class StickyOrder extends Order {
     // No need to clear interval here, it will be done in cancel function
     if (!this.moving) {
       const remainingAmount = Math.max(this.amount - totalFilledOfAllTransactions, 0);
-      this.orderCanceled({ filled: totalFilledOfAllTransactions, remaining: remainingAmount });
+      this.orderCanceled({ filled: totalFilledOfAllTransactions, remaining: remainingAmount, timestamp });
     }
     return Promise.resolve();
   }
@@ -200,7 +184,6 @@ export class StickyOrder extends Order {
   protected handleCancelOrderError(error: Error) {
     // Order is not found because it was filled
     if (error instanceof OrderNotFound) {
-      clearInterval(this.interval);
       return Promise.resolve(this.orderFilled());
     }
     return Promise.resolve(this.orderErrored(error));
@@ -221,17 +204,15 @@ export class StickyOrder extends Order {
     );
 
     if (status === 'closed') {
-      clearInterval(this.interval);
       return Promise.resolve(this.orderFilled());
     }
 
     this.updateTransactionPartialFilledAmount(id, filled);
 
     if (status === 'canceled') {
-      clearInterval(this.interval);
-      const totalFilled = sumBy(this.transactions, 'filled');
+      const totalFilled = sumBy(this.transactions.values().toArray(), 'filled');
       const remainingAmount = Math.max(this.amount - totalFilled, 0);
-      return Promise.resolve(this.orderCanceled({ filled: totalFilled, remaining: remainingAmount }));
+      return Promise.resolve(this.orderCanceled({ filled: totalFilled, remaining: remainingAmount, timestamp }));
     }
 
     if (status === 'open') {

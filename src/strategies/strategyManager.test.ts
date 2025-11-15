@@ -38,8 +38,8 @@ vi.mock('@indicators/index', () => ({
 const strategyMocks = vi.hoisted(() => {
   class DummyStrategy {
     init = vi.fn();
-    onEachCandle = vi.fn();
-    onCandleAfterWarmup = vi.fn();
+    onEachTimeframeCandle = vi.fn();
+    onTimeframeCandleAfterWarmup = vi.fn();
     onOrderCompleted = vi.fn();
     onOrderCanceled = vi.fn();
     onOrderErrored = vi.fn();
@@ -73,8 +73,8 @@ vi.mock('@services/configuration/configuration', () => {
 vi.mock('./debug/debugAdvice.startegy.ts', () => ({
   DebugAdvice: class {
     init = vi.fn();
-    onEachCandle = vi.fn();
-    onCandleAfterWarmup = vi.fn();
+    onEachTimeframeCandle = vi.fn();
+    onTimeframeCandleAfterWarmup = vi.fn();
     onOrderCompleted = vi.fn();
     onOrderCanceled = vi.fn();
     onOrderErrored = vi.fn();
@@ -132,34 +132,52 @@ describe('StrategyManager', () => {
         manager['indicators'].push(indicator as any);
         const strategy = {
           init: vi.fn(),
-          onEachCandle: vi.fn(),
+          onEachTimeframeCandle: vi.fn(),
           log: vi.fn(),
-          onCandleAfterWarmup: vi.fn(),
+          onTimeframeCandleAfterWarmup: vi.fn(),
         };
         manager['strategy'] = strategy as any;
         const warmupListener = vi.fn();
         manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);
 
-        manager.onNewCandle(candle);
+        manager.onTimeFrameCandle(candle);
 
         expect(strategy.init).toHaveBeenCalledTimes(1);
+        const initArgs = strategy.init.mock.calls[0]?.[0];
+        expect(initArgs).toMatchObject({
+          candle,
+          portfolio: { asset: 0, currency: 0 },
+          addIndicator: manager['addIndicator'],
+        });
+        expect(initArgs.tools).toEqual({
+          strategyParams: { each: 1, wait: 0 },
+          marketLimits: defaultMarketLimits,
+          createOrder: manager['createOrder'],
+          cancelOrder: manager['cancelOrder'],
+          log: manager['log'],
+        });
         expect(indicator.onNewCandle).toHaveBeenCalledWith(candle);
         expect(indicator.getResult).toHaveBeenCalled();
-        expect(strategy.onEachCandle).toHaveBeenCalledTimes(1);
+        expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(1);
 
-        const [tools, indicatorResult] = strategy.onEachCandle.mock.calls[0] as [any, number];
-        expect(tools.candle).toBe(candle);
-        expect(tools.createOrder).toBe(manager['createOrder']);
-        expect(tools.cancelOrder).toBe(manager['cancelOrder']);
-        expect(tools.log).toBe(manager['log']);
-        expect(tools.strategyParams).toEqual({ each: 1, wait: 0 });
-        expect(tools.portfolio).toEqual({ asset: 0, currency: 0 });
+        const [params, indicatorResult] = strategy.onEachTimeframeCandle.mock.calls[0] as [any, number];
+        expect(params).toMatchObject({
+          candle,
+          portfolio: { asset: 0, currency: 0 },
+          tools: expect.objectContaining({
+            strategyParams: { each: 1, wait: 0 },
+            marketLimits: defaultMarketLimits,
+            createOrder: manager['createOrder'],
+            cancelOrder: manager['cancelOrder'],
+            log: manager['log'],
+          }),
+        });
         expect(indicatorResult).toBe(42);
         expect(strategy.log).not.toHaveBeenCalled();
-        expect(strategy.onCandleAfterWarmup).not.toHaveBeenCalled();
+        expect(strategy.onTimeframeCandleAfterWarmup).not.toHaveBeenCalled();
         expect(warmupListener).not.toHaveBeenCalled();
 
-        manager.onNewCandle(candle);
+        manager.onTimeFrameCandle(candle);
 
         expect(strategy.init).toHaveBeenCalledTimes(1);
         expect(warmupListener).toHaveBeenCalledWith(candle);
@@ -168,8 +186,8 @@ describe('StrategyManager', () => {
           expect.stringContaining('Strategy warmup done ! Sending first candle (1970-01-01T00:00:00.000Z) to strategy'),
         );
         expect(strategy.log).toHaveBeenCalledTimes(1);
-        expect(strategy.onCandleAfterWarmup).toHaveBeenCalledTimes(1);
-        expect(strategy.onEachCandle).toHaveBeenCalledTimes(2);
+        expect(strategy.onTimeframeCandleAfterWarmup).toHaveBeenCalledTimes(1);
+        expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(2);
       });
     });
 
@@ -178,10 +196,25 @@ describe('StrategyManager', () => {
         const strategy = { onOrderCompleted: vi.fn() };
         manager['strategy'] = strategy as any;
         const order = { id: '1' } as any;
+        const exchange = { price: 10 };
+        manager['indicatorsResults'] = ['indicator'];
 
-        manager.onOrderCompleted(order);
+        manager.onOrderCompleted({ order, exchange } as any);
 
-        expect(strategy.onOrderCompleted).toHaveBeenCalledWith(order);
+        expect(strategy.onOrderCompleted).toHaveBeenCalledWith(
+          {
+            order,
+            exchange,
+            tools: {
+              strategyParams: { each: 1, wait: 0 },
+              marketLimits: defaultMarketLimits,
+              createOrder: manager['createOrder'],
+              cancelOrder: manager['cancelOrder'],
+              log: manager['log'],
+            },
+          },
+          'indicator',
+        );
       });
     });
 
@@ -190,10 +223,25 @@ describe('StrategyManager', () => {
         const strategy = { onOrderCanceled: vi.fn() };
         manager['strategy'] = strategy as any;
         const order = { id: '2' } as any;
+        const exchange = { price: 11 };
+        manager['indicatorsResults'] = ['indicator'];
 
-        manager.onOrderCanceled(order);
+        manager.onOrderCanceled({ order, exchange } as any);
 
-        expect(strategy.onOrderCanceled).toHaveBeenCalledWith(order);
+        expect(strategy.onOrderCanceled).toHaveBeenCalledWith(
+          {
+            order,
+            exchange,
+            tools: {
+              strategyParams: { each: 1, wait: 0 },
+              marketLimits: defaultMarketLimits,
+              createOrder: manager['createOrder'],
+              cancelOrder: manager['cancelOrder'],
+              log: manager['log'],
+            },
+          },
+          'indicator',
+        );
       });
     });
 
@@ -202,10 +250,25 @@ describe('StrategyManager', () => {
         const strategy = { onOrderErrored: vi.fn() };
         manager['strategy'] = strategy as any;
         const order = { id: '3' } as any;
+        const exchange = { price: 12 };
+        manager['indicatorsResults'] = ['indicator'];
 
-        manager.onOrderErrored(order);
+        manager.onOrderErrored({ order, exchange } as any);
 
-        expect(strategy.onOrderErrored).toHaveBeenCalledWith(order);
+        expect(strategy.onOrderErrored).toHaveBeenCalledWith(
+          {
+            order,
+            exchange,
+            tools: {
+              strategyParams: { each: 1, wait: 0 },
+              marketLimits: defaultMarketLimits,
+              createOrder: manager['createOrder'],
+              cancelOrder: manager['cancelOrder'],
+              log: manager['log'],
+            },
+          },
+          'indicator',
+        );
       });
     });
 
@@ -225,11 +288,20 @@ describe('StrategyManager', () => {
     describe('setPortfolio', () => {
       it('updates the portfolio reference used by tools', () => {
         const portfolio = { asset: 2, currency: 3 };
+        const strategy = {
+          init: vi.fn(),
+          onEachTimeframeCandle: vi.fn(),
+          log: vi.fn(),
+          onTimeframeCandleAfterWarmup: vi.fn(),
+        };
+        manager['strategy'] = strategy as any;
 
         manager.setPortfolio(portfolio);
 
-        const tools = manager['createTools'](candle);
-        expect(tools.portfolio).toEqual(portfolio);
+        manager.onTimeFrameCandle(candle);
+
+        const params = strategy.onEachTimeframeCandle.mock.calls[0]?.[0];
+        expect(params?.portfolio).toBe(portfolio);
       });
     });
     describe('setMarketLimits', () => {
@@ -238,7 +310,7 @@ describe('StrategyManager', () => {
 
         manager.setMarketLimits(marketLimits);
 
-        const tools = manager['createTools'](candle);
+        const tools = manager['createTools']();
         expect(tools.marketLimits).toEqual(marketLimits);
       });
     });
@@ -262,13 +334,16 @@ describe('StrategyManager', () => {
         const listener = vi.fn();
         manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
         const order = { side: 'BUY', type: 'STICKY', quantity: 1 } as const;
+        const candleStart = Date.UTC(2024, 0, 1, 0, 0, 0);
+        manager.onOneMinuteCandle({ start: candleStart } as any);
 
         const id = manager['createOrder'](order);
 
         expect(id).toBe('db2254e3-c749-448c-b7b6-aa28831bbae7');
         expect(listener).toHaveBeenCalledWith({
+          ...order,
           id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
-          order,
+          orderCreationDate: Date.UTC(2024, 0, 1, 0, 1, 0),
         });
       });
     });
@@ -321,12 +396,10 @@ describe('StrategyManager', () => {
   describe('utils function', () => {
     describe('createTools', () => {
       it('builds a toolset wired with the candle, helpers, and manager state', () => {
-        const tools = manager['createTools'](candle);
+        const tools = manager['createTools']();
 
         expect(tools).toStrictEqual({
-          candle,
           strategyParams: manager['strategyParams'],
-          portfolio: manager['portfolio'],
           marketLimits: defaultMarketLimits,
           createOrder: manager['createOrder'],
           cancelOrder: manager['cancelOrder'],
@@ -337,7 +410,7 @@ describe('StrategyManager', () => {
       it('throws when market limits are unset before creating tools', () => {
         manager.setMarketLimits(null);
 
-        expect(() => manager['createTools'](candle)).toThrow(GekkoError);
+        expect(() => manager['createTools']()).toThrow(GekkoError);
       });
     });
     describe('emitWarmupCompletedEvent', () => {

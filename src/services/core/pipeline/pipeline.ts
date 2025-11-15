@@ -7,7 +7,7 @@ import { inject } from '@services/injecter/injecter';
 import { debug } from '@services/logger';
 import { keepDuplicates } from '@utils/collection/array.utils';
 import { toCamelCase } from '@utils/string/string.utils';
-import { compact, each, filter, flatMap, map, some } from 'lodash-es';
+import { compact, each, filter, flatMap, map } from 'lodash-es';
 import { PluginsEmitSameEventError } from './pipeline.error';
 import { streamPipelines } from './pipeline.utils';
 
@@ -57,14 +57,9 @@ export const createPlugins = async (context: PipelineContext) =>
   });
 
 export const preloadMarkets = async (context: PipelineContext) => {
-  const { mode } = config.getWatch();
-  const isPreloadMarketNeeded =
-    ['realtime', 'importer'].includes(mode) || some(context, plugin => plugin.inject?.includes('exchange'));
-  if (isPreloadMarketNeeded) {
-    const exchange = inject.exchange();
-    debug('pipeline', `Preloading Markets data for ${exchange.getExchangeName()}`);
-    await exchange.loadMarkets();
-  }
+  const exchange = inject.exchange();
+  debug('pipeline', `Preloading Markets data for ${exchange.getExchangeName()}`);
+  await exchange.loadMarkets();
   return context;
 };
 

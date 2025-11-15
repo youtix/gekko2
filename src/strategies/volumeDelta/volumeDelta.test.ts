@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdviceOrder } from '@models/advice.types';
 import type { UUID } from 'node:crypto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { VolumeDelta } from './volumeDelta.strategy';
 
 describe('VolumeDelta Strategy', () => {
@@ -31,7 +31,7 @@ describe('VolumeDelta Strategy', () => {
     strategy = new VolumeDelta();
     advices = [];
     const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, quantity: order.quantity ?? 1 });
+      advices.push({ ...order, amount: order.amount ?? 1 });
       return '00000000-0000-0000-0000-000000000000' as UUID;
     });
     tools = {
@@ -51,10 +51,10 @@ describe('VolumeDelta Strategy', () => {
     ${'hist'}        | ${1}
   `('emits long after persistence for $output', ({ output, value }) => {
     tools.strategyParams.output = output;
-    strategy.onCandleAfterWarmup(tools, makeIndicator(output, value));
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator(output, value));
     expect(advices).toHaveLength(0);
-    strategy.onCandleAfterWarmup(tools, makeIndicator(output, value));
-    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', quantity: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator(output, value));
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1 }]);
   });
 
   it.each`
@@ -65,10 +65,10 @@ describe('VolumeDelta Strategy', () => {
     ${'hist'}        | ${-1}
   `('emits short after persistence for $output', ({ output, value }) => {
     tools.strategyParams.output = output;
-    strategy.onCandleAfterWarmup(tools, makeIndicator(output, value));
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator(output, value));
     expect(advices).toHaveLength(0);
-    strategy.onCandleAfterWarmup(tools, makeIndicator(output, value));
-    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', quantity: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator(output, value));
+    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', amount: 1 }]);
   });
 
   it.each`
@@ -77,29 +77,29 @@ describe('VolumeDelta Strategy', () => {
     ${'downtrend'} | ${'volumeDelta'} | ${-1}
   `('does not advise before persistence on $label', ({ output, value }) => {
     tools.strategyParams.output = output;
-    strategy.onCandleAfterWarmup(tools, makeIndicator(output, value));
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator(output, value));
     expect(advices).toHaveLength(0);
   });
 
   it('advises only once per persisted trend', () => {
     tools.strategyParams.output = 'volumeDelta';
-    strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', 1));
-    strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', 1));
-    strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', 1));
-    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', quantity: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator('volumeDelta', 1));
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator('volumeDelta', 1));
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator('volumeDelta', 1));
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1 }]);
   });
 
   it('resets when switching trend and advises accordingly', () => {
     tools.strategyParams.output = 'volumeDelta';
     // Persist an uptrend -> long
-    strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', 1));
-    strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', 1));
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator('volumeDelta', 1));
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator('volumeDelta', 1));
     // Switch to a downtrend -> short
-    strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', -1));
-    strategy.onCandleAfterWarmup(tools, makeIndicator('volumeDelta', -1));
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator('volumeDelta', -1));
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, makeIndicator('volumeDelta', -1));
     expect(advices).toEqual([
-      { type: 'STICKY', side: 'BUY', quantity: 1 },
-      { type: 'STICKY', side: 'SELL', quantity: 1 },
+      { type: 'STICKY', side: 'BUY', amount: 1 },
+      { type: 'STICKY', side: 'SELL', amount: 1 },
     ]);
   });
 
@@ -109,7 +109,7 @@ describe('VolumeDelta Strategy', () => {
     ${'relevant field is null'} | ${makeIndicator('macd', null)}
   `('does nothing when $scenario', ({ indicator }) => {
     tools.strategyParams.output = 'macd';
-    strategy.onCandleAfterWarmup(tools, indicator as any);
+    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, indicator as any);
     expect(advices).toHaveLength(0);
   });
 });

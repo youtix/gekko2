@@ -14,6 +14,7 @@ vi.mock('@services/configuration/configuration', () => ({
       timeframe: '1m',
       daterange: { start: mockStartDate },
     }),
+    getExchange: () => ({ name: 'dummy', exchangeSynchInterval: 5, orderSynchInterval: 1 }),
   },
 }));
 
@@ -21,7 +22,8 @@ vi.mock('@services/logger', () => ({ error: vi.fn() }));
 
 const baseConfig: DummyCentralizedExchangeConfig = {
   name: 'dummy-cex',
-  interval: 200,
+  exchangeSynchInterval: 200,
+  orderSynchInterval: 200,
   sandbox: false,
   verbose: false,
   feeMaker: 0.15,
@@ -242,7 +244,7 @@ describe('DummyCentralizedExchange', () => {
     exchange.processOneMinuteCandle(candle);
 
     const unsubscribe = exchange.onNewCandle(() => {});
-    vi.advanceTimersByTime(baseConfig.interval ?? 0);
+    vi.advanceTimersByTime(baseConfig.exchangeSynchInterval ?? 0);
     unsubscribe();
 
     const derived = await exchange.getKlines(undefined, '1m');

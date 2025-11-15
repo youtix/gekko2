@@ -7,7 +7,6 @@ import {
   ORDER_STATUS_CHANGED_EVENT,
 } from '@constants/event.const';
 import { OrderState } from '@models/order.types';
-import { Exchange } from '@services/exchange/exchange';
 import { toTimestamp } from '@utils/date/date.utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Order } from './order';
@@ -19,16 +18,6 @@ vi.mock('@services/logger', () => ({
   error: vi.fn(),
 }));
 
-class TestOrder extends Order {
-  public handleCancelOrderSuccess = vi.fn();
-  public handleCancelOrderError = vi.fn();
-  public handleCreateOrderSuccess = vi.fn();
-  public handleCreateOrderError = vi.fn();
-  public handleFetchOrderSuccess = vi.fn();
-  public handleFetchOrderError = vi.fn();
-  public cancel = vi.fn();
-  public createSummary = vi.fn();
-}
 const fakeExchange = {
   createLimitOrder: vi.fn(),
   createMarketOrder: vi.fn(),
@@ -38,17 +27,39 @@ const fakeExchange = {
   getInterval: vi.fn(() => 50),
 };
 
+vi.mock('@services/injecter/injecter', () => ({
+  inject: {
+    exchange: () => fakeExchange,
+  },
+}));
+
+class TestOrder extends Order {
+  public handleCancelOrderSuccess = vi.fn();
+  public handleCancelOrderError = vi.fn();
+  public handleCreateOrderSuccess = vi.fn();
+  public handleCreateOrderError = vi.fn();
+  public handleFetchOrderSuccess = vi.fn();
+  public handleFetchOrderError = vi.fn();
+  public cancel = vi.fn();
+  public createSummary = vi.fn();
+  public checkOrder = vi.fn();
+}
+
 describe('order', () => {
-  const defaultOrder: OrderState = { id: 'tx1', status: 'open', filled: 0, price: 100, timestamp: toTimestamp('2025') };
+  const defaultOrder: OrderState = {
+    id: 'tx1',
+    status: 'open',
+    filled: 0,
+    price: 100,
+    timestamp: toTimestamp('2025'),
+  };
   let testOrder: TestOrder;
 
   beforeEach(() => {
-    testOrder = new TestOrder(
-      'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      fakeExchange as unknown as Exchange,
-      'BUY',
-      'STICKY',
-    );
+    Object.values(fakeExchange).forEach(value => {
+      if (typeof value === 'function') value.mockReset?.();
+    });
+    testOrder = new TestOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 'STICKY');
   });
 
   it('should have status "initializing" upon creation', () => {
@@ -74,10 +85,13 @@ describe('order', () => {
   describe('orderCanceled', () => {
     it('should call setStatus with "canceled" and emit ORDER_CANCELED_EVENT on orderCanceled', () => {
       const spy = vi.spyOn(testOrder, 'emit');
-      testOrder['orderCanceled']({ filled: 100 });
+      testOrder['orderCanceled']({ filled: 100, remaining: 5, price: 10, timestamp: 0 });
       expect(spy).toHaveBeenCalledWith(ORDER_CANCELED_EVENT, {
         status: 'canceled',
         filled: 100,
+        remaining: 5,
+        price: 10,
+        timestamp: 0,
       });
     });
   });
@@ -97,16 +111,25 @@ describe('order', () => {
   describe('orderPartiallyFilled', () => {
     it('should emit ORDER_PARTIALLY_FILLED_EVENT with filled amount on orderPartiallyFilled', () => {
       const spy = vi.spyOn(testOrder, 'emit');
-      // Prepopulate transactions with a matching id.
-      testOrder['transactions'] = [defaultOrder];
+      testOrder['transactions'].set(defaultOrder.id!, {
+        id: defaultOrder.id!,
+        status: 'open',
+        timestamp: defaultOrder.timestamp!,
+        filled: 0,
+      });
       testOrder['orderPartiallyFilled']('tx1', 10);
       expect(spy).toHaveBeenCalledWith(ORDER_PARTIALLY_FILLED_EVENT, 10);
     });
 
     it('should update the transaction filled amount in orderPartiallyFilled', () => {
-      testOrder['transactions'] = [defaultOrder];
+      testOrder['transactions'].set(defaultOrder.id!, {
+        id: defaultOrder.id!,
+        status: 'open',
+        timestamp: defaultOrder.timestamp!,
+        filled: 0,
+      });
       testOrder['orderPartiallyFilled']('tx1', 10);
-      expect(testOrder['transactions'][0].filled).toBe(10);
+      expect(testOrder['transactions'].get('tx1')?.filled).toBe(10);
     });
   });
 

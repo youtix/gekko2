@@ -35,7 +35,6 @@ const initialTickerSchema = z
 
 export const dummyExchangeSchema = centralizedExchangeSchema.extend({
   name: z.literal('dummy-cex'),
-  interval: z.number().default(50), // in ms
   feeMaker: z.number().positive().default(0.15), // in %
   feeTaker: z.number().positive().default(0.25), // in %
   simulationBalance: simulationBalanceSchema,

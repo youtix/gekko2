@@ -1,5 +1,11 @@
-import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
-import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+} from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber } from 'lodash-es';
 import { RSICurrentTrend, RSIStrategyParams } from './rsi.types';
@@ -11,7 +17,13 @@ export class RSI implements Strategy<RSIStrategyParams> {
     this.trend = { direction: 'none', duration: 0, adviced: false };
   }
 
-  onCandleAfterWarmup({ strategyParams, createOrder, log }: Tools<RSIStrategyParams>, ...indicators: unknown[]): void {
+  init({ tools, addIndicator }: InitParams<RSIStrategyParams>): void {
+    const { period, src } = tools.strategyParams;
+    addIndicator('RSI', { period, src });
+  }
+
+  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<RSIStrategyParams>, ...indicators: unknown[]): void {
+    const { strategyParams, log, createOrder } = tools;
     const [rsi] = indicators;
     if (!isNumber(rsi)) return;
     const { thresholds } = strategyParams;
@@ -43,16 +55,11 @@ export class RSI implements Strategy<RSIStrategyParams> {
     }
   }
 
-  init({ strategyParams }: Tools<RSIStrategyParams>, addIndicator: AddIndicatorFn): void {
-    const { period, src } = strategyParams;
-    addIndicator('RSI', { period, src });
-  }
-
   // NOT USED
-  onEachCandle(_tools: Tools<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_order: OrderCompleted): void {}
-  onOrderCanceled(_order: OrderCanceled): void {}
-  onOrderErrored(_order: OrderErrored): void {}
-  log(_tools: Tools<RSIStrategyParams>, ..._indicators: unknown[]): void {}
+  onEachTimeframeCandle(_params: OnCandleEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
+  log(_params: OnCandleEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCompleted(_params: OnOrderCompletedEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCanceled(_params: OnOrderCanceledEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderErrored(_params: OnOrderErroredEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }

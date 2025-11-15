@@ -1,13 +1,12 @@
 import { GekkoError } from '@errors/gekko.error';
 import { Watch } from '@models/configuration.types';
-import { BinanceExchangeConfig } from '@services/exchange/centralized/binance/binance.types';
 import { DummyCentralizedExchangeConfig } from '@services/exchange/centralized/dummy/dummyCentralizedExchange.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../configuration/configuration';
 import { inject } from './injecter';
 
 const { BinanceExchangeMock, DummyCentralizedExchangeMock } = vi.hoisted(() => ({
-  BinanceExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'binance' })),
+  BinanceExchangeMock: vi.fn(() => ({ exchangeName: 'binance', type: 'binance' })),
   DummyCentralizedExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'dummy-cex' })),
 }));
 
@@ -52,16 +51,16 @@ describe('Injecter', () => {
   describe('exchange', () => {
     it('should cache the exchange instance and return the same object on multiple calls', () => {
       const binanceConfig = { name: 'binance', verbose: false, sandbox: false, interval: 1000 };
-      getExchangeMock.mockReturnValue(binanceConfig as BinanceExchangeConfig);
+      getExchangeMock.mockReturnValue(binanceConfig as unknown as DummyCentralizedExchangeConfig);
       const first = inject.exchange();
       const second = inject.exchange();
       expect(second).toBe(first);
       expect(BinanceExchangeMock).toHaveBeenCalledTimes(1);
-      expect(BinanceExchangeMock).toHaveBeenCalledWith(binanceConfig);
+      expect(BinanceExchangeMock).toHaveBeenCalledWith();
     });
 
     it('should throw GekkoError if no exchange config is returned', () => {
-      getExchangeMock.mockReturnValue(undefined as unknown as BinanceExchangeConfig);
+      getExchangeMock.mockReturnValue(undefined as unknown as DummyCentralizedExchangeConfig);
       expect(() => inject.exchange()).toThrow(GekkoError);
     });
 

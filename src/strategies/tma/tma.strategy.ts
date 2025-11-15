@@ -1,10 +1,24 @@
-import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
-import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+} from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { TMAStrategyParams } from './tma.types';
 
 export class TMA implements Strategy<TMAStrategyParams> {
-  onCandleAfterWarmup({ createOrder, log }: Tools<TMAStrategyParams>, ...indicators: unknown[]): void {
+  init({ tools, addIndicator }: InitParams<TMAStrategyParams>): void {
+    const { long, medium, short, src } = tools.strategyParams;
+    addIndicator('SMA', { period: short, src });
+    addIndicator('SMA', { period: medium, src });
+    addIndicator('SMA', { period: long, src });
+  }
+
+  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<TMAStrategyParams>, ...indicators: unknown[]): void {
+    const { log, createOrder } = tools;
     const [short, medium, long] = indicators;
     if (!isNumber(short) || !isNumber(medium) || !isNumber(long)) return;
 
@@ -21,18 +35,12 @@ export class TMA implements Strategy<TMAStrategyParams> {
       log('debug', `No clear trend detected: ${short}/${medium}/${long}`);
     }
   }
-  init({ strategyParams }: Tools<TMAStrategyParams>, addIndicator: AddIndicatorFn): void {
-    const { long, medium, short, src } = strategyParams;
-    addIndicator('SMA', { period: short, src });
-    addIndicator('SMA', { period: medium, src });
-    addIndicator('SMA', { period: long, src });
-  }
 
   // NOT USED
-  onEachCandle(_tools: Tools<TMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_order: OrderCompleted): void {}
-  onOrderCanceled(_order: OrderCanceled): void {}
-  onOrderErrored(_order: OrderErrored): void {}
-  log(_tools: Tools<TMAStrategyParams>, ..._indicators: unknown[]): void {}
+  onEachTimeframeCandle(_params: OnCandleEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
+  log(_params: OnCandleEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCompleted(_params: OnOrderCompletedEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCanceled(_params: OnOrderCanceledEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderErrored(_params: OnOrderErroredEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }

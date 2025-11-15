@@ -1,6 +1,6 @@
 import { PERFORMANCE_REPORT_EVENT } from '@constants/event.const';
 import { Candle } from '@models/candle.types';
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompletedEvent } from '@models/event.types';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
@@ -41,32 +41,44 @@ describe('PerformanceAnalyzer', () => {
     volume: 10,
   };
 
-  const buyTrade: OrderCompleted = {
-    side: 'BUY',
-    orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-    date: toTimestamp('2025-01-01T00:10:00Z'),
-    portfolio: { asset: 5, currency: 500 },
-    balance: 1000,
-    price: 100,
-    fee: 500,
-    amount: 5,
-    effectivePrice: 100,
-    feePercent: 0.2,
-    type: 'STICKY',
+  const buyTrade: OrderCompletedEvent = {
+    order: {
+      id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+      side: 'BUY',
+      type: 'STICKY',
+      amount: 5,
+      price: 100,
+      orderCreationDate: toTimestamp('2025-01-01T00:09:00Z'),
+      orderExecutionDate: toTimestamp('2025-01-01T00:10:00Z'),
+      effectivePrice: 100,
+      fee: 500,
+      feePercent: 0.2,
+    },
+    exchange: {
+      portfolio: { asset: 5, currency: 500 },
+      balance: 1000,
+      price: 100,
+    },
   };
 
-  const sellTrade: OrderCompleted = {
-    side: 'SELL',
-    orderId: 'dd21e130-48bc-405f-be0c-46e9bf17b111',
-    date: toTimestamp('2025-01-01T01:00:00Z'),
-    portfolio: { asset: 0, currency: 1500 },
-    balance: 1500,
-    price: 110,
-    fee: 0,
-    amount: 5,
-    effectivePrice: 110,
-    feePercent: 0.2,
-    type: 'STICKY',
+  const sellTrade: OrderCompletedEvent = {
+    order: {
+      id: 'dd21e130-48bc-405f-be0c-46e9bf17b111',
+      side: 'SELL',
+      type: 'STICKY',
+      amount: 5,
+      price: 110,
+      orderCreationDate: toTimestamp('2025-01-01T00:59:00Z'),
+      orderExecutionDate: toTimestamp('2025-01-01T01:00:00Z'),
+      effectivePrice: 110,
+      fee: 0,
+      feePercent: 0.2,
+    },
+    exchange: {
+      portfolio: { asset: 0, currency: 1500 },
+      balance: 1500,
+      price: 110,
+    },
   };
 
   beforeEach(async () => {
@@ -134,29 +146,31 @@ describe('PerformanceAnalyzer', () => {
     it('increments trade count, balance, and samples', () => {
       analyzer.onOrderCompleted(buyTrade);
       expect(analyzer['orders']).toBe(1);
-      expect(analyzer['balance']).toBe(buyTrade.balance);
-      expect(analyzer['balanceSamples']).toEqual([{ date: buyTrade.date, balance: buyTrade.balance }]);
+      expect(analyzer['balance']).toBe(buyTrade.exchange.balance);
+      expect(analyzer['balanceSamples']).toEqual([
+        { date: buyTrade.order.orderExecutionDate, balance: buyTrade.exchange.balance },
+      ]);
     });
 
     it('starts exposure window when entering a position', () => {
       analyzer.onOrderCompleted(buyTrade);
-      expect(analyzer['exposureActiveSince']).toBe(buyTrade.date);
+      expect(analyzer['exposureActiveSince']).toBe(buyTrade.order.orderExecutionDate);
     });
 
     it('accumulates exposure when exiting a position', () => {
       analyzer.onOrderCompleted(buyTrade);
       analyzer.onOrderCompleted(sellTrade);
-      expect(analyzer['exposure']).toBe(sellTrade.date - buyTrade.date);
+      expect(analyzer['exposure']).toBe(sellTrade.order.orderExecutionDate - buyTrade.order.orderExecutionDate);
       expect(analyzer['exposureActiveSince']).toBeNull();
     });
 
     it('logs each trade with portfolio deltas', () => {
       analyzer['start'].balance = 1000;
-      analyzer['balanceSamples'] = [{ date: buyTrade.date - 1000, balance: 900 }];
+      analyzer['balanceSamples'] = [{ date: buyTrade.order.orderExecutionDate - 1000, balance: 900 }];
 
       analyzer.onOrderCompleted(buyTrade);
 
-      expect(logTradeMock).toHaveBeenCalledWith(buyTrade, 'USD', 'BTC', false, {
+      expect(logTradeMock).toHaveBeenCalledWith(buyTrade.order, buyTrade.exchange, 'USD', 'BTC', false, {
         startBalance: 1000,
         previousBalance: 900,
       });

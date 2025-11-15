@@ -7,9 +7,9 @@ import {
 } from '@constants/event.const';
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { GekkoError } from '@errors/gekko.error';
-import { Advice } from '@models/advice.types';
+import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
+import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { Plugin } from '@plugins/plugin';
@@ -17,7 +17,6 @@ import { CandleBatcher } from '@services/core/batcher/candleBatcher/candleBatche
 import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
 import { info } from '@services/logger';
 import { StrategyManager } from '@strategies/strategyManager';
-import { addMinutes } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
@@ -56,6 +55,10 @@ export class TradingAdvisor extends Plugin {
       .on(STRATEGY_INFO_EVENT, this.relayStrategyInfo);
   }
 
+  /* -------------------------------------------------------------------------- */
+  /*                           EVENTS EMITERS                                   */
+  /* -------------------------------------------------------------------------- */
+
   private relayStrategyWarmupCompleted(event: unknown) {
     this.deferredEmit(STRATEGY_WARMUP_COMPLETED_EVENT, event);
   }
@@ -65,33 +68,27 @@ export class TradingAdvisor extends Plugin {
     this.deferredEmit(STRATEGY_CANCEL_ORDER_EVENT, orderId);
   }
 
-  private relayCreateOrder(advice: Advice) {
-    if (!this.candle) throw new GekkoError('trading advisor', 'No candle when relaying advice');
-    this.deferredEmit(STRATEGY_CREATE_ORDER_EVENT, {
-      ...advice,
-      // I need the close time of the candle
-      date: addMinutes(this.candle.start, 1).getTime(),
-    });
+  private relayCreateOrder(advice: AdviceOrder) {
+    this.deferredEmit<AdviceOrder>(STRATEGY_CREATE_ORDER_EVENT, advice);
   }
 
   private relayStrategyInfo(strategyInfo: StrategyInfo) {
     this.deferredEmit(STRATEGY_INFO_EVENT, strategyInfo);
   }
-  // --- END INTERNALS ---
 
-  // --------------------------------------------------------------------------
-  //                           PLUGIN LISTENERS
-  // --------------------------------------------------------------------------
+  /* -------------------------------------------------------------------------- */
+  /*                          EVENT LISTENERS                                   */
+  /* -------------------------------------------------------------------------- */
 
-  public onOrderCompleted(order: OrderCompleted) {
+  public onOrderCompleted(order: OrderCompletedEvent) {
     this.strategyManager?.onOrderCompleted(order);
   }
 
-  public onOrderCanceled(order: OrderCanceled) {
+  public onOrderCanceled(order: OrderCanceledEvent) {
     this.strategyManager?.onOrderCanceled(order);
   }
 
-  public onOrderErrored(order: OrderErrored) {
+  public onOrderErrored(order: OrderErroredEvent) {
     this.strategyManager?.onOrderErrored(order);
   }
 
@@ -100,12 +97,12 @@ export class TradingAdvisor extends Plugin {
   }
 
   public onTimeframeCandle(newCandle: Candle) {
-    this.strategyManager?.onNewCandle(newCandle);
+    this.strategyManager?.onTimeFrameCandle(newCandle);
   }
 
-  // --------------------------------------------------------------------------
-  //                           PLUGIN LIFECYCLE HOOKS
-  // --------------------------------------------------------------------------
+  /* -------------------------------------------------------------------------- */
+  /*                         PLUGIN LIFECYCLE HOOKS                             */
+  /* -------------------------------------------------------------------------- */
 
   protected async processInit() {
     await this.setUpStrategy();
@@ -118,11 +115,16 @@ export class TradingAdvisor extends Plugin {
     this.candle = candle;
     const newCandle = this.candleBatcher.addSmallCandle(candle);
     if (newCandle) this.deferredEmit(TIMEFRAME_CANDLE_EVENT, newCandle);
+    this.strategyManager?.onOneMinuteCandle(candle);
   }
 
   protected processFinalize() {
     this.strategyManager?.onStrategyEnd();
   }
+
+  /* -------------------------------------------------------------------------- */
+  /*                           PLUGIN CONFIGURATION                             */
+  /* -------------------------------------------------------------------------- */
 
   public static getStaticConfiguration() {
     return {

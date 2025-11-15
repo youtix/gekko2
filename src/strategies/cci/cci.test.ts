@@ -21,7 +21,7 @@ describe('CCI Strategy', () => {
     strategy = new CCI();
     advices = [];
     const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, quantity: order.quantity ?? 1 });
+      advices.push({ ...order, amount: order.amount ?? 1 });
       return '00000000-0000-0000-0000-000000000000' as UUID;
     });
     tools = {
@@ -34,37 +34,37 @@ describe('CCI Strategy', () => {
   });
 
   it('should not emit advice before persistence on overbought', () => {
-    strategy.onCandleAfterWarmup(tools, 150);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, 150);
     expect(advices).toHaveLength(0);
   });
 
   it('should emit short advice after persistence on overbought', () => {
-    strategy.onCandleAfterWarmup(tools, 150);
-    strategy.onCandleAfterWarmup(tools, 150);
-    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', quantity: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, 150);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, 150);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', amount: 1 }]);
   });
 
   it('should emit long advice after persistence on oversold', () => {
-    strategy.onCandleAfterWarmup(tools, -150);
-    strategy.onCandleAfterWarmup(tools, -150);
-    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', quantity: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, -150);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, -150);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1 }]);
   });
 
   it('should reset trend when switching from overbought to oversold', () => {
-    strategy.onCandleAfterWarmup(tools, 150);
-    strategy.onCandleAfterWarmup(tools, 150);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, 150);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, 150);
 
-    strategy.onCandleAfterWarmup(tools, -150);
-    strategy.onCandleAfterWarmup(tools, -150);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, -150);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, -150);
 
     expect(advices).toEqual([
-      { type: 'STICKY', side: 'SELL', quantity: 1 },
-      { type: 'STICKY', side: 'BUY', quantity: 1 },
+      { type: 'STICKY', side: 'SELL', amount: 1 },
+      { type: 'STICKY', side: 'BUY', amount: 1 },
     ]);
   });
 
   it('should do nothing when CCI result is invalid', () => {
-    strategy.onCandleAfterWarmup(tools, null);
+    strategy.onTimeframeCandleAfterWarmup({ tools } as any, null);
     expect(advices).toHaveLength(0);
   });
 });

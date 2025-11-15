@@ -1,20 +1,24 @@
-import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
-import { AddIndicatorFn, Strategy, Tools } from '@strategies/strategy.types';
+import {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+} from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { DEMAStrategyParams } from './dema.types';
 
 export class DEMA implements Strategy<DEMAStrategyParams> {
   private currentTrend?: 'down' | 'up';
 
-  init({ strategyParams }: Tools<DEMAStrategyParams>, addIndicator: AddIndicatorFn): void {
-    addIndicator('DEMA', { period: strategyParams.period });
-    addIndicator('SMA', { period: strategyParams.period });
+  init({ tools, addIndicator }: InitParams<DEMAStrategyParams>): void {
+    addIndicator('DEMA', { period: tools.strategyParams.period });
+    addIndicator('SMA', { period: tools.strategyParams.period });
   }
 
-  onCandleAfterWarmup(
-    { candle, strategyParams, createOrder, log }: Tools<DEMAStrategyParams>,
-    ...indicators: unknown[]
-  ): void {
+  onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<DEMAStrategyParams>, ...indicators: unknown[]) {
+    const { strategyParams, log, createOrder } = tools;
     const [dema, sma] = indicators;
     const price = candle.close;
     if (!isNumber(sma) || !isNumber(dema)) return;
@@ -44,7 +48,8 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
     }
   }
 
-  log({ log }: Tools<DEMAStrategyParams>, ...indicators: unknown[]): void {
+  log({ tools }: OnCandleEventParams<DEMAStrategyParams>, ...indicators: unknown[]): void {
+    const { log } = tools;
     const [dema, sma] = indicators;
     if (!isNumber(sma) || !isNumber(dema)) return;
 
@@ -57,9 +62,9 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
   }
 
   // NOT USED
-  onEachCandle(_tools: Tools<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_order: OrderCompleted): void {}
-  onOrderCanceled(_order: OrderCanceled): void {}
-  onOrderErrored(_order: OrderErrored): void {}
+  onEachTimeframeCandle(_params: OnCandleEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCompleted(_params: OnOrderCompletedEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderCanceled(_params: OnOrderCanceledEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
+  onOrderErrored(_params: OnOrderErroredEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
   end(): void {}
 }

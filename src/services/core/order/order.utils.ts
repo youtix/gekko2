@@ -29,6 +29,7 @@ export const createOrderSummary = async ({
     filter(myTrades, trade => orderIDs.includes(trade.id)),
     'timestamp',
   );
+  const orderExecutionDate = last(trades)?.timestamp;
 
   debug(
     'core',
@@ -37,7 +38,7 @@ export const createOrderSummary = async ({
     ),
   );
 
-  if (!trades.length) throw new GekkoError('core', 'No trades found in order');
+  if (!trades.length || !orderExecutionDate) throw new GekkoError('core', 'No trades found in order');
 
   const amounts = map(trades, 'amount');
   const feePercents = trades
@@ -49,6 +50,6 @@ export const createOrderSummary = async ({
     price: weightedMean(map(trades, 'price'), amounts),
     feePercent: feePercents.length ? weightedMean(feePercents, amounts) : undefined,
     side,
-    date: last(trades)?.timestamp,
+    orderExecutionDate,
   };
 };

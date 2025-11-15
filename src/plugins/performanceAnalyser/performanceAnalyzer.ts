@@ -1,6 +1,6 @@
 import { PERFORMANCE_REPORT_EVENT } from '@constants/event.const';
 import { Candle } from '@models/candle.types';
-import { OrderCompleted } from '@models/order.types';
+import { OrderCompletedEvent } from '@models/event.types';
 import { Portfolio } from '@models/portfolio.types';
 import { warning } from '@services/logger';
 import { percentile, stdev } from '@utils/math/math.utils';
@@ -68,28 +68,28 @@ export class PerformanceAnalyzer extends Plugin {
     if (this.warmupCandle) this.processOneMinuteCandle(this.warmupCandle);
   }
 
-  public onOrderCompleted(trade: OrderCompleted): void {
+  public onOrderCompleted({ order, exchange }: OrderCompletedEvent): void {
     this.orders++;
-    this.balance = trade.balance;
-    this.latestPortfolio = trade.portfolio;
+    this.balance = exchange.balance;
+    this.latestPortfolio = exchange.portfolio;
     const lastSample = this.balanceSamples[this.balanceSamples.length - 1];
 
-    logTrade(trade, this.currency, this.asset, this.enableConsoleTable, {
-      startBalance: this.start.balance || trade.balance,
+    logTrade(order, exchange, this.currency, this.asset, this.enableConsoleTable, {
+      startBalance: this.start.balance || exchange.balance,
       previousBalance: lastSample?.balance,
     });
 
-    this.balanceSamples.push({ date: trade.date, balance: trade.balance });
+    this.balanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance });
 
     const isCurrentlyExposed = this.exposureActiveSince !== null;
-    const isExposedAfterTrade = trade.portfolio.asset > 0;
+    const isExposedAfterTrade = exchange.portfolio.asset > 0;
 
     if (!isCurrentlyExposed && isExposedAfterTrade) {
-      this.exposureActiveSince = trade.date;
+      this.exposureActiveSince = order.orderExecutionDate;
     }
 
     if (isCurrentlyExposed && !isExposedAfterTrade && this.exposureActiveSince !== null) {
-      this.exposure += Math.max(0, trade.date - this.exposureActiveSince);
+      this.exposure += Math.max(0, order.orderExecutionDate - this.exposureActiveSince);
       this.exposureActiveSince = null;
     }
   }

@@ -6,14 +6,13 @@ import {
   TIMEFRAME_CANDLE_EVENT,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
-import { Advice } from '@models/advice.types';
+import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { OrderCanceled, OrderCompleted, OrderErrored } from '@models/order.types';
+import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { Exchange } from '@services/exchange/exchange';
 import { MarketLimits } from '@services/exchange/exchange.types';
 import { StrategyManager } from '@strategies/strategyManager';
-import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { TradingAdvisor } from './tradingAdvisor';
@@ -55,41 +54,61 @@ describe('TradingAdvisor', () => {
     name: 'TradingAdvisor',
     strategyName: 'DummyStrategy',
   } satisfies TradingAdvisorConfiguration;
-  const defaultAdvice: Advice = {
+  const defaultAdvice: AdviceOrder = {
     id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-    date: toTimestamp('2020'),
-    order: { type: 'STICKY', side: 'SELL', quantity: 1 },
+    orderCreationDate: toTimestamp('2020'),
+    type: 'STICKY',
+    side: 'SELL',
+    amount: 1,
   };
   const defaultCandle: Candle = { close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
-  const defaultBuyTradeEvent: OrderCompleted = {
-    orderId: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-    side: 'BUY',
-    date: 0,
-    portfolio: { asset: 100, currency: 200 },
-    balance: 1000,
-    price: 100,
-    fee: 1,
-    amount: 30,
-    effectivePrice: 31,
-    feePercent: 0.33,
-    type: 'STICKY',
+  const defaultBuyTradeEvent: OrderCompletedEvent = {
+    order: {
+      id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
+      side: 'BUY',
+      type: 'STICKY',
+      amount: 30,
+      price: 100,
+      orderCreationDate: 0,
+      orderExecutionDate: 0,
+      fee: 1,
+      feePercent: 0.33,
+      effectivePrice: 31,
+    },
+    exchange: {
+      portfolio: { asset: 100, currency: 200 },
+      balance: 1000,
+      price: 100,
+    },
   };
-  const defaultCanceledOrder: OrderCanceled = {
-    orderId: '91f8d591-1a72-4d26-9477-5455e8d88111',
-    date: 0,
-    type: 'STICKY',
-    side: 'BUY',
-    amount: 5,
-    filled: 2,
-    remaining: 3,
+  const defaultCanceledOrder: OrderCanceledEvent = {
+    order: {
+      id: '91f8d591-1a72-4d26-9477-5455e8d88111',
+      orderCreationDate: 0,
+      orderCancelationDate: 0,
+      type: 'STICKY',
+      side: 'BUY',
+      amount: 5,
+      filled: 2,
+      remaining: 3,
+    },
+    exchange: {
+      price: 100,
+      balance: 1000,
+      portfolio: { asset: 50, currency: 500 },
+    },
   };
-  const defaultErroredOrder: OrderErrored = {
-    orderId: defaultCanceledOrder.orderId,
-    date: 0,
-    type: 'STICKY',
-    side: 'BUY',
-    reason: 'Order errored',
-    amount: 2,
+  const defaultErroredOrder: OrderErroredEvent = {
+    order: {
+      id: defaultCanceledOrder.order.id,
+      orderCreationDate: 0,
+      orderErrorDate: 0,
+      type: 'STICKY',
+      side: 'BUY',
+      reason: 'Order errored',
+      amount: 2,
+    },
+    exchange: defaultCanceledOrder.exchange,
   };
 
   let advisor: TradingAdvisor;
@@ -175,19 +194,9 @@ describe('TradingAdvisor', () => {
     });
 
     describe('relayCreateOrder', () => {
-      it('should throw GekkoError in relayCreateOrder if no candle is set', () => {
-        (advisor as any).candle = undefined;
-        expect(() => advisor['relayCreateOrder'](defaultAdvice)).toThrow(GekkoError);
-      });
-
-      it('should emit STRATEGY_CREATE_ORDER_EVENT in relayCreateOrder when a candle is set', () => {
-        const candleStart = toTimestamp('2025-01-01T00:00:00Z');
-        (advisor as any).candle = defaultCandle;
+      it('should emit STRATEGY_CREATE_ORDER_EVENT in relayCreateOrder', () => {
         advisor['relayCreateOrder'](defaultAdvice);
-        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CREATE_ORDER_EVENT, {
-          ...defaultAdvice,
-          date: addMinutes(candleStart, 1).getTime(),
-        });
+        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CREATE_ORDER_EVENT, defaultAdvice);
       });
     });
 
@@ -207,15 +216,15 @@ describe('TradingAdvisor', () => {
     describe('relayCancelOrder', () => {
       it('should throw GekkoError in relayCancelOrder if no candle is set', () => {
         (advisor as any).candle = undefined;
-        expect(() => advisor['relayCancelOrder'](defaultCanceledOrder.orderId)).toThrow(GekkoError);
+        expect(() => advisor['relayCancelOrder'](defaultCanceledOrder.order.id)).toThrow(GekkoError);
       });
 
       it('should emit STRATEGY_CANCEL_ORDER_EVENT in relayCancelOrder when a candle is set', () => {
         (advisor as any).candle = defaultCandle;
-        advisor['relayCancelOrder'](defaultCanceledOrder.orderId);
+        advisor['relayCancelOrder'](defaultCanceledOrder.order.id);
         expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(
           STRATEGY_CANCEL_ORDER_EVENT,
-          defaultCanceledOrder.orderId,
+          defaultCanceledOrder.order.id,
         );
       });
     });
@@ -264,11 +273,11 @@ describe('TradingAdvisor', () => {
     describe('onTimeframeCandle', () => {
       it('should forward timeframe candles to the strategy manager', () => {
         const timeframeCandle: Candle = { ...defaultCandle, close: 123 };
-        advisor['strategyManager']!.onNewCandle = vi.fn();
+        advisor['strategyManager']!.onTimeFrameCandle = vi.fn();
 
         advisor.onTimeframeCandle(timeframeCandle);
 
-        expect(advisor['strategyManager']?.onNewCandle).toHaveBeenCalledExactlyOnceWith(timeframeCandle);
+        expect(advisor['strategyManager']?.onTimeFrameCandle).toHaveBeenCalledExactlyOnceWith(timeframeCandle);
       });
 
       it('should ignore timeframe candles when strategy manager is not initialized', () => {

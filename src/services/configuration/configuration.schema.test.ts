@@ -90,6 +90,9 @@ describe('configurationSchema', () => {
       mode: 'realtime' as const,
     },
     plugins: [] as Array<{ name?: string }>,
+    exchange: {
+      name: 'dummy-cex' as const,
+    },
   });
 
   it('populates defaults for optional configuration sections', () => {
@@ -101,7 +104,13 @@ describe('configurationSchema', () => {
     expect(result.watch.fillGaps).toBe('empty');
     expect(result.watch.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
     expect(result.watch.daterange).toBeNull();
-    expect(result.exchange).toBeNull();
+    expect(result.exchange).toMatchObject({
+      name: 'dummy-cex',
+      sandbox: false,
+      verbose: false,
+      exchangeSynchInterval: 10,
+      orderSynchInterval: 1,
+    });
     expect(result.storage).toBeNull();
     expect(result[DISCLAIMER_FIELD]).toBeNull();
   });
