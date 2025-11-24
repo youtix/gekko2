@@ -36,6 +36,7 @@ export class Trader extends Plugin {
   private balance: number;
   private price: number;
   private currentTimestamp: EpochTimeStamp;
+  private syncInterval: NodeJS.Timeout | null;
 
   constructor() {
     super(Trader.name);
@@ -46,6 +47,7 @@ export class Trader extends Plugin {
     this.balance = 0;
     this.price = 0;
     this.currentTimestamp = 0;
+    this.syncInterval = null;
 
     bindAll(this, [this.synchronize.name]);
   }
@@ -249,7 +251,11 @@ export class Trader extends Plugin {
   /* -------------------------------------------------------------------------- */
 
   protected processInit(): void {
-    /* noop */
+    if (this.mode === 'realtime') {
+      const { exchangeSync } = this.getExchange().getIntervals();
+      this.syncInterval = setInterval(this.synchronize, exchangeSync);
+      this.synchronize();
+    }
   }
 
   protected async processOneMinuteCandle(candle: Candle) {
@@ -269,7 +275,11 @@ export class Trader extends Plugin {
     // Let's synchronize with Exchange every X minutes but not the first execution
     const intervals = this.getExchange().getIntervals();
     const minutes = differenceInMinutes(candle.start, 0);
-    if (this.currentTimestamp && minutes % intervals.exchangeSync === 0) await this.synchronize();
+
+    if (this.mode === 'backtest') {
+      const exchangeSyncInMinutes = intervals.exchangeSync / 60000;
+      if (this.currentTimestamp && minutes % exchangeSyncInMinutes === 0) await this.synchronize();
+    }
 
     // Let's update order every Y minutes.
     if (minutes % intervals.orderSync === 0) {
@@ -281,7 +291,7 @@ export class Trader extends Plugin {
   }
 
   protected processFinalize(): void {
-    // Nothing to do
+    if (this.syncInterval) clearInterval(this.syncInterval);
   }
 
   /* -------------------------------------------------------------------------- */
