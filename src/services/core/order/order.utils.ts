@@ -5,9 +5,11 @@ import { debug } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { weightedMean } from '@utils/math/math.utils';
 import { filter, last, map, sortBy, sumBy } from 'lodash-es';
+import { UUID } from 'node:crypto';
 import { OrderSummary, Transaction } from './order.types';
 
 type CreateOrderSummaryParams = {
+  id: UUID;
   exchange: Exchange;
   type: OrderType;
   side: OrderSide;
@@ -15,12 +17,13 @@ type CreateOrderSummaryParams = {
 };
 
 export const createOrderSummary = async ({
+  id,
   exchange,
   type,
   side,
   transactions,
 }: CreateOrderSummaryParams): Promise<OrderSummary> => {
-  if (!transactions.length) throw new GekkoError('core', 'Order is not completed');
+  if (!transactions.length) throw new GekkoError('core', `[${id}] Order is not completed`);
 
   const from = resetDateParts(transactions[0]?.timestamp, ['ms']);
   const myTrades = await exchange.fetchMyTrades(from);
@@ -33,12 +36,13 @@ export const createOrderSummary = async ({
 
   debug(
     'core',
-    [`${myTrades.length} trades used to fill ${type} order.`, `First trade started at: ${toISOString(from)}.`].join(
-      ' ',
-    ),
+    [
+      `[${id}] ${trades.length} trades used to fill ${side} ${type} order.`,
+      `First trade started at: ${toISOString(from)}.`,
+    ].join(' '),
   );
 
-  if (!trades.length || !orderExecutionDate) throw new GekkoError('core', 'No trades found in order');
+  if (!trades.length || !orderExecutionDate) throw new GekkoError('core', `[${id}] No trades found in order`);
 
   const amounts = map(trades, 'amount');
   const feePercents = trades

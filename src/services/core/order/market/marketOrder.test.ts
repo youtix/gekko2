@@ -37,7 +37,7 @@ describe('MarketOrder', () => {
     const order = new MarketOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 1);
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
 
-    await order.creation;
+    await order.launch();
 
     expect(fakeExchange.createMarketOrder).toHaveBeenCalledWith('BUY', 1);
     expect([...order['transactions'].values()]).toEqual([
@@ -53,7 +53,7 @@ describe('MarketOrder', () => {
     const order = new MarketOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'SELL', 2);
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
 
-    await expect(order.creation).rejects.toThrow('exchange down');
+    await expect(order['createMarketOrder']('SELL', 2)).rejects.toThrow('exchange down');
     expect(emitSpy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, 'exchange down');
   });
 
@@ -68,7 +68,7 @@ describe('MarketOrder', () => {
     ]);
 
     const order = new MarketOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 2);
-    await order.creation;
+    await order.launch();
 
     const summary = await order.createSummary();
 

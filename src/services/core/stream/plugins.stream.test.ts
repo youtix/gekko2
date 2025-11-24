@@ -29,7 +29,7 @@ describe('PluginsStream', () => {
       processInitStream: vi.fn(async () => undefined),
       processInputStream: vi.fn(async () => undefined),
       processCloseStream: vi.fn(async () => undefined),
-      broadcastDeferredEmit: vi.fn(() => false),
+      broadcastDeferredEmit: vi.fn(async () => false),
       ...overrides,
     }) as unknown as Plugin;
 

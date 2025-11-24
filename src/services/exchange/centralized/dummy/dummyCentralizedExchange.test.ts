@@ -50,9 +50,9 @@ const sampleCandle = (start: number, overrides: Partial<Candle> = {}): Candle =>
   ...overrides,
 });
 
-const seedExchangeWithBaseCandle = (exchange: DummyCentralizedExchange, overrides: Partial<Candle> = {}) => {
+const seedExchangeWithBaseCandle = async (exchange: DummyCentralizedExchange, overrides: Partial<Candle> = {}) => {
   const candle = sampleCandle(Date.now() - 60_000, overrides);
-  exchange.processOneMinuteCandle(candle);
+  await exchange.processOneMinuteCandle(candle);
   return candle;
 };
 
@@ -87,7 +87,7 @@ describe('DummyCentralizedExchange', () => {
   it('manages order lifecycle including reservation, fill, and cancellation', async () => {
     const exchange = createExchange({ simulationBalance: { asset: 2, currency: 1_000 } });
     await exchange.loadMarkets();
-    seedExchangeWithBaseCandle(exchange);
+    await seedExchangeWithBaseCandle(exchange);
 
     const buyOrder = await exchange.createLimitOrder('BUY', 1, 100);
     const makerFeeRate = (baseConfig.feeMaker ?? 0) / 100;
@@ -100,7 +100,7 @@ describe('DummyCentralizedExchange', () => {
       high: buyOrder.price ?? 0,
       close: buyOrder.price ?? 0,
     });
-    exchange.processOneMinuteCandle(fillCandle);
+    await exchange.processOneMinuteCandle(fillCandle);
 
     const filledOrder = await exchange.fetchOrder(buyOrder.id);
     expect(filledOrder.status).toBe('closed');
@@ -141,7 +141,7 @@ describe('DummyCentralizedExchange', () => {
   it('executes market orders immediately and applies taker fees to balances', async () => {
     const exchange = createExchange();
     await exchange.loadMarkets();
-    seedExchangeWithBaseCandle(exchange);
+    await seedExchangeWithBaseCandle(exchange);
 
     const initialPortfolio = await exchange.fetchPortfolio();
     const takerFeeRate = (baseConfig.feeTaker ?? 0) / 100;
@@ -175,7 +175,7 @@ describe('DummyCentralizedExchange', () => {
       simulationBalance: { asset: 0, currency: 100 },
     });
     await exchange.loadMarkets();
-    seedExchangeWithBaseCandle(exchange, { close: 100, low: 100, high: 100 });
+    await seedExchangeWithBaseCandle(exchange, { close: 100, low: 100, high: 100 });
 
     await expect(exchange.createMarketOrder('BUY', 1)).rejects.toThrow('Insufficient currency balance');
   });
@@ -183,7 +183,7 @@ describe('DummyCentralizedExchange', () => {
   it('applies maker fees when settling limit orders', async () => {
     const exchange = createExchange({ simulationBalance: { asset: 5, currency: 10_000 } });
     await exchange.loadMarkets();
-    seedExchangeWithBaseCandle(exchange);
+    await seedExchangeWithBaseCandle(exchange);
 
     const makerFeeRate = (baseConfig.feeMaker ?? 0) / 100;
 
@@ -200,7 +200,7 @@ describe('DummyCentralizedExchange', () => {
       high: buyPrice,
       close: buyPrice,
     });
-    exchange.processOneMinuteCandle(buyFillCandle);
+    await exchange.processOneMinuteCandle(buyFillCandle);
 
     const afterBuyFill = await exchange.fetchPortfolio();
     expect(afterBuyFill.asset).toBeCloseTo(7);
@@ -217,7 +217,7 @@ describe('DummyCentralizedExchange', () => {
       low: sellPrice,
       close: sellPrice,
     });
-    exchange.processOneMinuteCandle(sellFillCandle);
+    await exchange.processOneMinuteCandle(sellFillCandle);
 
     const afterSellFill = await exchange.fetchPortfolio();
     const expectedCurrencyAfterSell = 10_000 - buyCost * (1 + makerFeeRate) + sellPrice * (1 - makerFeeRate);
@@ -233,7 +233,7 @@ describe('DummyCentralizedExchange', () => {
   it('derives candles from trades when queue is empty', async () => {
     const exchange = createExchange();
     await exchange.loadMarkets();
-    seedExchangeWithBaseCandle(exchange);
+    await seedExchangeWithBaseCandle(exchange);
 
     const order = await exchange.createLimitOrder('BUY', 0.5, 100);
     const candle = sampleCandle(Date.now(), {
@@ -241,7 +241,7 @@ describe('DummyCentralizedExchange', () => {
       high: order.price ?? 0,
       close: order.price ?? 0,
     });
-    exchange.processOneMinuteCandle(candle);
+    await exchange.processOneMinuteCandle(candle);
 
     const unsubscribe = exchange.onNewCandle(() => {});
     vi.advanceTimersByTime(baseConfig.exchangeSynchInterval ?? 0);
@@ -257,7 +257,7 @@ describe('DummyCentralizedExchange', () => {
   it('aligns order timestamps with candle closes and simulated time', async () => {
     const exchange = createExchange();
     await exchange.loadMarkets();
-    const firstCandle = seedExchangeWithBaseCandle(exchange);
+    const firstCandle = await seedExchangeWithBaseCandle(exchange);
 
     const limitOrder = await exchange.createLimitOrder('BUY', 1, 100);
     expect(limitOrder.timestamp).toBe(firstCandle.start + 60_000);
@@ -267,7 +267,7 @@ describe('DummyCentralizedExchange', () => {
       high: limitOrder.price ?? 0,
       close: limitOrder.price ?? 0,
     });
-    exchange.processOneMinuteCandle(fillCandle);
+    await exchange.processOneMinuteCandle(fillCandle);
 
     const closedOrder = await exchange.fetchOrder(limitOrder.id);
     expect(closedOrder.timestamp).toBe(fillCandle.start + 60_000);

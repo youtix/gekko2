@@ -77,7 +77,7 @@ export class StrategyManager extends EventEmitter {
     const tools = this.createTools();
     const params = { candle, portfolio: this.portfolio, tools };
 
-    // Initialize strategy
+    // Initialize strategy with time frame candle (do not use one minute candle)
     if (this.age === 0) this.strategy?.init({ ...params, addIndicator: this.addIndicator });
 
     // Update indicators

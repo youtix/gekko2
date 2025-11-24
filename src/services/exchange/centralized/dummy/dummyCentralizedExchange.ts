@@ -47,6 +47,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
 
   /** Because dummy exchange is not a plugin, I need to call this function manualy in the plugins stream */
   public processOneMinuteCandle(candle: Candle): void {
+    // console.table(this.orders.toArray().slice(-10));
     // I need the close time of the candle
     this.currentTimestamp = addMinutes(candle.start, 1).getTime();
     this.candles.push(candle);
@@ -121,11 +122,17 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     const totalCost = cost * (1 + this.takerFee);
 
     if (side === 'BUY') {
-      if (this.portfolio.currency < totalCost) throw new InvalidOrder('Insufficient currency balance');
+      if (this.portfolio.currency < totalCost)
+        throw new InvalidOrder(
+          `Insufficient currency balance (portfolio: ${this.portfolio.currency}, order cost: ${totalCost})`,
+        );
       this.portfolio.currency -= totalCost;
       this.portfolio.asset += normalizedAmount;
     } else {
-      if (this.portfolio.asset < normalizedAmount) throw new InvalidOrder('Insufficient asset balance');
+      if (this.portfolio.asset < normalizedAmount)
+        throw new InvalidOrder(
+          `Insufficient asset balance (portfolio: ${this.portfolio.asset}, amount: ${normalizedAmount})`,
+        );
       this.portfolio.asset -= normalizedAmount;
       this.portfolio.currency += cost * (1 - this.takerFee);
     }
@@ -155,7 +162,6 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       this.releaseBalance(order);
       order.status = 'canceled';
       order.timestamp = this.currentTimestamp;
-      order.remaining = 0;
     }
 
     return this.cloneOrder(order);
@@ -179,10 +185,16 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     if (side === 'BUY') {
       const cost = amount * price;
       const totalCost = cost * (1 + this.makerFee);
-      if (this.portfolio.currency < totalCost) throw new InvalidOrder('Insufficient currency balance');
+      if (this.portfolio.currency < totalCost)
+        throw new InvalidOrder(
+          `Insufficient currency balance (portfolio: ${this.portfolio.currency}, order cost: ${totalCost})`,
+        );
       this.portfolio.currency -= totalCost;
     } else {
-      if (this.portfolio.asset < amount) throw new InvalidOrder('Insufficient asset balance');
+      if (this.portfolio.asset < amount)
+        throw new InvalidOrder(
+          `Insufficient asset balance (portfolio: ${this.portfolio.asset}, order cost: ${amount})`,
+        );
       this.portfolio.asset -= amount;
     }
   }

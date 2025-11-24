@@ -1,40 +1,31 @@
-import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderSide, OrderState } from '@models/order.types';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
-import { debug, warning } from '@services/logger';
+import { debug, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { bindAll, sumBy } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { Order } from '../order';
-import { createOrderSummary } from '../order.utils';
 
 export class StickyOrder extends Order {
-  private completing: boolean;
-  private moving: boolean;
-  private checking: boolean;
+  private isCanceling: boolean;
+  private isMoving: boolean;
+  private isChecking: boolean;
   private amount: number;
   private id?: string;
 
   constructor(gekkoOrderId: UUID, action: OrderSide, amount: number, _price?: number) {
     super(gekkoOrderId, action, 'STICKY');
-    this.completing = false;
-    this.moving = false;
-    this.checking = false;
+    this.isCanceling = false;
+    this.isMoving = false;
+    this.isChecking = false;
     this.amount = amount;
 
     bindAll(this, [this.checkOrder.name]);
-
-    this.createStickyOrder();
   }
 
-  private async createStickyOrder() {
-    const { ask, bid } = await this.exchange.fetchTicker();
-
-    const limits = this.exchange.getMarketLimits();
-    const minimalPrice = limits?.price?.min ?? 0;
-
-    const price = this.side === 'BUY' ? bid + minimalPrice : ask - minimalPrice;
+  public async launch(): Promise<void> {
+    const price = await this.processStickyPrice();
     const filledAmount = sumBy(this.transactions.values().toArray(), 'filled');
 
     // Creating initial order
@@ -43,57 +34,54 @@ export class StickyOrder extends Order {
 
   public async cancel() {
     if (this.isOrderCompleted()) return;
-    this.completing = true;
-    if (this.checking || this.getStatus() === 'initializing') return;
+    this.isCanceling = true;
+    // Let's wait order creation or order checking before canceling
+    if (!this.id || this.isChecking || this.getStatus() === 'initializing') return;
 
-    if (this.id) await this.cancelOrder(this.id);
-    if (this.getStatus() !== 'error') this.completing = false;
-  }
-
-  public async createSummary() {
-    if (!this.isOrderCompleted()) throw new GekkoError('core', 'Order is not completed');
-
-    return createOrderSummary({
-      exchange: this.exchange,
-      type: 'STICKY',
-      side: this.side,
-      transactions: this.transactions.values().toArray(),
-    });
+    await this.cancelOrder(this.id);
+    if (this.getStatus() !== 'error') this.isCanceling = false;
   }
 
   public async checkOrder() {
     if (this.isOrderCompleted() || !this.id) return;
-    debug('core', `Starting checking order ${this.id} status`);
+    info('order', `[${this.gekkoOrderId}] Starting checking order status`);
 
     // If canceling execute cancel().
-    if (this.completing) return await this.cancel();
+    if (this.isCanceling) return await this.cancel();
     // No check when initializing the order or when already checking the order.
-    if (this.getStatus() === 'initializing' || this.checking) return;
-    this.checking = true;
-    if (this.id) await this.fetchOrder(this.id);
-    this.checking = false;
+    if (this.getStatus() === 'initializing' || this.isChecking) return;
+
+    this.isChecking = true;
+    try {
+      await this.fetchOrder(this.id);
+    } finally {
+      this.isChecking = false;
+    }
   }
 
   private async move() {
-    debug('core', `Starting moving order ${this.id}`);
+    debug('order', `[${this.gekkoOrderId}] Starting moving ${this.side} ${this.type} order`);
 
     // Ignoring move if cancel order has been given during checking
-    if (this.completing || !this.id) return;
-    this.moving = true;
+    if (this.isCanceling || !this.id) return;
+    this.isMoving = true;
     await this.cancelOrder(this.id);
 
     // If order cancelation is a success let's keep going the move
-    if (this.getStatus() !== 'error' && !this.isOrderCompleted()) await this.createStickyOrder();
+    if (this.getStatus() !== 'error' && !this.isOrderCompleted()) await this.launch();
 
-    this.moving = false;
+    this.isMoving = false;
+  }
+
+  private async processStickyPrice() {
+    const { bid, ask } = await this.exchange.fetchTicker();
+    const limits = this.exchange.getMarketLimits();
+    const minimalPrice = limits?.price?.min ?? 0;
+    return this.side === 'BUY' ? bid + minimalPrice : ask - minimalPrice;
   }
 
   private isOrderPartiallyFilled() {
     return !this.isOrderCompleted() && sumBy(this.transactions.values().toArray(), 'filled') > 0;
-  }
-
-  private isOrderCompleted() {
-    return ['rejected', 'canceled', 'filled'].includes(this.getStatus());
   }
 
   private updateTransactionPartialFilledAmount(id: string, filled = 0) {
@@ -108,9 +96,9 @@ export class StickyOrder extends Order {
   // Overrided functions
   protected handleCreateOrderSuccess({ id, status, filled, price, remaining, timestamp }: OrderState) {
     debug(
-      'core',
+      'order',
       [
-        `Order ${id} created with success.`,
+        `[${this.gekkoOrderId}] ${this.side} ${this.type} order created with success.`,
         `Status: ${status};`,
         `Filled: ${filled};`,
         `Price: ${price};`,
@@ -136,7 +124,7 @@ export class StickyOrder extends Order {
     }
 
     if (status === 'open') return Promise.resolve(this.setStatus('open'));
-    warning('core', `Order creation succeeded, but unknown status (${status}) returned`);
+    warning('order', `[${this.gekkoOrderId}] Order creation succeeded, but unknown status (${status}) returned`);
     return Promise.resolve();
   }
 
@@ -154,10 +142,10 @@ export class StickyOrder extends Order {
 
   protected handleCancelOrderSuccess({ id, status, filled, remaining, timestamp, price }: OrderState) {
     debug(
-      'core',
+      'order',
       [
-        `Order ${id} canceled with success.`,
-        `Order is moving: ${this.moving};`,
+        `[${this.gekkoOrderId}] ${this.side} ${this.type} order canceled with success.`,
+        `Order is moving: ${this.isMoving};`,
         `Status: ${status};`,
         `Filled: ${filled};`,
         `Price: ${price};`,
@@ -174,7 +162,7 @@ export class StickyOrder extends Order {
     this.updateTransactionPartialFilledAmount(id, filled);
 
     // No need to clear interval here, it will be done in cancel function
-    if (!this.moving) {
+    if (!this.isMoving) {
       const remainingAmount = Math.max(this.amount - totalFilledOfAllTransactions, 0);
       this.orderCanceled({ filled: totalFilledOfAllTransactions, remaining: remainingAmount, timestamp });
     }
@@ -191,11 +179,11 @@ export class StickyOrder extends Order {
 
   protected async handleFetchOrderSuccess({ id, status, filled, price, remaining, timestamp }: OrderState) {
     debug(
-      'core',
+      'order',
       [
-        `Order ${id} fetched with success.`,
-        `Order is moving: ${this.moving};`,
-        `Status: ${status};`,
+        `[${this.gekkoOrderId}] ${this.side} ${this.type} order data:`,
+        `Order moved: ${this.isMoving};`,
+        `Status: ${status.toUpperCase()};`,
         `Filled: ${filled};`,
         `Price: ${price};`,
         `Remaining: ${remaining};`,
@@ -217,11 +205,12 @@ export class StickyOrder extends Order {
 
     if (status === 'open') {
       try {
-        const ticker = await this.exchange.fetchTicker();
-        const bookSide = this.side === 'BUY' ? 'bid' : 'ask';
-        debug('core', `Moving order ${id} to ${bookSide} side ${ticker[bookSide]}. Old price: ${price}.`);
-
-        if (price && ticker[bookSide] !== price) await this.move();
+        const newPrice = await this.processStickyPrice();
+        if (price && newPrice !== price) {
+          const msg = `[${this.gekkoOrderId}] Moving ${this.side} ${this.type} order from price: ${price} to ${newPrice} price.`;
+          debug('order', msg);
+          await this.move();
+        }
       } catch (error) {
         if (error instanceof Error) this.orderErrored(error);
         throw error;
