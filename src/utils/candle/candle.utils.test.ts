@@ -14,10 +14,9 @@ const createCandle = (start: number, open: number, close: number, high: number, 
   quoteVolume: 0,
   quoteVolumeActive: 0,
 });
-const candles = [
+const candles: [Candle, Candle] = [
   createCandle(toTimestamp('2024-06-01T00:00:00Z'), 100, 100, 100, 100, 1),
   createCandle(toTimestamp('2024-06-01T00:02:00Z'), 102, 102, 102, 102, 1),
-  createCandle(toTimestamp('2024-06-01T00:06:00Z'), 104, 104, 104, 104, 1),
 ];
 
 describe('candle utils', () => {
@@ -28,18 +27,111 @@ describe('candle utils', () => {
 
       expect(result).toEqual([
         candles[0],
-        { ...candles[0], start: new Date('2024-06-01T00:01:00Z').getTime(), volume: 1 },
+        {
+          ...candles[0],
+          start: new Date('2024-06-01T00:01:00Z').getTime(),
+          volume: 1,
+          close: 102,
+          high: 102,
+          low: 100,
+        },
         candles[1],
-        { ...candles[1], start: new Date('2024-06-01T00:03:00Z').getTime(), volume: 1 },
-        { ...candles[1], start: new Date('2024-06-01T00:04:00Z').getTime(), volume: 1 },
-        { ...candles[1], start: new Date('2024-06-01T00:05:00Z').getTime(), volume: 1 },
-        candles[2],
       ]);
     });
 
-    it('should return empty array when no candles are provided', () => {
-      const result = fillMissingCandles([]);
-      expect(result).toBeUndefined();
+    it('should fill gaps in a list of multiple candles', () => {
+      const inputCandles: [Candle, Candle, ...Candle[]] = [
+        candles[0],
+        {
+          ...candles[0],
+          start: new Date('2024-06-01T00:02:00Z').getTime(),
+          open: 105,
+          close: 110,
+          high: 110,
+          low: 105,
+        },
+        {
+          ...candles[0],
+          start: new Date('2024-06-01T00:05:00Z').getTime(),
+          open: 115,
+          close: 120,
+          high: 120,
+          low: 115,
+        },
+      ];
+
+      const result = fillMissingCandles(inputCandles);
+
+      expect(result).toHaveLength(6); // 00, 01(gap), 02, 03(gap), 04(gap), 05
+      expect(result?.[1]).toEqual({
+        ...candles[0],
+        start: new Date('2024-06-01T00:01:00Z').getTime(),
+        volume: 1,
+        close: 105, // Links to next open
+        high: 105,
+        low: 100,
+      });
+      expect(result?.[3]).toEqual({
+        ...candles[0],
+        start: new Date('2024-06-01T00:03:00Z').getTime(),
+        volume: 1,
+        close: 110, // Links to next open (at 05) - WAIT. Next real is at 05. 04 is empty. So 03 -> 04 is empty. So close = prevClose (110).
+        high: 110,
+        low: 110, // Previous close was 110
+        open: 110,
+      });
+      expect(result?.[4]).toEqual({
+        ...candles[0],
+        start: new Date('2024-06-01T00:04:00Z').getTime(),
+        volume: 1,
+        close: 115, // Links to next open (at 05). Next real is at 05. So close = 115.
+        high: 115,
+        low: 110, // Previous close was 110 (from synthetic candle at 03)
+        open: 110,
+      });
+    });
+
+    it('should handle large gaps correctly', () => {
+      const inputCandles: [Candle, Candle] = [
+        createCandle(toTimestamp('2024-06-01T00:00:00Z'), 100, 100, 100, 100, 1),
+        createCandle(toTimestamp('2024-06-01T00:10:00Z'), 200, 200, 200, 200, 1),
+      ];
+
+      const result = fillMissingCandles(inputCandles);
+
+      expect(result).toHaveLength(11);
+      // Check a middle candle
+      const middleCandle = result?.[5];
+      expect(middleCandle).toEqual({
+        ...inputCandles[0],
+        start: toTimestamp('2024-06-01T00:05:00Z'),
+        open: 100,
+        close: 100, // Still flat in the middle of the gap
+        high: 100,
+        low: 100,
+        volume: 1,
+      });
+
+      // The last synthetic candle should link to the next real candle
+      const lastSynthetic = result?.[9];
+      expect(lastSynthetic).toEqual({
+        ...inputCandles[0],
+        start: toTimestamp('2024-06-01T00:09:00Z'),
+        open: 100,
+        close: 200, // Links to next open (200)
+        high: 200,
+        low: 100,
+        volume: 1,
+      });
+    });
+
+    it('should handle already contiguous candles', () => {
+      const contiguousCandles: [Candle, Candle] = [
+        createCandle(toTimestamp('2024-06-01T00:00:00Z'), 100, 100, 100, 100, 1),
+        createCandle(toTimestamp('2024-06-01T00:01:00Z'), 100, 100, 100, 100, 1),
+      ];
+      const result = fillMissingCandles(contiguousCandles);
+      expect(result).toEqual(contiguousCandles);
     });
   });
 

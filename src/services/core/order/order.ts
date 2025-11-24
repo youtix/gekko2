@@ -6,6 +6,7 @@ import {
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
 } from '@constants/event.const';
+import { GekkoError } from '@errors/gekko.error';
 import { OrderSide, OrderState, OrderType } from '@models/order.types';
 import { Exchange } from '@services/exchange/exchange';
 import { inject } from '@services/injecter/injecter';
@@ -14,6 +15,7 @@ import { isNil } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { OrderCancelDetails, OrderCancelEventPayload, OrderStatus, OrderSummary, Transaction } from './order.types';
+import { createOrderSummary } from './order.utils';
 
 export abstract class Order extends EventEmitter {
   private status: OrderStatus;
@@ -37,20 +39,20 @@ export abstract class Order extends EventEmitter {
     return this.gekkoOrderId;
   }
 
-  protected async createLimitOrder(action: OrderSide, amount: number, price: number) {
+  protected async createLimitOrder(side: OrderSide, amount: number, price: number) {
     try {
-      info('core', `Creating ${action} limit order with amount: ${amount} with price ${price}`);
-      const order = await this.exchange.createLimitOrder(action, amount, price);
+      info('order', `[${this.gekkoOrderId}] Creating ${side} limit order with amount: ${amount} and price ${price}`);
+      const order = await this.exchange.createLimitOrder(side, amount, price);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
       await this.handleCreateOrderError(error);
     }
   }
 
-  protected async createMarketOrder(action: OrderSide, amount: number) {
+  protected async createMarketOrder(side: OrderSide, amount: number) {
     try {
-      info('core', `Creating ${action} market order with amount: ${amount}`);
-      const order = await this.exchange.createMarketOrder(action, amount);
+      info('order', `[${this.gekkoOrderId}] Creating ${side} market order created with amount: ${amount}`);
+      const order = await this.exchange.createMarketOrder(side, amount);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
       await this.handleCreateOrderError(error);
@@ -59,7 +61,7 @@ export abstract class Order extends EventEmitter {
 
   protected async cancelOrder(id: string) {
     try {
-      info('core', `Canceling ${this.type} order with ID: ${id}`);
+      info('order', `[${this.gekkoOrderId}] Canceling ${this.side} ${this.type} order.`);
       const order = await this.exchange.cancelOrder(id);
       await this.handleCancelOrderSuccess(order);
     } catch (error) {
@@ -69,7 +71,7 @@ export abstract class Order extends EventEmitter {
 
   protected async fetchOrder(id: string) {
     try {
-      info('core', `Fetching ${this.type} order with ID: ${id}`);
+      info('order', `[${this.gekkoOrderId}] Fetching ${this.side} ${this.type} order`);
       const order = await this.exchange.fetchOrder(id);
       await this.handleFetchOrderSuccess(order);
     } catch (error) {
@@ -84,8 +86,8 @@ export abstract class Order extends EventEmitter {
   protected setStatus(status: OrderStatus, reason?: string) {
     this.status = status;
     this.emit(ORDER_STATUS_CHANGED_EVENT, { status, reason });
-    if (reason) error('core', `${this.type} order ${status}: ${reason}`);
-    else debug('core', `${this.type} order ${status}`);
+    if (reason) error('order', `[${this.gekkoOrderId}] ${this.side} ${this.type} order ${status}: ${reason}`);
+    else debug('order', `[${this.gekkoOrderId}] ${this.side} ${this.type} order ${status}`);
   }
 
   protected orderCanceled({ filled, remaining, price, timestamp }: OrderCancelDetails) {
@@ -120,9 +122,26 @@ export abstract class Order extends EventEmitter {
     this.emit(ORDER_ERRORED_EVENT, error.message);
   }
 
+  protected isOrderCompleted() {
+    return ['rejected', 'canceled', 'filled'].includes(this.getStatus());
+  }
+
+  public async createSummary(): Promise<OrderSummary> {
+    if (!this.isOrderCompleted())
+      throw new GekkoError('order', `[${this.gekkoOrderId}] ${this.side} ${this.type} order is not completed`);
+
+    return createOrderSummary({
+      id: this.gekkoOrderId,
+      exchange: this.exchange,
+      type: this.type,
+      side: this.side,
+      transactions: this.transactions.values().toArray(),
+    });
+  }
+
   public abstract cancel(): Promise<void>;
-  public abstract createSummary(): Promise<OrderSummary>;
   public abstract checkOrder(): Promise<void>;
+  public abstract launch(): Promise<void>;
 
   protected abstract handleCancelOrderSuccess(order: OrderState): void;
   protected abstract handleCancelOrderError(error: unknown): void;

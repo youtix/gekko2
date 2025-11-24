@@ -1,34 +1,25 @@
-import { GekkoError } from '@errors/gekko.error';
 import { OrderSide, OrderState } from '@models/order.types';
 import { InvalidOrder } from '@services/exchange/exchange.error';
 import { warning } from '@services/logger';
 import { UUID } from 'node:crypto';
 import { Order } from '../order';
-import { createOrderSummary } from '../order.utils';
 
 export class MarketOrder extends Order {
-  public readonly creation: Promise<void>;
+  public readonly amount: number;
   private id?: string;
 
   constructor(gekkoOrderId: UUID, side: OrderSide, amount: number, _price?: number) {
     super(gekkoOrderId, side, 'MARKET');
-    this.creation = this.createMarketOrder(side, amount);
+    this.amount = amount;
+  }
+
+  public async launch(): Promise<void> {
+    this.createMarketOrder(this.side, this.amount);
   }
 
   public async cancel() {
     if (!this.id || this.isOrderCompleted()) return;
     await this.cancelOrder(this.id);
-  }
-
-  public async createSummary() {
-    if (!this.isOrderCompleted()) throw new GekkoError('core', 'Order is not completed');
-
-    return createOrderSummary({
-      exchange: this.exchange,
-      type: 'MARKET',
-      side: this.side,
-      transactions: this.transactions.values().toArray(),
-    });
   }
 
   public checkOrder(): Promise<void> {
@@ -84,11 +75,10 @@ export class MarketOrder extends Order {
         if (oldTransaction?.status !== status) return this.setStatus('open');
         break;
       default:
-        warning('core', `Order update returned unexpected status: ${status ?? 'unknown'}`);
+        warning(
+          'order',
+          `[${this.gekkoOrderId}] ${this.side} ${this.type} order update returned unexpected status: ${status ?? 'unknown'}`,
+        );
     }
-  }
-
-  private isOrderCompleted() {
-    return ['rejected', 'canceled', 'filled'].includes(this.getStatus());
   }
 }

@@ -51,7 +51,7 @@ describe('LimitOrder', () => {
     fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
     const order = new LimitOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 1.5, 101);
 
-    await order.creation;
+    await order.launch();
 
     expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BUY', 1.5, 101);
     expect([...order['transactions'].values()]).toEqual([
@@ -68,7 +68,7 @@ describe('LimitOrder', () => {
     const order = new LimitOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'SELL', 1.5, 99);
 
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
-    await order.creation;
+    await order.launch();
 
     expect(emitSpy).toHaveBeenCalledWith(ORDER_COMPLETED_EVENT, { status: 'filled', filled: true });
     const summary = await order.createSummary();
@@ -83,7 +83,7 @@ describe('LimitOrder', () => {
     const order = new LimitOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 2, 105);
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');
 
-    await expect(order.creation).resolves.toBeUndefined();
+    await expect(order.launch()).resolves.toBeUndefined();
     expect(emitSpy).toHaveBeenCalledWith(
       ORDER_INVALID_EVENT,
       expect.objectContaining({
@@ -97,7 +97,7 @@ describe('LimitOrder', () => {
   it('emits cancel event with filled amount when order is canceled after a partial fill', async () => {
     fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
     const order = new LimitOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 2, 100);
-    await order.creation;
+    await order.launch();
 
     order['handleFetchOrderSuccess']({ ...defaultOrder, filled: 1, remaining: 1, status: 'open' });
     const emitSpy = vi.spyOn(order as unknown as { emit: (event: string, payload?: unknown) => boolean }, 'emit');

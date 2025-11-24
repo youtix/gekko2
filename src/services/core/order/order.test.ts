@@ -43,6 +43,7 @@ class TestOrder extends Order {
   public cancel = vi.fn();
   public createSummary = vi.fn();
   public checkOrder = vi.fn();
+  public launch = vi.fn();
 }
 
 describe('order', () => {

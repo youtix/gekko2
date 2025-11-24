@@ -116,7 +116,7 @@ describe('TradingAdvisor', () => {
   beforeEach(() => {
     advisor = new TradingAdvisor(config);
     attachMockExchange(advisor);
-    advisor['deferredEmit'] = vi.fn();
+    advisor['addDeferredEmit'] = vi.fn();
   });
 
   describe('life cycle functions', () => {
@@ -159,13 +159,13 @@ describe('TradingAdvisor', () => {
       it('should not emit timeframe candle event when addSmallCandle returns a falsy value', () => {
         vi.spyOn(advisor['candleBatcher'], 'addSmallCandle').mockReturnValue(undefined as any);
         advisor['processOneMinuteCandle'](defaultCandle);
-        expect(advisor['deferredEmit']).not.toHaveBeenCalled();
+        expect(advisor['addDeferredEmit']).not.toHaveBeenCalled();
       });
 
       it('should emit STRATEGY_TIMEFRAME_CANDLE_EVENT when addSmallCandle returns a new candle', () => {
         vi.spyOn(advisor['candleBatcher'], 'addSmallCandle').mockReturnValue(defaultCandle);
         advisor['processOneMinuteCandle'](defaultCandle);
-        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_CANDLE_EVENT, defaultCandle);
+        expect(advisor['addDeferredEmit']).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_CANDLE_EVENT, defaultCandle);
       });
     });
 
@@ -189,14 +189,14 @@ describe('TradingAdvisor', () => {
       it('should emit STRATEGY_WARMUP_COMPLETED_EVENT in relayStrategyWarmupCompleted', () => {
         const payload = { warmup: true };
         advisor['relayStrategyWarmupCompleted'](payload);
-        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_WARMUP_COMPLETED_EVENT, payload);
+        expect(advisor['addDeferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_WARMUP_COMPLETED_EVENT, payload);
       });
     });
 
     describe('relayCreateOrder', () => {
       it('should emit STRATEGY_CREATE_ORDER_EVENT in relayCreateOrder', () => {
         advisor['relayCreateOrder'](defaultAdvice);
-        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CREATE_ORDER_EVENT, defaultAdvice);
+        expect(advisor['addDeferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CREATE_ORDER_EVENT, defaultAdvice);
       });
     });
 
@@ -209,7 +209,7 @@ describe('TradingAdvisor', () => {
           timestamp: 123456789,
         };
         advisor['relayStrategyInfo'](strategyInfoPayload);
-        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_INFO_EVENT, strategyInfoPayload);
+        expect(advisor['addDeferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_INFO_EVENT, strategyInfoPayload);
       });
     });
 
@@ -222,7 +222,7 @@ describe('TradingAdvisor', () => {
       it('should emit STRATEGY_CANCEL_ORDER_EVENT in relayCancelOrder when a candle is set', () => {
         (advisor as any).candle = defaultCandle;
         advisor['relayCancelOrder'](defaultCanceledOrder.order.id);
-        expect(advisor['deferredEmit']).toHaveBeenCalledExactlyOnceWith(
+        expect(advisor['addDeferredEmit']).toHaveBeenCalledExactlyOnceWith(
           STRATEGY_CANCEL_ORDER_EVENT,
           defaultCanceledOrder.order.id,
         );

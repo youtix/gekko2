@@ -79,21 +79,21 @@ export class Trader extends Plugin {
   /* -------------------------------------------------------------------------- */
 
   private emitPortfolioChangeEvent() {
-    this.deferredEmit(PORTFOLIO_CHANGE_EVENT, {
+    this.addDeferredEmit(PORTFOLIO_CHANGE_EVENT, {
       asset: this.portfolio.asset,
       currency: this.portfolio.currency,
     });
   }
 
   private emitPortfolioValueChangeEvent() {
-    this.deferredEmit(PORTFOLIO_VALUE_CHANGE_EVENT, {
+    this.addDeferredEmit(PORTFOLIO_VALUE_CHANGE_EVENT, {
       balance: this.balance,
     });
   }
 
   private emitOrderCompletedEvent(id: UUID, summary: OrderSummary) {
     const orderMetadata = this.orders.get(id);
-    if (!orderMetadata) throw new GekkoError('trader', 'No order metadata found in order completed event');
+    if (!orderMetadata) throw new GekkoError('trader', `[${id}] No order metadata found in order completed event`);
 
     const { amount, price, feePercent, side, orderExecutionDate } = summary;
     const { effectivePrice, fee } = computeOrderPricing(side, price, amount, feePercent);
@@ -102,7 +102,7 @@ export class Trader extends Plugin {
     info(
       'trader',
       [
-        `${side} ${type} order summary '${id}':`,
+        `[${id}] ${side} ${type} order summary:`,
         `Completed at: ${toISOString(orderExecutionDate)}`,
         `Order amount: ${amount},`,
         `Effective price: ${effectivePrice},`,
@@ -113,7 +113,7 @@ export class Trader extends Plugin {
 
     const order = { ...summary, id, orderCreationDate, type, fee, effectivePrice };
     const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-    this.deferredEmit<OrderCompletedEvent>(ORDER_COMPLETED_EVENT, { order, exchange });
+    this.addDeferredEmit<OrderCompletedEvent>(ORDER_COMPLETED_EVENT, { order, exchange });
   }
 
   /* -------------------------------------------------------------------------- */
@@ -128,9 +128,9 @@ export class Trader extends Plugin {
     await this.synchronize();
   }
 
-  public onStrategyCancelOrder(id: UUID) {
+  public async onStrategyCancelOrder(id: UUID) {
     const orderMetadata = this.orders.get(id);
-    if (!orderMetadata) return warning('trader', 'Impossible to cancel order: Unknown Order');
+    if (!orderMetadata) return warning('trader', `[${id}] Impossible to cancel order: Unknown Order`);
     const { orderInstance, side, amount, type, orderCreationDate, price } = orderMetadata;
 
     orderInstance.removeAllListeners();
@@ -141,7 +141,25 @@ export class Trader extends Plugin {
       await this.synchronize();
       const order = { id, orderCreationDate, orderCancelationDate, amount, side, type, price, filled, remaining };
       const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-      this.deferredEmit<OrderCanceledEvent>(ORDER_CANCELED_EVENT, { order, exchange });
+      this.addDeferredEmit<OrderCanceledEvent>(ORDER_CANCELED_EVENT, { order, exchange });
+    });
+
+    // Handle Order success event (maybe it completed before we succeed to cancel)
+    orderInstance.once(ORDER_COMPLETED_EVENT, async () => {
+      try {
+        const summary = await orderInstance.createSummary();
+        await this.synchronize();
+        this.emitOrderCompletedEvent(id, summary);
+      } catch (err) {
+        error(
+          'trader',
+          err instanceof Error
+            ? `[${id}] Error in order completed ${err.message}`
+            : `[${id}] Unknown error on order completed`,
+        );
+      } finally {
+        this.orders.delete(id);
+      }
     });
 
     // Handle Cancel Error hook
@@ -150,14 +168,14 @@ export class Trader extends Plugin {
       await this.synchronize();
       const order = { id, orderCreationDate, amount, side, type, price, reason, orderErrorDate: this.currentTimestamp };
       const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-      this.deferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
+      this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
     });
 
     // Cancel
-    orderInstance.cancel();
+    await orderInstance.cancel();
   }
 
-  public onStrategyCreateOrder(advice: AdviceOrder) {
+  public async onStrategyCreateOrder(advice: AdviceOrder) {
     const { id, side, orderCreationDate, type, price = this.price } = advice;
     const { asset, currency } = this.portfolio;
 
@@ -169,7 +187,7 @@ export class Trader extends Plugin {
     // Emit order initiated event
     const orderInitiated = { ...advice, amount };
     const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-    this.deferredEmit<OrderInitiatedEvent>(ORDER_INITIATED_EVENT, { order: orderInitiated, exchange });
+    this.addDeferredEmit<OrderInitiatedEvent>(ORDER_INITIATED_EVENT, { order: orderInitiated, exchange });
 
     // Create order
     const orderInstance = new ORDER_FACTORY[type](id, side, amount, price);
@@ -177,31 +195,31 @@ export class Trader extends Plugin {
 
     // UPDATE EVENTS
     orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
-      info('trader', `Partial ${side} order fill, total filled: ${filled}`),
+      info('trader', `[${id}] ${side} ${type} order fill, total filled: ${filled}`),
     );
 
     orderInstance.on(ORDER_STATUS_CHANGED_EVENT, ({ status, reason }) => {
       const secondPart = `, reason: ${reason}`;
-      return info('trader', `status changed: ${status}${reason ? secondPart : ''}`);
+      return info('trader', `[${id}] Status changed: ${status.toUpperCase()}${reason ? secondPart : ''}`);
     });
 
     // ERROR EVENTS
     orderInstance.on(ORDER_INVALID_EVENT, async ({ reason, status, filled }) => {
-      info('trader', `Order ${status} : ${reason} (filled: ${filled})`);
+      info('trader', `[${id}] ${side} ${type} order: ${reason} (filled: ${filled}, status: ${status})`);
       this.orders.delete(id);
       await this.synchronize();
       const order = { ...orderInitiated, reason, orderErrorDate: this.currentTimestamp };
       const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-      this.deferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
+      this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
     });
 
     orderInstance.on(ORDER_ERRORED_EVENT, async reason => {
-      error('trader', `Gekko received error: ${reason}`);
+      error('trader', `[${id}] ${side} ${type} order: ${reason} (status: ERROR)`);
       this.orders.delete(id);
       await this.synchronize();
       const order = { ...orderInitiated, reason, orderErrorDate: this.currentTimestamp };
       const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-      this.deferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
+      this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
     });
 
     // SUCCES EVENTS
@@ -211,11 +229,19 @@ export class Trader extends Plugin {
         await this.synchronize();
         this.emitOrderCompletedEvent(id, summary);
       } catch (err) {
-        error('trader', err instanceof Error ? err.message : 'Unknown error on order completed');
+        error(
+          'trader',
+          err instanceof Error
+            ? `[${id}] Error in order completed ${err.message}`
+            : `[${id}] Unknown error on order completed`,
+        );
       } finally {
         this.orders.delete(id);
       }
     });
+
+    // Launch the order
+    await orderInstance.launch();
   }
 
   /* -------------------------------------------------------------------------- */
@@ -227,6 +253,10 @@ export class Trader extends Plugin {
   }
 
   protected async processOneMinuteCandle(candle: Candle) {
+    const { open, close, high, low, start } = candle;
+    const isoDate = toISOString(start);
+    debug('trader', `Processing new 1m candle (o: ${open}, c: ${close}, h: ${high}, l: ${low}, date: ${isoDate})`);
+
     // Update price first (needed in synchronize fn)
     this.price = candle.close;
 
@@ -238,7 +268,6 @@ export class Trader extends Plugin {
 
     // Let's synchronize with Exchange every X minutes but not the first execution
     const intervals = this.getExchange().getIntervals();
-    const timestamp = addMinutes(candle.start, 1).getTime();
     const minutes = differenceInMinutes(candle.start, 0);
     if (this.currentTimestamp && minutes % intervals.exchangeSync === 0) await this.synchronize();
 
@@ -248,7 +277,7 @@ export class Trader extends Plugin {
     }
 
     // Then update current timestamp
-    this.currentTimestamp = timestamp;
+    this.currentTimestamp = addMinutes(candle.start, 1).getTime();
   }
 
   protected processFinalize(): void {

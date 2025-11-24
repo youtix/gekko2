@@ -98,6 +98,7 @@ function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = fa
     this.price = requiresPrice ? priceOrExchange : undefined;
     this.exchange = requiresPrice ? maybeExchange : priceOrExchange;
     this.cancel = vi.fn();
+    this.launch = vi.fn();
     this.createSummary = vi.fn().mockResolvedValue({
       amount: this.amount,
       price: 100,
@@ -168,6 +169,8 @@ describe('Trader', () => {
     fetchPortfolio: Mock;
     getMarketLimits: Mock;
   };
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  let setIntervalSpy: ReturnType<typeof vi.spyOn>;
   let waitSpy: ReturnType<typeof vi.spyOn>;
   const getWatchMock = config.getWatch as unknown as Mock;
   const getExchangeMock = config.getExchange as unknown as Mock;
@@ -214,7 +217,7 @@ describe('Trader', () => {
     };
 
     trader['getExchange'] = vi.fn().mockReturnValue(fakeExchange);
-    trader['deferredEmit'] = vi.fn();
+    trader['addDeferredEmit'] = vi.fn();
   });
 
   afterEach(() => {
@@ -312,7 +315,7 @@ describe('Trader', () => {
     it('defers portfolio change events with current asset and currency', () => {
       trader['portfolio'] = { asset: 10, currency: 25 };
       trader['emitPortfolioChangeEvent']();
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, {
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, {
         asset: 10,
         currency: 25,
       });
@@ -321,7 +324,7 @@ describe('Trader', () => {
     it('defers portfolio value events with current balance', () => {
       trader['balance'] = 321.45;
       trader['emitPortfolioValueChangeEvent']();
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(PORTFOLIO_VALUE_CHANGE_EVENT, {
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_VALUE_CHANGE_EVENT, {
         balance: 321.45,
       });
     });
@@ -441,7 +444,7 @@ describe('Trader', () => {
 
   describe('onStrategyCreateOrder', () => {
     const getInitiatedEvent = () => {
-      const emitCalls = (trader['deferredEmit'] as unknown as Mock).mock.calls;
+      const emitCalls = (trader['addDeferredEmit'] as unknown as Mock).mock.calls;
       return emitCalls.find(call => call[0] === ORDER_INITIATED_EVENT)?.[1];
     };
     const getInitiatedOrder = () => getInitiatedEvent()?.order;
@@ -511,9 +514,12 @@ describe('Trader', () => {
       order.emit(ORDER_ERRORED_EVENT, 'boom');
       await Promise.resolve();
 
-      expect(logger.error).toHaveBeenCalledWith('trader', 'Gekko received error: boom');
+      expect(logger.error).toHaveBeenCalledWith(
+        'trader',
+        '[20a7abd2-546b-4c65-b04d-900b84fa5fe6] BUY STICKY order: boom (status: ERROR)',
+      );
       expect(getOrdersMap().size).toBe(0);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
           order: expect.objectContaining({
@@ -547,7 +553,7 @@ describe('Trader', () => {
       expect(logger.info).toHaveBeenCalledWith('trader', expect.stringContaining('limit too low'));
       expect(synchronizeSpy).toHaveBeenCalled();
       expect(getOrdersMap().size).toBe(0);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
           order: expect.objectContaining({
@@ -608,7 +614,10 @@ describe('Trader', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(errorMock).toHaveBeenCalledWith('trader', 'summary failed');
+      expect(errorMock).toHaveBeenCalledWith(
+        'trader',
+        '[20a7abd2-546b-4c65-b04d-900b84fa5fe6] Error in order completed summary failed',
+      );
       expect(emitSpy).not.toHaveBeenCalled();
       expect(synchronizeSpy).not.toHaveBeenCalled();
       expect(getOrdersMap().size).toBe(0);
@@ -618,7 +627,7 @@ describe('Trader', () => {
   describe('onStrategyCancelOrder', () => {
     it('warns when order is unknown', () => {
       trader.onStrategyCancelOrder('missing-id' as any);
-      expect(logger.warning).toHaveBeenCalledWith('trader', 'Impossible to cancel order: Unknown Order');
+      expect(logger.warning).toHaveBeenCalledWith('trader', '[missing-id] Impossible to cancel order: Unknown Order');
     });
 
     it('removes listeners, cancels order, and emits cancellation after completion', async () => {
@@ -640,7 +649,7 @@ describe('Trader', () => {
       await Promise.resolve();
 
       expect(getOrdersMap().size).toBe(0);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_CANCELED_EVENT,
         expect.objectContaining({
           order: expect.objectContaining({
@@ -659,7 +668,7 @@ describe('Trader', () => {
           }),
         }),
       );
-      const cancelPayload = (trader['deferredEmit'] as Mock).mock.calls
+      const cancelPayload = (trader['addDeferredEmit'] as Mock).mock.calls
         .filter(call => call[0] === ORDER_CANCELED_EVENT)
         .pop()?.[1].order;
       expect(cancelPayload?.amount).toBeCloseTo(9.5, 5);
@@ -700,7 +709,7 @@ describe('Trader', () => {
       await Promise.resolve();
 
       expect(getOrdersMap().size).toBe(0);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
           order: expect.objectContaining({
@@ -760,7 +769,7 @@ describe('Trader', () => {
       trader['emitOrderCompletedEvent']('order-id' as any, summary);
 
       expect(processCostSpy).toHaveBeenCalledWith(summary.side, summary.price, summary.amount, summary.feePercent);
-      expect(trader['deferredEmit']).toHaveBeenCalledWith(
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_COMPLETED_EVENT,
         expect.objectContaining({
           order: expect.objectContaining({

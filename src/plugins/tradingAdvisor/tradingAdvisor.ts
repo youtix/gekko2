@@ -60,20 +60,20 @@ export class TradingAdvisor extends Plugin {
   /* -------------------------------------------------------------------------- */
 
   private relayStrategyWarmupCompleted(event: unknown) {
-    this.deferredEmit(STRATEGY_WARMUP_COMPLETED_EVENT, event);
+    this.addDeferredEmit(STRATEGY_WARMUP_COMPLETED_EVENT, event);
   }
 
   private relayCancelOrder(orderId: UUID) {
     if (!this.candle) throw new GekkoError('trading advisor', 'No candle when relaying advice');
-    this.deferredEmit(STRATEGY_CANCEL_ORDER_EVENT, orderId);
+    this.addDeferredEmit(STRATEGY_CANCEL_ORDER_EVENT, orderId);
   }
 
   private relayCreateOrder(advice: AdviceOrder) {
-    this.deferredEmit<AdviceOrder>(STRATEGY_CREATE_ORDER_EVENT, advice);
+    this.addDeferredEmit<AdviceOrder>(STRATEGY_CREATE_ORDER_EVENT, advice);
   }
 
   private relayStrategyInfo(strategyInfo: StrategyInfo) {
-    this.deferredEmit(STRATEGY_INFO_EVENT, strategyInfo);
+    this.addDeferredEmit(STRATEGY_INFO_EVENT, strategyInfo);
   }
 
   /* -------------------------------------------------------------------------- */
@@ -114,7 +114,7 @@ export class TradingAdvisor extends Plugin {
   protected processOneMinuteCandle(candle: Candle) {
     this.candle = candle;
     const newCandle = this.candleBatcher.addSmallCandle(candle);
-    if (newCandle) this.deferredEmit(TIMEFRAME_CANDLE_EVENT, newCandle);
+    if (newCandle) this.addDeferredEmit(TIMEFRAME_CANDLE_EVENT, newCandle);
     this.strategyManager?.onOneMinuteCandle(candle);
   }
 

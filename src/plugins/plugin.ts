@@ -1,17 +1,14 @@
 import { Watch } from '@models/configuration.types';
 import { Exchange } from '@services/exchange/exchange';
 import { Storage } from '@services/storage/storage';
-import { Fifo } from '@utils/collection/fifo';
-import EventEmitter from 'node:events';
+import { SequentialEventEmitter } from '@utils/event/sequentialEventEmitter';
 import { Candle } from '../models/candle.types';
-import { DeffferedEvent } from '../models/event.types';
 import { config } from '../services/configuration/configuration';
 import { PluginMissingServiceError } from './plugin.error';
 
-export abstract class Plugin extends EventEmitter {
+export abstract class Plugin extends SequentialEventEmitter {
   private storage?: Storage;
   private exchange?: Exchange;
-  private readonly defferedEvents: Fifo<DeffferedEvent>;
   protected readonly asset: string;
   protected readonly currency: string;
   protected readonly timeframe: Watch['timeframe'];
@@ -20,32 +17,16 @@ export abstract class Plugin extends EventEmitter {
   protected readonly strategySettings: unknown;
 
   constructor(pluginName: string) {
-    super();
+    super(pluginName);
     const { asset, currency, timeframe, warmup } = config.getWatch();
+
     this.strategySettings = config.getStrategy();
 
-    this.defferedEvents = new Fifo();
     this.pluginName = pluginName;
     this.asset = asset;
     this.currency = currency;
     this.timeframe = timeframe;
     this.warmupPeriod = warmup.candleCount;
-  }
-
-  /* -------------------------------------------------------------------------- */
-  /*                         PLUGIN EVENTS MANAGER                              */
-  /* -------------------------------------------------------------------------- */
-
-  /** Emits deferred event, invoked in loop after each candle has been handled by all plugins. */
-  public broadcastDeferredEmit() {
-    const event = this.defferedEvents.shift();
-    if (!event) return false;
-    this.emit(event.name, event.payload);
-    return true;
-  }
-
-  protected deferredEmit<T = unknown>(name: string, payload: T) {
-    this.defferedEvents.push({ name, payload });
   }
 
   /* -------------------------------------------------------------------------- */
@@ -80,9 +61,8 @@ export abstract class Plugin extends EventEmitter {
   }
 
   /** Executed for every new candle after it passes through the stream pipeline.  */
-  public async processInputStream(candle: Candle, done: () => void) {
+  public async processInputStream(candle: Candle) {
     await this.processOneMinuteCandle(candle);
-    done();
   }
 
   /** Invoked once when the stream pipeline terminates. */

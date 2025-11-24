@@ -40,6 +40,7 @@ describe('StickyOrder', () => {
 
   const createOrder = async (side: 'BUY' | 'SELL', amount = 5) => {
     const order = new StickyOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', side, amount);
+    await order.launch();
     await flushAsync();
     return order;
   };
@@ -55,7 +56,7 @@ describe('StickyOrder', () => {
     fakeExchange.fetchTicker.mockResolvedValue({ bid: 50, ask: 60 });
     fakeExchange.createLimitOrder.mockResolvedValue({ ...defaultOrder, id: 'order-2' });
 
-    await order['createStickyOrder']();
+    await order.launch();
 
     expect(fakeExchange.createLimitOrder).toHaveBeenLastCalledWith('SELL', 2, 58);
   });

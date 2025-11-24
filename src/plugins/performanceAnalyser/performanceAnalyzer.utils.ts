@@ -61,7 +61,7 @@ export const logTrade = (
 ) => {
   if (enableConsoleTable) {
     const formatter = new Intl.NumberFormat();
-    const executedPrice = order.effectivePrice ?? order.price;
+    const executedPrice = order.effectivePrice;
     const baselineLabel = balances.previousBalance !== undefined ? 'since last trade' : 'since start';
     const baselineForChange = balances.previousBalance ?? balances.startBalance;
 
@@ -71,7 +71,7 @@ export const logTrade = (
       timestamp: toISOString(order.orderExecutionDate),
       side: order.side,
       amount: `${round(order.amount, ROUND)} ${asset}`,
-      price: `${formatter.format(order.effectivePrice)} ${currency}`,
+      price: `${formatter.format(order.price ?? 0)} ${currency}`,
       effectivePrice: `${formatter.format(executedPrice)} ${currency}`,
       volume: `${formatter.format(order.amount * executedPrice)} ${currency}`,
       balance: `${formatter.format(exchange.balance)} ${currency}`,

@@ -84,7 +84,7 @@ describe('PerformanceAnalyzer', () => {
   beforeEach(async () => {
     ({ PerformanceAnalyzer } = await import('./performanceAnalyzer'));
     analyzer = new PerformanceAnalyzer({ name: 'PerformanceAnalyzer', riskFreeReturn: 5, enableConsoleTable: false });
-    analyzer['deferredEmit'] = vi.fn();
+    analyzer['addDeferredEmit'] = vi.fn();
     analyzer['emit'] = vi.fn();
   });
 
