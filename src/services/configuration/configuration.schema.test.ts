@@ -108,7 +108,7 @@ describe('configurationSchema', () => {
       name: 'dummy-cex',
       sandbox: false,
       verbose: false,
-      exchangeSynchInterval: 10,
+      exchangeSynchInterval: 600000,
       orderSynchInterval: 1,
     });
     expect(result.storage).toBeNull();

@@ -15,10 +15,11 @@ export abstract class Plugin extends SequentialEventEmitter {
   protected readonly warmupPeriod: number;
   protected readonly pluginName: string;
   protected readonly strategySettings: unknown;
+  protected readonly mode: Watch['mode'];
 
   constructor(pluginName: string) {
     super(pluginName);
-    const { asset, currency, timeframe, warmup } = config.getWatch();
+    const { asset, currency, timeframe, warmup, mode } = config.getWatch();
 
     this.strategySettings = config.getStrategy();
 
@@ -27,6 +28,7 @@ export abstract class Plugin extends SequentialEventEmitter {
     this.currency = currency;
     this.timeframe = timeframe;
     this.warmupPeriod = warmup.candleCount;
+    this.mode = mode;
   }
 
   /* -------------------------------------------------------------------------- */
