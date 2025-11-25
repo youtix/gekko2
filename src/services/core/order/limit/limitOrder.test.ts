@@ -12,11 +12,18 @@ vi.mock('@services/logger', () => ({
   error: vi.fn(),
 }));
 
+vi.mock('@services/configuration/configuration', () => ({
+  config: {
+    getWatch: () => ({ mode: 'backtest' }),
+  },
+}));
+
 const fakeExchange = {
   createLimitOrder: vi.fn(),
   cancelOrder: vi.fn(),
   fetchOrder: vi.fn(),
   fetchMyTrades: vi.fn(),
+  getIntervals: vi.fn(() => ({ orderSync: 1000 })),
   getInterval: vi.fn(() => 10),
 };
 

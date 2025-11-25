@@ -10,6 +10,12 @@ vi.mock('@services/logger', () => ({
   error: vi.fn(),
 }));
 
+vi.mock('@services/configuration/configuration', () => ({
+  config: {
+    getWatch: () => ({ mode: 'backtest' }),
+  },
+}));
+
 const fakeExchange = {
   createMarketOrder: vi.fn(),
   fetchMyTrades: vi.fn(),

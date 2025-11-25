@@ -109,18 +109,23 @@ describe('configurationSchema', () => {
       sandbox: false,
       verbose: false,
       exchangeSynchInterval: 600000,
-      orderSynchInterval: 1,
+      orderSynchInterval: 2000,
     });
     expect(result.storage).toBeNull();
     expect(result[DISCLAIMER_FIELD]).toBeNull();
   });
 
+  const traderPlugin = [{ name: 'Trader' }];
+  const paperTraderPlugin = [{ name: 'paperTrader' }];
+  const binanceExchange = { name: 'binance' };
+  const sandboxExchange = { name: 'binance', sandbox: true };
+
   it.each`
-    scenario                                              | plugins                      | exchange                              | disclaimer | expectSuccess
-    ${'trader plugin with real exchange missing consent'} | ${[{ name: 'Trader' }]}      | ${{ name: 'binance' }}                | ${null}    | ${false}
-    ${'trader plugin with disclaimer acknowledged'}       | ${[{ name: 'Trader' }]}      | ${{ name: 'binance' }}                | ${true}    | ${true}
-    ${'non-trader plugin without disclaimer'}             | ${[{ name: 'paperTrader' }]} | ${{ name: 'binance' }}                | ${null}    | ${true}
-    ${'trader plugin on sandboxed exchange'}              | ${[{ name: 'Trader' }]}      | ${{ name: 'binance', sandbox: true }} | ${null}    | ${true}
+    scenario                                              | plugins              | exchange           | disclaimer | expectSuccess
+    ${'trader plugin with real exchange missing consent'} | ${traderPlugin}      | ${binanceExchange} | ${null}    | ${false}
+    ${'trader plugin with disclaimer acknowledged'}       | ${traderPlugin}      | ${binanceExchange} | ${true}    | ${true}
+    ${'non-trader plugin without disclaimer'}             | ${paperTraderPlugin} | ${binanceExchange} | ${null}    | ${true}
+    ${'trader plugin on sandboxed exchange'}              | ${traderPlugin}      | ${sandboxExchange} | ${null}    | ${true}
   `('enforces disclaimer requirements when $scenario', ({ plugins, exchange, disclaimer, expectSuccess }) => {
     const configInput: Record<string, unknown> = {
       ...createBaseConfig(),
