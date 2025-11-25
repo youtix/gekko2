@@ -7,3 +7,5 @@ export const ORDER_FACTORY = {
   STICKY: StickyOrder,
   LIMIT: LimitOrder,
 } as const;
+
+export const DEFAULT_SYNCH_INTERVAL_WHEN_BACKTESTING = 10; // in minutes

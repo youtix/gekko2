@@ -7,7 +7,9 @@ import {
   ORDER_STATUS_CHANGED_EVENT,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
+import { Watch } from '@models/configuration.types';
 import { OrderSide, OrderState, OrderType } from '@models/order.types';
+import { config } from '@services/configuration/configuration';
 import { Exchange } from '@services/exchange/exchange';
 import { inject } from '@services/injecter/injecter';
 import { debug, error, info } from '@services/logger';
@@ -24,15 +26,18 @@ export abstract class Order extends EventEmitter {
   protected readonly type: OrderType;
   protected readonly side: OrderSide;
   protected readonly gekkoOrderId: UUID;
+  protected readonly mode: Watch['mode'];
 
   constructor(gekkoOrderId: UUID, side: OrderSide, type: OrderType) {
     super();
+    const { mode } = config.getWatch();
     this.exchange = inject.exchange();
     this.status = 'initializing';
     this.transactions = new Map();
     this.type = type;
     this.side = side;
     this.gekkoOrderId = gekkoOrderId;
+    this.mode = mode;
   }
 
   public getGekkoOrderId() {

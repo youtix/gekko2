@@ -11,16 +11,20 @@ export class LimitOrder extends Order {
   private readonly amount: number;
   private isChecking: boolean;
   private isCanceling: boolean;
+  private interval?: Timer;
   private id?: string;
 
   constructor(gekkoOrderId: UUID, side: OrderSide, amount: number, price: number) {
     super(gekkoOrderId, side, 'LIMIT');
+    const { orderSync } = this.exchange.getIntervals();
     this.price = price;
     this.amount = amount;
     this.isChecking = false;
     this.isCanceling = false;
 
     bindAll(this, [this.checkOrder.name]);
+
+    if (this.mode === 'realtime') this.interval = setInterval(this.checkOrder, orderSync);
   }
 
   public async launch(): Promise<void> {
@@ -28,16 +32,23 @@ export class LimitOrder extends Order {
   }
 
   public async cancel() {
-    if (this.isOrderCompleted()) return;
+    if (this.isOrderCompleted()) {
+      clearInterval(this.interval);
+      return;
+    }
 
     this.isCanceling = true;
     if (!this.id || this.getStatus() === 'initializing') return;
 
     await this.cancelOrder(this.id);
-    if (this.getStatus() !== 'error') this.isCanceling = false;
+    if (this.getStatus() !== 'error') {
+      clearInterval(this.interval);
+      this.isCanceling = false;
+    }
   }
 
   public async checkOrder() {
+    if (this.isOrderCompleted()) clearInterval(this.interval);
     if (this.isOrderCompleted() || !this.id || this.getStatus() === 'initializing' || this.isChecking) return;
     debug('order', `[${this.gekkoOrderId}] Starting checking ${this.side} ${this.type} order status`);
 
@@ -57,6 +68,8 @@ export class LimitOrder extends Order {
   }
 
   protected handleCreateOrderError(error: unknown) {
+    clearInterval(this.interval);
+
     if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError)
       return this.orderRejected(error.message);
 
@@ -69,7 +82,10 @@ export class LimitOrder extends Order {
   }
 
   protected handleCancelOrderError(error: unknown) {
-    if (error instanceof OrderNotFound) return this.orderFilled();
+    if (error instanceof OrderNotFound) {
+      clearInterval(this.interval);
+      return this.orderFilled();
+    }
 
     if (error instanceof Error) this.orderErrored(error);
     throw error;
@@ -98,8 +114,10 @@ export class LimitOrder extends Order {
 
     switch (status) {
       case 'closed':
+        clearInterval(this.interval);
         return this.orderFilled();
       case 'canceled':
+        clearInterval(this.interval);
         return this.orderCanceled({ filled, remaining, price: this.price, timestamp });
       case 'open':
         if (oldTransaction?.status !== status) return this.setStatus('open');

@@ -2,6 +2,6 @@ import z from 'zod';
 
 export const exchangeSchema = z.object({
   name: z.string(),
-  exchangeSynchInterval: z.number().default(600000), // in milliseconds
-  orderSynchInterval: z.number().default(1), // in minute
+  exchangeSynchInterval: z.number().default(10 * 60 * 1000), // in milliseconds
+  orderSynchInterval: z.number().default(2000), // in milliseconds
 });

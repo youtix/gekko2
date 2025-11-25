@@ -23,7 +23,7 @@ import { toISOString } from '@utils/date/date.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
 import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
-import { ORDER_FACTORY } from './trader.const';
+import { DEFAULT_SYNCH_INTERVAL_WHEN_BACKTESTING, ORDER_FACTORY } from './trader.const';
 import { traderSchema } from './trader.schema';
 import { TraderOrderMetadata } from './trader.types';
 import { computeOrderPricing, isEmptyPortfolio } from './trader.utils';
@@ -273,16 +273,10 @@ export class Trader extends Plugin {
     if (!this.warmupCompleted) this.warmupCandle = candle;
 
     // Let's synchronize with Exchange every X minutes but not the first execution
-    const intervals = this.getExchange().getIntervals();
     const minutes = differenceInMinutes(candle.start, 0);
 
     if (this.mode === 'backtest') {
-      const exchangeSyncInMinutes = intervals.exchangeSync / 60000;
-      if (this.currentTimestamp && minutes % exchangeSyncInMinutes === 0) await this.synchronize();
-    }
-
-    // Let's update order every Y minutes.
-    if (minutes % intervals.orderSync === 0) {
+      if (this.currentTimestamp && minutes % DEFAULT_SYNCH_INTERVAL_WHEN_BACKTESTING === 0) await this.synchronize();
       await Promise.all(this.orders.values().map(({ orderInstance }) => orderInstance.checkOrder()));
     }
 

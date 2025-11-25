@@ -8,6 +8,7 @@ const fakeExchange = {
   createLimitOrder: vi.fn(),
   cancelOrder: vi.fn(),
   fetchOrder: vi.fn(),
+  getIntervals: vi.fn(() => ({ orderSync: 1000 })),
 };
 
 vi.mock('@services/logger', () => ({
@@ -15,6 +16,12 @@ vi.mock('@services/logger', () => ({
   info: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
+}));
+
+vi.mock('@services/configuration/configuration', () => ({
+  config: {
+    getWatch: () => ({ mode: 'backtest' }),
+  },
 }));
 
 vi.mock('@services/injecter/injecter', () => ({
