@@ -3,7 +3,7 @@ export const DEFAULT_SIMULATION_BALANCE = {
   currency: 1000,
 };
 
-export const DEFAULT_LIMITS = {
+export const DEFAULT_MARKET_DATA = {
   price: {
     min: 1,
     max: 1_000_000,
@@ -15,6 +15,14 @@ export const DEFAULT_LIMITS = {
   cost: {
     min: 10,
     max: 1_000_000,
+  },
+  precision: {
+    price: 1,
+    amount: 0.00001,
+  },
+  fee: {
+    maker: 0.0004,
+    taker: 0.0007,
   },
 };
 

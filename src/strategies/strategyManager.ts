@@ -16,7 +16,7 @@ import { Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { Nullable } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
-import { MarketLimits } from '@services/exchange/exchange.types';
+import { MarketData } from '@services/exchange/exchange.types';
 import { debug, error, info, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { toISOString } from '@utils/date/date.utils';
@@ -32,7 +32,7 @@ export class StrategyManager extends EventEmitter {
   private warmupPeriod: number;
   private indicators: Indicator[];
   private strategyParams: object;
-  private marketLimits: Nullable<MarketLimits>;
+  private marketData: Nullable<MarketData>;
   private portfolio: Portfolio;
   private strategy?: Strategy<object>;
   private indicatorsResults: unknown[] = [];
@@ -45,7 +45,7 @@ export class StrategyManager extends EventEmitter {
     this.indicators = [];
     this.strategyParams = config.getStrategy() ?? {};
     this.portfolio = { asset: 0, currency: 0 };
-    this.marketLimits = null;
+    this.marketData = null;
     this.oneMinuteCandle = null;
 
     bindAll(this, [this.addIndicator.name, this.createOrder.name, this.cancelOrder.name, this.log.name]);
@@ -125,8 +125,8 @@ export class StrategyManager extends EventEmitter {
     this.portfolio = portfolio;
   }
 
-  public setMarketLimits(marketLimits: Nullable<MarketLimits>) {
-    this.marketLimits = marketLimits;
+  public setMarketData(marketData: Nullable<MarketData>) {
+    this.marketData = marketData;
   }
 
   /* -------------------------------------------------------------------------- */
@@ -189,13 +189,13 @@ export class StrategyManager extends EventEmitter {
   }
 
   private createTools(): Tools<object> {
-    if (!this.marketLimits) throw new GekkoError('strategy', 'Market limits are not defined building strategy tools');
+    if (!this.marketData) throw new GekkoError('strategy', 'Market data are not defined building strategy tools');
     return {
       createOrder: this.createOrder,
       cancelOrder: this.cancelOrder,
       log: this.log,
       strategyParams: this.strategyParams,
-      marketLimits: this.marketLimits,
+      marketData: this.marketData,
     };
   }
 }

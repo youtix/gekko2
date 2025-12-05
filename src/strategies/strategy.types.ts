@@ -4,7 +4,7 @@ import { Candle } from '@models/candle.types';
 import { ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { Portfolio } from '@models/portfolio.types';
-import { MarketLimits } from '@services/exchange/exchange.types';
+import { MarketData } from '@services/exchange/exchange.types';
 import { UUID } from 'node:crypto';
 
 export type Direction = 'short' | 'long';
@@ -12,7 +12,7 @@ export type AddIndicatorFn = <T extends IndicatorNames>(name: T, parameters: Ind
 export type LoggerFn = (level: LogLevel, msg: string) => void;
 export type Tools<T> = {
   strategyParams: T;
-  marketLimits: MarketLimits;
+  marketData: MarketData;
   log: LoggerFn;
   createOrder: (order: Omit<AdviceOrder, 'id' | 'orderCreationDate'>) => UUID;
   cancelOrder: (orderId: UUID) => void;

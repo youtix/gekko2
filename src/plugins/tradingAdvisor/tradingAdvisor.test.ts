@@ -10,8 +10,7 @@ import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
-import { Exchange } from '@services/exchange/exchange';
-import { MarketLimits } from '@services/exchange/exchange.types';
+import { Exchange, MarketData } from '@services/exchange/exchange.types';
 import { StrategyManager } from '@strategies/strategyManager';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
@@ -21,7 +20,7 @@ import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 const attachMockExchange = (instance: TradingAdvisor) => {
   instance.setExchange({
     getExchangeName: (): string => 'binance',
-    getMarketLimits: (): MarketLimits => ({ amount: { min: 3 } }),
+    getMarketData: (): MarketData => ({ amount: { min: 3 } }),
   } as unknown as Exchange);
 };
 
@@ -42,10 +41,16 @@ vi.mock('@strategies/index', () => ({
   NonExistentStrategy: undefined,
 }));
 vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({
-    getWatch: vi.fn(() => ({ warmup: {} })),
-    getStrategy: vi.fn(() => ({})),
-  }));
+  const Configuration = vi.fn(function () {
+    return {
+      getWatch: vi.fn(() => ({ warmup: {} })),
+      getStrategy: vi.fn(() => ({})),
+      showLogo: vi.fn(),
+      getPlugins: vi.fn(),
+      getStorage: vi.fn(),
+      getExchange: vi.fn(),
+    };
+  });
   return { config: new Configuration() };
 });
 
@@ -134,7 +139,7 @@ describe('TradingAdvisor', () => {
         expect(advisor['strategyManager']).toBeDefined();
       });
       it('should set up market limits in strategy manager', async () => {
-        const setUpSpy = vi.spyOn(StrategyManager.prototype, 'setMarketLimits');
+        const setUpSpy = vi.spyOn(StrategyManager.prototype, 'setMarketData');
         await advisor['processInit']();
         expect(setUpSpy).toHaveBeenCalledExactlyOnceWith({ amount: { min: 3 } });
         setUpSpy.mockRestore();

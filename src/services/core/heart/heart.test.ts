@@ -1,75 +1,124 @@
 import { GekkoError } from '@errors/gekko.error';
+import { debug } from '@services/logger';
 import { defer } from 'lodash-es';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Heart } from './heart';
 
 vi.mock('@services/logger', () => ({ debug: vi.fn() }));
-vi.mock('./heart.utils', () => ({ getTickRate: vi.fn().mockReturnValue(20) }));
 vi.mock('lodash-es', async () => ({
   ...(await vi.importActual('lodash-es')),
-  defer: vi.fn().mockImplementation(fn => fn()),
+  defer: vi.fn(),
+  bindAll: vi.fn(),
 }));
 
 describe('Heart', () => {
   let heart: Heart;
+  const tickRate = 20;
+  const noop = () => {};
 
   beforeEach(() => {
-    heart = new Heart(5000);
     vi.useFakeTimers();
-    vi.spyOn(global, 'setInterval');
+    heart = new Heart(tickRate);
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('should initialize without errors', () => {
-    expect(() => new Heart(5000)).not.toThrow();
+  describe('constructor', () => {
+    it('should initialize with correct tickRate', () => {
+      expect(heart['tickRate']).toBe(tickRate);
+    });
+
+    it('should initialize lastTick to 0', () => {
+      expect(heart['lastTick']).toBe(0);
+    });
   });
 
-  it('should schedule ticks when pump is called', () => {
-    heart.pump();
-    expect(setInterval).toHaveBeenCalled();
+  describe('pump', () => {
+    it('should log starting message', () => {
+      heart.pump();
+      expect(debug).toHaveBeenCalledWith('core', 'Starting heartbeat ticks');
+    });
+
+    it('should set an interval with the correct tickRate', () => {
+      const setIntervalSpy = vi.spyOn(global, 'setInterval');
+      heart.pump();
+      expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), tickRate);
+    });
+
+    it('should defer the first tick', () => {
+      heart.pump();
+      expect(defer).toHaveBeenCalledWith(expect.any(Function));
+    });
   });
 
-  it('should emit tick event on each tick', () => {
-    const emitSpy = vi.spyOn(heart, 'emit');
-    heart.tick();
-    expect(emitSpy).toHaveBeenCalledWith('tick');
+  describe('tick', () => {
+    it.each`
+      description              | existingLastTick | setupTime | expectedError | setupFn
+      ${'first tick (0)'}      | ${0}             | ${100}    | ${false}      | ${noop}
+      ${'timely tick'}         | ${100}           | ${120}    | ${false}      | ${noop}
+      ${'excessively delayed'} | ${100}           | ${500}    | ${true}       | ${noop}
+    `('should handle $description', ({ existingLastTick, setupTime, expectedError, setupFn }) => {
+      heart['lastTick'] = existingLastTick;
+      vi.setSystemTime(setupTime);
+      setupFn();
+
+      const emitSpy = vi.spyOn(heart, 'emit');
+
+      if (expectedError) {
+        expect(() => heart.tick()).toThrowError(GekkoError);
+      } else {
+        heart.tick();
+        expect(heart['lastTick']).toBe(setupTime);
+        expect(emitSpy).toHaveBeenCalledWith('tick');
+      }
+    });
+
+    it('should throw specific error message when too late', () => {
+      heart['lastTick'] = 100;
+      // tickRate is 20. 20 * 3 = 60. 100 + 60 = 160. So > 160 should fail.
+      vi.setSystemTime(100 + tickRate * 3 + 1);
+      expect(() => heart.tick()).toThrowError('Failed to tick in time');
+    });
   });
 
-  /** Make sure the last tick happened not to lang ago @link https://github.com/askmike/gekko/issues/514 */
-  it('should throw if tick is excessively delayed', () => {
-    vi.setSystemTime(10000);
-    heart['lastTick'] = Date.now() - 15001;
-    expect(() => heart.tick()).toThrowError(GekkoError);
+  describe('stop', () => {
+    it('should log stopping message', () => {
+      heart.stop();
+      expect(debug).toHaveBeenCalledWith('core', 'Stopping heartbeat ticks');
+    });
+
+    it('should clear the interval', () => {
+      const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
+      // Set a fake timeout to clear
+      const timer = setInterval(noop, 10);
+      heart['timeout'] = timer;
+
+      heart.stop();
+      expect(clearIntervalSpy).toHaveBeenCalledWith(timer);
+    });
+
+    it('should unset the timeout property', () => {
+      heart['timeout'] = setInterval(noop, 10);
+      heart.stop();
+      expect(heart['timeout']).toBeUndefined();
+    });
   });
 
-  it('should update lastTick on every tick', () => {
-    const initialTime = Date.now();
-    heart.tick();
-    expect(heart['lastTick']).toBeGreaterThanOrEqual(initialTime);
-  });
-
-  it.each`
-    tickRate
-    ${1000}
-    ${5000}
-    ${10000}
-  `('should handle tick intervals correctly with tickRate = $tickRate', ({ tickRate }) => {
-    vi.spyOn(global, 'setInterval');
-    vi.spyOn(global, 'setTimeout');
-    heart['tickRate'] = tickRate;
-    heart.pump();
-    expect(setInterval).toHaveBeenCalledWith(expect.any(Function), tickRate);
-  });
-
-  it('should trigger an immediate tick with defer', () => {
-    heart.pump();
-    expect(defer).toHaveBeenCalledWith(heart.tick);
-  });
-
-  it('should not throw error if tick is called without previous ticks', () => {
-    expect(() => heart.tick()).not.toThrow();
+  describe('isHeartBeating', () => {
+    const heartPumpAndStop = () => {
+      heart.pump();
+      heart.stop();
+    };
+    it.each`
+      scenario         | setup                 | expected
+      ${'not started'} | ${noop}               | ${false}
+      ${'started'}     | ${() => heart.pump()} | ${true}
+      ${'stopped'}     | ${heartPumpAndStop}   | ${false}
+    `('should return $expected when $scenario', ({ setup, expected }) => {
+      setup();
+      expect(heart.isHeartBeating()).toBe(expected);
+    });
   });
 });

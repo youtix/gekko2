@@ -5,35 +5,27 @@ import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
 import { config } from '@services/configuration/configuration';
-import { DUMMY_DEFAULT_BUFFER_SIZE } from '@services/exchange/exchange.const';
+import { DUMMY_DEFAULT_BUFFER_SIZE, LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
-import { MarketLimits } from '@services/exchange/exchange.types';
+import { Exchange, FetchOHLCVParams, MarketData } from '@services/exchange/exchange.types';
 import { RingBuffer } from '@utils/collection/ringBuffer';
 import { toTimestamp } from '@utils/date/date.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
-import { CentralizedExchange } from '../cex';
+import { checkOrderAmount, checkOrderCost, checkOrderPrice } from '../exchange.utils';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
 
-export class DummyCentralizedExchange extends CentralizedExchange {
+export class DummyCentralizedExchange implements Exchange {
   private readonly orders: RingBuffer<DummyInternalOrder>;
   private readonly candles: RingBuffer<Candle>;
-  /** Maker fee as decimal fraction */
-  private readonly makerFee: number;
-  /** Taker fee as decimal fraction */
-  private readonly takerFee: number;
-  private readonly marketLimits: MarketLimits;
+  private readonly marketData: MarketData;
   private portfolio: Portfolio;
   private ticker: Ticker;
   private currentTimestamp: EpochTimeStamp;
-
   private orderSequence = 0;
 
   constructor(exchangeConfig: DummyCentralizedExchangeConfig) {
-    super();
-    this.makerFee = (exchangeConfig.feeMaker ?? 0) / 100;
-    this.takerFee = (exchangeConfig.feeTaker ?? 0) / 100;
-    this.marketLimits = exchangeConfig.limits;
+    this.marketData = exchangeConfig.marketData;
     this.portfolio = { ...exchangeConfig.simulationBalance };
     this.ticker = { ...exchangeConfig.initialTicker };
     this.candles = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
@@ -43,6 +35,10 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     this.currentTimestamp = toTimestamp(start);
 
     bindAll(this, [this.mapOrderToTrade.name]);
+  }
+
+  public getExchangeName(): string {
+    return 'dummy-cex';
   }
 
   /** Because dummy exchange is not a plugin, I need to call this function manualy in the plugins stream */
@@ -60,39 +56,38 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return () => {};
   }
 
-  protected async loadMarketsImpl(): Promise<void> {
+  public async loadMarkets(): Promise<void> {
     // Nothing to do, already done in constructor
   }
 
-  protected async fetchTickerImpl(): Promise<Ticker> {
+  public async fetchTicker(): Promise<Ticker> {
     return { ...this.ticker };
   }
 
-  protected async getKlinesImpl(
-    from?: EpochTimeStamp,
-    _timeframe?: string, // Not used in dummy
-    limits?: number,
-  ): Promise<Candle[]> {
+  public async fetchOHLCV({
+    from,
+    limit = LIMITS[this.getExchangeName()].candles,
+  }: FetchOHLCVParams): Promise<Candle[]> {
     const arr = this.candles.toArray();
     const filtered = isNil(from) ? arr : arr.filter(candle => candle.start >= from);
-    if (!isNil(limits)) return filtered.slice(-limits);
+    if (!isNil(limit)) return filtered.slice(-limit);
     return filtered;
   }
 
-  protected async fetchMyTradesImpl(from?: EpochTimeStamp): Promise<Trade[]> {
+  public async fetchMyTrades(from?: EpochTimeStamp): Promise<Trade[]> {
     const arr = this.orders.toArray();
     const filtered = isNil(from) ? arr : arr.filter(order => order.timestamp >= from);
     return filtered.map(this.mapOrderToTrade);
   }
 
-  protected async fetchPortfolioImpl(): Promise<Portfolio> {
+  public async fetchBalance(): Promise<Portfolio> {
     return { ...this.portfolio };
   }
 
-  protected async createLimitOrderImpl(side: OrderSide, amount: number, price: number): Promise<OrderState> {
-    const checkedPrice = await this.checkOrderPrice(price);
-    const normalizedAmount = this.checkOrderAmount(amount);
-    this.checkOrderCost(normalizedAmount, checkedPrice);
+  public async createLimitOrder(side: OrderSide, amount: number, price: number): Promise<OrderState> {
+    const checkedPrice = checkOrderPrice(price, this.marketData);
+    const normalizedAmount = checkOrderAmount(amount, this.marketData);
+    checkOrderCost(normalizedAmount, checkedPrice, this.marketData);
 
     this.reserveBalance(side, normalizedAmount, checkedPrice);
 
@@ -112,14 +107,14 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return this.cloneOrder(order);
   }
 
-  protected async createMarketOrderImpl(side: OrderSide, amount: number): Promise<OrderState> {
-    const normalizedAmount = this.checkOrderAmount(amount);
+  public async createMarketOrder(side: OrderSide, amount: number): Promise<OrderState> {
+    const normalizedAmount = checkOrderAmount(amount, this.marketData);
     const price = side === 'BUY' ? this.ticker.ask : this.ticker.bid;
-    this.checkOrderCost(normalizedAmount, price);
+    checkOrderCost(normalizedAmount, price, this.marketData);
 
     const id = `order-${++this.orderSequence}`;
     const cost = normalizedAmount * price;
-    const totalCost = cost * (1 + this.takerFee);
+    const totalCost = cost * (1 + (this.marketData.fee?.taker ?? 0));
 
     if (side === 'BUY') {
       if (this.portfolio.currency < totalCost)
@@ -134,7 +129,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
           `Insufficient asset balance (portfolio: ${this.portfolio.asset}, amount: ${normalizedAmount})`,
         );
       this.portfolio.asset -= normalizedAmount;
-      this.portfolio.currency += cost * (1 - this.takerFee);
+      this.portfolio.currency += cost * (1 - (this.marketData.fee?.taker ?? 0));
     }
 
     const order: DummyInternalOrder = {
@@ -154,7 +149,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return this.cloneOrder(order);
   }
 
-  protected async cancelOrderImpl(id: string): Promise<OrderState> {
+  public async cancelOrder(id: string): Promise<OrderState> {
     const order = this.orders.find(c => c.id === id);
     if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
 
@@ -167,24 +162,20 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     return this.cloneOrder(order);
   }
 
-  protected async fetchOrderImpl(id: string): Promise<OrderState> {
+  public async fetchOrder(id: string): Promise<OrderState> {
     const order = this.orders.find(c => c.id === id);
     if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
     return this.cloneOrder(order);
   }
 
-  public getMarketLimits(): MarketLimits {
-    return this.marketLimits;
-  }
-
-  protected isRetryableError(): boolean {
-    return false;
+  public getMarketData(): MarketData {
+    return this.marketData;
   }
 
   private reserveBalance(side: OrderSide, amount: number, price: number) {
     if (side === 'BUY') {
       const cost = amount * price;
-      const totalCost = cost * (1 + this.makerFee);
+      const totalCost = cost * (1 + (this.marketData.fee?.maker ?? 0));
       if (this.portfolio.currency < totalCost)
         throw new InvalidOrder(
           `Insufficient currency balance (portfolio: ${this.portfolio.currency}, order cost: ${totalCost})`,
@@ -205,7 +196,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
     if (remaining <= 0) return;
 
     if (order.side === 'BUY') {
-      this.portfolio.currency += remaining * (order.price ?? 0) * (1 + this.makerFee);
+      this.portfolio.currency += remaining * (order.price ?? 0) * (1 + (this.marketData.fee?.maker ?? 0));
     } else {
       this.portfolio.asset += remaining;
     }
@@ -226,7 +217,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
       if (order.side === 'BUY') {
         this.portfolio.asset += order.amount;
       } else {
-        this.portfolio.currency += order.amount * price * (1 - this.makerFee);
+        this.portfolio.currency += order.amount * price * (1 - (this.marketData.fee?.maker ?? 0));
       }
     });
   }
@@ -237,7 +228,7 @@ export class DummyCentralizedExchange extends CentralizedExchange {
   }
 
   private mapOrderToTrade(order: DummyInternalOrder): Trade {
-    const feeRate = order.type === 'MARKET' ? this.takerFee : this.makerFee;
+    const feeRate = order.type === 'MARKET' ? (this.marketData.fee?.taker ?? 0) : (this.marketData.fee?.maker ?? 0);
 
     return {
       id: order.id,

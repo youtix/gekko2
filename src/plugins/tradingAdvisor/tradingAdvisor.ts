@@ -107,7 +107,7 @@ export class TradingAdvisor extends Plugin {
   protected async processInit() {
     await this.setUpStrategy();
     this.setUpListeners();
-    this.strategyManager?.setMarketLimits(this.getExchange().getMarketLimits());
+    this.strategyManager?.setMarketData(this.getExchange().getMarketData());
     info('trading advisor', `Using the strategy: ${this.strategyName}`);
   }
 

@@ -14,10 +14,11 @@ const defaultParams: GridBotStrategyParams = {
   mode: 'recenter',
 };
 
-const marketLimits = {
+const marketData = {
   amount: { min: 0.1 },
   price: { min: 0.01 },
   cost: { min: 1 },
+  precision: { price: 0.01, amount: 0.1 },
 };
 
 const makeCandle = (price = 100): Candle =>
@@ -50,7 +51,7 @@ describe('GridBot', () => {
       issuedOrders.push({ id, price: order.price ?? 0, side: order.side });
       return id;
     });
-    tools = { strategyParams: defaultParams, marketLimits, createOrder, cancelOrder, log };
+    tools = { strategyParams: defaultParams, marketData, createOrder, cancelOrder, log };
   });
 
   const initStrategy = (price = 100, params: Partial<GridBotStrategyParams> = {}) => {

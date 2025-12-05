@@ -1,5 +1,6 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderSide, OrderState } from '@models/order.types';
+import { config } from '@services/configuration/configuration';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { debug, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
@@ -17,7 +18,7 @@ export class StickyOrder extends Order {
 
   constructor(gekkoOrderId: UUID, action: OrderSide, amount: number, _price?: number) {
     super(gekkoOrderId, action, 'STICKY');
-    const { orderSync } = this.exchange.getIntervals();
+    const orderSync = config.getExchange().orderSynchInterval;
     this.isCanceling = false;
     this.isMoving = false;
     this.isChecking = false;
@@ -82,8 +83,8 @@ export class StickyOrder extends Order {
 
   private async processStickyPrice() {
     const { bid, ask } = await this.exchange.fetchTicker();
-    const limits = this.exchange.getMarketLimits();
-    const minimalPrice = limits?.price?.min ?? 0;
+    const marketData = this.exchange.getMarketData();
+    const minimalPrice = marketData?.price?.min ?? 0;
     return this.side === 'BUY' ? bid + minimalPrice : ask - minimalPrice;
   }
 

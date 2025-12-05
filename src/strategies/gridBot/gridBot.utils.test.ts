@@ -1,5 +1,5 @@
 import type { Portfolio } from '@models/portfolio.types';
-import type { MarketLimits } from '@services/exchange/exchange.types';
+import type { MarketData } from '@services/exchange/exchange.types';
 import { describe, expect, it, vi } from 'vitest';
 import type { GridRange, LevelState, RebalancePlan } from './gridBot.types';
 import {
@@ -153,10 +153,10 @@ describe('gridBot.utils', () => {
 
   describe('resolveLevelQuantity', () => {
     const portfolio: Portfolio = { asset: 10, currency: 1000 };
-    const limits: MarketLimits = { amount: { min: 0.1 } };
+    const marketData: MarketData = { amount: { min: 0.1 } };
 
     it('uses override if provided', () => {
-      expect(resolveLevelQuantity(100, portfolio, 2, limits, 5)).toBe(5);
+      expect(resolveLevelQuantity(100, portfolio, 2, marketData, 5)).toBe(5);
     });
 
     it('calculates quantity based on portfolio and levels', () => {
@@ -164,18 +164,18 @@ describe('gridBot.utils', () => {
       // Asset share: 10 / 2 = 5
       // Currency share: 1000 / (2 * 100) = 5
       // Min is 5
-      expect(resolveLevelQuantity(100, portfolio, 2, limits)).toBe(5);
+      expect(resolveLevelQuantity(100, portfolio, 2, marketData)).toBe(5);
     });
 
     it('respects amount rounding', () => {
       // Asset share: 10/2 = 5
       // Currency share: 1000 / (2*100) = 5
       // But let's make currency share smaller: 1000 / (2*200) = 2.5
-      expect(resolveLevelQuantity(200, portfolio, 2, limits)).toBe(2.5);
+      expect(resolveLevelQuantity(200, portfolio, 2, marketData)).toBe(2.5);
     });
 
     it('returns 0 if levelsPerSide is 0', () => {
-      expect(resolveLevelQuantity(100, portfolio, 0, limits)).toBe(0);
+      expect(resolveLevelQuantity(100, portfolio, 0, marketData)).toBe(0);
     });
   });
 
@@ -229,7 +229,7 @@ describe('gridBot.utils', () => {
   });
 
   describe('validateRebalancePlan', () => {
-    const tools: any = { log: vi.fn(), marketLimits: { amount: { min: 0.1, max: 100 }, cost: { min: 1, max: 1000 } } };
+    const tools: any = { log: vi.fn(), marketData: { amount: { min: 0.1, max: 100 }, cost: { min: 1, max: 1000 } } };
     const portfolio: Portfolio = { asset: 10, currency: 1000 };
     const basePlan: RebalancePlan = {
       stage: 'init',
@@ -271,7 +271,7 @@ describe('gridBot.utils', () => {
 
   describe('inferPricePrecision', () => {
     it('infers from price step if present', () => {
-      expect(inferPricePrecision(123.45, { price: { min: 0.5 } })).toEqual({ priceDecimals: 1, priceStep: 0.5 });
+      expect(inferPricePrecision(123.45, { precision: { price: 0.5 } })).toEqual({ priceDecimals: 1, priceStep: 0.5 });
     });
 
     it('infers from current price if no step', () => {
@@ -281,13 +281,13 @@ describe('gridBot.utils', () => {
 
   describe('computeRebalancePlan', () => {
     const portfolio: Portfolio = { asset: 0, currency: 1000 }; // Total 1000. Target 500 each.
-    const limits: MarketLimits = {};
+    const marketData: MarketData = {};
 
     it('returns plan when drift exceeds tolerance', () => {
       // Price 100. Asset 0 -> 0 value. Currency 1000.
       // Gap: 500 - 0 = 500.
       // Drift: 500 / 1000 = 50%
-      const plan = computeRebalancePlan('init', 100, portfolio, limits, 5);
+      const plan = computeRebalancePlan('init', 100, portfolio, marketData, 5);
       expect(plan).toMatchObject({
         side: 'BUY',
         amount: 5, // 500 / 100
@@ -298,20 +298,20 @@ describe('gridBot.utils', () => {
     it('returns null when drift is within tolerance', () => {
       // Portfolio balanced: 5 asset * 100 = 500. Currency 500.
       const balancedPortfolio = { asset: 5, currency: 500 };
-      expect(computeRebalancePlan('init', 100, balancedPortfolio, limits, 5)).toBeNull();
+      expect(computeRebalancePlan('init', 100, balancedPortfolio, marketData, 5)).toBeNull();
     });
 
-    it('rounds amount according to market limits', () => {
+    it('rounds amount according to market data', () => {
       const portfolio = { asset: 0, currency: 1000 };
       // Gap 500. Price 100. Raw amount 5.
       // Let's use a price that gives a long decimal amount.
       // Price 33. Gap 500. Amount 15.151515...
-      const limitsWithPrecision: MarketLimits = { amount: { min: 0.1 } }; // Implies some precision, or we can rely on default rounding
+      const marketDataWithPrecision: MarketData = { amount: { min: 0.1 }, precision: { amount: 0.1 } };
       // If we assume default rounding is used if not specified, or we can specify a step.
       // Let's specify a step indirectly via min or just rely on the fact that it SHOULD round.
-      // Actually resolveLevelQuantity uses countDecimals(marketLimits.amount?.min ?? DEFAULT_AMOUNT_ROUNDING).
+      // Actually resolveLevelQuantity uses countDecimals(marketData.amount?.min ?? DEFAULT_AMOUNT_ROUNDING).
 
-      const plan = computeRebalancePlan('init', 33, portfolio, limitsWithPrecision, 1);
+      const plan = computeRebalancePlan('init', 33, portfolio, marketDataWithPrecision, 1);
       // 15.1515... should be rounded to 1 decimal place (0.1 step) -> 15.1
       expect(plan?.amount).toBe(15.1);
     });
@@ -320,9 +320,9 @@ describe('gridBot.utils', () => {
       const portfolio = { asset: 0, currency: 10000 };
       // Price 100. Gap 5000. Amount 50.
       // Max limit 10.
-      const limitsWithMax: MarketLimits = { amount: { min: 0.1, max: 10 } };
+      const marketDataWithMaxAmount: MarketData = { amount: { min: 0.1, max: 10 } };
 
-      const plan = computeRebalancePlan('init', 100, portfolio, limitsWithMax, 1);
+      const plan = computeRebalancePlan('init', 100, portfolio, marketDataWithMaxAmount, 1);
       expect(plan?.amount).toBe(10);
     });
   });

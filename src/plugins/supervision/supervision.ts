@@ -153,7 +153,7 @@ export class Supervision extends Plugin {
 
   private async checkTimeframeCandle() {
     if (!this.lastTimeframeCandle) return;
-    const candles = await this.getExchange().getKlines(undefined, this.timeframe, 100);
+    const candles = await this.getExchange().fetchOHLCV({ timeframe: this.timeframe, limit: 100 });
     const exchangeCandle = candles.filter(candle => this.lastTimeframeCandle?.start === candle.start)[0];
     if (!exchangeCandle) return;
     const diff = shallowObjectDiff(exchangeCandle, this.lastTimeframeCandle);

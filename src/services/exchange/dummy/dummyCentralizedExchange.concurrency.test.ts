@@ -22,14 +22,18 @@ const baseConfig: DummyCentralizedExchangeConfig = {
   name: 'dummy-cex',
   exchangeSynchInterval: 200,
   orderSynchInterval: 200,
-  sandbox: false,
-  verbose: false,
-  feeMaker: 0,
-  feeTaker: 0,
-  limits: {
+  marketData: {
     price: { min: 1, max: 10_000 },
     amount: { min: 0.1, max: 100 },
     cost: { min: 10, max: 100_000 },
+    precision: {
+      price: 2,
+      amount: 2,
+    },
+    fee: {
+      maker: 0,
+      taker: 0,
+    },
   },
   simulationBalance: { asset: 10, currency: 1000 },
   initialTicker: { bid: 100, ask: 101 },
@@ -66,7 +70,7 @@ describe('DummyCentralizedExchange Concurrency', () => {
     expect(fulfilled).toHaveLength(5);
     expect(rejected).toHaveLength(0);
 
-    const portfolio = await exchange.fetchPortfolio();
+    const portfolio = await exchange.fetchBalance();
     expect(portfolio.currency).toBe(0);
   });
 
@@ -87,7 +91,7 @@ describe('DummyCentralizedExchange Concurrency', () => {
     expect(fulfilled).toHaveLength(5);
     expect(rejected).toHaveLength(1);
 
-    const portfolio = await exchange.fetchPortfolio();
+    const portfolio = await exchange.fetchBalance();
     expect(portfolio.currency).toBe(0);
   });
 });

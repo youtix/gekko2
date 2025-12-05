@@ -1,5 +1,6 @@
-import { binanceExchangeSchema } from '@services/exchange/centralized/binance/binance.schema';
-import { dummyExchangeSchema } from '@services/exchange/centralized/dummy/dummyCentralizedExchange.schema';
+import { binanceExchangeSchema } from '@services/exchange/binance/binance.schema';
+import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
+import { hyperliquidExchangeSchema } from '@services/exchange/hyperliquid/hyperliquid.schema';
 import { some } from 'lodash-es';
 import { z } from 'zod';
 import { TIMEFRAMES } from './configuration.const';
@@ -51,7 +52,7 @@ export const configurationSchema = z
   .object({
     showLogo: z.boolean().default(true),
     watch: watchSchema,
-    exchange: z.discriminatedUnion('name', [dummyExchangeSchema, binanceExchangeSchema]),
+    exchange: z.discriminatedUnion('name', [dummyExchangeSchema, binanceExchangeSchema, hyperliquidExchangeSchema]),
     storage: storageSchema.nullable().optional().default(null),
     plugins: z.array(z.looseObject({ name: z.string() })),
     strategy: z.looseObject({ name: z.string() }).optional(),
@@ -59,7 +60,7 @@ export const configurationSchema = z
   })
   .superRefine((data, ctx) => {
     const hasTraderPlugin = some(data.plugins, plugin => plugin.name?.toLowerCase() === 'trader');
-    const isUsingRealExchange = data.exchange && !data.exchange.name.includes('dummy') && !data.exchange.sandbox;
+    const isUsingRealExchange = data.exchange && data.exchange.name !== 'dummy-cex' && !data.exchange.sandbox;
     const isDisclaimerIgnored = !data[disclaimerField];
     if (hasTraderPlugin && isUsingRealExchange && isDisclaimerIgnored) {
       ctx.addIssue({

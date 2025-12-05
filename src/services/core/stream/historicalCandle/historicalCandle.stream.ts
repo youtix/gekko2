@@ -1,7 +1,7 @@
 import { Candle } from '@models/candle.types';
 import { Heart } from '@services/core/heart/heart';
 import { HistoricalCandleError } from '@services/core/stream/historicalCandle/historicalCandle.error';
-import { Exchange } from '@services/exchange/exchange';
+import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
 import { info } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
@@ -51,7 +51,7 @@ export class HistoricalCandleStream extends Readable {
   async onTick() {
     if (this.isLocked) return;
     this.isLocked = true;
-    const candles = await this.exchange.getKlines(this.startDate);
+    const candles = await this.exchange.fetchOHLCV({ from: this.startDate });
     if (!candles?.length) throw new HistoricalCandleError('No candle data was fetched.');
     this.startDate = last(candles)?.start ?? Number.MAX_SAFE_INTEGER;
     this.startDate++;
@@ -72,7 +72,6 @@ export class HistoricalCandleStream extends Readable {
   }
 
   pushCandle(candle: Candle): void {
-    // console.log({ clazz: 'HistoricalCandleStream', candle: toISOString(candle.start) });
     this.push(candle);
   }
 }

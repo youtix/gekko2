@@ -8,11 +8,17 @@ import { eventSubscriberSchema } from './eventSubscriber.schema';
 import { EVENT_NAMES } from './eventSubscriber.types';
 
 vi.mock('@services/logger', () => ({ debug: vi.fn() }));
-vi.mock('../../services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({
-    getWatch: vi.fn(() => ({ mode: 'realtime', warmup: {}, asset: 'BTC', currency: 'USD' })),
-    getStrategy: vi.fn(() => ({})),
-  }));
+vi.mock('@services/configuration/configuration', () => {
+  const Configuration = vi.fn(function () {
+    return {
+      getWatch: vi.fn(() => ({ mode: 'realtime', warmup: {}, asset: 'BTC', currency: 'USD' })),
+      getStrategy: vi.fn(() => ({})),
+      showLogo: vi.fn(),
+      getPlugins: vi.fn(),
+      getStorage: vi.fn(),
+      getExchange: vi.fn(),
+    };
+  });
   return { config: new Configuration() };
 });
 

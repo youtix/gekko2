@@ -7,7 +7,9 @@ import { GapFillerStream } from './gapFiller.stream';
 
 vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({ getWatch: vi.fn() }));
+  const Configuration = vi.fn(function () {
+    return { getWatch: vi.fn() };
+  });
   return { config: new Configuration() };
 });
 vi.mock('@utils/candle/candle.utils', () => ({

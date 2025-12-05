@@ -10,7 +10,7 @@ import { GekkoError } from '@errors/gekko.error';
 import { Watch } from '@models/configuration.types';
 import { OrderSide, OrderState, OrderType } from '@models/order.types';
 import { config } from '@services/configuration/configuration';
-import { Exchange } from '@services/exchange/exchange';
+import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
 import { debug, error, info } from '@services/logger';
 import { isNil } from 'lodash-es';

@@ -1,5 +1,5 @@
 import { Watch } from '@models/configuration.types';
-import { Exchange } from '@services/exchange/exchange';
+import { Exchange } from '@services/exchange/exchange.types';
 import { Storage } from '@services/storage/storage';
 import { SequentialEventEmitter } from '@utils/event/sequentialEventEmitter';
 import { Candle } from '../models/candle.types';

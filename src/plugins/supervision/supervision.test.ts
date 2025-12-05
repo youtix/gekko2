@@ -4,11 +4,17 @@ import { Supervision } from './supervision';
 import { supervisionSchema } from './supervision.schema';
 
 vi.mock('@services/logger', () => ({ debug: vi.fn(), getBufferedLogs: vi.fn(() => []) }));
-vi.mock('../../services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({
-    getWatch: vi.fn(() => ({ mode: 'realtime', warmup: { candleCount: 0 } })),
-    getStrategy: vi.fn(() => ({})),
-  }));
+vi.mock('@services/configuration/configuration', () => {
+  const Configuration = vi.fn(function () {
+    return {
+      getWatch: vi.fn(() => ({ mode: 'realtime', warmup: { candleCount: 0 } })),
+      getStrategy: vi.fn(() => ({})),
+      showLogo: vi.fn(),
+      getPlugins: vi.fn(),
+      getStorage: vi.fn(),
+      getExchange: vi.fn(),
+    };
+  });
   return { config: new Configuration() };
 });
 
@@ -77,7 +83,7 @@ describe('Supervision', () => {
     const exchangeCandle = { open: 1, high: 2, low: 1, close: 2, volume: 10 };
     const timeframeCandle = { open: 2, high: 3, low: 1, close: 3, volume: 11 };
     plugin['getExchange'] = vi.fn().mockReturnValue({
-      getKlines: vi.fn().mockResolvedValue([exchangeCandle]),
+      fetchOHLCV: vi.fn().mockResolvedValue([exchangeCandle]),
     });
     plugin['handleCommand']('/launchtimeframecandlecheck');
     await plugin.onTimeframeCandle(timeframeCandle as any);
@@ -93,7 +99,7 @@ describe('Supervision', () => {
     const exchangeCandle = { open: 1, high: 2, low: 1, close: 2, volume: 10 };
     const timeframeCandle = { open: 2, high: 3, low: 1, close: 3, volume: 11 };
     plugin['getExchange'] = vi.fn().mockReturnValue({
-      getKlines: vi.fn().mockResolvedValue([exchangeCandle]),
+      fetchOHLCV: vi.fn().mockResolvedValue([exchangeCandle]),
     });
     plugin['handleCommand']('/launchtimeframecandlecheck');
     plugin['handleCommand']('/stoptimeframecandlecheck');

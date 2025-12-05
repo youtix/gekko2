@@ -14,7 +14,7 @@ export class MarketOrder extends Order {
   }
 
   public async launch(): Promise<void> {
-    this.createMarketOrder(this.side, this.amount);
+    await this.createMarketOrder(this.side, this.amount);
   }
 
   public async cancel() {
