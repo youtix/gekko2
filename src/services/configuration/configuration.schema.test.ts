@@ -106,26 +106,24 @@ describe('configurationSchema', () => {
     expect(result.watch.daterange).toBeNull();
     expect(result.exchange).toMatchObject({
       name: 'dummy-cex',
-      sandbox: false,
-      verbose: false,
       exchangeSynchInterval: 600000,
-      orderSynchInterval: 2000,
+      orderSynchInterval: 20000,
     });
     expect(result.storage).toBeNull();
     expect(result[DISCLAIMER_FIELD]).toBeNull();
   });
 
   const traderPlugin = [{ name: 'Trader' }];
-  const paperTraderPlugin = [{ name: 'paperTrader' }];
-  const binanceExchange = { name: 'binance' };
-  const sandboxExchange = { name: 'binance', sandbox: true };
+  const OtherPlugin = [{ name: 'Other' }];
+  const binanceExchange = { name: 'binance', apiKey: 'test', secret: 'test' };
+  const sandboxExchange = { name: 'binance', sandbox: true, apiKey: 'test', secret: 'test' };
 
   it.each`
-    scenario                                              | plugins              | exchange           | disclaimer | expectSuccess
-    ${'trader plugin with real exchange missing consent'} | ${traderPlugin}      | ${binanceExchange} | ${null}    | ${false}
-    ${'trader plugin with disclaimer acknowledged'}       | ${traderPlugin}      | ${binanceExchange} | ${true}    | ${true}
-    ${'non-trader plugin without disclaimer'}             | ${paperTraderPlugin} | ${binanceExchange} | ${null}    | ${true}
-    ${'trader plugin on sandboxed exchange'}              | ${traderPlugin}      | ${sandboxExchange} | ${null}    | ${true}
+    scenario                                              | plugins         | exchange           | disclaimer | expectSuccess
+    ${'trader plugin with real exchange missing consent'} | ${traderPlugin} | ${binanceExchange} | ${null}    | ${false}
+    ${'trader plugin with disclaimer acknowledged'}       | ${traderPlugin} | ${binanceExchange} | ${true}    | ${true}
+    ${'non-trader plugin without disclaimer'}             | ${OtherPlugin}  | ${binanceExchange} | ${null}    | ${true}
+    ${'trader plugin on sandboxed exchange'}              | ${traderPlugin} | ${sandboxExchange} | ${null}    | ${true}
   `('enforces disclaimer requirements when $scenario', ({ plugins, exchange, disclaimer, expectSuccess }) => {
     const configInput: Record<string, unknown> = {
       ...createBaseConfig(),

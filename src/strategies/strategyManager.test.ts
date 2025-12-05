@@ -6,7 +6,7 @@ import {
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { LogLevel } from '@models/logLevel.types';
-import { MarketLimits } from '@services/exchange/exchange.types';
+import { MarketData } from '@services/exchange/exchange.types';
 import { debug, error, info, warning } from '@services/logger';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -64,9 +64,11 @@ vi.mock('@services/logger', () => ({
 }));
 
 vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({
-    getStrategy: vi.fn(() => ({ each: 1, wait: 0 })),
-  }));
+  const Configuration = vi.fn(function () {
+    return {
+      getStrategy: vi.fn(() => ({ each: 1, wait: 0 })),
+    };
+  });
   return { config: new Configuration() };
 });
 
@@ -86,7 +88,7 @@ vi.mock('./debug/debugAdvice.startegy.ts', () => ({
 
 describe('StrategyManager', () => {
   let manager: StrategyManager;
-  const defaultMarketLimits: MarketLimits = { amount: { min: 1 } };
+  const defaultMarketData: MarketData = { amount: { min: 1 } };
   const candle = {
     start: 0,
     open: 1,
@@ -98,7 +100,7 @@ describe('StrategyManager', () => {
 
   beforeEach(() => {
     manager = new StrategyManager(1);
-    manager.setMarketLimits(defaultMarketLimits);
+    manager.setMarketData(defaultMarketData);
   });
 
   describe('createStrategy', () => {
@@ -151,7 +153,7 @@ describe('StrategyManager', () => {
         });
         expect(initArgs.tools).toEqual({
           strategyParams: { each: 1, wait: 0 },
-          marketLimits: defaultMarketLimits,
+          marketData: defaultMarketData,
           createOrder: manager['createOrder'],
           cancelOrder: manager['cancelOrder'],
           log: manager['log'],
@@ -166,7 +168,7 @@ describe('StrategyManager', () => {
           portfolio: { asset: 0, currency: 0 },
           tools: expect.objectContaining({
             strategyParams: { each: 1, wait: 0 },
-            marketLimits: defaultMarketLimits,
+            marketData: defaultMarketData,
             createOrder: manager['createOrder'],
             cancelOrder: manager['cancelOrder'],
             log: manager['log'],
@@ -207,7 +209,7 @@ describe('StrategyManager', () => {
             exchange,
             tools: {
               strategyParams: { each: 1, wait: 0 },
-              marketLimits: defaultMarketLimits,
+              marketData: defaultMarketData,
               createOrder: manager['createOrder'],
               cancelOrder: manager['cancelOrder'],
               log: manager['log'],
@@ -234,7 +236,7 @@ describe('StrategyManager', () => {
             exchange,
             tools: {
               strategyParams: { each: 1, wait: 0 },
-              marketLimits: defaultMarketLimits,
+              marketData: defaultMarketData,
               createOrder: manager['createOrder'],
               cancelOrder: manager['cancelOrder'],
               log: manager['log'],
@@ -261,7 +263,7 @@ describe('StrategyManager', () => {
             exchange,
             tools: {
               strategyParams: { each: 1, wait: 0 },
-              marketLimits: defaultMarketLimits,
+              marketData: defaultMarketData,
               createOrder: manager['createOrder'],
               cancelOrder: manager['cancelOrder'],
               log: manager['log'],
@@ -304,14 +306,14 @@ describe('StrategyManager', () => {
         expect(params?.portfolio).toBe(portfolio);
       });
     });
-    describe('setMarketLimits', () => {
-      it('applies the provided market limits to newly created tools', () => {
-        const marketLimits: MarketLimits = { amount: { min: 0.1, max: 5 } };
+    describe('setMarketData', () => {
+      it('applies the provided market data to newly created tools', () => {
+        const marketData: MarketData = { amount: { min: 0.1, max: 5 } };
 
-        manager.setMarketLimits(marketLimits);
+        manager.setMarketData(marketData);
 
         const tools = manager['createTools']();
-        expect(tools.marketLimits).toEqual(marketLimits);
+        expect(tools.marketData).toEqual(marketData);
       });
     });
   });
@@ -400,15 +402,15 @@ describe('StrategyManager', () => {
 
         expect(tools).toStrictEqual({
           strategyParams: manager['strategyParams'],
-          marketLimits: defaultMarketLimits,
+          marketData: defaultMarketData,
           createOrder: manager['createOrder'],
           cancelOrder: manager['cancelOrder'],
           log: manager['log'],
         } as Tools<object>);
       });
 
-      it('throws when market limits are unset before creating tools', () => {
-        manager.setMarketLimits(null);
+      it('throws when market data are unset before creating tools', () => {
+        manager.setMarketData(null);
 
         expect(() => manager['createTools']()).toThrow(GekkoError);
       });

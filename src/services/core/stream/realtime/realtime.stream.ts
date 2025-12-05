@@ -1,14 +1,14 @@
 import { Candle } from '@models/candle.types';
 import { candleSchema } from '@models/schema/candle.schema';
 import { config } from '@services/configuration/configuration';
-import { Exchange } from '@services/exchange/exchange';
+import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
 import { debug } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { bindAll } from 'lodash-es';
 import { Readable } from 'node:stream';
 
-export class RealtimeWebsocketStream extends Readable {
+export class RealtimeStream extends Readable {
   private readonly exchange: Exchange;
   private readonly unsubscribe: () => void;
   private readonly symbol: string;

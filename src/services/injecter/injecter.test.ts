@@ -1,26 +1,34 @@
 import { GekkoError } from '@errors/gekko.error';
 import { Watch } from '@models/configuration.types';
-import { DummyCentralizedExchangeConfig } from '@services/exchange/centralized/dummy/dummyCentralizedExchange.types';
+import { DummyCentralizedExchangeConfig } from '@services/exchange/dummy/dummyCentralizedExchange.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../configuration/configuration';
 import { inject } from './injecter';
 
 const { BinanceExchangeMock, DummyCentralizedExchangeMock } = vi.hoisted(() => ({
-  BinanceExchangeMock: vi.fn(() => ({ exchangeName: 'binance', type: 'binance' })),
-  DummyCentralizedExchangeMock: vi.fn(({ name }) => ({ exchangeName: name, type: 'dummy-cex' })),
+  BinanceExchangeMock: vi.fn(function () {
+    return { exchangeName: 'binance', type: 'binance' };
+  }),
+  DummyCentralizedExchangeMock: vi.fn(function ({ name }) {
+    return { exchangeName: name, type: 'dummy-cex' };
+  }),
 }));
 
 vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn(() => ({ getStorage: vi.fn(), getExchange: vi.fn(), getWatch: vi.fn() }));
+  const Configuration = vi.fn(function () {
+    return { getStorage: vi.fn(), getExchange: vi.fn(), getWatch: vi.fn() };
+  });
   return { config: new Configuration() };
 });
 vi.mock('@services/storage/sqlite.storage', () => ({
-  SQLiteStorage: vi.fn(() => ({})),
+  SQLiteStorage: vi.fn(function () {
+    return {};
+  }),
 }));
-vi.mock('@services/exchange/centralized/binance/binance', () => ({
-  BinanceExchange: BinanceExchangeMock,
+vi.mock('@services/exchange/ccxtExchange', () => ({
+  CCXTExchange: BinanceExchangeMock,
 }));
-vi.mock('@services/exchange/centralized/dummy/dummyCentralizedExchange', () => ({
+vi.mock('@services/exchange/dummy/dummyCentralizedExchange', () => ({
   DummyCentralizedExchange: DummyCentralizedExchangeMock,
 }));
 
@@ -73,7 +81,7 @@ describe('Injecter', () => {
         feeTaker: 0.25,
         simulationBalance: { asset: 0, currency: 0 },
       };
-      getExchangeMock.mockReturnValue(dummyConfig as DummyCentralizedExchangeConfig);
+      getExchangeMock.mockReturnValue(dummyConfig as unknown as DummyCentralizedExchangeConfig);
       getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT' } as Watch);
       const exchange = inject.exchange();
 

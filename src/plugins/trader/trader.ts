@@ -17,6 +17,7 @@ import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitia
 import { Portfolio } from '@models/portfolio.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
+import { config } from '@services/configuration/configuration';
 import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
@@ -62,7 +63,7 @@ export class Trader extends Plugin {
 
     // Update portfolio, balance and price
     const { bid } = await exchange.fetchTicker();
-    this.portfolio = await exchange.fetchPortfolio();
+    this.portfolio = await exchange.fetchBalance();
     this.price = bid;
     this.balance = this.price * this.portfolio.asset + this.portfolio.currency;
 
@@ -252,17 +253,13 @@ export class Trader extends Plugin {
 
   protected processInit(): void {
     if (this.mode === 'realtime') {
-      const { exchangeSync } = this.getExchange().getIntervals();
+      const exchangeSync = config.getExchange().exchangeSynchInterval;
       this.syncInterval = setInterval(this.synchronize, exchangeSync);
       this.synchronize();
     }
   }
 
   protected async processOneMinuteCandle(candle: Candle) {
-    const { open, close, high, low, start } = candle;
-    const isoDate = toISOString(start);
-    debug('trader', `Processing new 1m candle (o: ${open}, c: ${close}, h: ${high}, l: ${low}, date: ${isoDate})`);
-
     // Update price first (needed in synchronize fn)
     this.price = candle.close;
 

@@ -240,7 +240,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     if (!this.rebalanceEnabled) return false;
     if (stage === 'recenter' && tools.strategyParams.mode === 'oneShot') return false;
     if (this.awaitingRebalance) return true;
-    const plan = computeRebalancePlan(stage, currentPrice, portfolio, tools.marketLimits, this.rebalanceTolerance);
+    const plan = computeRebalancePlan(stage, currentPrice, portfolio, tools.marketData, this.rebalanceTolerance);
     if (!plan) return false;
 
     if (!validateRebalancePlan(plan, portfolio, tools)) return false;
@@ -319,7 +319,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
         this.pendingRebalance.stage,
         currentPrice,
         portfolio,
-        tools.marketLimits,
+        tools.marketData,
         this.rebalanceTolerance,
       );
       if (plan && validateRebalancePlan(plan, portfolio, tools)) this.pendingRebalance = plan;
@@ -335,9 +335,9 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
    * 4) Place the initial symmetric BUY/SELL limit orders.
    */
   private rebuildGrid(currentPrice: number, portfolio: Portfolio, tools: Tools<GridBotStrategyParams>) {
-    const { strategyParams, marketLimits, log } = tools;
+    const { strategyParams, marketData, log } = tools;
     const { levelsPerSide, levelQuantity, spacingType, spacingValue } = strategyParams;
-    const { priceDecimals, priceStep } = inferPricePrecision(currentPrice, marketLimits);
+    const { priceDecimals, priceStep } = inferPricePrecision(currentPrice, marketData);
     const centerPrice = roundPrice(currentPrice, priceDecimals, priceStep);
 
     if (centerPrice <= 0) {
@@ -370,9 +370,9 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       return;
     }
 
-    let quantity = resolveLevelQuantity(centerPrice, portfolio, perSideCap, marketLimits, levelQuantity);
-    quantity = applyAmountLimits(quantity, marketLimits);
-    quantity = applyCostLimits(quantity, rangeEstimate.min, rangeEstimate.max, marketLimits);
+    let quantity = resolveLevelQuantity(centerPrice, portfolio, perSideCap, marketData, levelQuantity);
+    quantity = applyAmountLimits(quantity, marketData);
+    quantity = applyCostLimits(quantity, rangeEstimate.min, rangeEstimate.max, marketData);
 
     if (!quantity || quantity <= 0) {
       log('error', 'GridBot could not derive a valid quantity per level.');

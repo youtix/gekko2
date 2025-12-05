@@ -1,5 +1,6 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderSide, OrderState } from '@models/order.types';
+import { config } from '@services/configuration/configuration';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { debug, warning } from '@services/logger';
 import { bindAll } from 'lodash-es';
@@ -16,7 +17,7 @@ export class LimitOrder extends Order {
 
   constructor(gekkoOrderId: UUID, side: OrderSide, amount: number, price: number) {
     super(gekkoOrderId, side, 'LIMIT');
-    const { orderSync } = this.exchange.getIntervals();
+    const orderSync = config.getExchange().orderSynchInterval;
     this.price = price;
     this.amount = amount;
     this.isChecking = false;
@@ -28,7 +29,7 @@ export class LimitOrder extends Order {
   }
 
   public async launch(): Promise<void> {
-    this.createLimitOrder(this.side, this.amount, this.price);
+    await this.createLimitOrder(this.side, this.amount, this.price);
   }
 
   public async cancel() {

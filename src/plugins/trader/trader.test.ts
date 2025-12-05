@@ -166,7 +166,7 @@ describe('Trader', () => {
     getExchangeName: Mock;
     getIntervals: Mock;
     fetchTicker: Mock;
-    fetchPortfolio: Mock;
+    fetchBalance: Mock;
     getMarketLimits: Mock;
   };
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -191,9 +191,7 @@ describe('Trader', () => {
 
   beforeAll(() => {
     vi.useFakeTimers();
-    // @ts-expect-error do not need to fix
     setIntervalSpy = vi.spyOn(global, 'setInterval');
-    // @ts-expect-error do not need to fix
     waitSpy = vi.spyOn(processUtils, 'wait');
   });
 
@@ -212,7 +210,7 @@ describe('Trader', () => {
       getExchangeName: vi.fn(() => 'MockExchange'),
       getIntervals: vi.fn(() => ({ exchangeSync: 1, orderSync: 1 })),
       fetchTicker: vi.fn().mockResolvedValue({ bid: 123 }),
-      fetchPortfolio: vi.fn().mockResolvedValue({ asset: 1, currency: 2 }),
+      fetchBalance: vi.fn().mockResolvedValue({ asset: 1, currency: 2 }),
       getMarketLimits: vi.fn(() => undefined),
     };
 
@@ -254,12 +252,12 @@ describe('Trader', () => {
 
       await trader['synchronize']();
 
-      expect(fakeExchange.fetchPortfolio).toHaveBeenCalledTimes(1);
+      expect(fakeExchange.fetchBalance).toHaveBeenCalledTimes(1);
     });
     it('should update trader plugin portfolio with exchange portfolio', async () => {
       trader['currentTimestamp'] = 0;
       trader['portfolio'] = { asset: 0, currency: 0 };
-      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 3, currency: 50 });
+      fakeExchange.fetchBalance.mockResolvedValue({ asset: 3, currency: 50 });
 
       await trader['synchronize']();
 
@@ -270,7 +268,7 @@ describe('Trader', () => {
       trader['balance'] = 0;
       trader['portfolio'] = { asset: 0, currency: 0 };
       trader['price'] = 200;
-      fakeExchange.fetchPortfolio.mockResolvedValue({ asset: 3, currency: 50 });
+      fakeExchange.fetchBalance.mockResolvedValue({ asset: 3, currency: 50 });
       fakeExchange.fetchTicker.mockResolvedValue({ bid: 200 });
 
       await trader['synchronize']();
@@ -284,7 +282,7 @@ describe('Trader', () => {
     `('should $action', async ({ oldPortfolio, newPortfolio, expectedEmit }) => {
       trader['emitPortfolioChangeEvent'] = vi.fn();
       trader['portfolio'] = oldPortfolio;
-      fakeExchange.fetchPortfolio.mockResolvedValue(newPortfolio);
+      fakeExchange.fetchBalance.mockResolvedValue(newPortfolio);
 
       await trader['synchronize']();
 
@@ -301,7 +299,7 @@ describe('Trader', () => {
       trader['balance'] = oldBalance;
       trader['portfolio'] = portfolio;
       trader['price'] = price;
-      fakeExchange.fetchPortfolio.mockResolvedValue(portfolio);
+      fakeExchange.fetchBalance.mockResolvedValue(portfolio);
       fakeExchange.fetchTicker.mockResolvedValue({ bid: price });
 
       await trader['synchronize']();

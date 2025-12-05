@@ -1,6 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderSide, OrderType } from '@models/order.types';
-import { Exchange } from '@services/exchange/exchange';
+import { Exchange } from '@services/exchange/exchange.types';
 import { debug } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
 import { weightedMean } from '@utils/math/math.utils';

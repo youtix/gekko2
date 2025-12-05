@@ -1,5 +1,5 @@
 import { Portfolio } from '@models/portfolio.types';
-import { MarketLimits } from '@services/exchange/exchange.types';
+import { MarketData } from '@services/exchange/exchange.types';
 import { Tools } from '@strategies/strategy.types';
 import { round } from '@utils/math/round.utils';
 import { DEFAULT_AMOUNT_ROUNDING, INTERNAL_OPEN_ORDER_CAP } from './gridBot.const';
@@ -121,7 +121,7 @@ export const resolveLevelQuantity = (
   centerPrice: number,
   portfolio: Portfolio,
   levelsPerSide: number,
-  marketLimits: MarketLimits,
+  marketData: MarketData,
   override?: number,
 ): number => {
   if (override && override > 0) return override;
@@ -132,30 +132,29 @@ export const resolveLevelQuantity = (
   const derived = Math.min(assetShare, currencyShare);
 
   // Round quantity to avoid floating point number problem when comparing with exchange
-  return Number.isFinite(derived)
-    ? round(derived, countDecimals(marketLimits.amount?.min ?? DEFAULT_AMOUNT_ROUNDING), 'down')
-    : 0;
+  const { amountDecimals } = inferAmountPrecision(marketData);
+  return Number.isFinite(derived) ? round(derived, amountDecimals, 'down') : 0;
 };
 
-/** Apply amount min/max from market limits if available. */
-export const applyAmountLimits = (quantity: number, marketLimits: MarketLimits): number => {
+/** Apply amount min/max from market data if available. */
+export const applyAmountLimits = (quantity: number, marketData: MarketData): number => {
   if (!quantity || quantity <= 0) return quantity;
-  const { amount } = marketLimits;
+  const { amount } = marketData;
   let adjusted = quantity;
   if (amount?.min) adjusted = Math.max(adjusted, amount.min);
   if (amount?.max) adjusted = Math.min(adjusted, amount.max);
   return adjusted;
 };
 
-/** Apply cost min/max from market limits across the grid range. */
+/** Apply cost min/max from market data across the grid range. */
 export const applyCostLimits = (
   quantity: number,
   minPrice: number,
   maxPrice: number,
-  marketLimits: MarketLimits,
+  marketData: MarketData,
 ): number => {
   if (!quantity || quantity <= 0) return quantity;
-  const { cost } = marketLimits;
+  const { cost } = marketData;
   let adjusted = quantity;
   if (cost?.min && minPrice > 0) adjusted = Math.max(adjusted, cost.min / minPrice);
   if (cost?.max && maxPrice > 0) adjusted = Math.min(adjusted, cost.max / maxPrice);
@@ -190,7 +189,7 @@ export const validateRebalancePlan = (
   portfolio: Portfolio,
   tools: Tools<GridBotStrategyParams>,
 ): boolean => {
-  const { log, marketLimits } = tools;
+  const { log, marketData } = tools;
   const { side, amount, tolerancePercent, estimatedNotional } = plan;
   if (!Number.isFinite(amount) || amount <= 0) return false;
 
@@ -204,7 +203,7 @@ export const validateRebalancePlan = (
     return false;
   }
 
-  const { amount: amountLimits, cost } = marketLimits ?? {};
+  const { amount: amountLimits, cost } = marketData ?? {};
   if (amountLimits?.min && amount < amountLimits.min) {
     log(
       'info',
@@ -233,8 +232,8 @@ export const validateRebalancePlan = (
 };
 
 /** Use price.min as tick size if provided; otherwise infer decimals from candle price. */
-export const inferPricePrecision = (currentPrice: number, marketLimits: MarketLimits) => {
-  const priceStep = marketLimits.price?.min ?? 0;
+export const inferPricePrecision = (currentPrice: number, marketData: MarketData) => {
+  const priceStep = marketData.precision?.price ?? 0;
   const price = priceStep > 0 ? priceStep : currentPrice;
   return {
     priceDecimals: countDecimals(price),
@@ -242,14 +241,18 @@ export const inferPricePrecision = (currentPrice: number, marketLimits: MarketLi
   };
 };
 
+export const inferAmountPrecision = (marketData: MarketData) => ({
+  amountDecimals: marketData.precision?.amount ? countDecimals(marketData.precision.amount) : DEFAULT_AMOUNT_ROUNDING,
+});
+
 export const computeRebalancePlan = (
   stage: RebalanceStage,
   currentPrice: number,
   portfolio: Portfolio,
-  marketLimits: MarketLimits,
+  marketData: MarketData,
   tolerancePercent: number,
 ): RebalancePlan | null => {
-  const { priceDecimals, priceStep } = inferPricePrecision(currentPrice, marketLimits);
+  const { priceDecimals, priceStep } = inferPricePrecision(currentPrice, marketData);
   const centerPrice = roundPrice(currentPrice, priceDecimals, priceStep);
   if (!Number.isFinite(centerPrice) || centerPrice <= 0) return null;
 
@@ -266,10 +269,9 @@ export const computeRebalancePlan = (
   let amount = Math.abs(valueGap) / centerPrice;
   if (!Number.isFinite(amount) || amount <= 0) return null;
 
-  const amountDecimals = countDecimals(marketLimits.amount?.min ?? DEFAULT_AMOUNT_ROUNDING);
+  const { amountDecimals } = inferAmountPrecision(marketData);
   amount = round(amount, amountDecimals, 'down');
-  amount = applyAmountLimits(amount, marketLimits);
-
+  amount = applyAmountLimits(amount, marketData);
   if (amount <= 0) return null;
 
   const estimatedNotional = amount * centerPrice;

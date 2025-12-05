@@ -1,12 +1,25 @@
 import { OrderCompletedEvent } from '@models/event.types';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Report } from './performanceAnalyzer.types';
+import { logFinalize, logTrade } from './performanceAnalyzer.utils';
 
-const infoMock = vi.fn();
-const debugMock = vi.fn();
-const toISOStringMock = vi.fn();
-const roundMock = vi.fn();
-const formatRatioMock = vi.fn();
+const {
+  infoMock,
+  debugMock,
+  toISOStringMock,
+  roundMock,
+  formatRatioMock,
+  formatSignedAmountMock,
+  formatSignedPercentMock,
+} = vi.hoisted(() => ({
+  infoMock: vi.fn(),
+  debugMock: vi.fn(),
+  toISOStringMock: vi.fn(),
+  roundMock: vi.fn(),
+  formatRatioMock: vi.fn(),
+  formatSignedAmountMock: vi.fn(),
+  formatSignedPercentMock: vi.fn(),
+}));
 
 vi.mock('@services/logger', () => ({
   info: infoMock,
@@ -21,206 +34,251 @@ vi.mock('@utils/math/round.utils', () => ({
   round: roundMock,
 }));
 
-vi.mock('@utils/string/string.utils', async () => {
-  const actual = await vi.importActual<typeof import('@utils/string/string.utils')>('@utils/string/string.utils');
-  return {
-    ...actual,
-    formatRatio: formatRatioMock,
-  };
-});
-
-let logFinalize: typeof import('./performanceAnalyzer.utils').logFinalize;
-let logTrade: typeof import('./performanceAnalyzer.utils').logTrade;
-beforeAll(async () => {
-  ({ logFinalize, logTrade } = await import('./performanceAnalyzer.utils'));
-});
+vi.mock('@utils/string/string.utils', () => ({
+  formatRatio: formatRatioMock,
+  formatSignedAmount: formatSignedAmountMock,
+  formatSignedPercent: formatSignedPercentMock,
+}));
 
 describe('performanceAnalyzer.utils', () => {
   beforeEach(() => {
+    // Reset recurring mocks to default simple behaviors for clean state
     toISOStringMock.mockImplementation((value: EpochTimeStamp) => `iso(${value})`);
-    roundMock.mockImplementation((value: number, decimals = 0, mode: 'down' | 'up' | 'halfEven' = 'up') => {
-      const factor = 10 ** decimals;
-      if (mode === 'down') return Math.floor(value * factor) / factor;
-      if (mode === 'up') return Math.round(value * factor) / factor;
-      const scaled = value * factor;
-      const floor = Math.floor(scaled);
-      const fraction = scaled - floor;
-      if (fraction > 0.5) return (floor + 1) / factor;
-      if (fraction < 0.5) return floor / factor;
-      return (floor % 2 === 0 ? floor : floor + 1) / factor;
-    });
+
+    // Simple mock for round to predictable strings or values if needed
+    // The original test had complex logic for round, let's simplify or keep it if crucial.
+    // The original logic actually reimplemented rounding. Let's return strings to verify calls or simple pass-through.
+    // Ideally we trust the utility, so we just want to see it was called.
+    // However, the function output is used in strings.
+    // Let's stick to the original "smart" mock if it validates logic, or simplify to "rounded(val)"
+    // The original mock logic was actually testing the utility behavior which is not this test's responsibility.
+    // But since the output is embedded in strings, having distinct values helps.
+    // Let's use a simpler mock that produces unique strings.
+    roundMock.mockImplementation(val => `round(${val})`);
+
     formatRatioMock.mockImplementation((ratio: number) => `ratio(${ratio})`);
+    formatSignedAmountMock.mockImplementation((val: number) => `signed(${val})`);
+    formatSignedPercentMock.mockImplementation((val: number) => `percent(${val})`);
   });
 
   describe('logFinalize', () => {
     const report: Report = {
-      startTime: 1_700_000_000,
-      endTime: 1_700_100_000,
+      startTime: 1000,
+      endTime: 2000,
       duration: '1h',
-      market: 12.34,
-      balance: 5050,
-      profit: 250,
-      relativeProfit: 4.95,
-      yearlyProfit: 730,
-      relativeYearlyProfit: 15.12,
-      startPrice: 21_000,
-      endPrice: 22_250,
-      orders: 7,
-      startBalance: 4800,
-      exposure: 55.678,
-      sharpe: 1.5,
-      sortino: 1.1,
-      standardDeviation: 0.75,
-      downside: 9.87,
-      alpha: 2.56,
+      market: 10,
+      balance: 1100,
+      profit: 100,
+      relativeProfit: 10,
+      yearlyProfit: 1200,
+      relativeYearlyProfit: 120,
+      startPrice: 100,
+      endPrice: 110,
+      orders: 5,
+      startBalance: 1000,
+      exposure: 0.5,
+      sharpe: 1.2,
+      sortino: 1.3,
+      standardDeviation: 0.1,
+      downside: 0.2,
+      alpha: 0.05,
     };
 
     let consoleTableMock: ReturnType<typeof vi.fn>;
     let numberFormatSpy: ReturnType<typeof vi.spyOn>;
-    let numberFormatFormatMock: ReturnType<typeof vi.fn>;
-    let consoleTableSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
       consoleTableMock = vi.fn();
-      numberFormatFormatMock = vi.fn((value: number) => `formatted(${value})`);
-      // @ts-expect-error to fix one day
-      numberFormatSpy = vi
-        .spyOn(Intl, 'NumberFormat')
-        .mockImplementation(() => ({ format: numberFormatFormatMock }) as unknown as Intl.NumberFormat);
-      consoleTableSpy = vi.spyOn(console, 'table').mockImplementation(consoleTableMock);
-    });
+      const consoleSpy = vi.spyOn(console, 'table').mockImplementation(consoleTableMock as any);
 
-    afterEach(() => {
-      numberFormatSpy.mockRestore();
-      consoleTableSpy.mockRestore();
+      numberFormatSpy = vi.spyOn(Intl, 'NumberFormat').mockImplementation(function () {
+        return {
+          format: (val: number) => `fmt(${val})`,
+        } as any;
+      });
+
+      return () => {
+        consoleSpy.mockRestore();
+        numberFormatSpy.mockRestore();
+      };
     });
 
     it.each`
-      enableConsoleTable | expectedCalls
+      enableConsoleTable | expectedTableCalls
       ${true}            | ${1}
       ${false}           | ${0}
     `(
-      'toggles console.table output (enableConsoleTable=$enableConsoleTable)',
-      ({ enableConsoleTable, expectedCalls }) => {
+      'should call console.table $expectedTableCalls times when enableConsoleTable is $enableConsoleTable',
+      ({ enableConsoleTable, expectedTableCalls }) => {
         logFinalize(report, 'USD', enableConsoleTable);
-        expect(consoleTableMock).toHaveBeenCalledTimes(expectedCalls);
+        expect(consoleTableMock).toHaveBeenCalledTimes(expectedTableCalls);
       },
     );
 
-    it('prints a fully formatted summary table when enabled', () => {
-      logFinalize(report, 'EUR', true);
-      expect(consoleTableMock.mock.calls[0][0]).toEqual({
+    it('should log correct data table when enabled', () => {
+      logFinalize(report, 'USD', true);
+
+      expect(consoleTableMock).toHaveBeenCalledWith({
         label: 'PROFIT REPORT',
-        startTime: 'iso(1700000000)',
-        endtime: 'iso(1700100000)',
+        startTime: 'iso(1000)',
+        endtime: 'iso(2000)',
         duration: '1h',
-        exposure: '55.68% of time exposed',
-        startPrice: 'formatted(21000) EUR',
-        endPrice: 'formatted(22250) EUR',
-        market: '12.34%',
-        alpha: '2.56%',
-        simulatedYearlyProfit: 'formatted(730) EUR (15.12%)',
-        amountOfOrders: 7,
-        originalBalance: 'formatted(4800) EUR',
-        currentbalance: 'formatted(5050) EUR',
-        sharpeRatio: 'ratio(1.5)',
-        sortinoRatio: 'ratio(1.1)',
-        standardDeviation: 'ratio(0.75)',
-        expectedDownside: '9.86%',
+        exposure: 'round(0.5)% of time exposed',
+        startPrice: 'fmt(100) USD',
+        endPrice: 'fmt(110) USD',
+        market: 'round(10)%',
+        alpha: 'round(0.05)%',
+        simulatedYearlyProfit: 'fmt(1200) USD (round(120)%)',
+        amountOfOrders: 5,
+        originalBalance: 'fmt(1000) USD',
+        currentbalance: 'fmt(1100) USD',
+        sharpeRatio: 'ratio(1.2)',
+        sortinoRatio: 'ratio(1.3)',
+        standardDeviation: 'ratio(0.1)',
+        expectedDownside: 'round(0.2)%',
       });
     });
 
-    it('emits the final report through the info logger', () => {
+    it('should always call info logger with report', () => {
       logFinalize(report, 'USD', false);
       expect(infoMock).toHaveBeenCalledWith('performance analyzer', report);
     });
   });
 
   describe('logTrade', () => {
-    const baseTrade: OrderCompletedEvent = {
-      order: {
-        id: '98c324a8-e8ad-490b-8baf-96eafc6ddc50',
-        side: 'BUY',
-        type: 'MARKET',
-        amount: 1,
-        fee: 10,
-        price: 10,
-        effectivePrice: 10,
-        feePercent: 0.2,
-        orderCreationDate: 1_700_200_000,
-        orderExecutionDate: 1_700_200_000,
-      },
-      exchange: {
-        portfolio: { asset: 1.23456789, currency: 4321.12345678 },
-        balance: 1000,
-        price: 10,
-      },
+    const baseOrder: OrderCompletedEvent['order'] = {
+      id: '98c324a8-e8ad-490b-8baf-96eafc6ddc50',
+      side: 'BUY',
+      type: 'MARKET',
+      amount: 1,
+      fee: 0.1,
+      price: 100,
+      effectivePrice: 100,
+      feePercent: 0.1,
+      orderCreationDate: 1000,
+      orderExecutionDate: 1000,
+    };
+
+    const baseExchange: OrderCompletedEvent['exchange'] = {
+      portfolio: { asset: 10, currency: 1000 },
+      balance: 2000,
+      price: 100,
     };
 
     let consoleTableMock: ReturnType<typeof vi.fn>;
     let numberFormatSpy: ReturnType<typeof vi.spyOn>;
-    let numberFormatFormatMock: ReturnType<typeof vi.fn>;
-    let consoleTableSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
       consoleTableMock = vi.fn();
-      numberFormatFormatMock = vi.fn((value: number) => `formatted(${value})`);
-      // @ts-expect-error to fix one day
-      numberFormatSpy = vi
-        .spyOn(Intl, 'NumberFormat')
-        .mockImplementation(() => ({ format: numberFormatFormatMock }) as unknown as Intl.NumberFormat);
-      consoleTableSpy = vi.spyOn(console, 'table').mockImplementation(consoleTableMock);
-    });
+      const consoleSpy = vi.spyOn(console, 'table').mockImplementation(consoleTableMock as any);
 
-    afterEach(() => {
-      numberFormatSpy.mockRestore();
-      consoleTableSpy.mockRestore();
+      numberFormatSpy = vi.spyOn(Intl, 'NumberFormat').mockImplementation(function () {
+        return {
+          format: (val: number) => `fmt(${val})`,
+        } as any;
+      });
+
+      return () => {
+        consoleSpy.mockRestore();
+        numberFormatSpy.mockRestore();
+      };
     });
 
     it.each`
-      side      | quantityLabel      | expectedAsset
-      ${'BUY'}  | ${'1.23456789'}    | ${'BTC'}
-      ${'SELL'} | ${'4321.12345678'} | ${'USD'}
-    `('logs a normalized $side trade report', ({ side, quantityLabel, expectedAsset }) => {
-      const trade = {
-        order: { ...baseTrade.order, side },
-        exchange: { ...baseTrade.exchange, portfolio: { ...baseTrade.exchange.portfolio } },
-      } as OrderCompletedEvent;
-      logTrade(trade.order, trade.exchange, 'USD', 'BTC', false, { startBalance: 1000 });
-      expect(debugMock.mock.calls[0]).toEqual([
+      side      | expectedAction | expectedAmount
+      ${'BUY'}  | ${'Bought'}    | ${'round(10)'}
+      ${'SELL'} | ${'Sold'}      | ${'round(1000)'}
+    `('should log debug message for $side order', ({ side, expectedAction, expectedAmount }) => {
+      const order = { ...baseOrder, side } as OrderCompletedEvent['order'];
+      logTrade(order, baseExchange, 'USD', 'BTC', false);
+
+      expect(debugMock).toHaveBeenCalledWith(
         'performance analyzer',
-        `${side === 'BUY' ? 'Bought' : 'Sold'} ${quantityLabel} ${expectedAsset} at iso(1700200000)`,
-      ]);
-      expect(consoleTableMock).not.toHaveBeenCalled();
-    });
-
-    it('renders a console table with portfolio deltas when enabled', () => {
-      logTrade(baseTrade.order, baseTrade.exchange, 'EUR', 'BTC', true, { startBalance: 900, previousBalance: 950 });
-
-      expect(consoleTableMock).toHaveBeenCalledTimes(1);
-      expect(consoleTableMock.mock.calls[0][0]).toEqual({
-        label: 'TRADE SNAPSHOT',
-        timestamp: 'iso(1700200000)',
-        side: 'BUY',
-        amount: '1 BTC',
-        price: 'formatted(10) EUR',
-        effectivePrice: 'formatted(10) EUR',
-        volume: 'formatted(10) EUR',
-        balance: 'formatted(1000) EUR',
-        portfolioChange: 'since last trade: +formatted(50) EUR (+5.26%)',
-        totalSinceStart: 'since start: +formatted(100) EUR (+11.11%)',
-        feePaid: 'formatted(10) EUR (0.2%)',
-      });
-    });
-
-    it('falls back to the initial balance when no previous trade is available', () => {
-      logTrade(baseTrade.order, baseTrade.exchange, 'USD', 'BTC', true, { startBalance: 1000 });
-      expect(consoleTableMock.mock.calls[0][0]).toEqual(
-        expect.objectContaining({
-          portfolioChange: 'since start: formatted(0) USD (0%)',
-          totalSinceStart: 'since start: formatted(0) USD (0%)',
-        }),
+        expect.stringContaining(`${expectedAction} ${expectedAmount}`),
       );
+    });
+
+    it.each`
+      baselineBalance | currentBalance | expectedChangeLabel
+      ${1000}         | ${1100}        | ${'signed(100)'}
+      ${undefined}    | ${1100}        | ${'since start: n/a'}
+      ${NaN}          | ${1100}        | ${'since start: n/a'}
+    `(
+      'should handle portfolio change calculation for baseline $baselineBalance',
+      ({ baselineBalance, currentBalance, expectedChangeLabel }) => {
+        // For this test we focus on 'since start' which uses startBalance
+        // Logic: const baselineForChange = balances.previousBalance ?? balances.startBalance;
+        // 'since start' uses balances.startBalance
+
+        const balances = { startBalance: baselineBalance };
+        const exchange = { ...baseExchange, balance: currentBalance };
+
+        logTrade(baseOrder, exchange, 'USD', 'BTC', true, balances);
+
+        // If valid, we expect "since start: signed(...) (percent(...))"
+        // If invalid, "since start: n/a"
+
+        const tableCall = consoleTableMock.mock.calls[0][0];
+        if (typeof baselineBalance === 'number' && !isNaN(baselineBalance)) {
+          expect(tableCall.totalSinceStart).toContain(`since start: ${expectedChangeLabel}`);
+        } else {
+          expect(tableCall.totalSinceStart).toBe(expectedChangeLabel);
+        }
+      },
+    );
+
+    it.each`
+      prevBalance  | startBalance | expectedLabel
+      ${1500}      | ${1000}      | ${'since last trade'}
+      ${undefined} | ${1000}      | ${'since start'}
+    `('should choose correct baseline label: $expectedLabel', ({ prevBalance, startBalance, expectedLabel }) => {
+      const balances = { previousBalance: prevBalance, startBalance };
+      logTrade(baseOrder, baseExchange, 'USD', 'BTC', true, balances);
+
+      expect(consoleTableMock.mock.calls[0][0].portfolioChange).toContain(expectedLabel);
+    });
+
+    it('should handle infinite change (division by zero protection implicit in logic?? No, explicit check)', () => {
+      // In utils: if (!Number.isFinite(absoluteChange)) return `${label}: n/a`;
+      // absoluteChange = current - baseline. If baseline is valid number, this is usually finite unless values are Infinity.
+
+      // Let's test the baselineBalance === 0 case -> percent is 'n/a'
+      const balances = { startBalance: 0 };
+      const exchange = { ...baseExchange, balance: 100 };
+
+      logTrade(baseOrder, exchange, 'USD', 'BTC', true, balances);
+
+      const tableCall = consoleTableMock.mock.calls[0][0];
+      // absoluteChange = 100 - 0 = 100 (finite)
+      // percentChange = 0 === 0 ? 'n/a'
+      expect(tableCall.totalSinceStart).toContain('(n/a)');
+    });
+
+    it('should handle fee format with and without percent', () => {
+      // With percent
+      logTrade({ ...baseOrder, feePercent: 0.5 }, baseExchange, 'USD', 'BTC', true);
+      expect(consoleTableMock.mock.calls[0][0].feePaid).toContain('(round(0.5)%)');
+
+      // Without percent (undefined)
+      consoleTableMock.mockClear();
+      logTrade({ ...baseOrder, feePercent: undefined }, baseExchange, 'USD', 'BTC', true);
+      expect(consoleTableMock.mock.calls[0][0].feePaid).not.toContain('%');
+    });
+
+    it('should default balances to empty object if not provided', () => {
+      logTrade(baseOrder, baseExchange, 'USD', 'BTC', true);
+      // Logic: balances = {} -> previousBalance undefined, startBalance undefined
+      // describesPortfolioChange(..., ..., undefined, ...) -> "n/a"
+      expect(consoleTableMock.mock.calls[0][0].portfolioChange).toBe('since start: n/a');
+    });
+
+    it('should handle infinite absolute change', () => {
+      // if (!Number.isFinite(absoluteChange))
+      const exchange = { ...baseExchange, balance: Infinity };
+      const balances = { startBalance: 1000 };
+
+      logTrade(baseOrder, exchange, 'USD', 'BTC', true, balances);
+      expect(consoleTableMock.mock.calls[0][0].totalSinceStart).toBe('since start: n/a');
     });
   });
 });

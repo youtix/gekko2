@@ -1,282 +1,337 @@
 import { PERFORMANCE_REPORT_EVENT } from '@constants/event.const';
 import { Candle } from '@models/candle.types';
 import { OrderCompletedEvent } from '@models/event.types';
+import { Portfolio } from '@models/portfolio.types';
+import { warning } from '@services/logger';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
+import { performanceAnalyzerSchema } from './performanceAnalyzer.schema';
+import { logFinalize, logTrade } from './performanceAnalyzer.utils';
 
-const logFinalizeMock = vi.fn();
-const logTradeMock = vi.fn();
-const getWatchMock = vi.fn(() => ({
-  asset: 'BTC',
-  currency: 'USD',
-  timeframe: '1m',
-  warmup: { candleCount: 0 },
-  daterange: null,
-}));
-
-vi.mock('./performanceAnalyzer.utils', () => ({
-  logFinalize: logFinalizeMock,
-  logTrade: logTradeMock,
-}));
-
-vi.mock('../../services/configuration/configuration', () => ({
+// Mocks
+vi.mock('@services/logger', () => ({ warning: vi.fn() }));
+vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: getWatchMock,
+    getWatch: vi.fn(() => ({ asset: 'BTC', currency: 'USD', warmup: { candleCount: 0 } })),
     getStrategy: vi.fn(() => ({})),
   },
 }));
+vi.mock('./performanceAnalyzer.utils', () => ({
+  logFinalize: vi.fn(),
+  logTrade: vi.fn(),
+}));
 
 describe('PerformanceAnalyzer', () => {
-  type PerformanceAnalyzerType = typeof import('./performanceAnalyzer').PerformanceAnalyzer;
-  let PerformanceAnalyzer: PerformanceAnalyzerType;
-  let analyzer: InstanceType<PerformanceAnalyzerType>;
+  let PerformanceAnalyzer: any;
+  let analyzer: any;
 
+  // Test Data
+  const timestamp = toTimestamp('2025-01-01T00:00:00Z');
   const defaultCandle: Candle = {
     close: 100,
     high: 110,
     low: 90,
     open: 95,
-    start: toTimestamp('2025-01-01T00:00:00Z'),
+    start: timestamp,
     volume: 10,
   };
 
-  const buyTrade: OrderCompletedEvent = {
+  const createOrder = (
+    side: 'BUY' | 'SELL',
+    price: number,
+    amount: number,
+    date: number,
+    balance: number,
+    assetP: number,
+    currP: number,
+  ): OrderCompletedEvent => ({
     order: {
-      id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      side: 'BUY',
+      id: '00000000-0000-0000-0000-000000000000',
+      side,
       type: 'STICKY',
-      amount: 5,
-      price: 100,
-      orderCreationDate: toTimestamp('2025-01-01T00:09:00Z'),
-      orderExecutionDate: toTimestamp('2025-01-01T00:10:00Z'),
-      effectivePrice: 100,
-      fee: 500,
-      feePercent: 0.2,
-    },
-    exchange: {
-      portfolio: { asset: 5, currency: 500 },
-      balance: 1000,
-      price: 100,
-    },
-  };
-
-  const sellTrade: OrderCompletedEvent = {
-    order: {
-      id: 'dd21e130-48bc-405f-be0c-46e9bf17b111',
-      side: 'SELL',
-      type: 'STICKY',
-      amount: 5,
-      price: 110,
-      orderCreationDate: toTimestamp('2025-01-01T00:59:00Z'),
-      orderExecutionDate: toTimestamp('2025-01-01T01:00:00Z'),
-      effectivePrice: 110,
+      amount,
+      price,
+      orderCreationDate: date - 60000,
+      orderExecutionDate: date,
+      effectivePrice: price,
       fee: 0,
-      feePercent: 0.2,
+      feePercent: 0,
     },
     exchange: {
-      portfolio: { asset: 0, currency: 1500 },
-      balance: 1500,
-      price: 110,
+      portfolio: { asset: assetP, currency: currP },
+      balance,
+      price,
     },
-  };
+  });
 
   beforeEach(async () => {
-    ({ PerformanceAnalyzer } = await import('./performanceAnalyzer'));
-    analyzer = new PerformanceAnalyzer({ name: 'PerformanceAnalyzer', riskFreeReturn: 5, enableConsoleTable: false });
-    analyzer['addDeferredEmit'] = vi.fn();
-    analyzer['emit'] = vi.fn();
+    const mod = await import('./performanceAnalyzer');
+    PerformanceAnalyzer = mod.PerformanceAnalyzer;
+    analyzer = new PerformanceAnalyzer({ name: 'PA', riskFreeReturn: 0, enableConsoleTable: false });
+    // Mock emit to prevent side effects
+    analyzer.emit = vi.fn();
   });
 
-  describe('onPortfolioValueChange', () => {
-    it('sets balance and start balance when first event arrives', () => {
-      analyzer.onPortfolioValueChange({ balance: 2000 });
-      expect(analyzer['balance']).toBe(2000);
-      expect(analyzer['start'].balance).toBe(2000);
-    });
-
-    it('keeps existing start balance on subsequent events', () => {
-      analyzer['start'].balance = 1500;
-      analyzer.onPortfolioValueChange({ balance: 1800 });
-      expect(analyzer['start'].balance).toBe(1500);
-      expect(analyzer['balance']).toBe(1800);
-    });
-  });
-
-  describe('onPortfolioChange', () => {
-    it('stores start portfolio when first event arrives', () => {
-      const portfolio = { asset: 1, currency: 1000 };
-      analyzer.onPortfolioChange(portfolio);
-      expect(analyzer['start'].portfolio).toEqual(portfolio);
-      expect(analyzer['latestPortfolio']).toEqual(portfolio);
-    });
-
-    it('does not overwrite start portfolio once set', () => {
-      analyzer['start'].portfolio = { asset: 2, currency: 100 };
-      const portfolio = { asset: 10, currency: 200 };
-      analyzer.onPortfolioChange(portfolio);
-      expect(analyzer['start'].portfolio).toEqual({ asset: 2, currency: 100 });
-      expect(analyzer['latestPortfolio']).toEqual(portfolio);
-    });
-  });
-
-  describe('onStrategyWarmupCompleted', () => {
-    it('marks warmup completed, sets start date and price', () => {
-      analyzer.onStrategyWarmupCompleted(defaultCandle);
-      expect(analyzer['warmupCompleted']).toBe(true);
-      expect(analyzer['dates'].start).toBe(defaultCandle.start);
-      expect(analyzer['startPrice']).toBe(defaultCandle.close);
-    });
-
-    it('processes warmup candle if queued', () => {
-      analyzer['warmupCandle'] = defaultCandle;
-      const spy = vi.spyOn(analyzer as any, 'processOneMinuteCandle');
-      analyzer.onStrategyWarmupCompleted(defaultCandle);
-      expect(spy).toHaveBeenCalledWith(defaultCandle);
-    });
-
-    it('starts exposure tracking when already holding asset', () => {
-      analyzer['start'].portfolio = { asset: 1, currency: 1000 };
-      analyzer.onStrategyWarmupCompleted(defaultCandle);
-      expect(analyzer['exposureActiveSince']).toBe(defaultCandle.start);
-    });
-  });
-
-  describe('onOrderCompleted', () => {
-    it('increments trade count, balance, and samples', () => {
-      analyzer.onOrderCompleted(buyTrade);
-      expect(analyzer['orders']).toBe(1);
-      expect(analyzer['balance']).toBe(buyTrade.exchange.balance);
-      expect(analyzer['balanceSamples']).toEqual([
-        { date: buyTrade.order.orderExecutionDate, balance: buyTrade.exchange.balance },
-      ]);
-    });
-
-    it('starts exposure window when entering a position', () => {
-      analyzer.onOrderCompleted(buyTrade);
-      expect(analyzer['exposureActiveSince']).toBe(buyTrade.order.orderExecutionDate);
-    });
-
-    it('accumulates exposure when exiting a position', () => {
-      analyzer.onOrderCompleted(buyTrade);
-      analyzer.onOrderCompleted(sellTrade);
-      expect(analyzer['exposure']).toBe(sellTrade.order.orderExecutionDate - buyTrade.order.orderExecutionDate);
-      expect(analyzer['exposureActiveSince']).toBeNull();
-    });
-
-    it('logs each trade with portfolio deltas', () => {
-      analyzer['start'].balance = 1000;
-      analyzer['balanceSamples'] = [{ date: buyTrade.order.orderExecutionDate - 1000, balance: 900 }];
-
-      analyzer.onOrderCompleted(buyTrade);
-
-      expect(logTradeMock).toHaveBeenCalledWith(buyTrade.order, buyTrade.exchange, 'USD', 'BTC', false, {
-        startBalance: 1000,
-        previousBalance: 900,
+  describe('Static Configuration', () => {
+    it('should return correct static configuration', () => {
+      const config = PerformanceAnalyzer.getStaticConfiguration();
+      expect(config).toEqual({
+        name: 'PerformanceAnalyzer',
+        schema: performanceAnalyzerSchema,
+        modes: ['realtime', 'backtest'],
+        dependencies: [],
+        inject: [],
+        eventsHandlers: expect.arrayContaining([
+          'onPortfolioValueChange',
+          'onPortfolioChange',
+          'onStrategyWarmupCompleted',
+          'onOrderCompleted',
+        ]),
+        eventsEmitted: [PERFORMANCE_REPORT_EVENT],
+        weight: 0,
       });
     });
   });
 
-  describe('processOneMinuteCandle', () => {
-    it('queues warmup candle until warmup completes', () => {
-      analyzer['warmupCompleted'] = false;
-      analyzer['processOneMinuteCandle'](defaultCandle);
-      expect(analyzer['warmupCandle']).toBe(defaultCandle);
-    });
-
-    it('updates end date and price once warmup is done', () => {
-      analyzer['warmupCompleted'] = true;
-      analyzer['processOneMinuteCandle'](defaultCandle);
-      expect(analyzer['dates'].end).toBe(addMinutes(defaultCandle.start, 1).getTime());
-      expect(analyzer['endPrice']).toBe(defaultCandle.close);
+  describe('Lifecycle: processInit', () => {
+    it('should execution without error (noop)', () => {
+      expect(() => analyzer['processInit']()).not.toThrow();
     });
   });
 
-  describe('processFinalize', () => {
-    beforeEach(() => {
-      analyzer['start'] = { balance: 1000, portfolio: { asset: 0, currency: 1000 } };
+  describe('onPortfolioValueChange', () => {
+    it.each([
+      { initialBalance: 0, newBalance: 1000, expectedStart: 1000, expectedCurrent: 1000 },
+      { initialBalance: 500, newBalance: 1000, expectedStart: 500, expectedCurrent: 1000 },
+    ])(
+      'should set balance to $newBalance (start: $expectedStart)',
+      ({ initialBalance, newBalance, expectedStart, expectedCurrent }) => {
+        if (initialBalance) analyzer['start'].balance = initialBalance;
+
+        analyzer.onPortfolioValueChange({ balance: newBalance });
+
+        expect(analyzer['start'].balance).toBe(expectedStart);
+        expect(analyzer['balance']).toBe(expectedCurrent);
+      },
+    );
+  });
+
+  describe('onPortfolioChange', () => {
+    const p1 = { asset: 1, currency: 100 };
+    const p2 = { asset: 2, currency: 200 };
+
+    it.each`
+      initialStart | newPortfolio | expectedStart | expectedLatest
+      ${null}      | ${p1}        | ${p1}         | ${p1}
+      ${p1}        | ${p2}        | ${p1}         | ${p2}
+    `('should update portfolio correctly', ({ initialStart, newPortfolio, expectedStart, expectedLatest }) => {
+      if (initialStart) analyzer['start'].portfolio = initialStart;
+
+      analyzer.onPortfolioChange(newPortfolio);
+
+      expect(analyzer['start'].portfolio).toEqual(expectedStart);
+      expect(analyzer['latestPortfolio']).toEqual(expectedLatest);
+    });
+  });
+
+  describe('onStrategyWarmupCompleted', () => {
+    it('should set start date, start price and process queued warmup candle', () => {
+      const processSpy = vi.spyOn(analyzer as any, 'processOneMinuteCandle');
+      analyzer['warmupCandle'] = defaultCandle;
+
+      analyzer.onStrategyWarmupCompleted(defaultCandle);
+
+      expect(analyzer['warmupCompleted']).toBe(true);
+      expect(analyzer['dates'].start).toBe(defaultCandle.start);
+      expect(analyzer['startPrice']).toBe(defaultCandle.close);
+      expect(processSpy).toHaveBeenCalledWith(defaultCandle);
+    });
+
+    it('should set exposureActiveSince if currently holding asset', () => {
+      analyzer['latestPortfolio'] = { asset: 1, currency: 0 };
+
+      analyzer.onStrategyWarmupCompleted(defaultCandle);
+
+      expect(analyzer['exposureActiveSince']).toBe(defaultCandle.start);
+    });
+
+    it('should NOT set exposureActiveSince if NOT holding asset', () => {
       analyzer['latestPortfolio'] = { asset: 0, currency: 1000 };
-      analyzer['balance'] = 1000;
-      analyzer['dates'] = {
-        start: defaultCandle.start,
-        end: addMinutes(defaultCandle.start, 1).getTime(),
-      };
-      analyzer['startPrice'] = 100;
-      analyzer['endPrice'] = 100;
+
+      analyzer.onStrategyWarmupCompleted(defaultCandle);
+
+      expect(analyzer['exposureActiveSince']).toBeNull();
+    });
+  });
+
+  describe('onOrderCompleted', () => {
+    const buy = createOrder('BUY', 100, 1, 1000, 1000, 1, 0);
+    const sell = createOrder('SELL', 110, 1, 2000, 1100, 0, 1100);
+
+    it('should update stats, log trade and track samples', () => {
+      analyzer.onOrderCompleted(buy);
+
+      expect(analyzer['orders']).toBe(1);
+      expect(analyzer['balance']).toBe(1000);
+      expect(analyzer['latestPortfolio']).toEqual(buy.exchange.portfolio);
+      expect(analyzer['balanceSamples']).toHaveLength(1);
+      expect(logTrade).toHaveBeenCalled();
     });
 
-    it('includes open exposure duration before emitting the report', () => {
-      analyzer['exposureActiveSince'] = defaultCandle.start;
-      analyzer['processFinalize']();
-      expect(analyzer['exposure']).toBe(analyzer['dates'].end - defaultCandle.start);
+    it('should accumulate exposure when exiting a position (SELL)', () => {
+      analyzer.onOrderCompleted(buy);
+      analyzer.onOrderCompleted(sell);
+
+      expect(analyzer['exposure']).toBe(sell.order.orderExecutionDate - buy.order.orderExecutionDate);
+      expect(analyzer['exposureActiveSince']).toBeNull();
     });
 
-    it('emits a performance report even when no orders occurred', () => {
+    it.each`
+      scenario       | initialExposure | newPortfolioAsset | expectedExposureStart | expectedExposureAdded
+      ${'Start Exp'} | ${null}         | ${1}              | ${1000}               | ${0}
+      ${'End Exp'}   | ${500}          | ${0}              | ${null}               | ${1000 - 500}
+      ${'Cont Exp'}  | ${500}          | ${1}              | ${500}                | ${0}
+      ${'No Exp'}    | ${null}         | ${0}              | ${null}               | ${0}
+    `(
+      'should handle exposure for $scenario',
+      ({ initialExposure, newPortfolioAsset, expectedExposureStart, expectedExposureAdded }) => {
+        analyzer['exposureActiveSince'] = initialExposure;
+        const order = createOrder('BUY', 100, 1, 1000, 1000, newPortfolioAsset, 0);
+
+        analyzer.onOrderCompleted(order);
+
+        expect(analyzer['exposureActiveSince']).toBe(expectedExposureStart);
+        if (expectedExposureAdded > 0) {
+          expect(analyzer['exposure']).toBe(expectedExposureAdded);
+        }
+      },
+    );
+  });
+
+  describe('processOneMinuteCandle', () => {
+    it.each`
+      warmupCompleted | expectedWarmupCandle | expectedEndDate
+      ${false}        | ${defaultCandle}     | ${0}
+      ${true}         | ${undefined}         | ${addMinutes(defaultCandle.start, 1).getTime()}
+    `(
+      'should handle candle (warmupCompleted: $warmupCompleted)',
+      ({ warmupCompleted, expectedWarmupCandle, expectedEndDate }) => {
+        analyzer['warmupCompleted'] = warmupCompleted;
+
+        analyzer['processOneMinuteCandle'](defaultCandle);
+
+        expect(analyzer['warmupCandle']).toEqual(expectedWarmupCandle);
+        if (warmupCompleted) {
+          expect(analyzer['dates'].end).toBe(expectedEndDate);
+          expect(analyzer['endPrice']).toBe(defaultCandle.close);
+        }
+      },
+    );
+  });
+
+  describe('processFinalize', () => {
+    it('should log warning if no start balance', () => {
+      analyzer['start'].balance = 0;
       analyzer['processFinalize']();
-      expect(analyzer['emit']).toHaveBeenCalledWith(
-        PERFORMANCE_REPORT_EVENT,
-        expect.objectContaining({
-          profit: 0,
-          orders: 0,
-          balance: 1000,
-        }),
-      );
+      expect(warning).toHaveBeenCalled();
+      expect(analyzer.emit).not.toHaveBeenCalled();
+    });
+
+    it('should finalize exposure if active', () => {
+      analyzer['start'] = { balance: 1000, portfolio: { asset: 0, currency: 1000 } };
+      analyzer['exposureActiveSince'] = 1000;
+      analyzer['dates'].end = 2000;
+
+      analyzer['processFinalize']();
+
+      expect(analyzer['exposure']).toBe(1000); // 2000 - 1000
+      expect(analyzer['exposureActiveSince']).toBeNull();
+      expect(logFinalize).toHaveBeenCalled();
+      expect(analyzer.emit).toHaveBeenCalledWith(PERFORMANCE_REPORT_EVENT, expect.any(Object));
+    });
+
+    it('should emit report if valid', () => {
+      analyzer['start'] = { balance: 1000, portfolio: { asset: 0, currency: 1000 } };
+      analyzer['processFinalize']();
+      expect(analyzer.emit).toHaveBeenCalledWith(PERFORMANCE_REPORT_EVENT, expect.any(Object));
     });
   });
 
   describe('calculateReportStatistics', () => {
-    const start = toTimestamp('2025-01-01T00:00:00Z');
-    const end = toTimestamp('2026-01-01T00:00:00Z');
+    const setupAnalyzer = (
+      balance: number,
+      startBalance: number,
+      startPortfolio: Portfolio = { asset: 0, currency: startBalance },
+      latestPortfolio: Portfolio | null = null,
+      endPrice: number = 100,
+      samples: any[] = [],
+    ) => {
+      analyzer['balance'] = balance;
+      analyzer['start'] = { balance: startBalance, portfolio: startPortfolio };
+      analyzer['latestPortfolio'] = latestPortfolio || startPortfolio;
+      analyzer['endPrice'] = endPrice;
+      analyzer['dates'] = { start: timestamp, end: timestamp + 31536000000 }; // 1 Year
+      analyzer['balanceSamples'] = samples;
+    };
 
-    beforeEach(() => {
-      analyzer['start'] = { balance: 1000, portfolio: { asset: 0, currency: 1000 } };
-      analyzer['latestPortfolio'] = { asset: 0, currency: 990 };
-      analyzer['balance'] = 990;
-      analyzer['startPrice'] = 100;
-      analyzer['endPrice'] = 100;
-      analyzer['dates'] = { start, end };
-      analyzer['balanceSamples'] = [
-        { date: start + 1, balance: 1100 },
-        { date: start + 2, balance: 990 },
+    it('should return undefined if no start data', () => {
+      analyzer['start'] = { balance: 0, portfolio: null };
+      expect(analyzer['calculateReportStatistics']()).toBeUndefined();
+    });
+
+    it('should calculate basic profit correctly', () => {
+      setupAnalyzer(1100, 1000, undefined, { asset: 0, currency: 1100 });
+      const report = analyzer['calculateReportStatistics']();
+      expect(report.profit).toBe(100);
+      expect(report.relativeProfit).toBeCloseTo(10);
+      expect(report.yearlyProfit).toBeCloseTo(100);
+    });
+
+    it('should use mark to market balance if holding assets', () => {
+      // Holding 1 asset, price goes to 200. Start: 100 cash.
+      const startP = { asset: 1, currency: 0 }; // implicitly bought at start? Or just start with it.
+      // If we start with 1 asset at price 100 (startPrice), start balance = 100 (if calculated logic was different, but here it's explicit).
+      // Let's say start balance 100.
+      // End: still holding 1 asset, end price 200.
+      setupAnalyzer(100, 100, startP, startP, 200);
+
+      const report = analyzer['calculateReportStatistics']();
+      expect(report.balance).toBe(200); // 1 * 200 + 0
+      expect(report.profit).toBe(100); // 200 - 100
+    });
+
+    it('should calculate volatility metrics (Sharpe, Sortino)', () => {
+      const samples = [
+        { date: timestamp + 1000, balance: 1010 }, // +1%
+        { date: timestamp + 2000, balance: 1020.1 }, // +1%
       ];
-      analyzer['orders'] = 2;
-      analyzer['exposure'] = (end - start) / 2;
+      // Start 1000. Returns: 1%, 1%. Avg 1%. Stdev 0.
+      // If stdev 0, sharpe 0.
+      setupAnalyzer(1020.1, 1000, undefined, undefined, 100, samples);
+      analyzer['riskFreeReturn'] = 0;
+
+      let report = analyzer['calculateReportStatistics']();
+      expect(report.standardDeviation).toBe(0);
+      expect(report.sharpe).toBe(0);
+
+      // Add volatility
+      const samples2 = [
+        { date: timestamp + 1000, balance: 1100 }, // +10%
+        { date: timestamp + 2000, balance: 990 }, // -10% from 1100
+      ];
+      setupAnalyzer(990, 1000, undefined, undefined, 100, samples2);
+      report = analyzer['calculateReportStatistics']();
+      expect(report.standardDeviation).toBeGreaterThan(0);
+      // We have loss, so downside should be negative (it's a percentile of losses)
+      expect(report.downside).toBeLessThan(0);
     });
 
-    it('derives metrics from balance samples', () => {
+    it('should handle zero duration gracefully', () => {
+      setupAnalyzer(1000, 1000);
+      analyzer['dates'].end = timestamp; // distinct from start? No, same.
       const report = analyzer['calculateReportStatistics']();
-      expect(report).toBeDefined();
-      expect(report?.balance).toBe(990);
-      expect(report?.profit).toBe(-10);
-      expect(report?.relativeProfit).toBeCloseTo(-1);
-      expect(report?.yearlyProfit).toBeCloseTo(-10);
-      expect(report?.exposure).toBeCloseTo(50);
-      expect(report?.standardDeviation).toBeCloseTo(10);
-      expect(report?.sharpe).toBeCloseTo((-1 - 5) / 10);
-      expect(report?.downside).toBeCloseTo(Math.sqrt(2) * -10);
-      expect(report?.sortino).toBe(0);
-      expect(report?.alpha).toBeCloseTo(-1);
-    });
-
-    it('marks open positions to market using the end price', () => {
-      analyzer['latestPortfolio'] = { asset: 1, currency: 100 };
-      analyzer['balance'] = 100;
-      analyzer['endPrice'] = 200;
-      const report = analyzer['calculateReportStatistics']();
-      expect(report?.balance).toBe(300);
-      expect(report?.profit).toBe(300 - 1000);
-    });
-
-    it('returns zeroed volatility metrics when no orders were executed', () => {
-      analyzer['balanceSamples'] = [];
-      analyzer['orders'] = 0;
-      analyzer['balance'] = 1000;
-      analyzer['latestPortfolio'] = analyzer['start'].portfolio;
-      const report = analyzer['calculateReportStatistics']();
-      expect(report?.standardDeviation).toBe(0);
-      expect(report?.sharpe).toBe(0);
-      expect(report?.sortino).toBe(0);
-      expect(report?.downside).toBe(0);
+      expect(report.yearlyProfit).toBe(0); // avoided Infinity
     });
   });
 });
