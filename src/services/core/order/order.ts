@@ -140,7 +140,7 @@ export abstract class Order extends EventEmitter {
       exchange: this.exchange,
       type: this.type,
       side: this.side,
-      transactions: this.transactions.values().toArray(),
+      transactions: Array.from(this.transactions.values()),
     });
   }
 

@@ -31,7 +31,7 @@ export class StickyOrder extends Order {
 
   public async launch(): Promise<void> {
     const price = await this.processStickyPrice();
-    const filledAmount = sumBy(this.transactions.values().toArray(), 'filled');
+    const filledAmount = sumBy(Array.from(this.transactions.values()), 'filled');
 
     // Creating initial order
     this.createLimitOrder(this.side, this.amount - filledAmount, price);
@@ -89,7 +89,7 @@ export class StickyOrder extends Order {
   }
 
   private isOrderPartiallyFilled() {
-    return !this.isOrderCompleted() && sumBy(this.transactions.values().toArray(), 'filled') > 0;
+    return !this.isOrderCompleted() && sumBy(Array.from(this.transactions.values()), 'filled') > 0;
   }
 
   private updateTransactionPartialFilledAmount(id: string, filled = 0) {
@@ -130,7 +130,7 @@ export class StickyOrder extends Order {
 
     if (status === 'canceled') {
       clearInterval(this.interval);
-      const totalFilled = sumBy(this.transactions.values().toArray(), 'filled');
+      const totalFilled = sumBy(Array.from(this.transactions.values()), 'filled');
       const remainingAmount = Math.max(this.amount - totalFilled, 0);
       return Promise.resolve(this.orderCanceled({ filled: totalFilled, remaining: remainingAmount, timestamp }));
     }
@@ -167,7 +167,7 @@ export class StickyOrder extends Order {
       ].join(' '),
     );
 
-    const totalFilledOfAllTransactions = sumBy(this.transactions.values().toArray(), 'filled') + (filled ?? 0);
+    const totalFilledOfAllTransactions = sumBy(Array.from(this.transactions.values()), 'filled') + (filled ?? 0);
     if (remaining === 0 || this.amount === totalFilledOfAllTransactions) {
       clearInterval(this.interval);
       return Promise.resolve(this.orderFilled());
@@ -215,7 +215,7 @@ export class StickyOrder extends Order {
 
     if (status === 'canceled') {
       clearInterval(this.interval);
-      const totalFilled = sumBy(this.transactions.values().toArray(), 'filled');
+      const totalFilled = sumBy(Array.from(this.transactions.values()), 'filled');
       const remainingAmount = Math.max(this.amount - totalFilled, 0);
       return Promise.resolve(this.orderCanceled({ filled: totalFilled, remaining: remainingAmount, timestamp }));
     }
