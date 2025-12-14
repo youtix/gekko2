@@ -43,5 +43,5 @@ export const computeOrderPricing: ComputeOrderPricingFn = (side, price, amount, 
 };
 
 export const isEmptyPortfolio = (portfolio: Portfolio) => {
-  return portfolio.asset <= 0 && portfolio.currency <= 0;
+  return portfolio.asset.total <= 0 && portfolio.currency.total <= 0;
 };

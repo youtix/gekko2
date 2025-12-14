@@ -148,7 +148,10 @@ describe('StrategyManager', () => {
         const initArgs = strategy.init.mock.calls[0]?.[0];
         expect(initArgs).toMatchObject({
           candle,
-          portfolio: { asset: 0, currency: 0 },
+          portfolio: {
+            asset: { free: 0, used: 0, total: 0 },
+            currency: { free: 0, used: 0, total: 0 },
+          },
           addIndicator: manager['addIndicator'],
         });
         expect(initArgs.tools).toEqual({
@@ -165,7 +168,10 @@ describe('StrategyManager', () => {
         const [params, indicatorResult] = strategy.onEachTimeframeCandle.mock.calls[0] as [any, number];
         expect(params).toMatchObject({
           candle,
-          portfolio: { asset: 0, currency: 0 },
+          portfolio: {
+            asset: { free: 0, used: 0, total: 0 },
+            currency: { free: 0, used: 0, total: 0 },
+          },
           tools: expect.objectContaining({
             strategyParams: { each: 1, wait: 0 },
             marketData: defaultMarketData,
@@ -289,7 +295,10 @@ describe('StrategyManager', () => {
   describe('setters function', () => {
     describe('setPortfolio', () => {
       it('updates the portfolio reference used by tools', () => {
-        const portfolio = { asset: 2, currency: 3 };
+        const portfolio = {
+          asset: { free: 2, used: 0, total: 2 },
+          currency: { free: 3, used: 0, total: 3 },
+        };
         const strategy = {
           init: vi.fn(),
           onEachTimeframeCandle: vi.fn(),

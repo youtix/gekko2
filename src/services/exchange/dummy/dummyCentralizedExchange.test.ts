@@ -91,7 +91,10 @@ describe('DummyCentralizedExchange', () => {
 
     await exchange.loadMarkets();
 
-    await expect(exchange.fetchBalance()).resolves.toEqual({ asset: 1, currency: 1_000 });
+    await expect(exchange.fetchBalance()).resolves.toEqual({
+      asset: { free: 1, used: 0, total: 1 },
+      currency: { free: 1_000, used: 0, total: 1_000 },
+    });
     await expect(exchange.fetchTicker()).resolves.toEqual({ bid: 200, ask: 201 });
     await expect(exchange.fetchOHLCV({})).resolves.toEqual([]);
   });
@@ -104,8 +107,9 @@ describe('DummyCentralizedExchange', () => {
     const buyOrder = await exchange.createLimitOrder('BUY', 1, 100);
     const makerFeeRate = baseConfig.marketData.fee.maker ?? 0;
     const reservedPortfolio = await exchange.fetchBalance();
-    expect(reservedPortfolio.currency).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
-    expect(reservedPortfolio.asset).toBe(2);
+    expect(reservedPortfolio.currency.total).toBe(1_000);
+    expect(reservedPortfolio.currency.free).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
+    expect(reservedPortfolio.asset.total).toBe(2);
 
     const fillCandle = sampleCandle(Date.now(), {
       low: buyOrder.price ?? 0,
@@ -120,18 +124,19 @@ describe('DummyCentralizedExchange', () => {
     expect(filledOrder.filled).toBe(1);
 
     const portfolioAfterFill = await exchange.fetchBalance();
-    expect(portfolioAfterFill.asset).toBeCloseTo(3);
-    expect(portfolioAfterFill.currency).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
+    expect(portfolioAfterFill.asset.total).toBeCloseTo(3);
+    expect(portfolioAfterFill.currency.total).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
 
     const sellOrder = await exchange.createLimitOrder('SELL', 1, 100);
     const reservedAfterSell = await exchange.fetchBalance();
-    expect(reservedAfterSell.asset).toBeCloseTo(2);
+    expect(reservedAfterSell.asset.total).toBeCloseTo(3);
+    expect(reservedAfterSell.asset.free).toBeCloseTo(2);
 
     const canceled = await exchange.cancelOrder(sellOrder.id);
     expect(canceled.status).toBe('canceled');
 
     const restoredPortfolio = await exchange.fetchBalance();
-    expect(restoredPortfolio.asset).toBeCloseTo(3);
+    expect(restoredPortfolio.asset.total).toBeCloseTo(3);
   });
 
   it('validates limits and cost before creating orders', async () => {
@@ -164,17 +169,17 @@ describe('DummyCentralizedExchange', () => {
     expect(buyOrder.remaining).toBe(0);
 
     const afterBuy = await exchange.fetchBalance();
-    const expectedBuyCurrency = initialPortfolio.currency - 2 * ask * (1 + takerFeeRate);
-    expect(afterBuy.asset).toBeCloseTo(initialPortfolio.asset + 2, 8);
-    expect(afterBuy.currency).toBeCloseTo(expectedBuyCurrency, 8);
+    const expectedBuyCurrency = initialPortfolio.currency.total - 2 * ask * (1 + takerFeeRate);
+    expect(afterBuy.asset.total).toBeCloseTo(initialPortfolio.asset.total + 2, 8);
+    expect(afterBuy.currency.total).toBeCloseTo(expectedBuyCurrency, 8);
 
     const sellOrder = await exchange.createMarketOrder('SELL', 1);
     expect(sellOrder.status).toBe('closed');
 
     const afterSell = await exchange.fetchBalance();
     const expectedSellCurrency = expectedBuyCurrency + 1 * bid * (1 - takerFeeRate);
-    expect(afterSell.asset).toBeCloseTo(initialPortfolio.asset + 1, 8);
-    expect(afterSell.currency).toBeCloseTo(expectedSellCurrency, 8);
+    expect(afterSell.asset.total).toBeCloseTo(initialPortfolio.asset.total + 1, 8);
+    expect(afterSell.currency.total).toBeCloseTo(expectedSellCurrency, 8);
 
     const trades = await exchange.fetchMyTrades();
     expect(trades).toHaveLength(2);
@@ -204,8 +209,9 @@ describe('DummyCentralizedExchange', () => {
     const buyCost = buyPrice * 2;
 
     const afterBuyReservation = await exchange.fetchBalance();
-    expect(afterBuyReservation.currency).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
-    expect(afterBuyReservation.asset).toBeCloseTo(5);
+    expect(afterBuyReservation.currency.total).toBe(10_000);
+    expect(afterBuyReservation.currency.free).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
+    expect(afterBuyReservation.asset.total).toBeCloseTo(5);
 
     const buyFillCandle = sampleCandle(Date.now(), {
       low: buyPrice,
@@ -215,14 +221,15 @@ describe('DummyCentralizedExchange', () => {
     await exchange.processOneMinuteCandle(buyFillCandle);
 
     const afterBuyFill = await exchange.fetchBalance();
-    expect(afterBuyFill.asset).toBeCloseTo(7);
-    expect(afterBuyFill.currency).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
+    expect(afterBuyFill.asset.total).toBeCloseTo(7);
+    expect(afterBuyFill.currency.total).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
 
     const sellOrder = await exchange.createLimitOrder('SELL', 1, 100);
     const sellPrice = sellOrder.price ?? 0;
     const afterSellReservation = await exchange.fetchBalance();
-    expect(afterSellReservation.asset).toBeCloseTo(6);
-    expect(afterSellReservation.currency).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
+    expect(afterSellReservation.asset.total).toBeCloseTo(7);
+    expect(afterSellReservation.asset.free).toBeCloseTo(6);
+    expect(afterSellReservation.currency.total).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
 
     const sellFillCandle = sampleCandle(Date.now() + 60_000, {
       high: sellPrice,
@@ -233,8 +240,8 @@ describe('DummyCentralizedExchange', () => {
 
     const afterSellFill = await exchange.fetchBalance();
     const expectedCurrencyAfterSell = 10_000 - buyCost * (1 + makerFeeRate) + sellPrice * (1 - makerFeeRate);
-    expect(afterSellFill.asset).toBeCloseTo(6);
-    expect(afterSellFill.currency).toBeCloseTo(expectedCurrencyAfterSell);
+    expect(afterSellFill.asset.total).toBeCloseTo(6);
+    expect(afterSellFill.currency.total).toBeCloseTo(expectedCurrencyAfterSell);
 
     const trades = await exchange.fetchMyTrades();
     expect(trades).toHaveLength(2);

@@ -254,7 +254,10 @@ describe('CCXTExchange', () => {
       const result = await exchange.fetchBalance();
 
       expect(instance.fetchBalance).toHaveBeenCalled();
-      expect(result).toEqual({ asset: 1.5, currency: 1000 });
+      expect(result).toEqual({
+        asset: { free: 1.5, used: 0, total: 0 },
+        currency: { free: 1000, used: 0, total: 0 },
+      });
     });
 
     it.each`

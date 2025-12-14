@@ -44,7 +44,10 @@ export class StrategyManager extends EventEmitter {
     this.age = 0;
     this.indicators = [];
     this.strategyParams = config.getStrategy() ?? {};
-    this.portfolio = { asset: 0, currency: 0 };
+    this.portfolio = {
+      asset: { free: 0, used: 0, total: 0 },
+      currency: { free: 0, used: 0, total: 0 },
+    };
     this.marketData = null;
     this.oneMinuteCandle = null;
 

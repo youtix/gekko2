@@ -71,7 +71,7 @@ describe('DummyCentralizedExchange Concurrency', () => {
     expect(rejected).toHaveLength(0);
 
     const portfolio = await exchange.fetchBalance();
-    expect(portfolio.currency).toBe(0);
+    expect(portfolio.currency.free).toBe(0);
   });
 
   it('should prevent overspending with concurrent orders', async () => {
@@ -92,6 +92,6 @@ describe('DummyCentralizedExchange Concurrency', () => {
     expect(rejected).toHaveLength(1);
 
     const portfolio = await exchange.fetchBalance();
-    expect(portfolio.currency).toBe(0);
+    expect(portfolio.currency.free).toBe(0);
   });
 });

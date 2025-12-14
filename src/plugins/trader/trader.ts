@@ -14,7 +14,7 @@ import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
-import { Portfolio } from '@models/portfolio.types';
+import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
@@ -34,7 +34,7 @@ export class Trader extends Plugin {
   private warmupCompleted: boolean;
   private warmupCandle: Nullable<Candle>;
   private portfolio: Portfolio;
-  private balance: number;
+  private balance: BalanceDetail;
   private price: number;
   private currentTimestamp: EpochTimeStamp;
   private syncInterval: NodeJS.Timeout | null;
@@ -44,8 +44,11 @@ export class Trader extends Plugin {
     this.orders = new Map();
     this.warmupCompleted = false;
     this.warmupCandle = null;
-    this.portfolio = { asset: 0, currency: 0 };
-    this.balance = 0;
+    this.portfolio = {
+      asset: { free: 0, used: 0, total: 0 },
+      currency: { free: 0, used: 0, total: 0 },
+    };
+    this.balance = { free: 0, used: 0, total: 0 };
     this.price = 0;
     this.currentTimestamp = 0;
     this.syncInterval = null;
@@ -65,16 +68,20 @@ export class Trader extends Plugin {
     const { bid } = await exchange.fetchTicker();
     this.portfolio = await exchange.fetchBalance();
     this.price = bid;
-    this.balance = this.price * this.portfolio.asset + this.portfolio.currency;
+    this.balance = {
+      free: this.price * this.portfolio.asset.free + this.portfolio.currency.free,
+      used: this.price * this.portfolio.asset.used + this.portfolio.currency.used,
+      total: this.price * this.portfolio.asset.total + this.portfolio.currency.total,
+    };
 
     debug(
       'trader',
-      `Current portfolio: ${this.portfolio.asset} ${this.asset} / ${this.portfolio.currency} ${this.currency}`,
+      `Current portfolio: ${this.portfolio.asset.total} ${this.asset} / ${this.portfolio.currency.total} ${this.currency}`,
     );
 
     // Emit portfolio events if changes are detected
     if (!isEqual(oldPortfolio, this.portfolio)) this.emitPortfolioChangeEvent();
-    if (oldBalance !== this.balance) this.emitPortfolioValueChangeEvent();
+    if (!isEqual(oldBalance, this.balance)) this.emitPortfolioValueChangeEvent();
   }
 
   /* -------------------------------------------------------------------------- */
@@ -83,14 +90,14 @@ export class Trader extends Plugin {
 
   private emitPortfolioChangeEvent() {
     this.addDeferredEmit(PORTFOLIO_CHANGE_EVENT, {
-      asset: this.portfolio.asset,
-      currency: this.portfolio.currency,
+      asset: { ...this.portfolio.asset },
+      currency: { ...this.portfolio.currency },
     });
   }
 
   private emitPortfolioValueChangeEvent() {
     this.addDeferredEmit(PORTFOLIO_VALUE_CHANGE_EVENT, {
-      balance: this.balance,
+      balance: { ...this.balance },
     });
   }
 
@@ -184,7 +191,7 @@ export class Trader extends Plugin {
 
     // Price cannot be zero here because we call processOneMinuteCandle before events (plugins stream)
     // We delegate the order validation (notional, lot, amount) to the exchange
-    const computedAmount = side === 'BUY' ? (currency / price) * (1 - DEFAULT_FEE_BUFFER) : asset;
+    const computedAmount = side === 'BUY' ? (currency.free / price) * (1 - DEFAULT_FEE_BUFFER) : asset.free;
     const amount = advice.amount ?? computedAmount;
 
     // Emit order initiated event

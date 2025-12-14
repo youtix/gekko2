@@ -1,4 +1,10 @@
+export type BalanceDetail = {
+  free: number;
+  used: number;
+  total: number;
+};
+
 export type Portfolio = {
-  asset: number;
-  currency: number;
+  asset: BalanceDetail;
+  currency: BalanceDetail;
 };

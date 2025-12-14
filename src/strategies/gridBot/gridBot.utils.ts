@@ -127,8 +127,8 @@ export const resolveLevelQuantity = (
   if (override && override > 0) return override;
   if (levelsPerSide <= 0) return 0;
   const perSide = Math.max(1, levelsPerSide);
-  const assetShare = portfolio.asset / perSide;
-  const currencyShare = portfolio.currency / (perSide * Math.max(centerPrice, Number.EPSILON));
+  const assetShare = portfolio.asset.free / perSide;
+  const currencyShare = portfolio.currency.free / (perSide * Math.max(centerPrice, Number.EPSILON));
   const derived = Math.min(assetShare, currencyShare);
 
   // Round quantity to avoid floating point number problem when comparing with exchange
@@ -179,8 +179,8 @@ export const computeAffordableLevels = (
   if (maxLevels <= 0 || quantity <= 0) return 0;
   const highestBuyPrice = computeLevelPrice(centerPrice, -1, priceDecimals, spacingType, spacingValue, priceStep);
   if (highestBuyPrice <= 0) return 0;
-  const maxBuys = Math.floor(portfolio.currency / (quantity * highestBuyPrice));
-  const maxSells = Math.floor(portfolio.asset / quantity);
+  const maxBuys = Math.floor(portfolio.currency.free / (quantity * highestBuyPrice));
+  const maxSells = Math.floor(portfolio.asset.free / quantity);
   return Math.max(0, Math.min(maxLevels, maxBuys, maxSells));
 };
 
@@ -193,12 +193,12 @@ export const validateRebalancePlan = (
   const { side, amount, tolerancePercent, estimatedNotional } = plan;
   if (!Number.isFinite(amount) || amount <= 0) return false;
 
-  if (side === 'SELL' && amount > portfolio.asset) {
+  if (side === 'SELL' && amount > portfolio.asset.free) {
     log('warn', 'GridBot rebalance skipped: insufficient asset balance for planned sell.');
     return false;
   }
 
-  if (side === 'BUY' && estimatedNotional > portfolio.currency) {
+  if (side === 'BUY' && estimatedNotional > portfolio.currency.free) {
     log('warn', 'GridBot rebalance skipped: insufficient currency balance for planned buy.');
     return false;
   }
@@ -256,8 +256,8 @@ export const computeRebalancePlan = (
   const centerPrice = roundPrice(currentPrice, priceDecimals, priceStep);
   if (!Number.isFinite(centerPrice) || centerPrice <= 0) return null;
 
-  const currentAssetValue = portfolio.asset * centerPrice;
-  const currentCurrencyValue = portfolio.currency;
+  const currentAssetValue = portfolio.asset.total * centerPrice;
+  const currentCurrencyValue = portfolio.currency.total;
   const totalValue = currentAssetValue + currentCurrencyValue;
   if (!Number.isFinite(totalValue) || totalValue <= 0) return null;
 

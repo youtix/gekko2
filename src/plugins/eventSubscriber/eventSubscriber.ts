@@ -87,8 +87,8 @@ export class EventSubscriber extends Plugin {
     const message = [
       `${side} ${type} order created (${id})`,
       `Requested amount: ${amount}`,
-      `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
-      `Current balance: ${balance}`,
+      `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
+      `Current balance: ${balance.total}`,
       priceLine,
       `At time: ${toISOString(orderCreationDate)}`,
     ].join('\n');
@@ -136,7 +136,7 @@ export class EventSubscriber extends Plugin {
       `Fee percent: ${feePercent ?? '0'}%`,
       `Fee: ${fee} ${this.currency}`,
       `At time: ${toISOString(orderExecutionDate)}`,
-      `Current portfolio: ${portfolio.asset} ${this.asset} / ${portfolio.currency} ${this.currency}`,
+      `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
       `Current balance: ${balance}`,
     ].join('\n');
     this.bot.sendMessage(message);

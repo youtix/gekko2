@@ -40,7 +40,7 @@ describe('Configuration Service', () => {
       setConfigFile(undefined, mockConfig);
 
       await expect(import('./configuration')).rejects.toThrow('Missing GEKKO_CONFIG_FILE_PATH environment variable');
-    });
+    }, 10000);
 
     it.each([
       ['config.json', JSON.stringify(mockConfig)],

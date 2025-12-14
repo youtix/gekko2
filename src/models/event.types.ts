@@ -1,6 +1,6 @@
 import { UUID } from 'node:crypto';
 import { OrderSide, OrderType } from './order.types';
-import { Portfolio } from './portfolio.types';
+import { BalanceDetail, Portfolio } from './portfolio.types';
 
 export type DeffferedEvent = {
   name: string;
@@ -24,7 +24,7 @@ export type ExchangeEvent = {
   /** Current portfolio value */
   portfolio: Portfolio;
   /** Current balance value */
-  balance: number;
+  balance: BalanceDetail;
   /** Current price of the asset in currencey */
   price: number;
 };

@@ -1,6 +1,6 @@
 import type { Candle } from '@models/candle.types';
 import type { OrderSide } from '@models/order.types';
-import type { Portfolio } from '@models/portfolio.types';
+import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GridBot } from './gridBot.strategy';
@@ -31,7 +31,11 @@ const makeCandle = (price = 100): Candle =>
     volume: 1,
   }) as Candle;
 
-const defaultPortfolio: Portfolio = { asset: 5, currency: 500 };
+const defaultPortfolio: Portfolio = {
+  asset: { free: 5, used: 0, total: 5 },
+  currency: { free: 500, used: 0, total: 500 },
+};
+const defaultBalance: BalanceDetail = { free: 0, used: 0, total: 0 };
 
 describe('GridBot', () => {
   let strategy: GridBot;
@@ -58,7 +62,10 @@ describe('GridBot', () => {
     tools.strategyParams = { ...defaultParams, ...params };
     strategy.init({
       candle: makeCandle(price),
-      portfolio: { ...defaultPortfolio },
+      portfolio: {
+        asset: { ...defaultPortfolio.asset },
+        currency: { ...defaultPortfolio.currency },
+      },
       tools,
       addIndicator: vi.fn(),
     });
@@ -113,7 +120,10 @@ describe('GridBot', () => {
       tools.strategyParams = defaultParams;
       strategy.init({
         candle: makeCandle(100),
-        portfolio: { asset: 0, currency: 0 }, // No funds
+        portfolio: {
+          asset: { free: 0, used: 0, total: 0 },
+          currency: { free: 0, used: 0, total: 0 },
+        },
         tools,
         addIndicator: vi.fn(),
       });
@@ -142,7 +152,7 @@ describe('GridBot', () => {
           fee: 0,
           effectivePrice: 95,
         } as any,
-        exchange: { price: 95, balance: 0, portfolio: { ...defaultPortfolio } },
+        exchange: { price: 95, balance: defaultBalance, portfolio: { ...defaultPortfolio } },
       });
 
       // Expect SELL at 100 (one level up from 95)
@@ -165,7 +175,7 @@ describe('GridBot', () => {
           fee: 0,
           effectivePrice: 100,
         } as any,
-        exchange: { price: 100, balance: 0, portfolio: { ...defaultPortfolio } },
+        exchange: { price: 100, balance: defaultBalance, portfolio: { ...defaultPortfolio } },
       });
 
       // Expect BUY at 95 (one level down from 100)
@@ -184,7 +194,7 @@ describe('GridBot', () => {
       strategy.onOrderCompleted({
         tools,
         order: { id: buyId as UUID, side: 'BUY', price: 95 } as any,
-        exchange: { price: 95, balance: 0, portfolio: { ...defaultPortfolio } },
+        exchange: { price: 95, balance: defaultBalance, portfolio: { ...defaultPortfolio } },
       });
 
       // Expect SELL at 100.
@@ -198,7 +208,7 @@ describe('GridBot', () => {
       strategy.onOrderErrored({
         tools,
         order: { id: orderId, reason: 'Test error' } as any,
-        exchange: { price: 100, balance: 0, portfolio: defaultPortfolio },
+        exchange: { price: 100, balance: defaultBalance, portfolio: defaultPortfolio },
       });
 
       // Should retry creation
@@ -210,7 +220,7 @@ describe('GridBot', () => {
       strategy.onOrderErrored({
         tools,
         order: { id: retryId1, reason: 'Test error' } as any,
-        exchange: { price: 100, balance: 0, portfolio: defaultPortfolio },
+        exchange: { price: 100, balance: defaultBalance, portfolio: defaultPortfolio },
       });
       expect(createOrder).toHaveBeenCalledTimes(7);
 
@@ -219,7 +229,7 @@ describe('GridBot', () => {
       strategy.onOrderErrored({
         tools,
         order: { id: retryId2, reason: 'Test error' } as any,
-        exchange: { price: 100, balance: 0, portfolio: defaultPortfolio },
+        exchange: { price: 100, balance: defaultBalance, portfolio: defaultPortfolio },
       });
       expect(createOrder).toHaveBeenCalledTimes(8);
 
@@ -231,7 +241,7 @@ describe('GridBot', () => {
       strategy.onOrderErrored({
         tools,
         order: { id: retryId3, reason: 'Test error' } as any,
-        exchange: { price: 100, balance: 0, portfolio: defaultPortfolio },
+        exchange: { price: 100, balance: defaultBalance, portfolio: defaultPortfolio },
       });
       expect(createOrder).toHaveBeenCalledTimes(8);
 
@@ -252,7 +262,10 @@ describe('GridBot', () => {
 
       strategy.init({
         candle: makeCandle(100),
-        portfolio: { asset: 0, currency: 100 },
+        portfolio: {
+          asset: { free: 0, used: 0, total: 0 },
+          currency: { free: 100, used: 0, total: 100 },
+        },
         tools,
         addIndicator: vi.fn(),
       });
@@ -271,7 +284,10 @@ describe('GridBot', () => {
 
       strategy.init({
         candle: makeCandle(100),
-        portfolio: { asset: 0.5, currency: 50 }, // Balanced at price 100
+        portfolio: {
+          asset: { free: 0.5, used: 0, total: 0.5 },
+          currency: { free: 50, used: 0, total: 50 },
+        },
         tools,
         addIndicator: vi.fn(),
       });
@@ -288,7 +304,10 @@ describe('GridBot', () => {
       };
       strategy.init({
         candle: makeCandle(100),
-        portfolio: { asset: 0, currency: 100 },
+        portfolio: {
+          asset: { free: 0, used: 0, total: 0 },
+          currency: { free: 100, used: 0, total: 100 },
+        },
         tools,
         addIndicator: vi.fn(),
       });
@@ -300,7 +319,14 @@ describe('GridBot', () => {
       strategy.onOrderErrored({
         tools,
         order: { id: rebalanceId, reason: 'Test error' } as any,
-        exchange: { price: 100, balance: 0, portfolio: { asset: 0, currency: 100 } },
+        exchange: {
+          price: 100,
+          balance: defaultBalance,
+          portfolio: {
+            asset: { free: 0, used: 0, total: 0 },
+            currency: { free: 100, used: 0, total: 100 },
+          },
+        },
       });
 
       expect(createOrder).toHaveBeenCalledTimes(2);
@@ -341,7 +367,7 @@ describe('GridBot', () => {
         strategy.onOrderCanceled({
           tools,
           order: { id: cancelIds[i] } as any,
-          exchange: { price: 120, balance: 0, portfolio: defaultPortfolio },
+          exchange: { price: 120, balance: defaultBalance, portfolio: defaultPortfolio },
         });
       }
 
@@ -352,7 +378,7 @@ describe('GridBot', () => {
       strategy.onOrderCanceled({
         tools,
         order: { id: cancelIds[3] } as any,
-        exchange: { price: 120, balance: 0, portfolio: defaultPortfolio },
+        exchange: { price: 120, balance: defaultBalance, portfolio: defaultPortfolio },
       });
 
       // Grid rebuilt around 120
