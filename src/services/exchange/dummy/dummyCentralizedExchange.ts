@@ -5,19 +5,20 @@ import { Portfolio } from '@models/portfolio.types';
 import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
 import { config } from '@services/configuration/configuration';
-import { DUMMY_DEFAULT_BUFFER_SIZE, LIMITS } from '@services/exchange/exchange.const';
+import { LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData } from '@services/exchange/exchange.types';
-import { RingBuffer } from '@utils/collection/ringBuffer';
 import { toTimestamp } from '@utils/date/date.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
 import { checkOrderAmount, checkOrderCost, checkOrderPrice } from '../exchange.utils';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
+import { findCandleIndexByTimestamp } from './dummyCentralizedExchange.utils';
 
 export class DummyCentralizedExchange implements Exchange {
-  private readonly orders: RingBuffer<DummyInternalOrder>;
-  private readonly candles: RingBuffer<Candle>;
+  private readonly ordersMap: Map<string, DummyInternalOrder>;
+  private readonly openOrders: Set<string>;
+  private readonly candles: Candle[];
   private readonly marketData: MarketData;
   private portfolio: Portfolio;
   private ticker: Ticker;
@@ -32,8 +33,9 @@ export class DummyCentralizedExchange implements Exchange {
       currency: { free: simulationBalance.currency, used: 0, total: simulationBalance.currency },
     };
     this.ticker = { ...initialTicker };
-    this.candles = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
-    this.orders = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
+    this.candles = [];
+    this.ordersMap = new Map();
+    this.openOrders = new Set();
     const start = config.getWatch().daterange?.start;
     if (!start) throw new GekkoError('exchange', 'Inconsistent state: In backtest mode dateranges are mandatory');
     this.currentTimestamp = toTimestamp(start);
@@ -72,14 +74,20 @@ export class DummyCentralizedExchange implements Exchange {
     from,
     limit = LIMITS[this.getExchangeName()].candles,
   }: FetchOHLCVParams): Promise<Candle[]> {
-    const arr = this.candles.toArray();
-    const filtered = isNil(from) ? arr : arr.filter(candle => candle.start >= from);
-    if (!isNil(limit)) return filtered.slice(-limit);
-    return filtered;
+    if (this.candles.length === 0) return [];
+    if (isNil(from)) return this.candles.slice(-limit);
+
+    const startIndex = findCandleIndexByTimestamp(this.candles, from);
+
+    // If no candle matches (start index is at the end), return empty
+    if (startIndex >= this.candles.length) return [];
+
+    const endIndex = isNil(limit) ? this.candles.length : startIndex + limit;
+    return this.candles.slice(startIndex, endIndex);
   }
 
   public async fetchMyTrades(from?: EpochTimeStamp): Promise<Trade[]> {
-    const arr = this.orders.toArray();
+    const arr = Array.from(this.ordersMap.values());
     const filtered = isNil(from) ? arr : arr.filter(order => order.timestamp >= from);
     return filtered.map(this.mapOrderToTrade);
   }
@@ -110,7 +118,8 @@ export class DummyCentralizedExchange implements Exchange {
       side,
       type: 'LIMIT',
     };
-    this.orders.push(order);
+    this.ordersMap.set(id, order);
+    this.openOrders.add(id);
     return this.cloneOrder(order);
   }
 
@@ -155,27 +164,27 @@ export class DummyCentralizedExchange implements Exchange {
       side,
       type: 'MARKET',
     };
-
-    this.orders.push(order);
+    this.ordersMap.set(id, order);
 
     return this.cloneOrder(order);
   }
 
   public async cancelOrder(id: string): Promise<OrderState> {
-    const order = this.orders.find(c => c.id === id);
+    const order = this.ordersMap.get(id);
     if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
 
     if (order.status === 'open') {
       this.releaseBalance(order);
       order.status = 'canceled';
       order.timestamp = this.currentTimestamp;
+      this.openOrders.delete(id);
     }
 
     return this.cloneOrder(order);
   }
 
   public async fetchOrder(id: string): Promise<OrderState> {
-    const order = this.orders.find(c => c.id === id);
+    const order = this.ordersMap.get(id);
     if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
     return this.cloneOrder(order);
   }
@@ -220,16 +229,27 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   private settleOrdersWithCandle(candle: Candle) {
-    this.orders.forEach(order => {
-      if (order.status !== 'open') return;
+    for (const id of this.openOrders) {
+      const order = this.ordersMap.get(id);
+      if (!order) {
+        this.openOrders.delete(id);
+        continue;
+      }
+
+      if (order.status !== 'open') {
+        this.openOrders.delete(id);
+        continue;
+      }
+
       const price = order.price ?? 0;
       const shouldFill = order.side === 'BUY' ? candle.low <= price : candle.high >= price;
-      if (!shouldFill) return;
+      if (!shouldFill) continue;
 
       order.status = 'closed';
       order.filled = order.amount;
       order.remaining = 0;
       order.timestamp = this.currentTimestamp;
+      this.openOrders.delete(id);
 
       if (order.side === 'BUY') {
         const cost = order.amount * price * (1 + (this.marketData.fee?.maker ?? 0));
@@ -244,7 +264,7 @@ export class DummyCentralizedExchange implements Exchange {
         this.portfolio.currency.free += gain;
         this.portfolio.currency.total += gain;
       }
-    });
+    }
   }
 
   private cloneOrder(order: DummyInternalOrder): OrderState {
