@@ -152,7 +152,10 @@ describe('gridBot.utils', () => {
   });
 
   describe('resolveLevelQuantity', () => {
-    const portfolio: Portfolio = { asset: 10, currency: 1000 };
+    const portfolio: Portfolio = {
+      asset: { free: 10, used: 0, total: 10 },
+      currency: { free: 1000, used: 0, total: 1000 },
+    };
     const marketData: MarketData = { amount: { min: 0.1 } };
 
     it('uses override if provided', () => {
@@ -204,7 +207,10 @@ describe('gridBot.utils', () => {
   });
 
   describe('computeAffordableLevels', () => {
-    const portfolio: Portfolio = { asset: 10, currency: 1000 };
+    const portfolio: Portfolio = {
+      asset: { free: 10, used: 0, total: 10 },
+      currency: { free: 1000, used: 0, total: 1000 },
+    };
 
     it('returns maxLevels if affordable', () => {
       // Price ~100. Qty 1.
@@ -217,20 +223,29 @@ describe('gridBot.utils', () => {
     it('limits by currency', () => {
       // Price ~100. Qty 1.
       // Max buys: 100 / (1 * ~100) = 1
-      const poorPortfolio = { ...portfolio, currency: 100 };
+      const poorPortfolio: Portfolio = {
+        asset: { free: 10, used: 0, total: 10 },
+        currency: { free: 100, used: 0, total: 100 },
+      };
       expect(computeAffordableLevels(100, poorPortfolio, 1, 5, 2, 'fixed', 5)).toBe(1);
     });
 
     it('limits by asset', () => {
       // Max sells: 2 / 1 = 2
-      const lowAssetPortfolio = { ...portfolio, asset: 2 };
+      const lowAssetPortfolio: Portfolio = {
+        asset: { free: 2, used: 0, total: 2 },
+        currency: { free: 1000, used: 0, total: 1000 },
+      };
       expect(computeAffordableLevels(100, lowAssetPortfolio, 1, 5, 2, 'fixed', 5)).toBe(2);
     });
   });
 
   describe('validateRebalancePlan', () => {
     const tools: any = { log: vi.fn(), marketData: { amount: { min: 0.1, max: 100 }, cost: { min: 1, max: 1000 } } };
-    const portfolio: Portfolio = { asset: 10, currency: 1000 };
+    const portfolio: Portfolio = {
+      asset: { free: 10, used: 0, total: 10 },
+      currency: { free: 1000, used: 0, total: 1000 },
+    };
     const basePlan: RebalancePlan = {
       stage: 'init',
       side: 'BUY',
@@ -280,7 +295,10 @@ describe('gridBot.utils', () => {
   });
 
   describe('computeRebalancePlan', () => {
-    const portfolio: Portfolio = { asset: 0, currency: 1000 }; // Total 1000. Target 500 each.
+    const portfolio: Portfolio = {
+      asset: { free: 0, used: 0, total: 0 },
+      currency: { free: 1000, used: 0, total: 1000 },
+    }; // Total 1000. Target 500 each.
     const marketData: MarketData = {};
 
     it('returns plan when drift exceeds tolerance', () => {
@@ -297,12 +315,18 @@ describe('gridBot.utils', () => {
 
     it('returns null when drift is within tolerance', () => {
       // Portfolio balanced: 5 asset * 100 = 500. Currency 500.
-      const balancedPortfolio = { asset: 5, currency: 500 };
+      const balancedPortfolio: Portfolio = {
+        asset: { free: 5, used: 0, total: 5 },
+        currency: { free: 500, used: 0, total: 500 },
+      };
       expect(computeRebalancePlan('init', 100, balancedPortfolio, marketData, 5)).toBeNull();
     });
 
     it('rounds amount according to market data', () => {
-      const portfolio = { asset: 0, currency: 1000 };
+      const portfolio: Portfolio = {
+        asset: { free: 0, used: 0, total: 0 },
+        currency: { free: 1000, used: 0, total: 1000 },
+      };
       // Gap 500. Price 100. Raw amount 5.
       // Let's use a price that gives a long decimal amount.
       // Price 33. Gap 500. Amount 15.151515...
@@ -317,7 +341,10 @@ describe('gridBot.utils', () => {
     });
 
     it('applies min/max limits to amount', () => {
-      const portfolio = { asset: 0, currency: 10000 };
+      const portfolio: Portfolio = {
+        asset: { free: 0, used: 0, total: 0 },
+        currency: { free: 10000, used: 0, total: 10000 },
+      };
       // Price 100. Gap 5000. Amount 50.
       // Max limit 10.
       const marketDataWithMaxAmount: MarketData = { amount: { min: 0.1, max: 10 } };

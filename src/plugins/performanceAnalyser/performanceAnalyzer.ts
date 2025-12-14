@@ -1,7 +1,7 @@
 import { PERFORMANCE_REPORT_EVENT } from '@constants/event.const';
 import { Candle } from '@models/candle.types';
 import { OrderCompletedEvent } from '@models/event.types';
-import { Portfolio } from '@models/portfolio.types';
+import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { warning } from '@services/logger';
 import { percentile, stdev } from '@utils/math/math.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
@@ -47,9 +47,9 @@ export class PerformanceAnalyzer extends Plugin {
   }
 
   // --- BEGIN LISTENERS ---
-  public onPortfolioValueChange(event: { balance: number }): void {
-    if (!this.start.balance) this.start.balance = event.balance;
-    this.balance = event.balance;
+  public onPortfolioValueChange(event: { balance: BalanceDetail }): void {
+    if (!this.start.balance) this.start.balance = event.balance.total;
+    this.balance = event.balance.total;
   }
 
   public onPortfolioChange(event: Portfolio): void {
@@ -62,7 +62,7 @@ export class PerformanceAnalyzer extends Plugin {
     this.dates.start = start;
     this.startPrice = close;
     const portfolio = this.latestPortfolio ?? this.start.portfolio;
-    if (portfolio?.asset && portfolio.asset > 0 && this.exposureActiveSince === null) {
+    if (portfolio?.asset && portfolio.asset.total > 0 && this.exposureActiveSince === null) {
       this.exposureActiveSince = this.dates.start;
     }
     if (this.warmupCandle) this.processOneMinuteCandle(this.warmupCandle);
@@ -70,19 +70,19 @@ export class PerformanceAnalyzer extends Plugin {
 
   public onOrderCompleted({ order, exchange }: OrderCompletedEvent): void {
     this.orders++;
-    this.balance = exchange.balance;
+    this.balance = exchange.balance.total;
     this.latestPortfolio = exchange.portfolio;
     const lastSample = this.balanceSamples[this.balanceSamples.length - 1];
 
     logTrade(order, exchange, this.currency, this.asset, this.enableConsoleTable, {
-      startBalance: this.start.balance || exchange.balance,
+      startBalance: this.start.balance || exchange.balance.total,
       previousBalance: lastSample?.balance,
     });
 
-    this.balanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance });
+    this.balanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance.total });
 
     const isCurrentlyExposed = this.exposureActiveSince !== null;
-    const isExposedAfterTrade = exchange.portfolio.asset > 0;
+    const isExposedAfterTrade = exchange.portfolio.asset.total > 0;
 
     if (!isCurrentlyExposed && isExposedAfterTrade) {
       this.exposureActiveSince = order.orderExecutionDate;
@@ -106,7 +106,7 @@ export class PerformanceAnalyzer extends Plugin {
 
     const portfolio = this.latestPortfolio ?? this.start.portfolio;
     if (portfolio && this.endPrice > 0) {
-      const markToMarketBalance = portfolio.asset * this.endPrice + portfolio.currency;
+      const markToMarketBalance = portfolio.asset.total * this.endPrice + portfolio.currency.total;
       if (Number.isFinite(markToMarketBalance)) this.balance = markToMarketBalance;
     }
 

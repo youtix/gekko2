@@ -81,8 +81,11 @@ describe('TradingAdvisor', () => {
       effectivePrice: 31,
     },
     exchange: {
-      portfolio: { asset: 100, currency: 200 },
-      balance: 1000,
+      portfolio: {
+        asset: { free: 100, used: 0, total: 100 },
+        currency: { free: 200, used: 0, total: 200 },
+      },
+      balance: { free: 1000, used: 0, total: 1000 },
       price: 100,
     },
   };
@@ -99,8 +102,11 @@ describe('TradingAdvisor', () => {
     },
     exchange: {
       price: 100,
-      balance: 1000,
-      portfolio: { asset: 50, currency: 500 },
+      balance: { free: 1000, used: 0, total: 1000 },
+      portfolio: {
+        asset: { free: 50, used: 0, total: 50 },
+        currency: { free: 500, used: 0, total: 500 },
+      },
     },
   };
   const defaultErroredOrder: OrderErroredEvent = {
@@ -266,7 +272,10 @@ describe('TradingAdvisor', () => {
 
     describe('onPortfolioChange', () => {
       it('should forward latest portfolio to the strategy manager', () => {
-        const portfolio = { asset: 5, currency: 10 };
+        const portfolio = {
+          asset: { free: 5, used: 0, total: 5 },
+          currency: { free: 10, used: 0, total: 10 },
+        };
         advisor['strategyManager']!.setPortfolio = vi.fn();
 
         advisor.onPortfolioChange(portfolio);

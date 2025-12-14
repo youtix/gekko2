@@ -25,9 +25,13 @@ export class DummyCentralizedExchange implements Exchange {
   private orderSequence = 0;
 
   constructor(exchangeConfig: DummyCentralizedExchangeConfig) {
-    this.marketData = exchangeConfig.marketData;
-    this.portfolio = { ...exchangeConfig.simulationBalance };
-    this.ticker = { ...exchangeConfig.initialTicker };
+    const { marketData, simulationBalance, initialTicker } = exchangeConfig;
+    this.marketData = marketData;
+    this.portfolio = {
+      asset: { free: simulationBalance.asset, used: 0, total: simulationBalance.asset },
+      currency: { free: simulationBalance.currency, used: 0, total: simulationBalance.currency },
+    };
+    this.ticker = { ...initialTicker };
     this.candles = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
     this.orders = new RingBuffer(DUMMY_DEFAULT_BUFFER_SIZE);
     const start = config.getWatch().daterange?.start;
@@ -81,7 +85,10 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   public async fetchBalance(): Promise<Portfolio> {
-    return { ...this.portfolio };
+    return {
+      asset: { ...this.portfolio.asset },
+      currency: { ...this.portfolio.currency },
+    };
   }
 
   public async createLimitOrder(side: OrderSide, amount: number, price: number): Promise<OrderState> {
@@ -117,19 +124,24 @@ export class DummyCentralizedExchange implements Exchange {
     const totalCost = cost * (1 + (this.marketData.fee?.taker ?? 0));
 
     if (side === 'BUY') {
-      if (this.portfolio.currency < totalCost)
+      if (this.portfolio.currency.free < totalCost)
         throw new InvalidOrder(
-          `Insufficient currency balance (portfolio: ${this.portfolio.currency}, order cost: ${totalCost})`,
+          `Insufficient currency balance (portfolio: ${this.portfolio.currency.free}, order cost: ${totalCost})`,
         );
-      this.portfolio.currency -= totalCost;
-      this.portfolio.asset += normalizedAmount;
+      this.portfolio.currency.free -= totalCost;
+      this.portfolio.currency.total -= totalCost;
+      this.portfolio.asset.free += normalizedAmount;
+      this.portfolio.asset.total += normalizedAmount;
     } else {
-      if (this.portfolio.asset < normalizedAmount)
+      if (this.portfolio.asset.free < normalizedAmount)
         throw new InvalidOrder(
-          `Insufficient asset balance (portfolio: ${this.portfolio.asset}, amount: ${normalizedAmount})`,
+          `Insufficient asset balance (portfolio: ${this.portfolio.asset.free}, amount: ${normalizedAmount})`,
         );
-      this.portfolio.asset -= normalizedAmount;
-      this.portfolio.currency += cost * (1 - (this.marketData.fee?.taker ?? 0));
+      this.portfolio.asset.free -= normalizedAmount;
+      this.portfolio.asset.total -= normalizedAmount;
+      const gain = cost * (1 - (this.marketData.fee?.taker ?? 0));
+      this.portfolio.currency.free += gain;
+      this.portfolio.currency.total += gain;
     }
 
     const order: DummyInternalOrder = {
@@ -176,17 +188,19 @@ export class DummyCentralizedExchange implements Exchange {
     if (side === 'BUY') {
       const cost = amount * price;
       const totalCost = cost * (1 + (this.marketData.fee?.maker ?? 0));
-      if (this.portfolio.currency < totalCost)
+      if (this.portfolio.currency.free < totalCost)
         throw new InvalidOrder(
-          `Insufficient currency balance (portfolio: ${this.portfolio.currency}, order cost: ${totalCost})`,
+          `Insufficient currency balance (portfolio: ${this.portfolio.currency.free}, order cost: ${totalCost})`,
         );
-      this.portfolio.currency -= totalCost;
+      this.portfolio.currency.free -= totalCost;
+      this.portfolio.currency.used += totalCost;
     } else {
-      if (this.portfolio.asset < amount)
+      if (this.portfolio.asset.free < amount)
         throw new InvalidOrder(
-          `Insufficient asset balance (portfolio: ${this.portfolio.asset}, order cost: ${amount})`,
+          `Insufficient asset balance (portfolio: ${this.portfolio.asset.free}, order cost: ${amount})`,
         );
-      this.portfolio.asset -= amount;
+      this.portfolio.asset.free -= amount;
+      this.portfolio.asset.used += amount;
     }
   }
 
@@ -196,9 +210,12 @@ export class DummyCentralizedExchange implements Exchange {
     if (remaining <= 0) return;
 
     if (order.side === 'BUY') {
-      this.portfolio.currency += remaining * (order.price ?? 0) * (1 + (this.marketData.fee?.maker ?? 0));
+      const release = remaining * (order.price ?? 0) * (1 + (this.marketData.fee?.maker ?? 0));
+      this.portfolio.currency.free += release;
+      this.portfolio.currency.used -= release;
     } else {
-      this.portfolio.asset += remaining;
+      this.portfolio.asset.free += remaining;
+      this.portfolio.asset.used -= remaining;
     }
   }
 
@@ -215,9 +232,17 @@ export class DummyCentralizedExchange implements Exchange {
       order.timestamp = this.currentTimestamp;
 
       if (order.side === 'BUY') {
-        this.portfolio.asset += order.amount;
+        const cost = order.amount * price * (1 + (this.marketData.fee?.maker ?? 0));
+        this.portfolio.currency.used -= cost;
+        this.portfolio.currency.total -= cost;
+        this.portfolio.asset.free += order.amount;
+        this.portfolio.asset.total += order.amount;
       } else {
-        this.portfolio.currency += order.amount * price * (1 - (this.marketData.fee?.maker ?? 0));
+        const gain = order.amount * price * (1 - (this.marketData.fee?.maker ?? 0));
+        this.portfolio.asset.used -= order.amount;
+        this.portfolio.asset.total -= order.amount;
+        this.portfolio.currency.free += gain;
+        this.portfolio.currency.total += gain;
       }
     });
   }

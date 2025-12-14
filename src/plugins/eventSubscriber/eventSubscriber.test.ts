@@ -61,8 +61,11 @@ describe('EventSubscriber', () => {
     };
     const baseExchange = {
       price: 123,
-      balance: 1,
-      portfolio: { asset: 0, currency: 0 },
+      balance: { free: 1, used: 0, total: 1 },
+      portfolio: {
+        asset: { free: 0, used: 0, total: 0 },
+        currency: { free: 0, used: 0, total: 0 },
+      },
     };
     const onStrategyInfo = (p: EventSubscriber) =>
       p.onStrategyInfo({ timestamp: eventTimestamp, level: 'debug', message: 'M', tag: 'strategy' });
@@ -174,7 +177,13 @@ describe('EventSubscriber', () => {
       plugin['handleCommand']('/subscribe_to_order_initiated');
       onOrderInitiated(plugin, {
         order: { type: 'MARKET', amount: 5, price: 321 },
-        exchange: { balance: 10, portfolio: { asset: 1, currency: 2 } },
+        exchange: {
+          balance: { free: 10, used: 0, total: 10 },
+          portfolio: {
+            asset: { free: 1, used: 0, total: 1 },
+            currency: { free: 2, used: 0, total: 2 },
+          },
+        },
       });
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(
         expect.stringContaining('MARKET order created (ee21e130-48bc-405f-be0c-46e9bf17b52e)'),

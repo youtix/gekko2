@@ -157,9 +157,20 @@ export class CCXTExchange implements Exchange {
     return retry<Portfolio>(async () => {
       const balance = await this.client.fetchBalance(PARAMS.fetchBalance[this.exchangeName]);
       const { baseName, quote, base } = this.client.market(this.symbol) as MarketInterface & { baseName: string }; // Bug CCXT
+      const asset = balance[baseName ?? base];
+      const currency = balance[quote];
+
       return {
-        asset: balance[baseName ?? base]?.free ?? 0,
-        currency: balance[quote]?.free ?? 0,
+        asset: {
+          free: asset?.free ?? 0,
+          used: asset?.used ?? 0,
+          total: asset?.total ?? 0,
+        },
+        currency: {
+          free: currency?.free ?? 0,
+          used: currency?.used ?? 0,
+          total: currency?.total ?? 0,
+        },
       };
     });
   }

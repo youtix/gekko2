@@ -1,7 +1,6 @@
 import { PERFORMANCE_REPORT_EVENT } from '@constants/event.const';
 import { Candle } from '@models/candle.types';
 import { OrderCompletedEvent } from '@models/event.types';
-import { Portfolio } from '@models/portfolio.types';
 import { warning } from '@services/logger';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -59,8 +58,11 @@ describe('PerformanceAnalyzer', () => {
       feePercent: 0,
     },
     exchange: {
-      portfolio: { asset: assetP, currency: currP },
-      balance,
+      portfolio: {
+        asset: { free: assetP, used: 0, total: assetP },
+        currency: { free: currP, used: 0, total: currP },
+      },
+      balance: { free: balance, used: 0, total: balance },
       price,
     },
   });
@@ -109,7 +111,7 @@ describe('PerformanceAnalyzer', () => {
       ({ initialBalance, newBalance, expectedStart, expectedCurrent }) => {
         if (initialBalance) analyzer['start'].balance = initialBalance;
 
-        analyzer.onPortfolioValueChange({ balance: newBalance });
+        analyzer.onPortfolioValueChange({ balance: { free: newBalance, used: 0, total: newBalance } });
 
         expect(analyzer['start'].balance).toBe(expectedStart);
         expect(analyzer['balance']).toBe(expectedCurrent);
@@ -118,8 +120,14 @@ describe('PerformanceAnalyzer', () => {
   });
 
   describe('onPortfolioChange', () => {
-    const p1 = { asset: 1, currency: 100 };
-    const p2 = { asset: 2, currency: 200 };
+    const p1 = {
+      asset: { free: 1, used: 0, total: 1 },
+      currency: { free: 100, used: 0, total: 100 },
+    };
+    const p2 = {
+      asset: { free: 2, used: 0, total: 2 },
+      currency: { free: 200, used: 0, total: 200 },
+    };
 
     it.each`
       initialStart | newPortfolio | expectedStart | expectedLatest
@@ -149,7 +157,10 @@ describe('PerformanceAnalyzer', () => {
     });
 
     it('should set exposureActiveSince if currently holding asset', () => {
-      analyzer['latestPortfolio'] = { asset: 1, currency: 0 };
+      analyzer['latestPortfolio'] = {
+        asset: { free: 1, used: 0, total: 1 },
+        currency: { free: 0, used: 0, total: 0 },
+      };
 
       analyzer.onStrategyWarmupCompleted(defaultCandle);
 
@@ -157,7 +168,10 @@ describe('PerformanceAnalyzer', () => {
     });
 
     it('should NOT set exposureActiveSince if NOT holding asset', () => {
-      analyzer['latestPortfolio'] = { asset: 0, currency: 1000 };
+      analyzer['latestPortfolio'] = {
+        asset: { free: 0, used: 0, total: 0 },
+        currency: { free: 1000, used: 0, total: 1000 },
+      };
 
       analyzer.onStrategyWarmupCompleted(defaultCandle);
 
@@ -239,7 +253,13 @@ describe('PerformanceAnalyzer', () => {
     });
 
     it('should finalize exposure if active', () => {
-      analyzer['start'] = { balance: 1000, portfolio: { asset: 0, currency: 1000 } };
+      analyzer['start'] = {
+        balance: 1000,
+        portfolio: {
+          asset: { free: 0, used: 0, total: 0 },
+          currency: { free: 1000, used: 0, total: 1000 },
+        },
+      };
       analyzer['exposureActiveSince'] = 1000;
       analyzer['dates'].end = 2000;
 
@@ -252,7 +272,13 @@ describe('PerformanceAnalyzer', () => {
     });
 
     it('should emit report if valid', () => {
-      analyzer['start'] = { balance: 1000, portfolio: { asset: 0, currency: 1000 } };
+      analyzer['start'] = {
+        balance: 1000,
+        portfolio: {
+          asset: { free: 0, used: 0, total: 0 },
+          currency: { free: 1000, used: 0, total: 1000 },
+        },
+      };
       analyzer['processFinalize']();
       expect(analyzer.emit).toHaveBeenCalledWith(PERFORMANCE_REPORT_EVENT, expect.any(Object));
     });
@@ -262,14 +288,25 @@ describe('PerformanceAnalyzer', () => {
     const setupAnalyzer = (
       balance: number,
       startBalance: number,
-      startPortfolio: Portfolio = { asset: 0, currency: startBalance },
-      latestPortfolio: Portfolio | null = null,
+      startPortfolio: any = { asset: 0, currency: startBalance },
+      latestPortfolio: any | null = null,
       endPrice: number = 100,
       samples: any[] = [],
     ) => {
+      const fullStartPortfolio = {
+        asset: { free: startPortfolio.asset as any, used: 0, total: startPortfolio.asset as any },
+        currency: { free: startPortfolio.currency as any, used: 0, total: startPortfolio.currency as any },
+      };
+      const fullLatestPortfolio = latestPortfolio
+        ? {
+            asset: { free: latestPortfolio.asset as any, used: 0, total: latestPortfolio.asset as any },
+            currency: { free: latestPortfolio.currency as any, used: 0, total: latestPortfolio.currency as any },
+          }
+        : fullStartPortfolio;
+
       analyzer['balance'] = balance;
-      analyzer['start'] = { balance: startBalance, portfolio: startPortfolio };
-      analyzer['latestPortfolio'] = latestPortfolio || startPortfolio;
+      analyzer['start'] = { balance: startBalance, portfolio: fullStartPortfolio };
+      analyzer['latestPortfolio'] = fullLatestPortfolio;
       analyzer['endPrice'] = endPrice;
       analyzer['dates'] = { start: timestamp, end: timestamp + 31536000000 }; // 1 Year
       analyzer['balanceSamples'] = samples;

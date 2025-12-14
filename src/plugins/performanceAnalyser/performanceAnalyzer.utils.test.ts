@@ -160,8 +160,11 @@ describe('performanceAnalyzer.utils', () => {
     };
 
     const baseExchange: OrderCompletedEvent['exchange'] = {
-      portfolio: { asset: 10, currency: 1000 },
-      balance: 2000,
+      portfolio: {
+        asset: { free: 10, used: 0, total: 10 },
+        currency: { free: 1000, used: 0, total: 1000 },
+      },
+      balance: { free: 2000, used: 0, total: 2000 },
       price: 100,
     };
 
@@ -211,7 +214,10 @@ describe('performanceAnalyzer.utils', () => {
         // 'since start' uses balances.startBalance
 
         const balances = { startBalance: baselineBalance };
-        const exchange = { ...baseExchange, balance: currentBalance };
+        const exchange = {
+          ...baseExchange,
+          balance: { free: currentBalance, used: 0, total: currentBalance },
+        };
 
         logTrade(baseOrder, exchange, 'USD', 'BTC', true, balances);
 
@@ -244,7 +250,10 @@ describe('performanceAnalyzer.utils', () => {
 
       // Let's test the baselineBalance === 0 case -> percent is 'n/a'
       const balances = { startBalance: 0 };
-      const exchange = { ...baseExchange, balance: 100 };
+      const exchange = {
+        ...baseExchange,
+        balance: { free: 100, used: 0, total: 100 },
+      };
 
       logTrade(baseOrder, exchange, 'USD', 'BTC', true, balances);
 
@@ -274,7 +283,10 @@ describe('performanceAnalyzer.utils', () => {
 
     it('should handle infinite absolute change', () => {
       // if (!Number.isFinite(absoluteChange))
-      const exchange = { ...baseExchange, balance: Infinity };
+      const exchange = {
+        ...baseExchange,
+        balance: { free: Infinity, used: 0, total: Infinity },
+      };
       const balances = { startBalance: 1000 };
 
       logTrade(baseOrder, exchange, 'USD', 'BTC', true, balances);
