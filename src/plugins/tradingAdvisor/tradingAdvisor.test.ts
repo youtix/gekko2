@@ -21,6 +21,7 @@ const attachMockExchange = (instance: TradingAdvisor) => {
   instance.setExchange({
     getExchangeName: (): string => 'binance',
     getMarketData: (): MarketData => ({ amount: { min: 3 } }),
+    fetchBalance: () => ({ asset: { free: 100, used: 0, total: 100 }, currency: { free: 100, used: 0, total: 100 } }),
   } as unknown as Exchange);
 };
 

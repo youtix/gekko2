@@ -91,7 +91,6 @@ describe('PerformanceAnalyzer', () => {
           'onOrderCompleted',
         ]),
         eventsEmitted: [PERFORMANCE_REPORT_EVENT],
-        weight: 0,
       });
     });
   });

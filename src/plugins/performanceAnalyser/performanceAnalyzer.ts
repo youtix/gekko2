@@ -215,7 +215,6 @@ export class PerformanceAnalyzer extends Plugin {
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(PerformanceAnalyzer.prototype), p => p.startsWith('on')),
       eventsEmitted: [PERFORMANCE_REPORT_EVENT],
-      weight: 0,
     } as const;
   }
 }

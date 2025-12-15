@@ -169,7 +169,6 @@ export class EventSubscriber extends Plugin {
       inject: [],
       eventsHandlers: filter(Object.getOwnPropertyNames(EventSubscriber.prototype), p => p.startsWith('on')),
       eventsEmitted: [],
-      weight: 0,
     } as const;
   }
 }

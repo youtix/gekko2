@@ -8,4 +8,4 @@ export const ORDER_FACTORY = {
   LIMIT: LimitOrder,
 } as const;
 
-export const DEFAULT_SYNCH_INTERVAL_WHEN_BACKTESTING = 10; // in minutes
+export const BACKTEST_SYNC_INTERVAL = 10; // in minutes

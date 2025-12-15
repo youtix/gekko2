@@ -215,7 +215,6 @@ export class Supervision extends Plugin {
       inject: ['exchange'],
       eventsHandlers: filter(Object.getOwnPropertyNames(Supervision.prototype), p => p.startsWith('on')),
       eventsEmitted: [],
-      weight: 0,
     } as const;
   }
 }

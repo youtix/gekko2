@@ -34,7 +34,6 @@ export class CandleWriter extends Plugin {
       inject: ['storage'],
       eventsHandlers: [],
       eventsEmitted: [],
-      weight: 0,
     } as const;
   }
 }

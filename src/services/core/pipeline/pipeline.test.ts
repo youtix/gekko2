@@ -99,25 +99,6 @@ describe('Pipeline Service', () => {
     });
   });
 
-  describe('sortPluginsByWeight', () => {
-    it('should sort plugins by weight in descending order', async () => {
-      const context: PipelineContext = [
-        { name: 'Light', weight: 1 },
-        { name: 'Heavy', weight: 10 },
-        { name: 'Medium', weight: 5 },
-        { name: 'DefaultRef' }, // Should be treated as 0
-        { name: 'DefaultRef2' }, // Another 0 to comparison
-      ];
-
-      const result = await pipelineModule.sortPluginsByWeight(context);
-      const names = result.map(p => p.name);
-
-      // Order of DefaultRef and DefaultRef2 is not strictly guaranteed relative to each other if implementation is unstable sort,
-      // but they should be at the end. v8 sort is stable.
-      expect(names).toEqual(['Heavy', 'Medium', 'Light', 'DefaultRef', 'DefaultRef2']);
-    });
-  });
-
   describe('createPlugins', () => {
     it('should instantiate plugins using the registry', async () => {
       class MockPlugin {
@@ -238,7 +219,7 @@ describe('Pipeline Service', () => {
     it('should retrieve static configuration from plugin classes', async () => {
       class TestPlugin {
         static getStaticConfiguration() {
-          return { name: 'TestPlugin', weight: 42 };
+          return { name: 'TestPlugin' };
         }
       }
       (allPlugin as any).TestPlugin = TestPlugin;
@@ -246,7 +227,7 @@ describe('Pipeline Service', () => {
       const context: PipelineContext = [{ name: 'TestPlugin' }];
       const result = await pipelineModule.getPluginsStaticConfiguration(context);
 
-      expect(result[0]).toMatchObject({ name: 'TestPlugin', weight: 42 });
+      expect(result[0]).toMatchObject({ name: 'TestPlugin' });
     });
   });
 

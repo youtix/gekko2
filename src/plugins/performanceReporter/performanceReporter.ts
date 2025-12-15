@@ -107,7 +107,6 @@ export class PerformanceReporter extends Plugin {
       inject: [],
       eventsHandlers: [...Object.getOwnPropertyNames(PerformanceReporter.prototype).filter(n => n.startsWith('on'))],
       eventsEmitted: [],
-      weight: 0,
     } as const;
   }
 }
