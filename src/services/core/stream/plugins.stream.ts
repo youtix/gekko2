@@ -33,10 +33,10 @@ export class PluginsStream extends Writable {
       // Forward candle to dummy exchange (if set by user) before all plugins
       this.dummyExchange?.processOneMinuteCandle(candle);
 
-      // Forward candle to all plugins
-      for (const plugin of this.plugins) await plugin.processInputStream(candle);
+      // Forward candle to all plugins concurrently
+      await Promise.all(this.plugins.map(plugin => plugin.processInputStream(candle)));
 
-      // Broadcast all deferred events
+      // Broadcast all deferred events sequentially
       for (const plugin of this.plugins) {
         while (await plugin.broadcastDeferredEmit()) {
           // Continue looping while at least one plugin emitted an event

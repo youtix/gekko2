@@ -416,15 +416,6 @@ describe('Trader', () => {
       expect(trader['price']).toBe(100);
     });
 
-    it('should triggers synchronize when trader plugin is not initialized', async () => {
-      trader['currentTimestamp'] = 0; // => Means that trader plugin is not iitialized
-      trader['synchronize'] = vi.fn();
-
-      await trader['processOneMinuteCandle'](defaultCandle);
-
-      expect(trader['synchronize']).toHaveBeenCalledTimes(1);
-    });
-
     it('should NOT triggers synchronize when trader plugin is initialized', async () => {
       trader['currentTimestamp'] = Date.now(); // => Means trader plugin is iitialized
       trader['synchronize'] = vi.fn();

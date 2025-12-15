@@ -42,10 +42,6 @@ export const wirePlugins = async (context: PipelineContext) => {
   });
 };
 
-/** Sort the plugin by importance order, the greatest number is the most important */
-export const sortPluginsByWeight = async (context: PipelineContext) =>
-  context.sort((p1, p2) => (p2.weight ?? 0) - (p1.weight ?? 0));
-
 export const createPlugins = async (context: PipelineContext) =>
   map(context, pluginCtx => {
     const { name, parameters } = pluginCtx;
@@ -109,9 +105,9 @@ export const checkPluginsModesCompatibility = async (context: PipelineContext) =
 export const getPluginsStaticConfiguration = async (context: PipelineContext) =>
   map(context, plugin => {
     const PluginClass = pluginList[plugin.name as PluginsNames];
-    const { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject, weight } =
+    const { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject } =
       PluginClass.getStaticConfiguration();
-    return { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject, weight };
+    return { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject };
   });
 
 export const gekkoPipeline = () =>
@@ -122,7 +118,6 @@ export const gekkoPipeline = () =>
     checkPluginsDependencies,
     checkPluginsDuplicateEvents,
     preloadMarkets,
-    sortPluginsByWeight,
     createPlugins,
     wirePlugins,
     injectServices,

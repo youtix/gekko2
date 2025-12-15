@@ -108,6 +108,8 @@ export class TradingAdvisor extends Plugin {
     await this.setUpStrategy();
     this.setUpListeners();
     this.strategyManager?.setMarketData(this.getExchange().getMarketData());
+    const balance = await this.getExchange().fetchBalance();
+    this.strategyManager?.setPortfolio(balance);
     info('trading advisor', `Using the strategy: ${this.strategyName}`);
   }
 
@@ -141,7 +143,6 @@ export class TradingAdvisor extends Plugin {
         STRATEGY_WARMUP_COMPLETED_EVENT,
         TIMEFRAME_CANDLE_EVENT,
       ],
-      weight: 0,
     } as const;
   }
 }

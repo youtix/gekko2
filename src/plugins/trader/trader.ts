@@ -24,10 +24,10 @@ import { toISOString } from '@utils/date/date.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
 import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
-import { DEFAULT_SYNCH_INTERVAL_WHEN_BACKTESTING, ORDER_FACTORY } from './trader.const';
+import { BACKTEST_SYNC_INTERVAL, ORDER_FACTORY } from './trader.const';
 import { traderSchema } from './trader.schema';
 import { TraderOrderMetadata } from './trader.types';
-import { computeOrderPricing, isEmptyPortfolio } from './trader.utils';
+import { computeOrderPricing } from './trader.utils';
 
 export class Trader extends Plugin {
   private readonly orders: Map<UUID, TraderOrderMetadata>;
@@ -262,26 +262,23 @@ export class Trader extends Plugin {
     if (this.mode === 'realtime') {
       const exchangeSync = config.getExchange().exchangeSynchInterval;
       this.syncInterval = setInterval(this.synchronize, exchangeSync);
-      this.synchronize();
     }
+    this.synchronize();
   }
 
   protected async processOneMinuteCandle(candle: Candle) {
-    // Update price first (needed in synchronize fn)
+    // Update price
     this.price = candle.close;
-
-    // Then synchronize with exchange only the first execution of this function
-    if (this.currentTimestamp === 0 && isEmptyPortfolio(this.portfolio)) await this.synchronize();
 
     // Update warmup candle until warmup is completed
     if (!this.warmupCompleted) this.warmupCandle = candle;
 
-    // Let's synchronize with Exchange every X minutes but not the first execution
-    const minutes = differenceInMinutes(candle.start, 0);
-
+    // Check orders in backtest mode
     if (this.mode === 'backtest') {
-      if (this.currentTimestamp && minutes % DEFAULT_SYNCH_INTERVAL_WHEN_BACKTESTING === 0) await this.synchronize();
-      await Promise.all(this.orders.values().map(({ orderInstance }) => orderInstance.checkOrder()));
+      const minutes = differenceInMinutes(candle.start, 0);
+      const promises = Array.from(this.orders.values()).map(({ orderInstance }) => orderInstance.checkOrder());
+      if (this.currentTimestamp && minutes % BACKTEST_SYNC_INTERVAL === 0) promises.push(this.synchronize());
+      await Promise.all(promises);
     }
 
     // Then update current timestamp
@@ -312,8 +309,6 @@ export class Trader extends Plugin {
         ORDER_ERRORED_EVENT,
         ORDER_INITIATED_EVENT,
       ],
-      // Trader is most important than other plugins. it must be executed first
-      weight: 1,
     } as const;
   }
 }
