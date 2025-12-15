@@ -42,6 +42,7 @@
     "release": "bun semantic-release",
     "start": "bun dist/gekko2.js",
     "bench": "vitest --run bench",
+    "bench:watch": "vitest bench",
     "test": "vitest --run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
@@ -50,7 +51,7 @@
   "devDependencies": {
     "@commitlint/cli": "^20.2.0",
     "@commitlint/config-conventional": "^20.2.0",
-    "@eslint/js": "^9.39.1",
+    "@eslint/js": "^9.39.2",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/commit-analyzer": "^13.0.1",
     "@semantic-release/git": "^10.0.1",
@@ -61,7 +62,7 @@
     "@types/lodash-es": "^4.17.12",
     "@typescript-eslint/parser": "^8.49.0",
     "@vitest/coverage-v8": "^4.0.15",
-    "eslint": "^9.39.1",
+    "eslint": "^9.39.2",
     "eslint-import-resolver-typescript": "^4.4.4",
     "eslint-plugin-import": "^2.32.0",
     "globals": "^16.5.0",
@@ -74,13 +75,13 @@
   },
   "dependencies": {
     "@date-fns/tz": "^1.4.1",
-    "ccxt": "^4.5.26",
+    "ccxt": "^4.5.28",
     "date-fns": "^4.1.0",
     "js-yaml": "^4.1.1",
     "json5": "^2.2.3",
     "lodash-es": "^4.17.21",
     "protobufjs": "^7.5.4",
     "winston": "^3.19.0",
-    "zod": "^4.1.13"
+    "zod": "^4.2.0"
   }
 }

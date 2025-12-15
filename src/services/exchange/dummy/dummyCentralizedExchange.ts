@@ -19,7 +19,8 @@ import { findCandleIndexByTimestamp } from './dummyCentralizedExchange.utils';
 export class DummyCentralizedExchange implements Exchange {
   private readonly mutex = new AsyncMutex();
   private readonly ordersMap: Map<string, DummyInternalOrder>;
-  private readonly openOrders: Set<string>;
+  private readonly buyOrders: DummyInternalOrder[]; // Sorted by price DESC
+  private readonly sellOrders: DummyInternalOrder[]; // Sorted by price ASC
   private readonly candles: Candle[];
   private readonly marketData: MarketData;
   private portfolio: Portfolio;
@@ -37,7 +38,8 @@ export class DummyCentralizedExchange implements Exchange {
     this.ticker = { ...initialTicker };
     this.candles = [];
     this.ordersMap = new Map();
-    this.openOrders = new Set();
+    this.buyOrders = [];
+    this.sellOrders = [];
     const start = config.getWatch().daterange?.start;
     if (!start) throw new GekkoError('exchange', 'Inconsistent state: In backtest mode dateranges are mandatory');
     this.currentTimestamp = toTimestamp(start);
@@ -128,7 +130,10 @@ export class DummyCentralizedExchange implements Exchange {
         type: 'LIMIT',
       };
       this.ordersMap.set(id, order);
-      this.openOrders.add(id);
+
+      if (side === 'BUY') this.insertBuyOrder(order);
+      else this.insertSellOrder(order);
+
       return this.cloneOrder(order);
     });
   }
@@ -190,7 +195,14 @@ export class DummyCentralizedExchange implements Exchange {
         this.releaseBalance(order);
         order.status = 'canceled';
         order.timestamp = this.currentTimestamp;
-        this.openOrders.delete(id);
+
+        if (order.side === 'BUY') {
+          const idx = this.buyOrders.indexOf(order);
+          if (idx !== -1) this.buyOrders.splice(idx, 1);
+        } else {
+          const idx = this.sellOrders.indexOf(order);
+          if (idx !== -1) this.sellOrders.splice(idx, 1);
+        }
       }
 
       return this.cloneOrder(order);
@@ -245,42 +257,86 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   private settleOrdersWithCandle(candle: Candle) {
-    for (const id of this.openOrders) {
-      const order = this.ordersMap.get(id);
-      if (!order) {
-        this.openOrders.delete(id);
-        continue;
-      }
+    // Process BUYs (descending price)
+    // Matches if candle.low <= order.price
+    // Since sorted DESC, all orders from 0 to splitIndex match
+    let buySplitIndex = this.buyOrders.findIndex(o => (o.price ?? 0) < candle.low);
+    if (buySplitIndex === -1) {
+      // If not found, it means EITHER all match (all > candle.low) OR empty
+      // If array is not empty, and findIndex is -1, it means ALL elements failed the condition (price < low)
+      // which means ALL elements satisfy price >= low. So ALL match.
+      buySplitIndex = this.buyOrders.length;
+    }
 
-      if (order.status !== 'open') {
-        this.openOrders.delete(id);
-        continue;
-      }
-
-      const price = order.price ?? 0;
-      const shouldFill = order.side === 'BUY' ? candle.low <= price : candle.high >= price;
-      if (!shouldFill) continue;
-
-      order.status = 'closed';
-      order.filled = order.amount;
-      order.remaining = 0;
-      order.timestamp = this.currentTimestamp;
-      this.openOrders.delete(id);
-
-      if (order.side === 'BUY') {
-        const cost = order.amount * price * (1 + (this.marketData.fee?.maker ?? 0));
-        this.portfolio.currency.used -= cost;
-        this.portfolio.currency.total -= cost;
-        this.portfolio.asset.free += order.amount;
-        this.portfolio.asset.total += order.amount;
-      } else {
-        const gain = order.amount * price * (1 - (this.marketData.fee?.maker ?? 0));
-        this.portfolio.asset.used -= order.amount;
-        this.portfolio.asset.total -= order.amount;
-        this.portfolio.currency.free += gain;
-        this.portfolio.currency.total += gain;
+    if (buySplitIndex > 0) {
+      const matched = this.buyOrders.splice(0, buySplitIndex);
+      for (const order of matched) {
+        this.fillOrder(order, candle);
       }
     }
+
+    // Process SELLs (ascending price)
+    // Matches if candle.high >= order.price
+    // Since sorted ASC, all orders from 0 to splitIndex match
+    let sellSplitIndex = this.sellOrders.findIndex(o => (o.price ?? 0) > candle.high);
+    if (sellSplitIndex === -1) {
+      sellSplitIndex = this.sellOrders.length;
+    }
+
+    if (sellSplitIndex > 0) {
+      const matched = this.sellOrders.splice(0, sellSplitIndex);
+      for (const order of matched) {
+        this.fillOrder(order, candle);
+      }
+    }
+  }
+
+  private fillOrder(order: DummyInternalOrder, _candle?: Candle) {
+    if (order.status !== 'open') return;
+
+    const price = order.price ?? 0;
+    order.status = 'closed';
+    order.filled = order.amount;
+    order.remaining = 0;
+    order.timestamp = this.currentTimestamp;
+
+    if (order.side === 'BUY') {
+      const cost = order.amount * price * (1 + (this.marketData.fee?.maker ?? 0));
+      this.portfolio.currency.used -= cost;
+      this.portfolio.currency.total -= cost;
+      this.portfolio.asset.free += order.amount;
+      this.portfolio.asset.total += order.amount;
+    } else {
+      const gain = order.amount * price * (1 - (this.marketData.fee?.maker ?? 0));
+      this.portfolio.asset.used -= order.amount;
+      this.portfolio.asset.total -= order.amount;
+      this.portfolio.currency.free += gain;
+      this.portfolio.currency.total += gain;
+    }
+  }
+
+  private insertBuyOrder(order: DummyInternalOrder) {
+    // DESC
+    let low = 0,
+      high = this.buyOrders.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (this.buyOrders[mid].price! > order.price!) low = mid + 1;
+      else high = mid;
+    }
+    this.buyOrders.splice(low, 0, order);
+  }
+
+  private insertSellOrder(order: DummyInternalOrder) {
+    // ASC
+    let low = 0,
+      high = this.sellOrders.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (this.sellOrders[mid].price! < order.price!) low = mid + 1;
+      else high = mid;
+    }
+    this.sellOrders.splice(low, 0, order);
   }
 
   private cloneOrder(order: DummyInternalOrder): OrderState {
