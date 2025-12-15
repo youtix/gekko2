@@ -34,7 +34,7 @@ export default [
     },
   },
   {
-    files: ['**/*.test.ts'],
+    files: ['**/*.test.ts', '**/*.bench.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
     },
