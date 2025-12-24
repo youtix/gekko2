@@ -11,11 +11,13 @@ import { Exchange, FetchOHLCVParams, MarketData } from '@services/exchange/excha
 import { toTimestamp } from '@utils/date/date.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
+import { AsyncMutex } from '../../../utils/async/asyncMutex';
 import { checkOrderAmount, checkOrderCost, checkOrderPrice } from '../exchange.utils';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
 import { findCandleIndexByTimestamp } from './dummyCentralizedExchange.utils';
 
 export class DummyCentralizedExchange implements Exchange {
+  private readonly mutex = new AsyncMutex();
   private readonly ordersMap: Map<string, DummyInternalOrder>;
   private readonly openOrders: Set<string>;
   private readonly candles: Candle[];
@@ -48,13 +50,15 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   /** Because dummy exchange is not a plugin, I need to call this function manualy in the plugins stream */
-  public processOneMinuteCandle(candle: Candle): void {
-    // console.table(this.orders.toArray().slice(-10));
-    // I need the close time of the candle
-    this.currentTimestamp = addMinutes(candle.start, 1).getTime();
-    this.candles.push(candle);
-    this.ticker = { bid: candle.close, ask: candle.close };
-    this.settleOrdersWithCandle(candle);
+  public async processOneMinuteCandle(candle: Candle): Promise<void> {
+    return this.mutex.runExclusive(() => {
+      // console.table(this.orders.toArray().slice(-10));
+      // I need the close time of the candle
+      this.currentTimestamp = addMinutes(candle.start, 1).getTime();
+      this.candles.push(candle);
+      this.ticker = { bid: candle.close, ask: candle.close };
+      this.settleOrdersWithCandle(candle);
+    });
   }
 
   public onNewCandle(_onNewCandle: (candle: Candle) => void): () => void {
@@ -67,126 +71,138 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   public async fetchTicker(): Promise<Ticker> {
-    return { ...this.ticker };
+    return this.mutex.runExclusive(() => ({ ...this.ticker }));
   }
 
   public async fetchOHLCV({
     from,
     limit = LIMITS[this.getExchangeName()].candles,
   }: FetchOHLCVParams): Promise<Candle[]> {
-    if (this.candles.length === 0) return [];
-    if (isNil(from)) return this.candles.slice(-limit);
+    return this.mutex.runExclusive(() => {
+      if (this.candles.length === 0) return [];
+      if (isNil(from)) return this.candles.slice(-limit);
 
-    const startIndex = findCandleIndexByTimestamp(this.candles, from);
+      const startIndex = findCandleIndexByTimestamp(this.candles, from);
 
-    // If no candle matches (start index is at the end), return empty
-    if (startIndex >= this.candles.length) return [];
+      // If no candle matches (start index is at the end), return empty
+      if (startIndex >= this.candles.length) return [];
 
-    const endIndex = isNil(limit) ? this.candles.length : startIndex + limit;
-    return this.candles.slice(startIndex, endIndex);
+      const endIndex = isNil(limit) ? this.candles.length : startIndex + limit;
+      return this.candles.slice(startIndex, endIndex);
+    });
   }
 
   public async fetchMyTrades(from?: EpochTimeStamp): Promise<Trade[]> {
-    const arr = Array.from(this.ordersMap.values());
-    const filtered = isNil(from) ? arr : arr.filter(order => order.timestamp >= from);
-    return filtered.map(this.mapOrderToTrade);
+    return this.mutex.runExclusive(() => {
+      const arr = Array.from(this.ordersMap.values());
+      const filtered = isNil(from) ? arr : arr.filter(order => order.timestamp >= from);
+      return filtered.map(this.mapOrderToTrade);
+    });
   }
 
   public async fetchBalance(): Promise<Portfolio> {
-    return {
+    return this.mutex.runExclusive(() => ({
       asset: { ...this.portfolio.asset },
       currency: { ...this.portfolio.currency },
-    };
+    }));
   }
 
   public async createLimitOrder(side: OrderSide, amount: number, price: number): Promise<OrderState> {
-    const checkedPrice = checkOrderPrice(price, this.marketData);
-    const normalizedAmount = checkOrderAmount(amount, this.marketData);
-    checkOrderCost(normalizedAmount, checkedPrice, this.marketData);
+    return this.mutex.runExclusive(() => {
+      const checkedPrice = checkOrderPrice(price, this.marketData);
+      const normalizedAmount = checkOrderAmount(amount, this.marketData);
+      checkOrderCost(normalizedAmount, checkedPrice, this.marketData);
 
-    this.reserveBalance(side, normalizedAmount, checkedPrice);
+      this.reserveBalance(side, normalizedAmount, checkedPrice);
 
-    const id = `order-${++this.orderSequence}`;
-    const order: DummyInternalOrder = {
-      id,
-      status: 'open',
-      price: checkedPrice,
-      filled: 0,
-      remaining: normalizedAmount,
-      amount: normalizedAmount,
-      timestamp: this.currentTimestamp,
-      side,
-      type: 'LIMIT',
-    };
-    this.ordersMap.set(id, order);
-    this.openOrders.add(id);
-    return this.cloneOrder(order);
+      const id = `order-${++this.orderSequence}`;
+      const order: DummyInternalOrder = {
+        id,
+        status: 'open',
+        price: checkedPrice,
+        filled: 0,
+        remaining: normalizedAmount,
+        amount: normalizedAmount,
+        timestamp: this.currentTimestamp,
+        side,
+        type: 'LIMIT',
+      };
+      this.ordersMap.set(id, order);
+      this.openOrders.add(id);
+      return this.cloneOrder(order);
+    });
   }
 
   public async createMarketOrder(side: OrderSide, amount: number): Promise<OrderState> {
-    const normalizedAmount = checkOrderAmount(amount, this.marketData);
-    const price = side === 'BUY' ? this.ticker.ask : this.ticker.bid;
-    checkOrderCost(normalizedAmount, price, this.marketData);
+    return this.mutex.runExclusive(() => {
+      const normalizedAmount = checkOrderAmount(amount, this.marketData);
+      const price = side === 'BUY' ? this.ticker.ask : this.ticker.bid;
+      checkOrderCost(normalizedAmount, price, this.marketData);
 
-    const id = `order-${++this.orderSequence}`;
-    const cost = normalizedAmount * price;
-    const totalCost = cost * (1 + (this.marketData.fee?.taker ?? 0));
+      const id = `order-${++this.orderSequence}`;
+      const cost = normalizedAmount * price;
+      const totalCost = cost * (1 + (this.marketData.fee?.taker ?? 0));
 
-    if (side === 'BUY') {
-      if (this.portfolio.currency.free < totalCost)
-        throw new InvalidOrder(
-          `Insufficient currency balance (portfolio: ${this.portfolio.currency.free}, order cost: ${totalCost})`,
-        );
-      this.portfolio.currency.free -= totalCost;
-      this.portfolio.currency.total -= totalCost;
-      this.portfolio.asset.free += normalizedAmount;
-      this.portfolio.asset.total += normalizedAmount;
-    } else {
-      if (this.portfolio.asset.free < normalizedAmount)
-        throw new InvalidOrder(
-          `Insufficient asset balance (portfolio: ${this.portfolio.asset.free}, amount: ${normalizedAmount})`,
-        );
-      this.portfolio.asset.free -= normalizedAmount;
-      this.portfolio.asset.total -= normalizedAmount;
-      const gain = cost * (1 - (this.marketData.fee?.taker ?? 0));
-      this.portfolio.currency.free += gain;
-      this.portfolio.currency.total += gain;
-    }
+      if (side === 'BUY') {
+        if (this.portfolio.currency.free < totalCost)
+          throw new InvalidOrder(
+            `Insufficient currency balance (portfolio: ${this.portfolio.currency.free}, order cost: ${totalCost})`,
+          );
+        this.portfolio.currency.free -= totalCost;
+        this.portfolio.currency.total -= totalCost;
+        this.portfolio.asset.free += normalizedAmount;
+        this.portfolio.asset.total += normalizedAmount;
+      } else {
+        if (this.portfolio.asset.free < normalizedAmount)
+          throw new InvalidOrder(
+            `Insufficient asset balance (portfolio: ${this.portfolio.asset.free}, amount: ${normalizedAmount})`,
+          );
+        this.portfolio.asset.free -= normalizedAmount;
+        this.portfolio.asset.total -= normalizedAmount;
+        const gain = cost * (1 - (this.marketData.fee?.taker ?? 0));
+        this.portfolio.currency.free += gain;
+        this.portfolio.currency.total += gain;
+      }
 
-    const order: DummyInternalOrder = {
-      id,
-      status: 'closed',
-      price,
-      filled: normalizedAmount,
-      remaining: 0,
-      amount: normalizedAmount,
-      timestamp: this.currentTimestamp,
-      side,
-      type: 'MARKET',
-    };
-    this.ordersMap.set(id, order);
+      const order: DummyInternalOrder = {
+        id,
+        status: 'closed',
+        price,
+        filled: normalizedAmount,
+        remaining: 0,
+        amount: normalizedAmount,
+        timestamp: this.currentTimestamp,
+        side,
+        type: 'MARKET',
+      };
+      this.ordersMap.set(id, order);
 
-    return this.cloneOrder(order);
+      return this.cloneOrder(order);
+    });
   }
 
   public async cancelOrder(id: string): Promise<OrderState> {
-    const order = this.ordersMap.get(id);
-    if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
+    return this.mutex.runExclusive(() => {
+      const order = this.ordersMap.get(id);
+      if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
 
-    if (order.status === 'open') {
-      this.releaseBalance(order);
-      order.status = 'canceled';
-      order.timestamp = this.currentTimestamp;
-      this.openOrders.delete(id);
-    }
+      if (order.status === 'open') {
+        this.releaseBalance(order);
+        order.status = 'canceled';
+        order.timestamp = this.currentTimestamp;
+        this.openOrders.delete(id);
+      }
 
-    return this.cloneOrder(order);
+      return this.cloneOrder(order);
+    });
   }
 
   public async fetchOrder(id: string): Promise<OrderState> {
-    const order = this.ordersMap.get(id);
-    if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
-    return this.cloneOrder(order);
+    return this.mutex.runExclusive(() => {
+      const order = this.ordersMap.get(id);
+      if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
+      return this.cloneOrder(order);
+    });
   }
 
   public getMarketData(): MarketData {
