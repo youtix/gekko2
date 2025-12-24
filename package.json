@@ -41,6 +41,7 @@
     "prepare": "husky",
     "release": "bun semantic-release",
     "start": "bun dist/gekko2.js",
+    "bench": "vitest --run bench",
     "test": "vitest --run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
