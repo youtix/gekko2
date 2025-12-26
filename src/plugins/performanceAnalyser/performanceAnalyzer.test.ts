@@ -110,7 +110,7 @@ describe('PerformanceAnalyzer', () => {
       ({ initialBalance, newBalance, expectedStart, expectedCurrent }) => {
         if (initialBalance) analyzer['start'].balance = initialBalance;
 
-        analyzer.onPortfolioValueChange({ balance: { free: newBalance, used: 0, total: newBalance } });
+        analyzer.onPortfolioValueChange([{ balance: { free: newBalance, used: 0, total: newBalance } }]);
 
         expect(analyzer['start'].balance).toBe(expectedStart);
         expect(analyzer['balance']).toBe(expectedCurrent);
@@ -135,7 +135,7 @@ describe('PerformanceAnalyzer', () => {
     `('should update portfolio correctly', ({ initialStart, newPortfolio, expectedStart, expectedLatest }) => {
       if (initialStart) analyzer['start'].portfolio = initialStart;
 
-      analyzer.onPortfolioChange(newPortfolio);
+      analyzer.onPortfolioChange([newPortfolio]);
 
       expect(analyzer['start'].portfolio).toEqual(expectedStart);
       expect(analyzer['latestPortfolio']).toEqual(expectedLatest);
@@ -147,7 +147,7 @@ describe('PerformanceAnalyzer', () => {
       const processSpy = vi.spyOn(analyzer as any, 'processOneMinuteCandle');
       analyzer['warmupCandle'] = defaultCandle;
 
-      analyzer.onStrategyWarmupCompleted(defaultCandle);
+      analyzer.onStrategyWarmupCompleted([defaultCandle]);
 
       expect(analyzer['warmupCompleted']).toBe(true);
       expect(analyzer['dates'].start).toBe(defaultCandle.start);
@@ -161,7 +161,7 @@ describe('PerformanceAnalyzer', () => {
         currency: { free: 0, used: 0, total: 0 },
       };
 
-      analyzer.onStrategyWarmupCompleted(defaultCandle);
+      analyzer.onStrategyWarmupCompleted([defaultCandle]);
 
       expect(analyzer['exposureActiveSince']).toBe(defaultCandle.start);
     });
@@ -172,7 +172,7 @@ describe('PerformanceAnalyzer', () => {
         currency: { free: 1000, used: 0, total: 1000 },
       };
 
-      analyzer.onStrategyWarmupCompleted(defaultCandle);
+      analyzer.onStrategyWarmupCompleted([defaultCandle]);
 
       expect(analyzer['exposureActiveSince']).toBeNull();
     });
@@ -183,7 +183,7 @@ describe('PerformanceAnalyzer', () => {
     const sell = createOrder('SELL', 110, 1, 2000, 1100, 0, 1100);
 
     it('should update stats, log trade and track samples', () => {
-      analyzer.onOrderCompleted(buy);
+      analyzer.onOrderCompleted([buy]);
 
       expect(analyzer['orders']).toBe(1);
       expect(analyzer['balance']).toBe(1000);
@@ -193,8 +193,8 @@ describe('PerformanceAnalyzer', () => {
     });
 
     it('should accumulate exposure when exiting a position (SELL)', () => {
-      analyzer.onOrderCompleted(buy);
-      analyzer.onOrderCompleted(sell);
+      analyzer.onOrderCompleted([buy]);
+      analyzer.onOrderCompleted([sell]);
 
       expect(analyzer['exposure']).toBe(sell.order.orderExecutionDate - buy.order.orderExecutionDate);
       expect(analyzer['exposureActiveSince']).toBeNull();
@@ -212,7 +212,7 @@ describe('PerformanceAnalyzer', () => {
         analyzer['exposureActiveSince'] = initialExposure;
         const order = createOrder('BUY', 100, 1, 1000, 1000, newPortfolioAsset, 0);
 
-        analyzer.onOrderCompleted(order);
+        analyzer.onOrderCompleted([order]);
 
         expect(analyzer['exposureActiveSince']).toBe(expectedExposureStart);
         if (expectedExposureAdded > 0) {

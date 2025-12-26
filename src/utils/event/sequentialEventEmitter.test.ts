@@ -20,24 +20,46 @@ describe('SequentialEventEmitter', () => {
     expect(callOrder).toEqual(['first', 'second']);
   });
 
-  it('should handle deferred events', async () => {
+  it('should batch deferred events by name and emit as arrays', async () => {
     const emitter = new SequentialEventEmitter('test');
-    const callOrder: string[] = [];
+    const receivedPayloads: string[][] = [];
 
-    emitter.on('deferred', payload => {
-      callOrder.push(payload as string);
+    emitter.on('deferred', (payloads: string[]) => {
+      receivedPayloads.push(payloads);
     });
 
     emitter.addDeferredEmit('deferred', 'payload1');
     emitter.addDeferredEmit('deferred', 'payload2');
+    emitter.addDeferredEmit('deferred', 'payload3');
 
-    expect(callOrder).toEqual([]);
-
-    await emitter.broadcastDeferredEmit();
-    expect(callOrder).toEqual(['payload1']);
+    expect(receivedPayloads).toEqual([]);
 
     await emitter.broadcastDeferredEmit();
-    expect(callOrder).toEqual(['payload1', 'payload2']);
+    expect(receivedPayloads).toEqual([['payload1', 'payload2', 'payload3']]);
+  });
+
+  it('should handle multiple different event names separately', async () => {
+    const emitter = new SequentialEventEmitter('test');
+    const eventAPayloads: string[][] = [];
+    const eventBPayloads: string[][] = [];
+
+    emitter.on('eventA', (payloads: string[]) => {
+      eventAPayloads.push(payloads);
+    });
+    emitter.on('eventB', (payloads: string[]) => {
+      eventBPayloads.push(payloads);
+    });
+
+    emitter.addDeferredEmit('eventA', 'a1');
+    emitter.addDeferredEmit('eventB', 'b1');
+    emitter.addDeferredEmit('eventA', 'a2');
+    emitter.addDeferredEmit('eventB', 'b2');
+
+    await emitter.broadcastDeferredEmit();
+    await emitter.broadcastDeferredEmit();
+
+    expect(eventAPayloads).toEqual([['a1', 'a2']]);
+    expect(eventBPayloads).toEqual([['b1', 'b2']]);
   });
 
   it('should return false when no deferred events', async () => {

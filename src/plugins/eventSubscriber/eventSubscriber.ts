@@ -55,91 +55,115 @@ export class EventSubscriber extends Plugin {
   }
 
   // --- BEGIN LISTENERS ---
-  public onStrategyInfo({ timestamp, level, tag, message }: StrategyInfo) {
-    if (!this.subscriptions.has('strategy_info')) return;
-    const msg = `• ${toISOString(timestamp)} [${level.toUpperCase()}] (${tag})\n${message}\n------\n`;
-    this.bot.sendMessage(msg);
+  public async onStrategyInfo(payloads: StrategyInfo[]) {
+    await Promise.all(
+      payloads.map(({ timestamp, level, tag, message }) => {
+        if (!this.subscriptions.has('strategy_info')) return;
+        const msg = `• ${toISOString(timestamp)} [${level.toUpperCase()}] (${tag})\n${message}\n------\n`;
+        this.bot.sendMessage(msg);
+      }),
+    );
   }
 
-  public onStrategyCreateOrder({ id, orderCreationDate, side, type, amount, price }: AdviceOrder) {
-    if (!this.subscriptions.has('strategy_advice')) return;
-    const priceLine =
-      type === 'LIMIT'
-        ? `Requested limit price: ${price} ${this.currency}`
-        : `Target price: ${this.price ?? 'unknown'} ${this.currency}`;
-    const message = [
-      `Order Id: ${id}`,
-      `Received ${type} ${side} advice`,
-      `Requested amount: ${amount ?? 'auto'}`,
-      `At time: ${toISOString(orderCreationDate)}`,
-      priceLine,
-    ].join('\n');
-    this.bot.sendMessage(message);
+  public async onStrategyCreateOrder(payloads: AdviceOrder[]) {
+    await Promise.all(
+      payloads.map(({ id, orderCreationDate, side, type, amount, price }) => {
+        if (!this.subscriptions.has('strategy_advice')) return;
+        const priceLine =
+          type === 'LIMIT'
+            ? `Requested limit price: ${price} ${this.currency}`
+            : `Target price: ${this.price ?? 'unknown'} ${this.currency}`;
+        const message = [
+          `Order Id: ${id}`,
+          `Received ${type} ${side} advice`,
+          `Requested amount: ${amount ?? 'auto'}`,
+          `At time: ${toISOString(orderCreationDate)}`,
+          priceLine,
+        ].join('\n');
+        this.bot.sendMessage(message);
+      }),
+    );
   }
 
-  public onOrderInitiated({ order, exchange }: OrderInitiatedEvent) {
-    if (!this.subscriptions.has('order_initiated')) return;
-    const { balance, portfolio, price: currentPrice } = exchange;
-    const { id, amount, side, type, price, orderCreationDate } = order;
-    const priceLine = price
-      ? `Requested limit price: ${price} ${this.currency}`
-      : `Target price: ${currentPrice} ${this.currency}`;
-    const message = [
-      `${side} ${type} order created (${id})`,
-      `Requested amount: ${amount}`,
-      `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
-      `Current balance: ${balance.total}`,
-      priceLine,
-      `At time: ${toISOString(orderCreationDate)}`,
-    ].join('\n');
-    this.bot.sendMessage(message);
+  public async onOrderInitiated(payloads: OrderInitiatedEvent[]) {
+    await Promise.all(
+      payloads.map(({ order, exchange }) => {
+        if (!this.subscriptions.has('order_initiated')) return;
+        const { balance, portfolio, price: currentPrice } = exchange;
+        const { id, amount, side, type, price, orderCreationDate } = order;
+        const priceLine = price
+          ? `Requested limit price: ${price} ${this.currency}`
+          : `Target price: ${currentPrice} ${this.currency}`;
+        const message = [
+          `${side} ${type} order created (${id})`,
+          `Requested amount: ${amount}`,
+          `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
+          `Current balance: ${balance.total}`,
+          priceLine,
+          `At time: ${toISOString(orderCreationDate)}`,
+        ].join('\n');
+        this.bot.sendMessage(message);
+      }),
+    );
   }
 
-  public onOrderCanceled({ order, exchange }: OrderCanceledEvent) {
-    if (!this.subscriptions.has('order_canceled')) return;
-    const { price: currentPrice } = exchange;
-    const { id, amount, side, type, price, orderCancelationDate, filled, remaining } = order;
-    const priceLine = price
-      ? `Requested limit price: ${price} ${this.currency}`
-      : `Current price: ${currentPrice} ${this.currency}`;
-    const message = [
-      `${side} ${type} order canceled (${id})`,
-      `At time: ${toISOString(orderCancelationDate)}`,
-      `Filled amount: ${filled} / ${amount} ${this.asset}`,
-      `Remaining amount: ${remaining} ${this.asset}`,
-      priceLine,
-    ].join('\n');
-    this.bot.sendMessage(message);
+  public async onOrderCanceled(payloads: OrderCanceledEvent[]) {
+    await Promise.all(
+      payloads.map(({ order, exchange }) => {
+        if (!this.subscriptions.has('order_canceled')) return;
+        const { price: currentPrice } = exchange;
+        const { id, amount, side, type, price, orderCancelationDate, filled, remaining } = order;
+        const priceLine = price
+          ? `Requested limit price: ${price} ${this.currency}`
+          : `Current price: ${currentPrice} ${this.currency}`;
+        const message = [
+          `${side} ${type} order canceled (${id})`,
+          `At time: ${toISOString(orderCancelationDate)}`,
+          `Filled amount: ${filled} / ${amount} ${this.asset}`,
+          `Remaining amount: ${remaining} ${this.asset}`,
+          priceLine,
+        ].join('\n');
+        this.bot.sendMessage(message);
+      }),
+    );
   }
 
-  public onOrderErrored({ order }: OrderErroredEvent) {
-    if (!this.subscriptions.has('order_errored')) return;
-    const { id, amount, side, type, reason, orderErrorDate } = order;
-    const message = [
-      `${side} ${type} order errored (${id})`,
-      `Due to ${reason}`,
-      `At time: ${toISOString(orderErrorDate)}`,
-      `Requested amount: ${amount}`,
-      `Current price: ${this.price} ${this.currency}`,
-    ].join('\n');
-    this.bot.sendMessage(message);
+  public async onOrderErrored(payloads: OrderErroredEvent[]) {
+    await Promise.all(
+      payloads.map(({ order }) => {
+        if (!this.subscriptions.has('order_errored')) return;
+        const { id, amount, side, type, reason, orderErrorDate } = order;
+        const message = [
+          `${side} ${type} order errored (${id})`,
+          `Due to ${reason}`,
+          `At time: ${toISOString(orderErrorDate)}`,
+          `Requested amount: ${amount}`,
+          `Current price: ${this.price} ${this.currency}`,
+        ].join('\n');
+        this.bot.sendMessage(message);
+      }),
+    );
   }
 
-  public onOrderCompleted({ order, exchange }: OrderCompletedEvent) {
-    if (!this.subscriptions.has('order_completed')) return;
-    const { portfolio, balance } = exchange;
-    const { id, amount, side, type, orderExecutionDate, effectivePrice, feePercent, fee } = order;
-    const message = [
-      `${side} ${type} order completed (${id})`,
-      `Amount: ${amount} ${this.asset}`,
-      `Price: ${effectivePrice} ${this.currency}`,
-      `Fee percent: ${feePercent ?? '0'}%`,
-      `Fee: ${fee} ${this.currency}`,
-      `At time: ${toISOString(orderExecutionDate)}`,
-      `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
-      `Current balance: ${balance}`,
-    ].join('\n');
-    this.bot.sendMessage(message);
+  public async onOrderCompleted(payloads: OrderCompletedEvent[]) {
+    await Promise.all(
+      payloads.map(({ order, exchange }) => {
+        if (!this.subscriptions.has('order_completed')) return;
+        const { portfolio, balance } = exchange;
+        const { id, amount, side, type, orderExecutionDate, effectivePrice, feePercent, fee } = order;
+        const message = [
+          `${side} ${type} order completed (${id})`,
+          `Amount: ${amount} ${this.asset}`,
+          `Price: ${effectivePrice} ${this.currency}`,
+          `Fee percent: ${feePercent ?? '0'}%`,
+          `Fee: ${fee} ${this.currency}`,
+          `At time: ${toISOString(orderExecutionDate)}`,
+          `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
+          `Current balance: ${balance}`,
+        ].join('\n');
+        this.bot.sendMessage(message);
+      }),
+    );
   }
 
   // --- END LISTENERS ---
