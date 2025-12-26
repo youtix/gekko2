@@ -87,3 +87,59 @@ const countDecimals = (num: number) => {
   }
   return s.split('.')[1]?.length || 0;
 };
+
+export interface RatioParams {
+  returns: number[];
+  yearlyProfit: number;
+  riskFreeReturn: number;
+  elapsedYears: number;
+}
+
+/**
+ * Calculates the annualized Sharpe ratio.
+ * Sharpe ratio measures risk-adjusted return using standard deviation of all returns.
+ *
+ * @param params.returns - Array of percentage returns per trade/period
+ * @param params.yearlyProfit - Annualized profit percentage
+ * @param params.riskFreeReturn - Risk-free rate of return (e.g., 1 for 1%)
+ * @param params.elapsedYears - Total elapsed time in years
+ * @returns Annualized Sharpe ratio
+ */
+export const sharpeRatio = ({ returns, yearlyProfit, riskFreeReturn, elapsedYears }: RatioParams): number => {
+  if (!returns.length || elapsedYears <= 0) return 0;
+
+  const volatility = stdev(returns);
+  const standardDeviation = Number.isNaN(volatility) ? 0 : volatility;
+
+  // Annualize volatility: multiply by sqrt(observations per year)
+  const observationsPerYear = returns.length / elapsedYears;
+  const annualizedStdDev = standardDeviation * Math.sqrt(observationsPerYear);
+
+  return !annualizedStdDev ? 0 : (yearlyProfit - riskFreeReturn) / annualizedStdDev;
+};
+
+/**
+ * Calculates the annualized Sortino ratio.
+ * Sortino ratio measures risk-adjusted return using only downside deviation (negative returns).
+ *
+ * @param params.returns - Array of percentage returns per trade/period
+ * @param params.yearlyProfit - Annualized profit percentage
+ * @param params.riskFreeReturn - Risk-free rate of return (e.g., 1 for 1%)
+ * @param params.elapsedYears - Total elapsed time in years
+ * @returns Annualized Sortino ratio
+ */
+export const sortinoRatio = ({ returns, yearlyProfit, riskFreeReturn, elapsedYears }: RatioParams): number => {
+  if (!returns.length || elapsedYears <= 0) return 0;
+
+  const lossReturns = returns.filter(r => r < 0);
+  if (!lossReturns.length) return 0;
+
+  const downsideDeviation = stdev(lossReturns);
+  if (!downsideDeviation || Number.isNaN(downsideDeviation)) return 0;
+
+  // Annualize downside deviation: multiply by sqrt(observations per year)
+  const observationsPerYear = returns.length / elapsedYears;
+  const annualizedDownsideDev = downsideDeviation * Math.sqrt(observationsPerYear);
+
+  return (yearlyProfit - riskFreeReturn) / Math.abs(annualizedDownsideDev);
+};

@@ -3,7 +3,7 @@ import { Candle } from '@models/candle.types';
 import { OrderCompletedEvent } from '@models/event.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { warning } from '@services/logger';
-import { percentile, stdev } from '@utils/math/math.utils';
+import { percentile, sharpeRatio, sortinoRatio, stdev } from '@utils/math/math.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
@@ -143,17 +143,20 @@ export class PerformanceAnalyzer extends Plugin {
 
     const volatility = stdev(returns);
     const standardDeviation = Number.isNaN(volatility) ? 0 : volatility;
-    const sharpe = !standardDeviation ? 0 : (relativeYearlyProfit - this.riskFreeReturn) / standardDeviation;
 
     const lossReturns = returns.filter(r => r < 0);
     const observations = returns.length;
     const adjustedCount = observations > 2 ? observations - 2 : 1;
     const downside =
       lossReturns.length > 0 ? Math.sqrt((observations || 1) / adjustedCount) * percentile(lossReturns, 0.25) : 0;
-    const downsideDeviation = lossReturns.length ? stdev(lossReturns) : 0;
-    const sortino = !downsideDeviation ? 0 : (relativeYearlyProfit - this.riskFreeReturn) / Math.abs(downsideDeviation);
 
     const market = this.startPrice ? ((this.endPrice - this.startPrice) / this.startPrice) * 100 : 0;
+    const ratioParams = {
+      returns,
+      yearlyProfit: relativeYearlyProfit,
+      riskFreeReturn: this.riskFreeReturn,
+      elapsedYears,
+    };
 
     const report: Report = {
       alpha: relativeProfit - market,
@@ -166,8 +169,8 @@ export class PerformanceAnalyzer extends Plugin {
       profit,
       relativeProfit,
       relativeYearlyProfit,
-      sharpe,
-      sortino,
+      sharpe: sharpeRatio(ratioParams),
+      sortino: sortinoRatio(ratioParams),
       standardDeviation,
       startBalance: this.start.balance,
       startPrice: this.startPrice,
