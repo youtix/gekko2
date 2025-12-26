@@ -359,8 +359,8 @@ describe('PerformanceAnalyzer', () => {
       setupAnalyzer(990, 1000, undefined, undefined, 100, samples2);
       report = analyzer['calculateReportStatistics']();
       expect(report.standardDeviation).toBeGreaterThan(0);
-      // We have loss, so downside should be negative (it's a percentile of losses)
-      expect(report.downside).toBeLessThan(0);
+      // We have a balance decline from 1100 to 990, so maxDrawdown should be positive
+      expect(report.maxDrawdown).toBeGreaterThan(0);
     });
 
     it('should handle zero duration gracefully', () => {

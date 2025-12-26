@@ -25,7 +25,7 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 
 const HEADER =
-  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total orders;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;expected downside\n';
+  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total orders;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;max drawdown\n';
 
 const baseConfig = {
   name: 'PerformanceReporter',
@@ -50,7 +50,7 @@ const sampleReport: Report = {
   sharpe: 1.25,
   sortino: 1.1,
   standardDeviation: 2.5,
-  downside: 0.08,
+  maxDrawdown: 0.08,
   profit: 10,
   relativeProfit: 1,
 };

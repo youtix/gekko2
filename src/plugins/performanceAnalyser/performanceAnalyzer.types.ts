@@ -39,6 +39,7 @@ export type Report = {
   sortino: number;
   /** Standard deviation of balance-change returns */
   standardDeviation: number;
-  downside: number;
+  /** Maximum drawdown: largest percentage decline from peak to trough */
+  maxDrawdown: number;
   alpha: number;
 };

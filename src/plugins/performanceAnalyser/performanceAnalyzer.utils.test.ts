@@ -80,7 +80,7 @@ describe('performanceAnalyzer.utils', () => {
       sharpe: 1.2,
       sortino: 1.3,
       standardDeviation: 0.1,
-      downside: 0.2,
+      maxDrawdown: 0.2,
       alpha: 0.05,
     };
 
@@ -135,7 +135,7 @@ describe('performanceAnalyzer.utils', () => {
         sharpeRatio: 'ratio(1.2)',
         sortinoRatio: 'ratio(1.3)',
         standardDeviation: 'ratio(0.1)',
-        expectedDownside: 'round(0.2)%',
+        maxDrawdown: 'round(0.2)%',
       });
     });
 

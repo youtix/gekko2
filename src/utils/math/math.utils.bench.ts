@@ -1,5 +1,14 @@
 import { bench, describe } from 'vitest';
-import { addPrecise, linreg, percentile, sharpeRatio, sortinoRatio, stdev, weightedMean } from './math.utils';
+import {
+  addPrecise,
+  linreg,
+  maxDrawdown,
+  percentile,
+  sharpeRatio,
+  sortinoRatio,
+  stdev,
+  weightedMean,
+} from './math.utils';
 
 // Sample data for benchmarks
 const smallArray = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -168,5 +177,23 @@ describe('sortinoRatio Performance', () => {
       riskFreeReturn: 2,
       elapsedYears: 1,
     });
+  });
+});
+
+describe('maxDrawdown Performance', () => {
+  const smallBalances = Array.from({ length: 10 }, (_, i) => 1000 + (i % 3 === 0 ? -50 : 30) * i);
+  const mediumBalances = Array.from({ length: 100 }, (_, i) => 1000 + (i % 3 === 0 ? -50 : 30) * Math.sin(i));
+  const largeBalances = Array.from({ length: 1000 }, (_, i) => 1000 + (i % 3 === 0 ? -50 : 30) * Math.sin(i));
+
+  bench('maxDrawdown - small balances (10 samples)', () => {
+    maxDrawdown(smallBalances, 1000);
+  });
+
+  bench('maxDrawdown - medium balances (100 samples)', () => {
+    maxDrawdown(mediumBalances, 1000);
+  });
+
+  bench('maxDrawdown - large balances (1000 samples)', () => {
+    maxDrawdown(largeBalances, 1000);
   });
 });

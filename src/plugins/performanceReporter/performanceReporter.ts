@@ -17,7 +17,7 @@ export class PerformanceReporter extends Plugin {
   private readonly filePath: string;
   private fs: Fs = { lockSync: defaultLockSync };
   private readonly header =
-    'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total orders;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;expected downside\n';
+    'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total orders;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;max drawdown\n';
 
   constructor({ name, filePath, fileName }: PerformanceReporterConfig) {
     super(name);
@@ -51,7 +51,7 @@ export class PerformanceReporter extends Plugin {
           formatRatio(report.sharpe),
           formatRatio(report.sortino),
           formatRatio(report.standardDeviation),
-          `${round(report.downside, 2, 'down')}%`,
+          `${round(report.maxDrawdown, 2, 'down')}%`,
         ].join(';') + '\n';
 
       try {
