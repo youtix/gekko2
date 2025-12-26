@@ -45,7 +45,7 @@ export const logFinalize = (report: Report, currency: string, enableConsoleTable
       sharpeRatio: formatRatio(report.sharpe),
       sortinoRatio: formatRatio(report.sortino),
       standardDeviation: formatRatio(report.standardDeviation),
-      expectedDownside: `${round(report.downside, 2, 'down')}%`,
+      maxDrawdown: `${round(report.maxDrawdown, 2, 'down')}%`,
     });
   }
   info('performance analyzer', report);

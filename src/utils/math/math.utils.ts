@@ -143,3 +143,30 @@ export const sortinoRatio = ({ returns, yearlyProfit, riskFreeReturn, elapsedYea
 
   return (yearlyProfit - riskFreeReturn) / Math.abs(annualizedDownsideDev);
 };
+
+/**
+ * Calculates the maximum drawdown (MDD) as a percentage.
+ * Maximum drawdown measures the largest peak-to-trough decline in portfolio value
+ * before a new peak is reached.
+ *
+ * @param balances - Array of balance values in chronological order
+ * @param initialBalance - The starting balance before the first sample
+ * @returns Maximum drawdown as a positive percentage (0-100)
+ */
+export const maxDrawdown = (balances: number[], initialBalance: number): number => {
+  if (!balances.length || initialBalance <= 0) return 0;
+
+  const { maxDrawdown: result } = balances.reduce(
+    (acc, balance) => {
+      const peak = balance > acc.peak ? balance : acc.peak;
+      const drawdown = peak > 0 ? ((peak - balance) / peak) * 100 : 0;
+      return {
+        peak,
+        maxDrawdown: drawdown > acc.maxDrawdown ? drawdown : acc.maxDrawdown,
+      };
+    },
+    { peak: initialBalance, maxDrawdown: 0 },
+  );
+
+  return result;
+};

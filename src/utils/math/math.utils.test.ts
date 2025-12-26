@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { addPrecise, linreg, percentile, sharpeRatio, sortinoRatio, stdev, weightedMean } from './math.utils';
+import {
+  addPrecise,
+  linreg,
+  maxDrawdown,
+  percentile,
+  sharpeRatio,
+  sortinoRatio,
+  stdev,
+  weightedMean,
+} from './math.utils';
 
 describe('stdev', () => {
   it.each`
@@ -188,5 +197,42 @@ describe('sortinoRatio', () => {
     const sharpe = sharpeRatio(params);
     const sortino = sortinoRatio(params);
     expect(sortino).toBeGreaterThan(sharpe);
+  });
+});
+
+describe('maxDrawdown', () => {
+  it.each`
+    description                                      | balances                   | initialBalance | expected
+    ${'return 0 for empty balances array'}           | ${[]}                      | ${1000}        | ${0}
+    ${'return 0 when initialBalance is 0'}           | ${[100, 200]}              | ${0}           | ${0}
+    ${'return 0 when initialBalance is negative'}    | ${[100, 200]}              | ${-100}        | ${0}
+    ${'return 0 when balances only increase'}        | ${[1100, 1200, 1300]}      | ${1000}        | ${0}
+    ${'return 0 when balances stay constant'}        | ${[1000, 1000, 1000]}      | ${1000}        | ${0}
+    ${'calculate drawdown from initial balance'}     | ${[900]}                   | ${1000}        | ${10}
+    ${'calculate drawdown from new peak'}            | ${[1100, 990]}             | ${1000}        | ${10}
+    ${'return max drawdown among multiple declines'} | ${[1100, 1000, 1200, 900]} | ${1000}        | ${25}
+    ${'handle 100% drawdown'}                        | ${[1000, 0]}               | ${1000}        | ${100}
+    ${'handle small fractional changes'}             | ${[100.5, 100.0, 100.2]}   | ${100}         | ${0.4975124378109453}
+  `('should $description', ({ balances, initialBalance, expected }) => {
+    const result = maxDrawdown(balances, initialBalance);
+    if (expected === 0) {
+      expect(result).toBe(0);
+    } else {
+      expect(result).toBeCloseTo(expected, 5);
+    }
+  });
+
+  it('should track peak correctly through multiple ups and downs', () => {
+    // Peak at 1500, then drop to 1000, that's 33.33% drawdown
+    const balances = [1000, 1200, 1500, 1200, 1000, 1300];
+    const result = maxDrawdown(balances, 1000);
+    expect(result).toBeCloseTo(33.333333, 4);
+  });
+
+  it('should not mutate input array', () => {
+    const balances = [1100, 1000, 1200];
+    const copy = [...balances];
+    maxDrawdown(balances, 1000);
+    expect(balances).toEqual(copy);
   });
 });

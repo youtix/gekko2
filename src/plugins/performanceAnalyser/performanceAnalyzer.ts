@@ -3,7 +3,7 @@ import { Candle } from '@models/candle.types';
 import { OrderCompletedEvent } from '@models/event.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { warning } from '@services/logger';
-import { percentile, sharpeRatio, sortinoRatio, stdev } from '@utils/math/math.utils';
+import { maxDrawdown, sharpeRatio, sortinoRatio, stdev } from '@utils/math/math.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
@@ -144,11 +144,11 @@ export class PerformanceAnalyzer extends Plugin {
     const volatility = stdev(returns);
     const standardDeviation = Number.isNaN(volatility) ? 0 : volatility;
 
-    const lossReturns = returns.filter(r => r < 0);
-    const observations = returns.length;
-    const adjustedCount = observations > 2 ? observations - 2 : 1;
-    const downside =
-      lossReturns.length > 0 ? Math.sqrt((observations || 1) / adjustedCount) * percentile(lossReturns, 0.25) : 0;
+    // Calculate Maximum Drawdown using utility function
+    const mdd = maxDrawdown(
+      orderedSamples.map(s => s.balance),
+      this.start.balance,
+    );
 
     const market = this.startPrice ? ((this.endPrice - this.startPrice) / this.startPrice) * 100 : 0;
     const ratioParams = {
@@ -161,7 +161,7 @@ export class PerformanceAnalyzer extends Plugin {
     const report: Report = {
       alpha: relativeProfit - market,
       balance: this.balance,
-      downside,
+      maxDrawdown: mdd,
       endPrice: this.endPrice,
       endTime: this.dates.end,
       exposure: percentExposure,
