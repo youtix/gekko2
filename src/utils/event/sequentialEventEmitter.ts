@@ -1,17 +1,15 @@
-import { debug } from '@services/logger';
-import { Fifo } from '@utils/collection/fifo';
-import { DeffferedEvent } from '../../models/event.types';
+import { info } from '@services/logger';
 
 type Listener<T = unknown> = (payload: T) => Promise<void> | void;
 
 export class SequentialEventEmitter {
   private listeners: Map<string, Listener[]>;
-  private readonly defferedEvents: Fifo<DeffferedEvent>;
+  private readonly deferredEvents: Map<string, unknown[]>;
   private readonly emitterName: string;
 
   constructor(emitterName: string) {
     this.listeners = new Map();
-    this.defferedEvents = new Fifo();
+    this.deferredEvents = new Map();
     this.emitterName = emitterName;
   }
 
@@ -42,15 +40,22 @@ export class SequentialEventEmitter {
   }
 
   public addDeferredEmit<T = unknown>(name: string, payload: T): void {
-    debug('event', `[${this.emitterName}] Adding deferred event: ${name}`);
-    this.defferedEvents.push({ name, payload });
+    info('event', `[${this.emitterName}] Adding deferred event: ${name}`);
+    const existing = this.deferredEvents.get(name);
+    if (existing) {
+      existing.push(payload);
+    } else {
+      this.deferredEvents.set(name, [payload]);
+    }
   }
 
   public async broadcastDeferredEmit(): Promise<boolean> {
-    const event = this.defferedEvents.shift();
-    if (!event) return false;
-    debug('event', `[${this.emitterName}] Broadcasting deferred event: ${event.name}`);
-    await this.emit(event.name, event.payload);
+    const entry = this.deferredEvents.entries().next().value;
+    if (!entry) return false;
+    const [name, payloads] = entry;
+    this.deferredEvents.delete(name);
+    info('event', `[${this.emitterName}] Broadcasting deferred event: ${name} (${payloads.length} payloads)`);
+    await this.emit(name, payloads); // Broadcast all deferred events sequentially to avoid race conditions
     return true;
   }
 }

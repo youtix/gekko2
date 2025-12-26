@@ -86,7 +86,7 @@ describe('Supervision', () => {
       fetchOHLCV: vi.fn().mockResolvedValue([exchangeCandle]),
     });
     plugin['handleCommand']('/launchtimeframecandlecheck');
-    await plugin.onTimeframeCandle(timeframeCandle as any);
+    await plugin.onTimeframeCandle([timeframeCandle as any]);
     const message = (fakeBot.sendMessage as any).mock.calls[0][0];
     expect(message).toContain('⚠️ Timeframe candle mismatch detected');
     expect(message).toContain('open: 1 | 2');
@@ -103,7 +103,7 @@ describe('Supervision', () => {
     });
     plugin['handleCommand']('/launchtimeframecandlecheck');
     plugin['handleCommand']('/stoptimeframecandlecheck');
-    await plugin.onTimeframeCandle(timeframeCandle as any);
+    await plugin.onTimeframeCandle([timeframeCandle as any]);
     expect(fakeBot.sendMessage).not.toHaveBeenCalledWith(
       expect.stringContaining('⚠️ Timeframe candle mismatch detected'),
     );

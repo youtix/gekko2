@@ -96,7 +96,7 @@ describe('PerformanceReporter', () => {
       (fs.statSync as Mock).mockReturnValue({ size: 123 });
       await reporter['processInit']();
 
-      reporter.onPerformanceReport(sampleReport);
+      reporter.onPerformanceReport([sampleReport]);
 
       const expectedPath = path.join(baseConfig.filePath, baseConfig.fileName);
       const expectedLine =

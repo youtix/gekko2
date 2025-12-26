@@ -37,7 +37,7 @@ describe('DummyCentralizedExchange Benchmarks', async () => {
     await exchange.createLimitOrder('SELL', 1, 150);
   }
 
-  bench('processOneMinuteCandle with 10k orders (no fills)', () => {
+  bench('processOneMinuteCandle with 10k orders (no fills)', async () => {
     const candle: Candle = {
       start: Date.now(),
       open: 100,
@@ -46,6 +46,6 @@ describe('DummyCentralizedExchange Benchmarks', async () => {
       close: 100,
       volume: 1000,
     };
-    exchange.processOneMinuteCandle(candle);
+    await exchange.processOneMinuteCandle(candle);
   });
 });

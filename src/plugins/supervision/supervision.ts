@@ -183,10 +183,13 @@ export class Supervision extends Plugin {
     return bytes / (1024 * 1024);
   }
 
-  public async onTimeframeCandle(candle: Candle) {
-    this.lastTimeframeCandle = candle;
-    if (!this.timeframeCandleCheck) return;
-    await this.checkTimeframeCandle();
+  public async onTimeframeCandle(payloads: Candle[]) {
+    // Sequential strategy: process each payload in order
+    for (const candle of payloads) {
+      this.lastTimeframeCandle = candle;
+      if (!this.timeframeCandleCheck) continue;
+      await this.checkTimeframeCandle();
+    }
   }
 
   protected processInit() {

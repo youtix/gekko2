@@ -467,10 +467,10 @@ describe('Trader', () => {
       };
     });
 
-    it('creates order and emits initiation event for BUY advice', () => {
+    it('creates order and emits initiation event for BUY advice', async () => {
       const advice = buildAdvice();
 
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
 
       expect(getOrdersMap().size).toBe(1);
       const initiated = getInitiatedOrder();
@@ -479,23 +479,23 @@ describe('Trader', () => {
       expect(initiated?.amount).toBeCloseTo(9.5, 5);
     });
 
-    it('computes SELL order amount from asset holdings', () => {
+    it('computes SELL order amount from asset holdings', async () => {
       trader['portfolio'] = {
         asset: { free: 2.5, used: 0, total: 2.5 },
         currency: { free: 0, used: 0, total: 0 },
       };
       const advice = buildAdvice({ side: 'SELL', type: 'MARKET' });
 
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
 
       const initiated = getInitiatedOrder();
       expect(initiated?.amount).toBeCloseTo(2.5, 5);
     });
 
-    it('uses provided quantity when present', () => {
+    it('uses provided quantity when present', async () => {
       const advice = buildAdvice({ amount: 1.2345, type: 'MARKET', side: 'BUY' });
 
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
 
       const initiated = getInitiatedOrder();
       expect(initiated?.amount).toBeCloseTo(1.2345, 5);
@@ -504,14 +504,14 @@ describe('Trader', () => {
       expect(metadata?.orderInstance.amount).toBeCloseTo(1.2345, 5);
     });
 
-    it('creates limit order with requested price and no amount buffer when quantity missing', () => {
+    it('creates limit order with requested price and no amount buffer when quantity missing', async () => {
       trader['portfolio'] = {
         asset: { free: 0, used: 0, total: 0 },
         currency: { free: 1000, used: 0, total: 1000 },
       };
       const advice = buildAdvice({ type: 'LIMIT', side: 'BUY', price: 95 });
 
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
 
       const initiated = getInitiatedOrder();
       expect(initiated?.price).toBe(95);
@@ -527,7 +527,7 @@ describe('Trader', () => {
         .mockResolvedValue(undefined);
       (logger.error as Mock).mockClear();
 
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
       order.emit(ORDER_ERRORED_EVENT, 'boom');
@@ -563,7 +563,7 @@ describe('Trader', () => {
         .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
         .mockResolvedValue(undefined);
 
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
       order.emit(ORDER_INVALID_EVENT, { reason: 'limit too low' });
@@ -600,7 +600,7 @@ describe('Trader', () => {
         'emitOrderCompletedEvent',
       );
 
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
       order.emit(ORDER_COMPLETED_EVENT);
@@ -625,7 +625,7 @@ describe('Trader', () => {
         'emitOrderCompletedEvent',
       );
 
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
       (order.createSummary as Mock).mockRejectedValue(new Error('summary failed'));
 
@@ -644,8 +644,8 @@ describe('Trader', () => {
   });
 
   describe('onStrategyCancelOrder', () => {
-    it('warns when order is unknown', () => {
-      trader.onStrategyCancelOrder('missing-id' as any);
+    it('warns when order is unknown', async () => {
+      await trader.onStrategyCancelOrder(['missing-id' as any]);
       expect(logger.warning).toHaveBeenCalledWith('trader', '[missing-id] Impossible to cancel order: Unknown Order');
     });
 
@@ -659,10 +659,10 @@ describe('Trader', () => {
         asset: { free: 0, used: 0, total: 0 },
         currency: { free: 1000, used: 0, total: 1000 },
       };
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
-      trader.onStrategyCancelOrder(advice.id);
+      await trader.onStrategyCancelOrder([advice.id]);
 
       expect(order.removeAllListeners).toHaveBeenCalled();
       expect(order.cancel).toHaveBeenCalled();
@@ -704,13 +704,13 @@ describe('Trader', () => {
         currency: { free: 1000, used: 0, total: 1000 },
       };
       const advice = buildAdvice({ type: 'LIMIT', side: 'SELL', price: 210 });
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
       const metadata = getOrderMetadata(advice.id);
       expect(metadata?.price).toBe(210);
       expect(metadata?.side).toBe('SELL');
 
-      trader.onStrategyCancelOrder(advice.id);
+      await trader.onStrategyCancelOrder([advice.id]);
       order.emit(ORDER_CANCELED_EVENT, { filled: 0, remaining: 5, partiallyFilled: false });
       await Promise.resolve();
     });
@@ -725,10 +725,10 @@ describe('Trader', () => {
         asset: { free: 0, used: 0, total: 0 },
         currency: { free: 1000, used: 0, total: 1000 },
       };
-      trader.onStrategyCreateOrder(advice);
+      await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
-      trader.onStrategyCancelOrder(advice.id);
+      await trader.onStrategyCancelOrder([advice.id]);
 
       expect(order.removeAllListeners).toHaveBeenCalled();
       expect(order.cancel).toHaveBeenCalled();

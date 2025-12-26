@@ -80,24 +80,44 @@ export class TradingAdvisor extends Plugin {
   /*                          EVENT LISTENERS                                   */
   /* -------------------------------------------------------------------------- */
 
-  public onOrderCompleted(order: OrderCompletedEvent) {
-    this.strategyManager?.onOrderCompleted(order);
+  public async onOrderCompleted(payloads: OrderCompletedEvent[]) {
+    // Parallel strategy: process all payloads concurrently
+    await Promise.all(
+      payloads.map(order => {
+        this.strategyManager?.onOrderCompleted(order);
+      }),
+    );
   }
 
-  public onOrderCanceled(order: OrderCanceledEvent) {
-    this.strategyManager?.onOrderCanceled(order);
+  public async onOrderCanceled(payloads: OrderCanceledEvent[]) {
+    // Parallel strategy: process all payloads concurrently
+    await Promise.all(
+      payloads.map(order => {
+        this.strategyManager?.onOrderCanceled(order);
+      }),
+    );
   }
 
-  public onOrderErrored(order: OrderErroredEvent) {
-    this.strategyManager?.onOrderErrored(order);
+  public async onOrderErrored(payloads: OrderErroredEvent[]) {
+    // Parallel strategy: process all payloads concurrently
+    await Promise.all(
+      payloads.map(order => {
+        this.strategyManager?.onOrderErrored(order);
+      }),
+    );
   }
 
-  public onPortfolioChange(portfolio: Portfolio) {
+  public onPortfolioChange(payloads: Portfolio[]) {
+    // Latest strategy: only process the most recent payload
+    const portfolio = payloads[payloads.length - 1];
     this.strategyManager?.setPortfolio(portfolio);
   }
 
-  public onTimeframeCandle(newCandle: Candle) {
-    this.strategyManager?.onTimeFrameCandle(newCandle);
+  public onTimeframeCandle(payloads: Candle[]) {
+    // Sequential strategy: process each payload in order
+    for (const newCandle of payloads) {
+      this.strategyManager?.onTimeFrameCandle(newCandle);
+    }
   }
 
   /* -------------------------------------------------------------------------- */

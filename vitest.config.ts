@@ -9,6 +9,7 @@ export default {
       include: ['src/**/*.ts'],
       exclude: [
         'src/**/*.{schema,mock,types,error,const}.ts',
+        'src/**/*.bench.ts',
         'src/**/index.ts',
         'src/strategies/custom/**/*.ts',
         'src/strategies/debug/**/*.ts',

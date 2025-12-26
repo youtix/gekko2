@@ -47,17 +47,22 @@ export class PerformanceAnalyzer extends Plugin {
   }
 
   // --- BEGIN LISTENERS ---
-  public onPortfolioValueChange(event: { balance: BalanceDetail }): void {
+  public onPortfolioValueChange(payloads: { balance: BalanceDetail }[]): void {
+    // Latest strategy: only process the most recent payload
+    const event = payloads[payloads.length - 1];
     if (!this.start.balance) this.start.balance = event.balance.total;
     this.balance = event.balance.total;
   }
 
-  public onPortfolioChange(event: Portfolio): void {
+  public onPortfolioChange(payloads: Portfolio[]): void {
+    // Latest strategy: only process the most recent payload
+    const event = payloads[payloads.length - 1];
     if (!this.start.portfolio) this.start.portfolio = event;
     this.latestPortfolio = event;
   }
 
-  public onStrategyWarmupCompleted({ start, close }: Candle): void {
+  public onStrategyWarmupCompleted([{ start, close }]: [Candle]): void {
+    // There is only one warmup event during the execution so always one payload
     this.warmupCompleted = true;
     this.dates.start = start;
     this.startPrice = close;
@@ -68,29 +73,32 @@ export class PerformanceAnalyzer extends Plugin {
     if (this.warmupCandle) this.processOneMinuteCandle(this.warmupCandle);
   }
 
-  public onOrderCompleted({ order, exchange }: OrderCompletedEvent): void {
-    this.orders++;
-    this.balance = exchange.balance.total;
-    this.latestPortfolio = exchange.portfolio;
-    const lastSample = this.balanceSamples[this.balanceSamples.length - 1];
+  public onOrderCompleted(payloads: OrderCompletedEvent[]): void {
+    // Sequential strategy: process each payload in order
+    for (const { order, exchange } of payloads) {
+      this.orders++;
+      this.balance = exchange.balance.total;
+      this.latestPortfolio = exchange.portfolio;
+      const lastSample = this.balanceSamples[this.balanceSamples.length - 1];
 
-    logTrade(order, exchange, this.currency, this.asset, this.enableConsoleTable, {
-      startBalance: this.start.balance || exchange.balance.total,
-      previousBalance: lastSample?.balance,
-    });
+      logTrade(order, exchange, this.currency, this.asset, this.enableConsoleTable, {
+        startBalance: this.start.balance || exchange.balance.total,
+        previousBalance: lastSample?.balance,
+      });
 
-    this.balanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance.total });
+      this.balanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance.total });
 
-    const isCurrentlyExposed = this.exposureActiveSince !== null;
-    const isExposedAfterTrade = exchange.portfolio.asset.total > 0;
+      const isCurrentlyExposed = this.exposureActiveSince !== null;
+      const isExposedAfterTrade = exchange.portfolio.asset.total > 0;
 
-    if (!isCurrentlyExposed && isExposedAfterTrade) {
-      this.exposureActiveSince = order.orderExecutionDate;
-    }
+      if (!isCurrentlyExposed && isExposedAfterTrade) {
+        this.exposureActiveSince = order.orderExecutionDate;
+      }
 
-    if (isCurrentlyExposed && !isExposedAfterTrade && this.exposureActiveSince !== null) {
-      this.exposure += Math.max(0, order.orderExecutionDate - this.exposureActiveSince);
-      this.exposureActiveSince = null;
+      if (isCurrentlyExposed && !isExposedAfterTrade && this.exposureActiveSince !== null) {
+        this.exposure += Math.max(0, order.orderExecutionDate - this.exposureActiveSince);
+        this.exposureActiveSince = null;
+      }
     }
   }
   // --- END LISTENERS ---

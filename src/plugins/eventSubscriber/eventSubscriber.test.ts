@@ -68,13 +68,15 @@ describe('EventSubscriber', () => {
       },
     };
     const onStrategyInfo = (p: EventSubscriber) =>
-      p.onStrategyInfo({ timestamp: eventTimestamp, level: 'debug', message: 'M', tag: 'strategy' });
+      p.onStrategyInfo([{ timestamp: eventTimestamp, level: 'debug', message: 'M', tag: 'strategy' }]);
     const onStrategyCreateOrder = (p: EventSubscriber, overrides: Partial<AdviceOrder> = {}) =>
-      p.onStrategyCreateOrder({
-        ...baseOrder,
-        orderCreationDate: eventTimestamp,
-        ...overrides,
-      });
+      p.onStrategyCreateOrder([
+        {
+          ...baseOrder,
+          orderCreationDate: eventTimestamp,
+          ...overrides,
+        },
+      ]);
     const makeOrderInitiatedEvent = (
       overrides: {
         order?: Partial<OrderInitiatedEvent['order']>;
@@ -85,7 +87,7 @@ describe('EventSubscriber', () => {
       exchange: { ...baseExchange, ...overrides.exchange },
     });
     const onOrderInitiated = (p: EventSubscriber, overrides = {}) =>
-      p.onOrderInitiated(makeOrderInitiatedEvent(overrides));
+      p.onOrderInitiated([makeOrderInitiatedEvent(overrides)]);
     const makeOrderCanceledEvent = (
       overrides: {
         order?: Partial<OrderCanceledEvent['order']>;
@@ -106,7 +108,7 @@ describe('EventSubscriber', () => {
       };
     };
     const onOrderCanceled = (p: EventSubscriber, overrides = {}) =>
-      p.onOrderCanceled(makeOrderCanceledEvent(overrides));
+      p.onOrderCanceled([makeOrderCanceledEvent(overrides)]);
     const makeOrderErroredEvent = (
       overrides: {
         order?: Partial<OrderErroredEvent['order']>;
@@ -125,7 +127,7 @@ describe('EventSubscriber', () => {
         exchange: { ...initiated.exchange, ...overrides.exchange },
       };
     };
-    const onOrderErrored = (p: EventSubscriber, overrides = {}) => p.onOrderErrored(makeOrderErroredEvent(overrides));
+    const onOrderErrored = (p: EventSubscriber, overrides = {}) => p.onOrderErrored([makeOrderErroredEvent(overrides)]);
     const makeOrderCompletedEvent = (
       overrides: {
         order?: Partial<OrderCompletedEvent['order']>;
@@ -147,7 +149,7 @@ describe('EventSubscriber', () => {
       };
     };
     const onOrderCompleted = (p: EventSubscriber, overrides = {}) =>
-      p.onOrderCompleted(makeOrderCompletedEvent(overrides));
+      p.onOrderCompleted([makeOrderCompletedEvent(overrides)]);
     it.each`
       name                 | handler
       ${'strategy_info'}   | ${onStrategyInfo}

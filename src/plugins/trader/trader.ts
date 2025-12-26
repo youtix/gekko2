@@ -131,6 +131,7 @@ export class Trader extends Plugin {
   /* -------------------------------------------------------------------------- */
 
   public async onStrategyWarmupCompleted() {
+    // There is only one warmup event during the execution
     this.warmupCompleted = true;
     const candle = this.warmupCandle;
     this.warmupCandle = null;
@@ -138,120 +139,139 @@ export class Trader extends Plugin {
     await this.synchronize();
   }
 
-  public async onStrategyCancelOrder(id: UUID) {
-    const orderMetadata = this.orders.get(id);
-    if (!orderMetadata) return warning('trader', `[${id}] Impossible to cancel order: Unknown Order`);
-    const { orderInstance, side, amount, type, orderCreationDate, price } = orderMetadata;
+  public async onStrategyCancelOrder(payloads: UUID[]) {
+    // Parallel strategy: process all payloads concurrently
+    await Promise.all(
+      payloads.map(async id => {
+        const orderMetadata = this.orders.get(id);
+        if (!orderMetadata) return warning('trader', `[${id}] Impossible to cancel order: Unknown Order`);
+        const { orderInstance, side, amount, type, orderCreationDate, price } = orderMetadata;
 
-    orderInstance.removeAllListeners();
+        orderInstance.removeAllListeners();
 
-    // Handle Cancel Success hook
-    orderInstance.once(ORDER_CANCELED_EVENT, async ({ timestamp: orderCancelationDate, filled, remaining }) => {
-      this.orders.delete(id);
-      await this.synchronize();
-      const order = { id, orderCreationDate, orderCancelationDate, amount, side, type, price, filled, remaining };
-      const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-      this.addDeferredEmit<OrderCanceledEvent>(ORDER_CANCELED_EVENT, { order, exchange });
-    });
+        // Handle Cancel Success hook
+        orderInstance.once(ORDER_CANCELED_EVENT, async ({ timestamp: orderCancelationDate, filled, remaining }) => {
+          this.orders.delete(id);
+          await this.synchronize();
+          const order = { id, orderCreationDate, orderCancelationDate, amount, side, type, price, filled, remaining };
+          const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+          this.addDeferredEmit<OrderCanceledEvent>(ORDER_CANCELED_EVENT, { order, exchange });
+        });
 
-    // Handle Order success event (maybe it completed before we succeed to cancel)
-    orderInstance.once(ORDER_COMPLETED_EVENT, async () => {
-      try {
-        const summary = await orderInstance.createSummary();
-        await this.synchronize();
-        this.emitOrderCompletedEvent(id, summary);
-      } catch (err) {
-        error(
-          'trader',
-          err instanceof Error
-            ? `[${id}] Error in order completed ${err.message}`
-            : `[${id}] Unknown error on order completed`,
-        );
-      } finally {
-        this.orders.delete(id);
-      }
-    });
+        // Handle Order success event (maybe it completed before we succeed to cancel)
+        orderInstance.once(ORDER_COMPLETED_EVENT, async () => {
+          try {
+            const summary = await orderInstance.createSummary();
+            await this.synchronize();
+            this.emitOrderCompletedEvent(id, summary);
+          } catch (err) {
+            error(
+              'trader',
+              err instanceof Error
+                ? `[${id}] Error in order completed ${err.message}`
+                : `[${id}] Unknown error on order completed`,
+            );
+          } finally {
+            this.orders.delete(id);
+          }
+        });
 
-    // Handle Cancel Error hook
-    orderInstance.once(ORDER_ERRORED_EVENT, async reason => {
-      this.orders.delete(id);
-      await this.synchronize();
-      const order = { id, orderCreationDate, amount, side, type, price, reason, orderErrorDate: this.currentTimestamp };
-      const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-      this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
-    });
+        // Handle Cancel Error hook
+        orderInstance.once(ORDER_ERRORED_EVENT, async reason => {
+          this.orders.delete(id);
+          await this.synchronize();
+          const order = {
+            id,
+            orderCreationDate,
+            amount,
+            side,
+            type,
+            price,
+            reason,
+            orderErrorDate: this.currentTimestamp,
+          };
+          const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+          this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
+        });
 
-    // Cancel
-    await orderInstance.cancel();
+        // Cancel
+        orderInstance.cancel();
+      }),
+    );
   }
 
-  public async onStrategyCreateOrder(advice: AdviceOrder) {
-    const { id, side, orderCreationDate, type, price = this.price } = advice;
-    const { asset, currency } = this.portfolio;
+  public async onStrategyCreateOrder(payloads: AdviceOrder[]) {
+    // Parallel strategy: process all payloads concurrently
+    await Promise.all(
+      payloads.map(async advice => {
+        const { id, side, orderCreationDate, type, price = this.price } = advice;
+        const { asset, currency } = this.portfolio;
 
-    // Price cannot be zero here because we call processOneMinuteCandle before events (plugins stream)
-    // We delegate the order validation (notional, lot, amount) to the exchange
-    const computedAmount = side === 'BUY' ? (currency.free / price) * (1 - DEFAULT_FEE_BUFFER) : asset.free;
-    const amount = advice.amount ?? computedAmount;
+        // Price cannot be zero here because we call processOneMinuteCandle before events (plugins stream)
+        // We delegate the order validation (notional, lot, amount) to the exchange
+        const computedAmount = side === 'BUY' ? (currency.free / price) * (1 - DEFAULT_FEE_BUFFER) : asset.free;
+        const amount = advice.amount ?? computedAmount;
 
-    // Emit order initiated event
-    const orderInitiated = { ...advice, amount };
-    const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-    this.addDeferredEmit<OrderInitiatedEvent>(ORDER_INITIATED_EVENT, { order: orderInitiated, exchange });
+        // Emit order initiated event
+        const orderInitiated = { ...advice, amount };
+        const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+        this.addDeferredEmit<OrderInitiatedEvent>(ORDER_INITIATED_EVENT, { order: orderInitiated, exchange });
 
-    // Create order
-    const orderInstance = new ORDER_FACTORY[type](id, side, amount, price);
-    this.orders.set(id, { amount, side, orderCreationDate, type, price, orderInstance });
+        // Create order
+        const orderInstance = new ORDER_FACTORY[type](id, side, amount, price);
+        this.orders.set(id, { amount, side, orderCreationDate, type, price, orderInstance });
 
-    // UPDATE EVENTS
-    orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
-      info('trader', `[${id}] ${side} ${type} order fill, total filled: ${filled}`),
-    );
-
-    orderInstance.on(ORDER_STATUS_CHANGED_EVENT, ({ status, reason }) => {
-      const secondPart = `, reason: ${reason}`;
-      return info('trader', `[${id}] Status changed: ${status.toUpperCase()}${reason ? secondPart : ''}`);
-    });
-
-    // ERROR EVENTS
-    orderInstance.on(ORDER_INVALID_EVENT, async ({ reason, status, filled }) => {
-      info('trader', `[${id}] ${side} ${type} order: ${reason} (filled: ${filled}, status: ${status})`);
-      this.orders.delete(id);
-      await this.synchronize();
-      const order = { ...orderInitiated, reason, orderErrorDate: this.currentTimestamp };
-      const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-      this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
-    });
-
-    orderInstance.on(ORDER_ERRORED_EVENT, async reason => {
-      error('trader', `[${id}] ${side} ${type} order: ${reason} (status: ERROR)`);
-      this.orders.delete(id);
-      await this.synchronize();
-      const order = { ...orderInitiated, reason, orderErrorDate: this.currentTimestamp };
-      const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
-      this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
-    });
-
-    // SUCCES EVENTS
-    orderInstance.on(ORDER_COMPLETED_EVENT, async () => {
-      try {
-        const summary = await orderInstance.createSummary();
-        await this.synchronize();
-        this.emitOrderCompletedEvent(id, summary);
-      } catch (err) {
-        error(
-          'trader',
-          err instanceof Error
-            ? `[${id}] Error in order completed ${err.message}`
-            : `[${id}] Unknown error on order completed`,
+        // UPDATE EVENTS
+        orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
+          info('trader', `[${id}] ${side} ${type} order fill, total filled: ${filled}`),
         );
-      } finally {
-        this.orders.delete(id);
-      }
-    });
 
-    // Launch the order
-    await orderInstance.launch();
+        orderInstance.on(ORDER_STATUS_CHANGED_EVENT, ({ status, reason }) => {
+          const secondPart = `, reason: ${reason}`;
+          return info('trader', `[${id}] Status changed: ${status.toUpperCase()}${reason ? secondPart : ''}`);
+        });
+
+        // ERROR EVENTS
+        orderInstance.on(ORDER_INVALID_EVENT, async ({ reason, status, filled }) => {
+          info('trader', `[${id}] ${side} ${type} order: ${reason} (filled: ${filled}, status: ${status})`);
+          this.orders.delete(id);
+          await this.synchronize();
+          const order = { ...orderInitiated, reason, orderErrorDate: this.currentTimestamp };
+          const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+          this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
+        });
+
+        orderInstance.on(ORDER_ERRORED_EVENT, async reason => {
+          error('trader', `[${id}] ${side} ${type} order: ${reason} (status: ERROR)`);
+          this.orders.delete(id);
+          await this.synchronize();
+          const order = { ...orderInitiated, reason, orderErrorDate: this.currentTimestamp };
+          const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+          this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
+        });
+
+        // SUCCES EVENTS
+        orderInstance.on(ORDER_COMPLETED_EVENT, async () => {
+          try {
+            const summary = await orderInstance.createSummary();
+            await this.synchronize();
+            this.emitOrderCompletedEvent(id, summary);
+          } catch (err) {
+            error(
+              'trader',
+              err instanceof Error
+                ? `[${id}] Error in order completed ${err.message}`
+                : `[${id}] Unknown error on order completed`,
+            );
+          } finally {
+            this.orders.delete(id);
+          }
+        });
+
+        // Launch the order
+        orderInstance.launch();
+      }),
+    );
   }
 
   /* -------------------------------------------------------------------------- */

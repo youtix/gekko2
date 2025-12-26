@@ -29,39 +29,42 @@ export class PerformanceReporter extends Plugin {
     this.fs = fs;
   }
 
-  public onPerformanceReport(report: Report) {
-    const csvLine =
-      [
-        generateStrategyId(this.strategySettings),
-        `${this.asset}/${this.currency}`,
-        toISOString(report.startTime),
-        toISOString(report.endTime),
-        report.duration,
-        `${round(report.exposure, 2, 'halfEven')}%`,
-        `${this.formater.format(report.startPrice)} ${this.currency}`,
-        `${this.formater.format(report.endPrice)} ${this.currency}`,
-        `${round(report.market, 2, 'down')}%`,
-        `${round(report.alpha, 2, 'down')}%`,
-        `${this.formater.format(report.yearlyProfit)} ${this.currency} (${round(report.relativeYearlyProfit, 2, 'down')}%)`,
-        report.orders,
-        `${this.formater.format(report.startBalance)} ${this.currency}`,
-        `${this.formater.format(report.balance)} ${this.currency}`,
-        formatRatio(report.sharpe),
-        formatRatio(report.sortino),
-        formatRatio(report.standardDeviation),
-        `${round(report.downside, 2, 'down')}%`,
-      ].join(';') + '\n';
+  public onPerformanceReport(payloads: Report[]) {
+    // Sequential strategy: process each payload in order
+    for (const report of payloads) {
+      const csvLine =
+        [
+          generateStrategyId(this.strategySettings),
+          `${this.asset}/${this.currency}`,
+          toISOString(report.startTime),
+          toISOString(report.endTime),
+          report.duration,
+          `${round(report.exposure, 2, 'halfEven')}%`,
+          `${this.formater.format(report.startPrice)} ${this.currency}`,
+          `${this.formater.format(report.endPrice)} ${this.currency}`,
+          `${round(report.market, 2, 'down')}%`,
+          `${round(report.alpha, 2, 'down')}%`,
+          `${this.formater.format(report.yearlyProfit)} ${this.currency} (${round(report.relativeYearlyProfit, 2, 'down')}%)`,
+          report.orders,
+          `${this.formater.format(report.startBalance)} ${this.currency}`,
+          `${this.formater.format(report.balance)} ${this.currency}`,
+          formatRatio(report.sharpe),
+          formatRatio(report.sortino),
+          formatRatio(report.standardDeviation),
+          `${round(report.downside, 2, 'down')}%`,
+        ].join(';') + '\n';
 
-    try {
-      // Acquire an exclusive lock, append, then release.
-      const release = this.fs.lockSync(this.filePath, { retries: 5 });
       try {
-        appendFileSync(this.filePath, csvLine, 'utf8');
-      } finally {
-        release();
+        // Acquire an exclusive lock, append, then release.
+        const release = this.fs.lockSync(this.filePath, { retries: 5 });
+        try {
+          appendFileSync(this.filePath, csvLine, 'utf8');
+        } finally {
+          release();
+        }
+      } catch (err) {
+        error('performance reporter', `write error: ${err}`);
       }
-    } catch (err) {
-      error('performance reporter', `write error: ${err}`);
     }
   }
 

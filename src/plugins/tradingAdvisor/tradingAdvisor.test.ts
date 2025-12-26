@@ -248,25 +248,25 @@ describe('TradingAdvisor', () => {
     });
 
     describe('onOrderCompleted', () => {
-      it('should call strategyManager.onOrderCompleted when onOrderCompleted is called', () => {
+      it('should call strategyManager.onOrderCompleted when onOrderCompleted is called', async () => {
         advisor['strategyManager']!.onOrderCompleted = vi.fn();
-        advisor.onOrderCompleted(defaultBuyTradeEvent);
+        await advisor.onOrderCompleted([defaultBuyTradeEvent]);
         expect(advisor['strategyManager']?.onOrderCompleted).toHaveBeenCalledExactlyOnceWith(defaultBuyTradeEvent);
       });
     });
 
     describe('onOrderCanceled', () => {
-      it('should call strategyManager.onOrderCanceled when onOrderCanceled is called', () => {
+      it('should call strategyManager.onOrderCanceled when onOrderCanceled is called', async () => {
         advisor['strategyManager']!.onOrderCanceled = vi.fn();
-        advisor.onOrderCanceled(defaultCanceledOrder);
+        await advisor.onOrderCanceled([defaultCanceledOrder]);
         expect(advisor['strategyManager']?.onOrderCanceled).toHaveBeenCalledExactlyOnceWith(defaultCanceledOrder);
       });
     });
 
     describe('onOrderErrored', () => {
-      it('should call strategyManager.onOrderErrored when onOrderErrored is called', () => {
+      it('should call strategyManager.onOrderErrored when onOrderErrored is called', async () => {
         advisor['strategyManager']!.onOrderErrored = vi.fn();
-        advisor.onOrderErrored(defaultErroredOrder);
+        await advisor.onOrderErrored([defaultErroredOrder]);
         expect(advisor['strategyManager']?.onOrderErrored).toHaveBeenCalledExactlyOnceWith(defaultErroredOrder);
       });
     });
@@ -279,7 +279,7 @@ describe('TradingAdvisor', () => {
         };
         advisor['strategyManager']!.setPortfolio = vi.fn();
 
-        advisor.onPortfolioChange(portfolio);
+        advisor.onPortfolioChange([portfolio]);
 
         expect(advisor['strategyManager']?.setPortfolio).toHaveBeenCalledExactlyOnceWith(portfolio);
       });
@@ -290,7 +290,7 @@ describe('TradingAdvisor', () => {
         const timeframeCandle: Candle = { ...defaultCandle, close: 123 };
         advisor['strategyManager']!.onTimeFrameCandle = vi.fn();
 
-        advisor.onTimeframeCandle(timeframeCandle);
+        advisor.onTimeframeCandle([timeframeCandle]);
 
         expect(advisor['strategyManager']?.onTimeFrameCandle).toHaveBeenCalledExactlyOnceWith(timeframeCandle);
       });
@@ -298,7 +298,7 @@ describe('TradingAdvisor', () => {
       it('should ignore timeframe candles when strategy manager is not initialized', () => {
         const notInitializedAdvisor = new TradingAdvisor(config);
         attachMockExchange(notInitializedAdvisor);
-        expect(() => notInitializedAdvisor.onTimeframeCandle(defaultCandle)).not.toThrow();
+        expect(() => notInitializedAdvisor.onTimeframeCandle([defaultCandle])).not.toThrow();
       });
     });
   });

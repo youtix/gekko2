@@ -31,7 +31,7 @@ export class PluginsStream extends Writable {
   public async _write(candle: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
     try {
       // Forward candle to dummy exchange (if set by user) before all plugins
-      this.dummyExchange?.processOneMinuteCandle(candle);
+      await this.dummyExchange?.processOneMinuteCandle(candle);
 
       // Forward candle to all plugins concurrently
       await Promise.all(this.plugins.map(plugin => plugin.processInputStream(candle)));
