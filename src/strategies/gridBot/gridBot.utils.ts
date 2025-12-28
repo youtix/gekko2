@@ -1,60 +1,75 @@
 import { Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
-import { Tools } from '@strategies/strategy.types';
 import { round } from '@utils/math/round.utils';
-import { DEFAULT_AMOUNT_ROUNDING, INTERNAL_OPEN_ORDER_CAP } from './gridBot.const';
-import {
-  GridBotStrategyParams,
-  GridRange,
-  GridSpacingType,
-  LevelState,
-  RebalancePlan,
-  RebalanceStage,
-} from './gridBot.types';
+import { DEFAULT_AMOUNT_PRECISION, DEFAULT_PRICE_PRECISION } from './gridBot.const';
+import { GridBotStrategyParams, GridBounds, GridSpacingType, RebalancePlan } from './gridBot.types';
 
-export const isGridOutOfRange = (currentPrice: number, gridBounds: GridRange) => {
-  return currentPrice < gridBounds.min || currentPrice > gridBounds.max;
-};
-
-export const isOnlyOneSideRemaining = (levelStates: Map<number, LevelState>) => {
-  let buy = 0;
-  let sell = 0;
-  for (const level of levelStates.values()) {
-    if (!level.activeOrderId || !level.desiredSide) continue;
-    if (level.desiredSide === 'BUY') buy++;
-    else sell++;
+/**
+ * Infer price precision from market data or use default.
+ * Returns both the decimal count and optional price step for tick-based rounding.
+ */
+export const inferPricePrecision = (
+  currentPrice: number,
+  marketData: MarketData,
+): { priceDecimals: number; priceStep?: number } => {
+  const priceStep = marketData.precision?.price;
+  if (priceStep && priceStep > 0) {
+    return { priceDecimals: countDecimals(priceStep), priceStep };
   }
-  return buy === 0 || sell === 0;
+  return { priceDecimals: countDecimals(currentPrice) };
 };
 
-/** Merge user cap with internal cap, ensuring at least 2 orders can exist. */
-export const resolveOrderCap = (override?: number): number => {
-  if (!override || override <= 0) return INTERNAL_OPEN_ORDER_CAP;
-  return Math.max(2, Math.min(INTERNAL_OPEN_ORDER_CAP, Math.floor(override)));
+/**
+ * Infer amount precision from market data or use default.
+ */
+export const inferAmountPrecision = (marketData: MarketData): number => {
+  const precision = marketData.precision?.amount;
+  return precision && precision > 0 ? countDecimals(precision) : DEFAULT_AMOUNT_PRECISION;
 };
 
-/** Count decimals, handling scientific notation like 1e-7. */
+/**
+ * Count decimal places in a number, handling scientific notation.
+ */
 export const countDecimals = (num: number): number => {
-  const s = num.toString();
-  if (s.includes('e')) {
-    const [base, exp] = s.split('e');
-    return Math.max(0, (base.split('.')[1]?.length || 0) - Number(exp));
+  if (!Number.isFinite(num)) return DEFAULT_PRICE_PRECISION;
+  const str = num.toString();
+  if (str.includes('e')) {
+    const [base, exp] = str.split('e');
+    const baseDecimals = base.split('.')[1]?.length ?? 0;
+    return Math.max(0, baseDecimals - Number(exp));
   }
-  return s.split('.')[1]?.length || 0;
+  return str.split('.')[1]?.length ?? 0;
 };
 
-/** Round price to the nearest tick or candle precision. */
+/**
+ * Round price to specified precision, optionally snapping to price step.
+ */
 export const roundPrice = (value: number, priceDecimals: number, priceStep?: number): number => {
   if (!Number.isFinite(value)) return 0;
   if (priceStep && priceStep > 0) {
     const steps = Math.round(value / priceStep);
     return round(steps * priceStep, priceDecimals);
   }
-  const factor = 10 ** priceDecimals;
-  return Math.round(value * factor) / factor;
+  return round(value, priceDecimals);
 };
 
-/** Compute and round price for a level according to spacing type. */
+/**
+ * Round amount to specified precision.
+ */
+export const roundAmount = (value: number, amountDecimals: number): number => {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return round(value, amountDecimals, 'down');
+};
+
+/**
+ * Compute price for a grid level based on spacing type.
+ * @param centerPrice - The center price of the grid
+ * @param levelIndex - Negative for buy levels, positive for sell levels
+ * @param priceDecimals - Number of decimal places for rounding
+ * @param spacingType - Type of spacing calculation
+ * @param spacingValue - Spacing parameter value
+ * @param priceStep - Optional price step for tick rounding
+ */
 export const computeLevelPrice = (
   centerPrice: number,
   levelIndex: number,
@@ -64,20 +79,18 @@ export const computeLevelPrice = (
   priceStep?: number,
 ): number => {
   if (levelIndex === 0) return centerPrice;
+
   const steps = Math.abs(levelIndex);
   const direction = levelIndex > 0 ? 1 : -1;
+  let price: number;
 
-  let price = centerPrice;
   switch (spacingType) {
     case 'fixed':
       price = centerPrice + direction * spacingValue * steps;
       break;
-    case 'percent': {
-      const percent = spacingValue / 100;
-      price = centerPrice * (1 + direction * percent * steps);
+    case 'percent':
+      price = centerPrice * (1 + (direction * spacingValue * steps) / 100);
       break;
-    }
-    case 'geometric':
     case 'logarithmic': {
       const multiplier = 1 + spacingValue;
       if (multiplier <= 0) return 0;
@@ -89,203 +102,242 @@ export const computeLevelPrice = (
   return roundPrice(price, priceDecimals, priceStep);
 };
 
-/** Estimate min/max prices spanned by the grid; used for validation and cost checks. */
-export const estimatePriceRange = (
+/**
+ * Compute grid bounds (min and max prices) for the given configuration.
+ */
+export const computeGridBounds = (
   centerPrice: number,
-  levelsPerSide: number,
+  buyLevels: number,
+  sellLevels: number,
   priceDecimals: number,
   spacingType: GridSpacingType,
   spacingValue: number,
   priceStep?: number,
-): { min: number; max: number } | null => {
-  if (levelsPerSide <= 0) return null;
-  const min = computeLevelPrice(centerPrice, -levelsPerSide, priceDecimals, spacingType, spacingValue, priceStep);
-  const max = computeLevelPrice(centerPrice, levelsPerSide, priceDecimals, spacingType, spacingValue, priceStep);
+): GridBounds | null => {
+  if (buyLevels <= 0 && sellLevels <= 0) return null;
+
+  const min =
+    buyLevels > 0
+      ? computeLevelPrice(centerPrice, -buyLevels, priceDecimals, spacingType, spacingValue, priceStep)
+      : centerPrice;
+  const max =
+    sellLevels > 0
+      ? computeLevelPrice(centerPrice, sellLevels, priceDecimals, spacingType, spacingValue, priceStep)
+      : centerPrice;
+
   if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max <= 0) return null;
+
   return { min, max };
 };
 
-/** Generate level indices from -N..N (center 0 kept idle). */
-export const buildLevelIndexes = (levelsPerSide: number): number[] => {
-  const indexes: number[] = [];
-  for (let i = -levelsPerSide; i <= levelsPerSide; i++) {
-    indexes.push(i);
-  }
-  return indexes;
-};
 /**
- * Infer quantity per level (when not provided): split asset/currency across sides
- * and use the smaller capacity to avoid rejections.
+ * Check if price is outside grid bounds.
  */
-export const resolveLevelQuantity = (
+export const isOutOfRange = (currentPrice: number, bounds: GridBounds): boolean => {
+  return currentPrice < bounds.min || currentPrice > bounds.max;
+};
+
+/**
+ * Validate grid configuration against exchange limits.
+ * Returns an error message if invalid, null if valid.
+ */
+export const validateConfig = (
+  params: GridBotStrategyParams,
+  centerPrice: number,
+  marketData: MarketData,
+): string | null => {
+  if (centerPrice <= 0) return 'Center price must be positive';
+  if (params.buyLevels < 0 || params.sellLevels < 0) return 'Level counts must be non-negative';
+  if (params.buyLevels === 0 && params.sellLevels === 0) return 'At least one level is required';
+  if (params.spacingValue <= 0) return 'Spacing value must be positive';
+
+  const { priceDecimals, priceStep } = inferPricePrecision(centerPrice, marketData);
+
+  // Check if lowest buy price would be positive
+  if (params.buyLevels > 0) {
+    const lowestBuyPrice = computeLevelPrice(
+      centerPrice,
+      -params.buyLevels,
+      priceDecimals,
+      params.spacingType,
+      params.spacingValue,
+      priceStep,
+    );
+    if (lowestBuyPrice <= 0) return 'Grid configuration would result in non-positive buy prices';
+  }
+
+  // Check against exchange price limits
+  if (marketData.price?.min && centerPrice < marketData.price.min) {
+    return `Center price ${centerPrice} is below exchange minimum ${marketData.price.min}`;
+  }
+  if (marketData.price?.max && centerPrice > marketData.price.max) {
+    return `Center price ${centerPrice} is above exchange maximum ${marketData.price.max}`;
+  }
+
+  return null;
+};
+
+/**
+ * Compute rebalance plan to achieve optimal allocation based on buy/sell level ratio.
+ * The target allocation ensures equal quantity per order across all levels.
+ * For N buy levels and M sell levels: targetAssetRatio = M / (N + M)
+ * Returns null if portfolio is already optimally balanced.
+ */
+export const computeRebalancePlan = (
   centerPrice: number,
   portfolio: Portfolio,
-  levelsPerSide: number,
+  buyLevels: number,
+  sellLevels: number,
   marketData: MarketData,
-  override?: number,
-): number => {
-  if (override && override > 0) return override;
-  if (levelsPerSide <= 0) return 0;
-  const perSide = Math.max(1, levelsPerSide);
-  const assetShare = portfolio.asset.free / perSide;
-  const currencyShare = portfolio.currency.free / (perSide * Math.max(centerPrice, Number.EPSILON));
-  const derived = Math.min(assetShare, currencyShare);
+): RebalancePlan | null => {
+  if (centerPrice <= 0) return null;
+  if (buyLevels <= 0 && sellLevels <= 0) return null;
 
-  // Round quantity to avoid floating point number problem when comparing with exchange
-  const { amountDecimals } = inferAmountPrecision(marketData);
-  return Number.isFinite(derived) ? round(derived, amountDecimals, 'down') : 0;
+  const totalLevels = buyLevels + sellLevels;
+  const assetValue = portfolio.asset.total * centerPrice;
+  const currencyValue = portfolio.currency.total;
+  const totalValue = assetValue + currencyValue;
+
+  if (totalValue <= 0) return null;
+
+  // Target asset ratio is sellLevels / totalLevels
+  // (assets are sold on sell levels, currency is used on buy levels)
+  const targetAssetRatio = sellLevels / totalLevels;
+  const targetAssetValue = totalValue * targetAssetRatio;
+  const gap = targetAssetValue - assetValue;
+
+  // Small gap - no rebalance needed (within 1% of target)
+  if (Math.abs(gap) < 0.01 * totalValue) return null;
+
+  const side = gap > 0 ? 'BUY' : 'SELL';
+  let amount = Math.abs(gap) / centerPrice;
+
+  if (amount <= 0) return null;
+
+  // Apply amount rounding
+  const amountDecimals = inferAmountPrecision(marketData);
+  amount = roundAmount(amount, amountDecimals);
+
+  // Apply amount limits
+  amount = applyAmountLimits(amount, marketData);
+
+  if (amount <= 0) return null;
+
+  return {
+    side,
+    amount,
+    estimatedNotional: amount * centerPrice,
+    centerPrice,
+  };
 };
 
-/** Apply amount min/max from market data if available. */
+/**
+ * Apply exchange amount limits to quantity.
+ */
 export const applyAmountLimits = (quantity: number, marketData: MarketData): number => {
-  if (!quantity || quantity <= 0) return quantity;
-  const { amount } = marketData;
+  if (quantity <= 0) return quantity;
+
   let adjusted = quantity;
-  if (amount?.min) adjusted = Math.max(adjusted, amount.min);
-  if (amount?.max) adjusted = Math.min(adjusted, amount.max);
+  if (marketData.amount?.min) adjusted = Math.max(adjusted, marketData.amount.min);
+  if (marketData.amount?.max) adjusted = Math.min(adjusted, marketData.amount.max);
+
   return adjusted;
 };
 
-/** Apply cost min/max from market data across the grid range. */
+/**
+ * Apply exchange cost limits to quantity.
+ */
 export const applyCostLimits = (
   quantity: number,
   minPrice: number,
   maxPrice: number,
   marketData: MarketData,
 ): number => {
-  if (!quantity || quantity <= 0) return quantity;
-  const { cost } = marketData;
+  if (quantity <= 0) return quantity;
+
   let adjusted = quantity;
-  if (cost?.min && minPrice > 0) adjusted = Math.max(adjusted, cost.min / minPrice);
-  if (cost?.max && maxPrice > 0) adjusted = Math.min(adjusted, cost.max / maxPrice);
+  if (marketData.cost?.min && minPrice > 0) {
+    adjusted = Math.max(adjusted, marketData.cost.min / minPrice);
+  }
+  if (marketData.cost?.max && maxPrice > 0) {
+    adjusted = Math.min(adjusted, marketData.cost.max / maxPrice);
+  }
+
   return adjusted;
 };
 
 /**
- * Compute how many levels per side are affordable:
- * - Buys limited by currency and the closest-buy price (highest below center).
- * - Sells limited by asset holdings.
+ * Derive quantity per level from portfolio based on grid configuration.
  */
-export const computeAffordableLevels = (
+export const deriveLevelQuantity = (
   centerPrice: number,
   portfolio: Portfolio,
-  quantity: number,
-  maxLevels: number,
+  buyLevels: number,
+  sellLevels: number,
   priceDecimals: number,
   spacingType: GridSpacingType,
   spacingValue: number,
+  marketData: MarketData,
   priceStep?: number,
 ): number => {
-  if (maxLevels <= 0 || quantity <= 0) return 0;
-  const highestBuyPrice = computeLevelPrice(centerPrice, -1, priceDecimals, spacingType, spacingValue, priceStep);
-  if (highestBuyPrice <= 0) return 0;
-  const maxBuys = Math.floor(portfolio.currency.free / (quantity * highestBuyPrice));
-  const maxSells = Math.floor(portfolio.asset.free / quantity);
-  return Math.max(0, Math.min(maxLevels, maxBuys, maxSells));
-};
+  if (buyLevels <= 0 && sellLevels <= 0) return 0;
 
-export const validateRebalancePlan = (
-  plan: RebalancePlan,
-  portfolio: Portfolio,
-  tools: Tools<GridBotStrategyParams>,
-): boolean => {
-  const { log, marketData } = tools;
-  const { side, amount, tolerancePercent, estimatedNotional } = plan;
-  if (!Number.isFinite(amount) || amount <= 0) return false;
+  // Calculate sell capacity: assets / sell levels
+  const assetShare = sellLevels > 0 ? portfolio.asset.free / sellLevels : Infinity;
 
-  if (side === 'SELL' && amount > portfolio.asset.free) {
-    log('warn', 'GridBot rebalance skipped: insufficient asset balance for planned sell.');
-    return false;
+  // Calculate buy capacity using actual level prices
+  let currencyShare = Infinity;
+  if (buyLevels > 0) {
+    let totalBuyCost = 0;
+    for (let i = 1; i <= buyLevels; i++) {
+      const levelPrice = computeLevelPrice(centerPrice, -i, priceDecimals, spacingType, spacingValue, priceStep);
+      if (levelPrice > 0) totalBuyCost += levelPrice;
+    }
+    if (totalBuyCost > 0) {
+      currencyShare = portfolio.currency.free / totalBuyCost;
+    }
   }
 
-  if (side === 'BUY' && estimatedNotional > portfolio.currency.free) {
-    log('warn', 'GridBot rebalance skipped: insufficient currency balance for planned buy.');
-    return false;
-  }
+  const derived = Math.min(assetShare, currencyShare);
+  if (!Number.isFinite(derived) || derived <= 0) return 0;
 
-  const { amount: amountLimits, cost } = marketData ?? {};
-  if (amountLimits?.min && amount < amountLimits.min) {
-    log(
-      'info',
-      `GridBot rebalance skipped: computed amount ${amount} below amount.min ${amountLimits.min} (tolerance ${tolerancePercent}%).`,
-    );
-    return false;
-  }
-  if (amountLimits?.max && amount > amountLimits.max) {
-    log('info', `GridBot rebalance skipped: computed amount ${amount} above amount.max ${amountLimits.max}.`);
-    return false;
-  }
+  // Apply rounding
+  const amountDecimals = inferAmountPrecision(marketData);
+  let quantity = roundAmount(derived, amountDecimals);
 
-  if (cost?.min && estimatedNotional < cost.min) {
-    log(
-      'info',
-      `GridBot rebalance skipped: notional ${estimatedNotional} below cost.min ${cost.min} (tolerance ${tolerancePercent}%).`,
-    );
-    return false;
-  }
-  if (cost?.max && estimatedNotional > cost.max) {
-    log('info', `GridBot rebalance skipped: notional ${estimatedNotional} above cost.max ${cost.max}.`);
-    return false;
-  }
+  // Apply limits
+  quantity = applyAmountLimits(quantity, marketData);
 
-  return true;
-};
-
-/** Use price.min as tick size if provided; otherwise infer decimals from candle price. */
-export const inferPricePrecision = (currentPrice: number, marketData: MarketData) => {
-  const priceStep = marketData.precision?.price ?? 0;
-  const price = priceStep > 0 ? priceStep : currentPrice;
-  return {
-    priceDecimals: countDecimals(price),
-    ...(priceStep > 0 && { priceStep }),
-  };
-};
-
-export const inferAmountPrecision = (marketData: MarketData) => ({
-  amountDecimals: marketData.precision?.amount ? countDecimals(marketData.precision.amount) : DEFAULT_AMOUNT_ROUNDING,
-});
-
-export const computeRebalancePlan = (
-  stage: RebalanceStage,
-  currentPrice: number,
-  portfolio: Portfolio,
-  marketData: MarketData,
-  tolerancePercent: number,
-): RebalancePlan | null => {
-  const { priceDecimals, priceStep } = inferPricePrecision(currentPrice, marketData);
-  const centerPrice = roundPrice(currentPrice, priceDecimals, priceStep);
-  if (!Number.isFinite(centerPrice) || centerPrice <= 0) return null;
-
-  const currentAssetValue = portfolio.asset.total * centerPrice;
-  const currentCurrencyValue = portfolio.currency.total;
-  const totalValue = currentAssetValue + currentCurrencyValue;
-  if (!Number.isFinite(totalValue) || totalValue <= 0) return null;
-
-  const targetValuePerSide = totalValue / 2;
-  const valueGap = targetValuePerSide - currentAssetValue;
-  const driftPercent = totalValue > 0 ? (Math.abs(valueGap) / totalValue) * 100 : 0;
-  if (driftPercent <= tolerancePercent) return null;
-
-  let amount = Math.abs(valueGap) / centerPrice;
-  if (!Number.isFinite(amount) || amount <= 0) return null;
-
-  const { amountDecimals } = inferAmountPrecision(marketData);
-  amount = round(amount, amountDecimals, 'down');
-  amount = applyAmountLimits(amount, marketData);
-  if (amount <= 0) return null;
-
-  const estimatedNotional = amount * centerPrice;
-
-  return {
-    stage,
-    side: valueGap > 0 ? 'BUY' : 'SELL',
-    amount,
+  // Apply cost limits if we have grid bounds
+  const bounds = computeGridBounds(
     centerPrice,
-    driftPercent,
-    tolerancePercent,
-    targetValuePerSide,
-    currentAssetValue,
-    currentCurrencyValue,
-    estimatedNotional,
-  };
+    buyLevels,
+    sellLevels,
+    priceDecimals,
+    spacingType,
+    spacingValue,
+    priceStep,
+  );
+  if (bounds) {
+    quantity = applyCostLimits(quantity, bounds.min, bounds.max, marketData);
+  }
+
+  return quantity;
+};
+
+/**
+ * Check if only one side has active orders (for warning purposes).
+ */
+export const hasOnlyOneSide = (levels: Array<{ side: 'BUY' | 'SELL'; orderId?: string }>): boolean => {
+  let hasBuy = false;
+  let hasSell = false;
+
+  for (const level of levels) {
+    if (!level.orderId) continue;
+    if (level.side === 'BUY') hasBuy = true;
+    else hasSell = true;
+    if (hasBuy && hasSell) return false;
+  }
+
+  return hasBuy || hasSell;
 };
