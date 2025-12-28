@@ -1,4 +1,3 @@
-import { ExchangeEvent } from '@models/event.types';
 import type { OrderSide } from '@models/order.types';
 import type { Portfolio } from '@models/portfolio.types';
 import type {
@@ -11,526 +10,382 @@ import type {
   Tools,
 } from '@strategies/strategy.types';
 import type { UUID } from 'node:crypto';
-import { DEFAULT_REBALANCE_TOLERANCE_PERCENT, DEFAULT_RETRY_LIMIT, INTERNAL_OPEN_ORDER_CAP } from './gridBot.const';
-import type { GridBotStrategyParams, GridMode, LevelState, RebalancePlan, RebalanceStage } from './gridBot.types';
+import { DEFAULT_RETRY_LIMIT } from './gridBot.const';
+import type { GridBotStrategyParams, GridBounds, LevelState, RebalancePlan } from './gridBot.types';
 import {
-  applyAmountLimits,
-  applyCostLimits,
-  buildLevelIndexes,
-  computeAffordableLevels,
+  computeGridBounds,
   computeLevelPrice,
   computeRebalancePlan,
-  estimatePriceRange,
+  deriveLevelQuantity,
+  hasOnlyOneSide,
   inferPricePrecision,
-  isGridOutOfRange,
-  isOnlyOneSideRemaining,
-  resolveLevelQuantity,
-  resolveOrderCap,
+  isOutOfRange,
   roundPrice,
-  validateRebalancePlan,
+  validateConfig,
 } from './gridBot.utils';
 
 /**
- * GridBot strategy
+ * GridBot Strategy
  *
- * Places a symmetric grid of LIMIT orders centered around the current price.
- * - Buy levels are placed below the center; sell levels above it.
- * - Spacing between levels is configurable: fixed, percent, or geometric/logarithmic multiplier.
- * - When a level is filled, the bot re-arms the adjacent level on the opposite side
- *   (BUY at N -> SELL at N+1, SELL at N -> BUY at N-1) to capture one-step profit.
- * - The number of initially open orders is bounded by a single global cap and portfolio affordability.
- * - Rounds prices to market tick size (price.min) or candle price precision.
- * - If price exits the grid or only one side remains, the bot recenters or not depending on mode.
- * - Order create/cancel operations retry on exchange errors up to a configured limit.
+ * Places a grid of LIMIT orders around the current price.
+ * - Buy levels are placed below the center price
+ * - Sell levels are placed above the center price
+ * - Spacing between levels is configurable: fixed, percent, or logarithmic
+ * - When a level is filled, the bot arms the adjacent opposite side level
+ * - Mandatory rebalancing ensures 50/50 portfolio allocation before grid building
+ * - On exchange errors, orders are retried up to the configured limit
+ * - When price exits the grid range, a warning is logged but trading continues
  */
 export class GridBot implements Strategy<GridBotStrategyParams> {
-  /** Quantity to use per level. */
-  private levelQuantity = 0;
-  /** Effective open order cap (min of user override and internal cap). */
-  private totalOrderCap = INTERNAL_OPEN_ORDER_CAP;
-  /** How many times to retry create/cancel on errors. */
+  /** All grid levels with their state */
+  private levels: LevelState[] = [];
+  /** Grid price boundaries */
+  private gridBounds?: GridBounds;
+  /** Quantity per level */
+  private quantity = 0;
+  /** Retry limit for order operations */
   private retryLimit = DEFAULT_RETRY_LIMIT;
-  /** Level states indexed by level index. */
-  private levelStates = new Map<number, LevelState>();
-  private levelIndexes: number[] = [];
-  /** Reverse lookup from order id to level index. */
-  private orderIdToLevel = new Map<UUID, number>();
-  /** Retry counters for order creation and cancellation. */
-  private creationRetryCount = new Map<number, number>();
-  private cancelRetryCount = new Map<UUID, number>();
-  /** Track in-flight cancels during recenter. */
-  private pendingCancelIds = new Set<UUID>();
-  /** Current grid bounds (min/max price covered by the grid). */
-  private gridBounds?: { min: number; max: number };
-  private isRecentering = false;
-  /** Rebalance configuration */
-  private rebalanceEnabled = false;
-  private rebalanceTolerance = DEFAULT_REBALANCE_TOLERANCE_PERCENT;
+  /** Retry counts per level index */
+  private retryCount = new Map<number, number>();
+  /** Reverse lookup: order ID to level index */
+  private orderToLevel = new Map<UUID, number>();
+
+  // Rebalance state
   private awaitingRebalance = false;
   private pendingRebalance?: RebalancePlan;
   private rebalanceOrderId?: UUID;
   private rebalanceRetryCount = 0;
 
+  // Cached price precision
+  private priceDecimals = 2;
+  private priceStep?: number;
+
   init({ candle, portfolio, tools }: InitParams<GridBotStrategyParams>): void {
-    // Capture and validate parameters; reset state before building the grid
-    this.totalOrderCap = resolveOrderCap(tools.strategyParams.totalOpenOrderCap);
+    this.reset();
     this.retryLimit = Math.max(1, tools.strategyParams.retryOnError ?? DEFAULT_RETRY_LIMIT);
-    this.pendingCancelIds.clear();
-    this.creationRetryCount.clear();
-    this.cancelRetryCount.clear();
-    this.orderIdToLevel.clear();
-    this.levelStates.clear();
-    this.levelIndexes = [];
+
+    const { priceDecimals, priceStep } = inferPricePrecision(candle.close, tools.marketData);
+    this.priceDecimals = priceDecimals;
+    this.priceStep = priceStep;
+
+    const centerPrice = roundPrice(candle.close, priceDecimals, priceStep);
+
+    // Validate configuration
+    const validationError = validateConfig(tools.strategyParams, centerPrice, tools.marketData);
+    if (validationError) {
+      tools.log('error', `GridBot: ${validationError}`);
+      return;
+    }
+
+    // Always attempt rebalancing first
+    this.prepareGrid(centerPrice, portfolio, tools);
+  }
+
+  onEachTimeframeCandle({ candle, tools }: OnCandleEventParams<GridBotStrategyParams>): void {
+    if (!this.gridBounds || this.awaitingRebalance) return;
+
+    if (isOutOfRange(candle.close, this.gridBounds)) {
+      tools.log(
+        'warn',
+        `GridBot: Price ${candle.close} is out of grid range [${this.gridBounds.min}, ${this.gridBounds.max}]`,
+      );
+    }
+  }
+
+  onTimeframeCandleAfterWarmup(_params: OnCandleEventParams<GridBotStrategyParams>): void {
+    // Range checks happen in onEachTimeframeCandle
+  }
+
+  onOrderCompleted({ order, exchange, tools }: OnOrderCompletedEventParams<GridBotStrategyParams>): void {
+    // Handle rebalance order completion
+    if (this.handleRebalanceCompletion(order.id, exchange.price, exchange.portfolio, tools)) {
+      return;
+    }
+
+    // Handle grid order completion
+    const levelIndex = this.orderToLevel.get(order.id);
+    if (levelIndex === undefined) return;
+
+    this.orderToLevel.delete(order.id);
+    const level = this.levels[levelIndex];
+    if (!level) return;
+
+    // Clear this level
+    level.orderId = undefined;
+    this.retryCount.delete(levelIndex);
+
+    // Arm the adjacent opposite side level
+    const neighborIndex = order.side === 'BUY' ? levelIndex + 1 : levelIndex - 1;
+    const neighborSide: OrderSide = order.side === 'BUY' ? 'SELL' : 'BUY';
+
+    if (neighborIndex >= 0 && neighborIndex < this.levels.length) {
+      const neighbor = this.levels[neighborIndex];
+      if (neighbor && !neighbor.orderId) {
+        this.placeOrder(neighborIndex, neighborSide, tools);
+      }
+    }
+
+    // Check if only one side remains
+    if (hasOnlyOneSide(this.levels)) {
+      tools.log('warn', 'GridBot: Only one side of the grid remains active');
+    }
+  }
+
+  onOrderCanceled({ order, exchange, tools }: OnOrderCanceledEventParams<GridBotStrategyParams>): void {
+    // Handle rebalance order cancellation
+    if (this.rebalanceOrderId && order.id === this.rebalanceOrderId) {
+      this.handleRebalanceFailure('Order was canceled', exchange.price, exchange.portfolio, tools);
+      return;
+    }
+
+    // Handle grid order cancellation - try to replace it
+    const levelIndex = this.orderToLevel.get(order.id);
+    if (levelIndex === undefined) return;
+
+    this.orderToLevel.delete(order.id);
+    const level = this.levels[levelIndex];
+    if (!level) return;
+
+    level.orderId = undefined;
+
+    // Re-place the order if we're not in rebalancing mode
+    if (!this.awaitingRebalance) {
+      this.retryCount.set(levelIndex, 0);
+      this.placeOrder(levelIndex, level.side, tools);
+    }
+  }
+
+  onOrderErrored({ order, exchange, tools }: OnOrderErroredEventParams<GridBotStrategyParams>): void {
+    // Handle rebalance order error
+    if (this.rebalanceOrderId && order.id === this.rebalanceOrderId) {
+      this.handleRebalanceFailure(order.reason ?? 'Unknown error', exchange.price, exchange.portfolio, tools);
+      return;
+    }
+
+    // Handle grid order error
+    const levelIndex = this.orderToLevel.get(order.id);
+    if (levelIndex === undefined) return;
+
+    this.orderToLevel.delete(order.id);
+    const level = this.levels[levelIndex];
+    if (!level) return;
+
+    level.orderId = undefined;
+
+    // Retry if under the limit
+    const attempts = (this.retryCount.get(levelIndex) ?? 0) + 1;
+    if (attempts > this.retryLimit) {
+      tools.log('error', `GridBot: Retry limit reached for level ${levelIndex}`);
+      return;
+    }
+
+    this.retryCount.set(levelIndex, attempts);
+    this.placeOrder(levelIndex, level.side, tools);
+  }
+
+  log(_params: OnCandleEventParams<GridBotStrategyParams>): void {
+    // No logging implementation needed
+  }
+
+  end(): void {
+    // No cleanup needed
+  }
+
+  /** Reset all internal state */
+  private reset(): void {
+    this.levels = [];
+    this.gridBounds = undefined;
+    this.quantity = 0;
+    this.retryCount.clear();
+    this.orderToLevel.clear();
     this.awaitingRebalance = false;
     this.pendingRebalance = undefined;
     this.rebalanceOrderId = undefined;
     this.rebalanceRetryCount = 0;
-    const tolerance = tools.strategyParams.rebalance?.tolerancePercent;
-    this.rebalanceTolerance = Number.isFinite(tolerance)
-      ? Math.max(0, tolerance ?? DEFAULT_REBALANCE_TOLERANCE_PERCENT)
-      : DEFAULT_REBALANCE_TOLERANCE_PERCENT;
-    this.rebalanceEnabled = tools.strategyParams.rebalance?.enabled ?? false;
-
-    this.prepareGridBuild('init', candle.close, portfolio, tools);
   }
 
-  /**
-   * Check range continuously from the beginning. This keeps behavior consistent
-   * across backtests and live, while init() already built the grid at first candle.
-   */
-  onEachTimeframeCandle({ candle, portfolio, tools }: OnCandleEventParams<GridBotStrategyParams>): void {
-    this.checkRangeAndMaybeRecenter(candle.close, portfolio, tools);
-  }
+  /** Check if rebalancing is needed and initiate it, or build grid directly */
+  private prepareGrid(centerPrice: number, portfolio: Portfolio, tools: Tools<GridBotStrategyParams>): void {
+    const { buyLevels, sellLevels } = tools.strategyParams;
+    const plan = computeRebalancePlan(centerPrice, portfolio, buyLevels, sellLevels, tools.marketData);
 
-  /**
-   * On fill, disarm the current level and arm the adjacent opposite level
-   * (BUY at N ➜ SELL at N+1, SELL at N ➜ BUY at N−1).
-   */
-  onOrderCompleted({ order, exchange, tools }: OnOrderCompletedEventParams<GridBotStrategyParams>): void {
-    if (this.handleRebalanceOrderCompletion(order.id, exchange.price, exchange.portfolio, tools)) return;
-
-    if (this.pendingCancelIds.has(order.id)) {
-      this.pendingCancelIds.delete(order.id);
-      this.cancelRetryCount.delete(order.id);
-      if (this.pendingCancelIds.size === 0) this.finishRecenterIfNeeded(exchange.price, exchange.portfolio, tools);
-      return;
-    }
-
-    const levelIndex = this.orderIdToLevel.get(order.id);
-    if (levelIndex === undefined) return;
-
-    this.orderIdToLevel.delete(order.id);
-    const level = this.levelStates.get(levelIndex);
-    if (!level) return;
-
-    level.activeOrderId = undefined;
-    level.desiredSide = null;
-    this.creationRetryCount.set(levelIndex, 0);
-
-    const neighborIndex = this.findNeighborIndex(levelIndex, order.side === 'BUY' ? 1 : -1, tools.strategyParams.mode);
-    if (neighborIndex !== null && this.gridBounds && !isGridOutOfRange(exchange.price, this.gridBounds)) {
-      this.scheduleLevel(neighborIndex, order.side === 'BUY' ? 'SELL' : 'BUY', tools);
-    }
-
-    this.enforceSideBalance(order.id, exchange, tools);
-  }
-
-  /**
-   * During recenter: track cancel completions and rebuild once all are done.
-   * Otherwise: if level is still desired, re-place the order.
-   */
-  onOrderCanceled({ order, exchange, tools }: OnOrderCanceledEventParams<GridBotStrategyParams>): void {
-    if (this.rebalanceOrderId && order.id === this.rebalanceOrderId) {
-      this.handleRebalanceFailure('canceled before completion', tools, exchange.price, exchange.portfolio);
-      return;
-    }
-    if (this.pendingCancelIds.has(order.id)) {
-      this.pendingCancelIds.delete(order.id);
-      this.cancelRetryCount.delete(order.id);
-      if (this.pendingCancelIds.size === 0) this.finishRecenterIfNeeded(exchange.price, exchange.portfolio, tools);
-      return;
-    }
-
-    const levelIndex = this.orderIdToLevel.get(order.id);
-    if (levelIndex === undefined) return;
-
-    const level = this.levelStates.get(levelIndex);
-    if (!level) return;
-
-    level.activeOrderId = undefined;
-
-    if (!this.isRecentering && level.desiredSide) {
-      this.creationRetryCount.set(levelIndex, 0);
-      this.placeOrder(levelIndex, level.desiredSide, tools);
-    }
-  }
-
-  /** Retry cancel/create up to retryLimit when the exchange returns an error. */
-  onOrderErrored({ order, exchange, tools }: OnOrderErroredEventParams<GridBotStrategyParams>): void {
-    if (this.rebalanceOrderId && order.id === this.rebalanceOrderId) {
-      this.handleRebalanceFailure(order.reason ?? 'rebalance order errored', tools, exchange.price, exchange.portfolio);
-      return;
-    }
-    if (this.pendingCancelIds.has(order.id)) {
-      const attempts = (this.cancelRetryCount.get(order.id) ?? 0) + 1;
-      if (attempts > this.retryLimit) {
-        this.pendingCancelIds.delete(order.id);
-        this.cancelRetryCount.delete(order.id);
-        tools.log('error', `GridBot cancel retry limit reached for order ${order.id}`);
-        if (this.pendingCancelIds.size === 0) {
-          this.finishRecenterIfNeeded(exchange.price, exchange.portfolio, tools);
-        }
+    if (plan) {
+      // Validate rebalance is possible
+      if (plan.side === 'SELL' && plan.amount > portfolio.asset.free) {
+        tools.log('warn', 'GridBot: Insufficient asset for rebalance, building grid with current allocation');
+        this.buildGrid(centerPrice, portfolio, tools);
         return;
       }
-      this.cancelRetryCount.set(order.id, attempts);
-      tools.cancelOrder(order.id);
-      return;
+      if (plan.side === 'BUY' && plan.estimatedNotional > portfolio.currency.free) {
+        tools.log('warn', 'GridBot: Insufficient currency for rebalance, building grid with current allocation');
+        this.buildGrid(centerPrice, portfolio, tools);
+        return;
+      }
+
+      this.awaitingRebalance = true;
+      this.pendingRebalance = plan;
+      this.rebalanceRetryCount = 0;
+      this.placeRebalanceOrder(tools);
+    } else {
+      this.buildGrid(centerPrice, portfolio, tools);
     }
-
-    const levelIndex = this.orderIdToLevel.get(order.id);
-    if (levelIndex === undefined) return;
-
-    const level = this.levelStates.get(levelIndex);
-    this.orderIdToLevel.delete(order.id);
-    if (!level || !level.desiredSide) return;
-
-    level.activeOrderId = undefined;
-    const attempts = (this.creationRetryCount.get(levelIndex) ?? 0) + 1;
-    if (attempts > this.retryLimit) {
-      this.creationRetryCount.set(levelIndex, attempts);
-      tools.log('error', `GridBot retry limit reached for level ${levelIndex}`);
-      return;
-    }
-    this.creationRetryCount.set(levelIndex, attempts);
-    if (!this.isRecentering) this.placeOrder(levelIndex, level.desiredSide, tools);
   }
 
-  onTimeframeCandleAfterWarmup(_params: OnCandleEventParams<GridBotStrategyParams>): void {
-    // Not used for this strategy (range checks happen in onEachTimeframeCandle).
-  }
-
-  log(_params: OnCandleEventParams<GridBotStrategyParams>): void {
-    // Not used for this strategy
-  }
-
-  end(): void {
-    // Not used for this strategy
-  }
-
-  /** Decide whether to rebalance before grid build or build immediately. */
-  private prepareGridBuild(
-    stage: RebalanceStage,
-    currentPrice: number,
-    portfolio: Portfolio,
-    tools: Tools<GridBotStrategyParams>,
-  ) {
-    if (this.tryRebalance(stage, currentPrice, portfolio, tools)) return;
-    this.rebuildGrid(currentPrice, portfolio, tools);
-  }
-
-  /**
-   * Attempt to start a rebalance cycle. Returns true when a rebalance order has been placed.
-   */
-  private tryRebalance(
-    stage: RebalanceStage,
-    currentPrice: number,
-    portfolio: Portfolio,
-    tools: Tools<GridBotStrategyParams>,
-  ): boolean {
-    if (!this.rebalanceEnabled) return false;
-    if (stage === 'recenter' && tools.strategyParams.mode === 'oneShot') return false;
-    if (this.awaitingRebalance) return true;
-    const plan = computeRebalancePlan(stage, currentPrice, portfolio, tools.marketData, this.rebalanceTolerance);
-    if (!plan) return false;
-
-    if (!validateRebalancePlan(plan, portfolio, tools)) return false;
-
-    this.awaitingRebalance = true;
-    this.pendingRebalance = plan;
-    this.rebalanceRetryCount = 0;
-    this.placeRebalanceOrder(tools);
-    return true;
-  }
-
-  private placeRebalanceOrder(tools: Tools<GridBotStrategyParams>) {
+  /** Place the rebalance STICKY order */
+  private placeRebalanceOrder(tools: Tools<GridBotStrategyParams>): void {
     if (!this.pendingRebalance) return;
-    const {
-      side,
-      amount,
-      stage,
-      currentAssetValue,
-      currentCurrencyValue,
-      targetValuePerSide,
-      driftPercent,
-      tolerancePercent,
-      estimatedNotional,
-    } = this.pendingRebalance;
+
+    const { side, amount } = this.pendingRebalance;
     this.rebalanceOrderId = tools.createOrder({ type: 'STICKY', side, amount });
-    tools.log(
-      'info',
-      [
-        `GridBot rebalancing (${stage}):`,
-        `asset=${currentAssetValue.toFixed(4)} vs target ${targetValuePerSide.toFixed(4)}`,
-        `currency=${currentCurrencyValue.toFixed(4)}`,
-        `drift=${driftPercent.toFixed(2)}%`,
-        `tolerance=${tolerancePercent}%`,
-        `order=${side} STICKY ${amount} (est. ${estimatedNotional.toFixed(4)})`,
-      ].join(' '),
-    );
+    tools.log('info', `GridBot: Rebalancing - ${side} ${amount} (STICKY order)`);
   }
 
-  private handleRebalanceOrderCompletion(
+  /** Handle successful rebalance order completion */
+  private handleRebalanceCompletion(
     orderId: UUID,
     currentPrice: number,
     portfolio: Portfolio,
     tools: Tools<GridBotStrategyParams>,
   ): boolean {
-    if (!this.pendingRebalance || !this.rebalanceOrderId || orderId !== this.rebalanceOrderId) return false;
+    if (!this.pendingRebalance || this.rebalanceOrderId !== orderId) return false;
+
     this.awaitingRebalance = false;
     this.rebalanceOrderId = undefined;
     this.rebalanceRetryCount = 0;
-    const stage = this.pendingRebalance.stage;
     this.pendingRebalance = undefined;
-    tools.log('info', `GridBot rebalance (${stage}) completed. Rebuilding grid with updated balances.`);
-    this.rebuildGrid(currentPrice, portfolio, tools);
+
+    tools.log('info', 'GridBot: Rebalance complete, building grid');
+
+    const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep);
+    this.buildGrid(centerPrice, portfolio, tools);
+
     return true;
   }
 
+  /** Handle rebalance order failure */
   private handleRebalanceFailure(
     reason: string,
+    currentPrice: number,
+    portfolio: Portfolio,
     tools: Tools<GridBotStrategyParams>,
-    currentPrice?: number,
-    portfolio?: Portfolio,
-  ) {
-    if (!this.pendingRebalance) return;
-    const attempts = this.rebalanceRetryCount + 1;
-    this.rebalanceRetryCount = attempts;
+  ): void {
+    this.rebalanceRetryCount++;
     this.rebalanceOrderId = undefined;
-    if (attempts > this.retryLimit) {
-      this.pendingRebalance = undefined;
+
+    if (this.rebalanceRetryCount > this.retryLimit) {
+      tools.log('error', `GridBot: Rebalance failed after ${this.retryLimit} attempts: ${reason}`);
       this.awaitingRebalance = false;
-      tools.log('error', `Rebalance failed: ${reason}`);
+      this.pendingRebalance = undefined;
+
+      // Build grid anyway with current allocation
+      const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep);
+      this.buildGrid(centerPrice, portfolio, tools);
       return;
     }
-    tools.log('warn', `GridBot rebalance attempt ${attempts} failed (${reason}). Retrying.`);
-    if (currentPrice !== undefined && portfolio) {
-      // Optionally refresh plan with the latest snapshot.
-      const plan = computeRebalancePlan(
-        this.pendingRebalance.stage,
-        currentPrice,
-        portfolio,
-        tools.marketData,
-        this.rebalanceTolerance,
-      );
-      if (plan && validateRebalancePlan(plan, portfolio, tools)) this.pendingRebalance = plan;
+
+    tools.log('warn', `GridBot: Rebalance attempt ${this.rebalanceRetryCount} failed: ${reason}. Retrying...`);
+
+    // Refresh the rebalance plan with current portfolio
+    const { buyLevels, sellLevels } = tools.strategyParams;
+    const plan = computeRebalancePlan(currentPrice, portfolio, buyLevels, sellLevels, tools.marketData);
+    if (plan) {
+      this.pendingRebalance = plan;
+      this.placeRebalanceOrder(tools);
+    } else {
+      // No longer needs rebalancing
+      this.awaitingRebalance = false;
+      this.pendingRebalance = undefined;
+      const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep);
+      this.buildGrid(centerPrice, portfolio, tools);
     }
-    this.placeRebalanceOrder(tools);
   }
 
-  /**
-   * Build/rebuild the grid around the given candle price.
-   * 1) Derive precision and round center.
-   * 2) Validate spacing/caps; estimate range and derive quantity.
-   * 3) Compute affordable levels; create internal level states.
-   * 4) Place the initial symmetric BUY/SELL limit orders.
-   */
-  private rebuildGrid(currentPrice: number, portfolio: Portfolio, tools: Tools<GridBotStrategyParams>) {
-    const { strategyParams, marketData, log } = tools;
-    const { levelsPerSide, levelQuantity, spacingType, spacingValue } = strategyParams;
-    const { priceDecimals, priceStep } = inferPricePrecision(currentPrice, marketData);
-    const centerPrice = roundPrice(currentPrice, priceDecimals, priceStep);
+  /** Build the grid around the center price */
+  private buildGrid(centerPrice: number, portfolio: Portfolio, tools: Tools<GridBotStrategyParams>): void {
+    const { buyLevels, sellLevels, spacingType, spacingValue } = tools.strategyParams;
 
-    if (centerPrice <= 0) {
-      log('error', 'GridBot cannot initialize with non-positive center price.');
-      return;
-    }
-
-    if (spacingValue <= 0) {
-      log('error', 'GridBot spacingValue must be greater than zero.');
-      return;
-    }
-
-    const requestedLevels = Math.max(1, Math.floor(levelsPerSide));
-    const perSideCap = Math.min(requestedLevels, Math.floor(this.totalOrderCap / 2));
-    if (perSideCap <= 0) {
-      log('error', 'GridBot open order cap prevents placing any levels.');
-      return;
-    }
-
-    const rangeEstimate = estimatePriceRange(
+    // Compute grid bounds
+    const bounds = computeGridBounds(
       centerPrice,
-      perSideCap,
-      priceDecimals,
+      buyLevels,
+      sellLevels,
+      this.priceDecimals,
       spacingType,
       spacingValue,
-      priceStep,
+      this.priceStep,
     );
-    if (!rangeEstimate) {
-      log('error', 'GridBot could not compute grid range.');
+
+    if (!bounds) {
+      tools.log('error', 'GridBot: Could not compute valid grid bounds');
       return;
     }
 
-    let quantity = resolveLevelQuantity(centerPrice, portfolio, perSideCap, marketData, levelQuantity);
-    quantity = applyAmountLimits(quantity, marketData);
-    quantity = applyCostLimits(quantity, rangeEstimate.min, rangeEstimate.max, marketData);
+    this.gridBounds = bounds;
 
-    if (!quantity || quantity <= 0) {
-      log('error', 'GridBot could not derive a valid quantity per level.');
-      return;
-    }
-
-    const affordableLevels = computeAffordableLevels(
+    // Derive quantity per level
+    this.quantity = deriveLevelQuantity(
       centerPrice,
       portfolio,
-      quantity,
-      perSideCap,
-      priceDecimals,
+      buyLevels,
+      sellLevels,
+      this.priceDecimals,
       spacingType,
       spacingValue,
-      priceStep,
+      tools.marketData,
+      this.priceStep,
     );
-    if (affordableLevels <= 0) {
-      log('error', 'GridBot portfolio is insufficient to fund a single grid level.');
+
+    if (this.quantity <= 0) {
+      tools.log('error', 'GridBot: Insufficient portfolio for any grid levels');
       return;
     }
 
-    if (affordableLevels < requestedLevels)
-      log(
-        'warn',
-        `GridBot reduced levelsPerSide from ${requestedLevels} to ${affordableLevels} due to capital or caps.`,
-      );
+    // Build level states
+    this.levels = [];
+    this.orderToLevel.clear();
+    this.retryCount.clear();
 
-    this.levelQuantity = quantity;
-    this.levelIndexes = buildLevelIndexes(affordableLevels);
-    this.levelStates.clear();
-    this.orderIdToLevel.clear();
-    this.creationRetryCount.clear();
-
-    const minPrice = computeLevelPrice(
-      centerPrice,
-      -affordableLevels,
-      priceDecimals,
-      spacingType,
-      spacingValue,
-      priceStep,
-    );
-    const maxPrice = computeLevelPrice(
-      centerPrice,
-      affordableLevels,
-      priceDecimals,
-      spacingType,
-      spacingValue,
-      priceStep,
-    );
-    this.gridBounds = { min: minPrice, max: maxPrice };
-
-    for (const index of this.levelIndexes) {
-      const price = computeLevelPrice(centerPrice, index, priceDecimals, spacingType, spacingValue, priceStep);
-      if (!Number.isFinite(price) || price <= 0) {
-        log('warn', `GridBot skipped invalid price for level ${index}.`);
-        continue;
+    // Create buy levels (negative indices, stored first)
+    for (let i = buyLevels; i >= 1; i--) {
+      const price = computeLevelPrice(centerPrice, -i, this.priceDecimals, spacingType, spacingValue, this.priceStep);
+      if (price > 0) {
+        this.levels.push({ index: -i, price, side: 'BUY' });
       }
-      const side: OrderSide | null = index < 0 ? 'BUY' : index > 0 ? 'SELL' : null;
-      const level: LevelState = { index, price, desiredSide: side };
-      this.levelStates.set(index, level);
     }
 
-    for (const level of this.levelStates.values()) {
-      if (level.desiredSide) this.placeOrder(level.index, level.desiredSide, tools);
+    // Create sell levels (positive indices)
+    for (let i = 1; i <= sellLevels; i++) {
+      const price = computeLevelPrice(centerPrice, i, this.priceDecimals, spacingType, spacingValue, this.priceStep);
+      if (price > 0) {
+        this.levels.push({ index: i, price, side: 'SELL' });
+      }
     }
 
-    log('info', `GridBot initialized around ${centerPrice} with ${affordableLevels} levels/side and qty ${quantity}.`);
-  }
-
-  /** Place a LIMIT order for the requested level when allowed by state and caps. */
-  private placeOrder(levelIndex: number, side: OrderSide, tools: Tools<GridBotStrategyParams>): UUID | null {
-    if (this.isRecentering) return null;
-    const level = this.levelStates.get(levelIndex);
-    if (!level || level.activeOrderId || level.desiredSide !== side) return level?.activeOrderId ?? null;
-    if (this.orderIdToLevel.size >= this.totalOrderCap) return null;
-
-    const orderId = tools.createOrder({ type: 'LIMIT', side, amount: this.levelQuantity, price: level.price });
-    level.activeOrderId = orderId;
-    this.orderIdToLevel.set(orderId, levelIndex);
-    return orderId;
-  }
-
-  /** Return adjacent level index or null if out of bounds. */
-  private findNeighborIndex(levelIndex: number, offset: 1 | -1, mode: GridMode): number | null {
-    const position = this.levelIndexes.indexOf(levelIndex);
-    if (position === -1 || (mode === 'recenter' && isOnlyOneSideRemaining(this.levelStates))) return null;
-    const neighbor = this.levelIndexes[position + offset];
-    return neighbor ?? null;
-  }
-
-  /** Recenter or not when the current price exits the grid bounds. */
-  private checkRangeAndMaybeRecenter(
-    currentPrice: number,
-    portfolio: Portfolio,
-    tools: Tools<GridBotStrategyParams>,
-  ): void {
-    if (!this.gridBounds || this.isRecentering || this.awaitingRebalance) return;
-    if (!isGridOutOfRange(currentPrice, this.gridBounds)) return;
-
-    const message = `GridBot price ${currentPrice} exited grid range (${this.gridBounds.min} - ${this.gridBounds.max}).`;
-    if (tools.strategyParams.mode === 'recenter') this.requestRecenter(currentPrice, portfolio, tools, message);
-    else tools.log('warn', message);
-  }
-
-  /** Begin recenter: cancel all outstanding orders and rebuild once complete. */
-  private requestRecenter(
-    currentPrice: number,
-    portfolio: Portfolio,
-    tools: Tools<GridBotStrategyParams>,
-    reason: string,
-  ): void {
-    if (this.isRecentering || this.awaitingRebalance) return;
-    this.isRecentering = true;
-    tools.log('info', `GridBot recenter triggered: ${reason}`);
-    this.gridBounds = undefined;
-
-    if (this.orderIdToLevel.size === 0) {
-      this.finishRecenterIfNeeded(currentPrice, portfolio, tools);
-      return;
+    // Place initial orders
+    for (let i = 0; i < this.levels.length; i++) {
+      const level = this.levels[i];
+      this.placeOrder(i, level.side, tools);
     }
 
-    this.levelStates.forEach(level => {
-      level.desiredSide = null;
-      level.activeOrderId = undefined;
+    tools.log(
+      'info',
+      `GridBot: Grid built around ${centerPrice} with ${buyLevels} buy / ${sellLevels} sell levels, qty=${this.quantity}`,
+    );
+  }
+
+  /** Place a LIMIT order for a level */
+  private placeOrder(levelArrayIndex: number, side: OrderSide, tools: Tools<GridBotStrategyParams>): void {
+    const level = this.levels[levelArrayIndex];
+    if (!level || level.orderId) return;
+
+    const orderId = tools.createOrder({
+      type: 'LIMIT',
+      side,
+      amount: this.quantity,
+      price: level.price,
     });
 
-    for (const orderId of this.orderIdToLevel.keys()) {
-      this.pendingCancelIds.add(orderId);
-      tools.cancelOrder(orderId);
-    }
-    this.orderIdToLevel.clear();
-  }
-
-  /** Finalize recentering once all cancels are done, then rebuild the grid. */
-  private finishRecenterIfNeeded(currentPrice: number, porfolio: Portfolio, tools: Tools<GridBotStrategyParams>) {
-    this.pendingCancelIds.clear();
-    this.isRecentering = false;
-    this.prepareGridBuild('recenter', currentPrice, porfolio, tools);
-  }
-
-  /** Mark a level to host a side and ensure an order is (re)placed for it. */
-  private scheduleLevel(levelIndex: number, side: OrderSide, tools: Tools<GridBotStrategyParams>) {
-    const level = this.levelStates.get(levelIndex);
-    if (!level) return;
-    if (level.desiredSide === side && level.activeOrderId) return;
-    level.desiredSide = side;
-    level.activeOrderId = undefined;
-    this.creationRetryCount.set(levelIndex, 0);
-    this.placeOrder(levelIndex, side, tools);
-  }
-
-  /**
-   * If only BUY or only SELL orders remain active, recenter or not according to mode.
-   */
-  private enforceSideBalance(orderId: UUID, { price, portfolio }: ExchangeEvent, tools: Tools<GridBotStrategyParams>) {
-    if (this.isRecentering || this.awaitingRebalance || !isOnlyOneSideRemaining(this.levelStates)) return;
-    const message = `[${orderId}] Only one side of the grid remains active.`;
-    if (tools.strategyParams.mode === 'recenter') this.requestRecenter(price, portfolio, tools, message);
-    else tools.log('warn', message);
+    level.orderId = orderId;
+    this.orderToLevel.set(orderId, levelArrayIndex);
   }
 }

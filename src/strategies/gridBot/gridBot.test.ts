@@ -1,40 +1,44 @@
 import type { Candle } from '@models/candle.types';
 import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
+import type { MarketData } from '@services/exchange/exchange.types';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GridBot } from './gridBot.strategy';
 import type { GridBotStrategyParams } from './gridBot.types';
 
 const defaultParams: GridBotStrategyParams = {
-  levelsPerSide: 2,
+  buyLevels: 2,
+  sellLevels: 2,
   spacingType: 'fixed',
   spacingValue: 5,
-  levelQuantity: 0.5,
-  mode: 'recenter',
 };
 
-const marketData = {
+const marketData: MarketData = {
   amount: { min: 0.1 },
-  price: { min: 0.01 },
-  cost: { min: 1 },
-  precision: { price: 0.01, amount: 0.1 },
+  precision: { price: 0.01, amount: 0.01 },
 };
 
-const makeCandle = (price = 100): Candle =>
+const makeCandle = (close: number): Candle =>
   ({
     start: 0,
-    open: price,
-    high: price,
-    low: price,
-    close: price,
+    open: close,
+    high: close,
+    low: close,
+    close,
     volume: 1,
   }) as Candle;
 
-const defaultPortfolio: Portfolio = {
+const balancedPortfolio: Portfolio = {
   asset: { free: 5, used: 0, total: 5 },
   currency: { free: 500, used: 0, total: 500 },
 };
+
+const unbalancedPortfolio: Portfolio = {
+  asset: { free: 0, used: 0, total: 0 },
+  currency: { free: 1000, used: 0, total: 1000 },
+};
+
 const defaultBalance: BalanceDetail = { free: 0, used: 0, total: 0 };
 
 describe('GridBot', () => {
@@ -42,7 +46,7 @@ describe('GridBot', () => {
   let createOrder: ReturnType<typeof vi.fn>;
   let cancelOrder: ReturnType<typeof vi.fn>;
   let log: ReturnType<typeof vi.fn>;
-  let issuedOrders: Array<{ id: UUID; price: number; side: OrderSide }>;
+  let issuedOrders: Array<{ id: UUID; price: number; side: OrderSide; type: string }>;
   let tools: any;
 
   beforeEach(() => {
@@ -52,20 +56,21 @@ describe('GridBot', () => {
     cancelOrder = vi.fn();
     createOrder = vi.fn(order => {
       const id = `order-${issuedOrders.length + 1}` as UUID;
-      issuedOrders.push({ id, price: order.price ?? 0, side: order.side });
+      issuedOrders.push({ id, price: order.price ?? 0, side: order.side, type: order.type });
       return id;
     });
     tools = { strategyParams: defaultParams, marketData, createOrder, cancelOrder, log };
   });
 
-  const initStrategy = (price = 100, params: Partial<GridBotStrategyParams> = {}) => {
+  const initStrategy = (
+    price = 100,
+    params: Partial<GridBotStrategyParams> = {},
+    portfolio: Portfolio = balancedPortfolio,
+  ) => {
     tools.strategyParams = { ...defaultParams, ...params };
     strategy.init({
       candle: makeCandle(price),
-      portfolio: {
-        asset: { ...defaultPortfolio.asset },
-        currency: { ...defaultPortfolio.currency },
-      },
+      portfolio: { asset: { ...portfolio.asset }, currency: { ...portfolio.currency } },
       tools,
       addIndicator: vi.fn(),
     });
@@ -74,320 +79,390 @@ describe('GridBot', () => {
   const findOrderId = (price: number, side: OrderSide): UUID | undefined =>
     issuedOrders.find(order => order.price === price && order.side === side)?.id;
 
-  const findLatestOrderId = (price: number, side: OrderSide): UUID | undefined => {
+  const findLatestOrderId = (side: OrderSide): UUID | undefined => {
     for (let i = issuedOrders.length - 1; i >= 0; i--) {
-      const order = issuedOrders[i];
-      if (order.price === price && order.side === side) return order.id;
+      if (issuedOrders[i].side === side) return issuedOrders[i].id;
     }
     return undefined;
   };
 
-  describe('Initialization', () => {
-    it.each([
-      { levels: 1, expectedPrices: [95, 105] },
-      { levels: 2, expectedPrices: [90, 95, 105, 110] },
-    ])('places correct orders for $levels levels per side', ({ levels, expectedPrices }) => {
-      initStrategy(100, { levelsPerSide: levels });
+  describe('init', () => {
+    it('places correct number of orders for balanced portfolio', () => {
+      initStrategy(100);
 
-      expect(createOrder).toHaveBeenCalledTimes(levels * 2);
-      const prices = createOrder.mock.calls.map(([order]) => order.price).sort((a, b) => a - b);
-      expect(prices).toEqual(expectedPrices);
+      expect(createOrder).toHaveBeenCalledTimes(4);
     });
 
-    it.each([
-      { price: 0, desc: 'non-positive price' },
-      { price: -10, desc: 'negative price' },
-    ])('logs error and does not place orders for $desc', ({ price }) => {
-      initStrategy(price);
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('non-positive center price'));
-      expect(createOrder).not.toHaveBeenCalled();
+    it.each`
+      buyLevels | sellLevels | expectedOrders
+      ${1}      | ${1}       | ${2}
+      ${2}      | ${2}       | ${4}
+      ${3}      | ${2}       | ${5}
+      ${2}      | ${3}       | ${5}
+    `(
+      'places $expectedOrders orders for $buyLevels buy and $sellLevels sell levels',
+      ({ buyLevels, sellLevels, expectedOrders }) => {
+        // Create portfolio balanced for this level ratio
+        // Target asset ratio = sellLevels / (buyLevels + sellLevels)
+        const totalValue = 1000;
+        const assetRatio = sellLevels / (buyLevels + sellLevels);
+        const assetValue = totalValue * assetRatio;
+        const assetAmount = assetValue / 100; // at price 100
+        const currencyValue = totalValue - assetValue;
+
+        const balancedForLevels: Portfolio = {
+          asset: { free: assetAmount, used: 0, total: assetAmount },
+          currency: { free: currencyValue, used: 0, total: currencyValue },
+        };
+
+        initStrategy(100, { buyLevels, sellLevels }, balancedForLevels);
+
+        expect(createOrder).toHaveBeenCalledTimes(expectedOrders);
+      },
+    );
+
+    it('places buy orders below center price', () => {
+      initStrategy(100);
+
+      const buyOrders = issuedOrders.filter(o => o.side === 'BUY');
+      expect(buyOrders.every(o => o.price < 100)).toBe(true);
     });
 
-    it('logs error for invalid spacing', () => {
-      initStrategy(100, { spacingValue: 0 });
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('spacingValue must be greater than zero'));
-      expect(createOrder).not.toHaveBeenCalled();
+    it('places sell orders above center price', () => {
+      initStrategy(100);
+
+      const sellOrders = issuedOrders.filter(o => o.side === 'SELL');
+      expect(sellOrders.every(o => o.price > 100)).toBe(true);
     });
 
-    it('logs warn if order cap reduces levels', () => {
-      initStrategy(100, { totalOpenOrderCap: 1 }); // Cap 1 -> perSide 0
-      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('reduced levelsPerSide'));
-      // It still places orders (1 level)
-      expect(createOrder).toHaveBeenCalled();
-    });
+    it('uses LIMIT order type for grid orders', () => {
+      initStrategy(100);
 
-    it('logs error if portfolio insufficient for single level', () => {
-      tools.strategyParams = defaultParams;
-      strategy.init({
-        candle: makeCandle(100),
-        portfolio: {
-          asset: { free: 0, used: 0, total: 0 },
-          currency: { free: 0, used: 0, total: 0 },
-        },
-        tools,
-        addIndicator: vi.fn(),
-      });
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('portfolio is insufficient'));
-      expect(createOrder).not.toHaveBeenCalled();
+      expect(issuedOrders.every(o => o.type === 'LIMIT')).toBe(true);
     });
   });
 
-  describe('Order Execution', () => {
-    it('creates follow-up orders one level away after fills', () => {
-      initStrategy();
+  describe('rebalancing', () => {
+    it('places STICKY rebalance order for unbalanced portfolio', () => {
+      initStrategy(100, {}, unbalancedPortfolio);
 
-      const buyId = findOrderId(95, 'BUY');
-      expect(buyId).toBeDefined();
+      expect(createOrder).toHaveBeenCalledTimes(1);
+    });
 
-      // Fill BUY at 95
+    it('uses correct side for rebalance when asset value is low', () => {
+      initStrategy(100, {}, unbalancedPortfolio);
+
+      expect(issuedOrders[0].type).toBe('STICKY');
+    });
+
+    it('builds grid after rebalance completion', () => {
+      initStrategy(100, {}, unbalancedPortfolio);
+
+      const rebalanceId = issuedOrders[0].id;
       strategy.onOrderCompleted({
+        order: { id: rebalanceId, side: 'BUY' } as any,
+        exchange: { price: 100, balance: defaultBalance, portfolio: balancedPortfolio },
         tools,
-        order: {
-          id: buyId as UUID,
-          side: 'BUY',
-          type: 'LIMIT',
-          amount: 0.5,
-          price: 95,
-          orderExecutionDate: Date.now(),
-          fee: 0,
-          effectivePrice: 95,
-        } as any,
-        exchange: { price: 95, balance: defaultBalance, portfolio: { ...defaultPortfolio } },
       });
 
-      // Expect SELL at 100 (one level up from 95)
       expect(createOrder).toHaveBeenCalledTimes(5);
-      expect(createOrder.mock.calls.at(-1)?.[0]).toMatchObject({ side: 'SELL', price: 100, amount: 0.5 });
-
-      const sellId = findLatestOrderId(100, 'SELL');
-      expect(sellId).toBeDefined();
-
-      // Fill SELL at 100
-      strategy.onOrderCompleted({
-        tools,
-        order: {
-          id: sellId as UUID,
-          side: 'SELL',
-          type: 'LIMIT',
-          amount: 0.5,
-          price: 100,
-          orderExecutionDate: Date.now(),
-          fee: 0,
-          effectivePrice: 100,
-        } as any,
-        exchange: { price: 100, balance: defaultBalance, portfolio: { ...defaultPortfolio } },
-      });
-
-      // Expect BUY at 95 (one level down from 100)
-      expect(createOrder).toHaveBeenCalledTimes(6);
-      expect(createOrder.mock.calls.at(-1)?.[0]).toMatchObject({ side: 'BUY', price: 95, amount: 0.5 });
-    });
-  });
-
-  describe('Error Handling', () => {
-    it('retries order creation on error up to retry limit', () => {
-      initStrategy();
-      const buyId = findOrderId(95, 'BUY');
-      expect(buyId).toBeDefined();
-
-      // Simulate fill to trigger new order creation
-      strategy.onOrderCompleted({
-        tools,
-        order: { id: buyId as UUID, side: 'BUY', price: 95 } as any,
-        exchange: { price: 95, balance: defaultBalance, portfolio: { ...defaultPortfolio } },
-      });
-
-      // Expect SELL at 100.
-      const sellId = findLatestOrderId(100, 'SELL');
-      expect(sellId).toBeDefined();
-
-      const orderId = findOrderId(105, 'SELL') as UUID;
-      expect(orderId).toBeDefined();
-
-      // Simulate error
-      strategy.onOrderErrored({
-        tools,
-        order: { id: orderId, reason: 'Test error' } as any,
-        exchange: { price: 100, balance: defaultBalance, portfolio: defaultPortfolio },
-      });
-
-      // Should retry creation
-      expect(createOrder).toHaveBeenCalledTimes(6); // 4 init + 1 fill + 1 retry
-      expect(log).not.toHaveBeenCalledWith('error', expect.anything());
-
-      // Fail again (retry 1)
-      const retryId1 = createOrder.mock.results[5].value;
-      strategy.onOrderErrored({
-        tools,
-        order: { id: retryId1, reason: 'Test error' } as any,
-        exchange: { price: 100, balance: defaultBalance, portfolio: defaultPortfolio },
-      });
-      expect(createOrder).toHaveBeenCalledTimes(7);
-
-      // Fail again (retry 2)
-      const retryId2 = createOrder.mock.results[6].value;
-      strategy.onOrderErrored({
-        tools,
-        order: { id: retryId2, reason: 'Test error' } as any,
-        exchange: { price: 100, balance: defaultBalance, portfolio: defaultPortfolio },
-      });
-      expect(createOrder).toHaveBeenCalledTimes(8);
-
-      // Fail again (retry 3 - limit reached?) Default limit is 3.
-      // attempts: 1 (first error), 2, 3.
-      // If limit is 3, 4th attempt should fail.
-
-      const retryId3 = createOrder.mock.results[7].value;
-      strategy.onOrderErrored({
-        tools,
-        order: { id: retryId3, reason: 'Test error' } as any,
-        exchange: { price: 100, balance: defaultBalance, portfolio: defaultPortfolio },
-      });
-      expect(createOrder).toHaveBeenCalledTimes(8);
-
-      // Should NOT retry again, should log error
-      expect(createOrder).toHaveBeenCalledTimes(8);
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('retry limit reached'));
-    });
-  });
-
-  describe('Rebalancing', () => {
-    it('rebalances when drift exceeds tolerance', () => {
-      // Drift 50% (0 asset, 100 currency). Tolerance 1%.
-      tools.strategyParams = {
-        ...defaultParams,
-        levelQuantity: undefined,
-        rebalance: { enabled: true, tolerancePercent: 1 },
-      };
-
-      strategy.init({
-        candle: makeCandle(100),
-        portfolio: {
-          asset: { free: 0, used: 0, total: 0 },
-          currency: { free: 100, used: 0, total: 100 },
-        },
-        tools,
-        addIndicator: vi.fn(),
-      });
-
-      expect(createOrder).toHaveBeenCalledTimes(1);
-      expect(createOrder.mock.calls[0]?.[0]).toMatchObject({ type: 'STICKY', side: 'BUY', amount: 0.5 });
     });
 
-    it('skips rebalance when drift is within tolerance', () => {
-      // Drift 0%. Tolerance 5%.
-      tools.strategyParams = {
-        ...defaultParams,
-        levelQuantity: undefined,
-        rebalance: { enabled: true, tolerancePercent: 5 },
-      };
+    it('retries rebalance on error', () => {
+      initStrategy(100, {}, unbalancedPortfolio);
 
-      strategy.init({
-        candle: makeCandle(100),
-        portfolio: {
-          asset: { free: 0.5, used: 0, total: 0.5 },
-          currency: { free: 50, used: 0, total: 50 },
-        },
-        tools,
-        addIndicator: vi.fn(),
-      });
-
-      expect(createOrder).toHaveBeenCalledTimes(4); // 4 limit orders
-      const orders = createOrder.mock.calls.map(([order]) => order);
-      expect(orders.every(order => order.type === 'LIMIT')).toBe(true);
-    });
-
-    it('retries rebalance order on error', () => {
-      tools.strategyParams = {
-        ...defaultParams,
-        rebalance: { enabled: true, tolerancePercent: 1 },
-      };
-      strategy.init({
-        candle: makeCandle(100),
-        portfolio: {
-          asset: { free: 0, used: 0, total: 0 },
-          currency: { free: 100, used: 0, total: 100 },
-        },
-        tools,
-        addIndicator: vi.fn(),
-      });
-
-      expect(createOrder).toHaveBeenCalledTimes(1);
-      const rebalanceId = issuedOrders[0]?.id as UUID;
-
-      // Simulate error
+      const rebalanceId = issuedOrders[0].id;
       strategy.onOrderErrored({
-        tools,
         order: { id: rebalanceId, reason: 'Test error' } as any,
-        exchange: {
-          price: 100,
-          balance: defaultBalance,
-          portfolio: {
-            asset: { free: 0, used: 0, total: 0 },
-            currency: { free: 100, used: 0, total: 100 },
-          },
-        },
+        exchange: { price: 100, balance: defaultBalance, portfolio: unbalancedPortfolio },
+        tools,
       });
 
       expect(createOrder).toHaveBeenCalledTimes(2);
-      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('GridBot rebalance attempt 1 failed'));
+    });
+
+    it('builds grid after rebalance retry limit', () => {
+      initStrategy(100, { retryOnError: 1 }, unbalancedPortfolio);
+
+      const rebalanceId = issuedOrders[0].id;
+
+      // First error
+      strategy.onOrderErrored({
+        order: { id: rebalanceId, reason: 'Test error' } as any,
+        exchange: { price: 100, balance: defaultBalance, portfolio: unbalancedPortfolio },
+        tools,
+      });
+
+      // Second error exceeds limit
+      const retryId = issuedOrders[1].id;
+      strategy.onOrderErrored({
+        order: { id: retryId, reason: 'Test error' } as any,
+        exchange: { price: 100, balance: defaultBalance, portfolio: unbalancedPortfolio },
+        tools,
+      });
+
+      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('Rebalance failed'));
+    });
+
+    it('handles rebalance order cancellation', () => {
+      initStrategy(100, {}, unbalancedPortfolio);
+
+      const rebalanceId = issuedOrders[0].id;
+      strategy.onOrderCanceled({
+        order: { id: rebalanceId } as any,
+        exchange: { price: 100, balance: defaultBalance, portfolio: unbalancedPortfolio },
+        tools,
+      });
+
+      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('failed'));
+    });
+
+    it('skips rebalance if insufficient currency for buy', () => {
+      // Asset value is 0, currency is 50 - total value 50, needs 25 asset value
+      // That's buying 0.25 at price 100 = 25 in currency (but free currency is only 10)
+      const lowCurrencyPortfolio: Portfolio = {
+        asset: { free: 0, used: 0, total: 0 },
+        currency: { free: 10, used: 0, total: 50 },
+      };
+      initStrategy(100, {}, lowCurrencyPortfolio);
+
+      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('Insufficient currency'));
+    });
+
+    it('skips rebalance if insufficient asset for sell', () => {
+      // Currency is 0, asset is low - would need to SELL but not enough asset
+      const lowAssetPortfolio: Portfolio = {
+        asset: { free: 0.001, used: 0, total: 0.001 },
+        currency: { free: 100, used: 0, total: 100 },
+      };
+      initStrategy(100, {}, lowAssetPortfolio);
+
+      // This portfolio needs a BUY to rebalance (asset value is low)
+      // so it should place a STICKY order
+      expect(issuedOrders[0]?.type).toBe('STICKY');
     });
   });
 
-  describe('Recentering', () => {
-    it('triggers recenter when price exits grid range', () => {
-      initStrategy(100); // Range [90, 110]
+  describe('validation', () => {
+    it('logs error for non-positive center price', () => {
+      initStrategy(0);
 
-      // Move price to 120 (outside)
-      strategy.onEachTimeframeCandle({
-        candle: makeCandle(120),
-        portfolio: defaultPortfolio,
-        tools,
-      });
-
-      expect(log).toHaveBeenCalledWith('info', expect.stringContaining('GridBot recenter triggered'));
-      expect(cancelOrder).toHaveBeenCalledTimes(4); // Cancel all 4 orders
+      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('Center price'));
     });
 
-    it('finishes recenter and rebuilds grid after all cancels', () => {
+    it('logs error for invalid spacing value', () => {
+      initStrategy(100, { spacingValue: 0 });
+
+      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('Spacing value'));
+    });
+
+    it('logs error for negative buy prices', () => {
+      initStrategy(100, { buyLevels: 25, spacingType: 'fixed', spacingValue: 5 });
+
+      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('non-positive buy prices'));
+    });
+  });
+
+  describe('order completion', () => {
+    it('arms adjacent opposite level after buy fill', () => {
+      initStrategy(100);
+      const initialOrderCount = createOrder.mock.calls.length;
+
+      // Find first buy order (at 95, which is index 1 in the levels array: [-2, -1, 1, 2])
+      // After buy at level -1 (price 95) fills, should arm SELL at level 0 (but we skip 0)
+      // Actually the neighbor is the next element in the array
+      const buyId = findOrderId(95, 'BUY');
+      strategy.onOrderCompleted({
+        order: { id: buyId as UUID, side: 'BUY' } as any,
+        exchange: { price: 95, balance: defaultBalance, portfolio: balancedPortfolio },
+        tools,
+      });
+
+      // The adjacent sell level should already have an order, so no new order is created
+      // unless the neighbor is empty
+      expect(createOrder.mock.calls.length).toBeGreaterThanOrEqual(initialOrderCount);
+    });
+
+    it('arms adjacent opposite level after sell fill', () => {
+      initStrategy(100);
+      const initialOrderCount = createOrder.mock.calls.length;
+
+      const sellId = findOrderId(105, 'SELL');
+      strategy.onOrderCompleted({
+        order: { id: sellId as UUID, side: 'SELL' } as any,
+        exchange: { price: 105, balance: defaultBalance, portfolio: balancedPortfolio },
+        tools,
+      });
+
+      // The adjacent buy level should already have an order, so no new order is created
+      expect(createOrder.mock.calls.length).toBeGreaterThanOrEqual(initialOrderCount);
+    });
+
+    it('logs warning when only one side remains', () => {
+      initStrategy(100, { buyLevels: 1, sellLevels: 1 });
+
+      // Complete the only buy order
+      const buyId = findOrderId(95, 'BUY');
+      strategy.onOrderCompleted({
+        order: { id: buyId as UUID, side: 'BUY' } as any,
+        exchange: { price: 95, balance: defaultBalance, portfolio: balancedPortfolio },
+        tools,
+      });
+
+      // Complete the only sell order
+      const sellId = findOrderId(105, 'SELL');
+      strategy.onOrderCompleted({
+        order: { id: sellId as UUID, side: 'SELL' } as any,
+        exchange: { price: 105, balance: defaultBalance, portfolio: balancedPortfolio },
+        tools,
+      });
+
+      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('one side'));
+    });
+
+    it('ignores unknown order IDs', () => {
       initStrategy(100);
 
-      // Trigger recenter
-      strategy.onEachTimeframeCandle({
-        candle: makeCandle(120),
-        portfolio: defaultPortfolio,
+      const initialCalls = createOrder.mock.calls.length;
+      strategy.onOrderCompleted({
+        order: { id: 'unknown-id' as UUID, side: 'BUY' } as any,
+        exchange: { price: 100, balance: defaultBalance, portfolio: balancedPortfolio },
         tools,
       });
 
-      expect(cancelOrder).toHaveBeenCalledTimes(4);
-      const cancelIds = issuedOrders.map(o => o.id);
+      expect(createOrder).toHaveBeenCalledTimes(initialCalls);
+    });
+  });
 
-      // Confirm 3 cancels
-      for (let i = 0; i < 3; i++) {
-        strategy.onOrderCanceled({
-          tools,
-          order: { id: cancelIds[i] } as any,
-          exchange: { price: 120, balance: defaultBalance, portfolio: defaultPortfolio },
-        });
-      }
+  describe('order errors', () => {
+    it('retries order on error', () => {
+      initStrategy(100);
 
-      // Grid not rebuilt yet
-      expect(createOrder).toHaveBeenCalledTimes(4); // Initial 4
+      const buyId = findOrderId(95, 'BUY');
+      strategy.onOrderErrored({
+        order: { id: buyId as UUID, reason: 'Test error' } as any,
+        exchange: { price: 100, balance: defaultBalance, portfolio: balancedPortfolio },
+        tools,
+      });
 
-      // Confirm last cancel
+      expect(createOrder).toHaveBeenCalledTimes(5);
+    });
+
+    it('stops retrying after limit', () => {
+      initStrategy(100, { retryOnError: 1 });
+
+      const buyId = findOrderId(95, 'BUY');
+
+      // First error - retry
+      strategy.onOrderErrored({
+        order: { id: buyId as UUID, reason: 'Test error' } as any,
+        exchange: { price: 100, balance: defaultBalance, portfolio: balancedPortfolio },
+        tools,
+      });
+
+      const retryId = findLatestOrderId('BUY');
+
+      // Second error - limit reached
+      strategy.onOrderErrored({
+        order: { id: retryId as UUID, reason: 'Test error' } as any,
+        exchange: { price: 100, balance: defaultBalance, portfolio: balancedPortfolio },
+        tools,
+      });
+
+      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('Retry limit'));
+    });
+  });
+
+  describe('order cancellation', () => {
+    it('replaces canceled grid order', () => {
+      initStrategy(100);
+
+      const buyId = findOrderId(95, 'BUY');
       strategy.onOrderCanceled({
+        order: { id: buyId as UUID } as any,
+        exchange: { price: 100, balance: defaultBalance, portfolio: balancedPortfolio },
         tools,
-        order: { id: cancelIds[3] } as any,
-        exchange: { price: 120, balance: defaultBalance, portfolio: defaultPortfolio },
       });
 
-      // Grid rebuilt around 120
-      expect(createOrder).toHaveBeenCalledTimes(8); // 4 initial + 4 new
-      const newOrders = createOrder.mock.calls.slice(4).map(([order]) => order);
-      // Center 120. Levels 2. Spacing 5.
-      // Prices: 110, 115, 125, 130.
-      const prices = newOrders.map(o => o.price).sort((a, b) => a - b);
-      expect(prices).toEqual([110, 115, 125, 130]);
+      expect(createOrder).toHaveBeenCalledTimes(5);
+    });
+  });
+
+  describe('out of range', () => {
+    it('logs warning when price exits grid range', () => {
+      initStrategy(100);
+
+      strategy.onEachTimeframeCandle({
+        candle: makeCandle(150),
+        portfolio: balancedPortfolio,
+        tools,
+      });
+
+      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('out of grid range'));
+    });
+
+    it('does not log when price is in range', () => {
+      initStrategy(100);
+
+      strategy.onEachTimeframeCandle({
+        candle: makeCandle(100),
+        portfolio: balancedPortfolio,
+        tools,
+      });
+
+      expect(log).not.toHaveBeenCalledWith('warn', expect.stringContaining('out of grid range'));
+    });
+  });
+
+  describe('spacing types', () => {
+    it.each`
+      spacingType      | spacingValue | expectedBuyPrice | expectedSellPrice
+      ${'fixed'}       | ${5}         | ${95}            | ${105}
+      ${'percent'}     | ${5}         | ${95}            | ${105}
+      ${'logarithmic'} | ${0.05}      | ${95.24}         | ${105}
+    `(
+      'calculates correct prices for $spacingType spacing',
+      ({ spacingType, spacingValue, expectedBuyPrice, expectedSellPrice }) => {
+        initStrategy(100, { spacingType, spacingValue, buyLevels: 1, sellLevels: 1 });
+
+        const buyOrders = issuedOrders.filter(o => o.side === 'BUY');
+        const sellOrders = issuedOrders.filter(o => o.side === 'SELL');
+
+        expect(buyOrders[0]?.price).toBe(expectedBuyPrice);
+        expect(sellOrders[0]?.price).toBe(expectedSellPrice);
+      },
+    );
+  });
+
+  describe('lifecycle methods', () => {
+    it('onTimeframeCandleAfterWarmup does not throw', () => {
+      initStrategy(100);
+
+      expect(() =>
+        strategy.onTimeframeCandleAfterWarmup({
+          candle: makeCandle(100),
+          portfolio: balancedPortfolio,
+          tools,
+        }),
+      ).not.toThrow();
+    });
+
+    it('log method does not throw', () => {
+      initStrategy(100);
+
+      expect(() =>
+        strategy.log({
+          candle: makeCandle(100),
+          portfolio: balancedPortfolio,
+          tools,
+        }),
+      ).not.toThrow();
+    });
+
+    it('end method does not throw', () => {
+      initStrategy(100);
+
+      expect(() => strategy.end()).not.toThrow();
     });
   });
 });

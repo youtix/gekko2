@@ -1,66 +1,56 @@
 import { OrderSide } from '@models/order.types';
 import { UUID } from 'node:crypto';
 
-export type GridSpacingType = 'percent' | 'fixed' | 'geometric' | 'logarithmic';
-export type GridMode = 'recenter' | 'oneShot';
-export type RebalanceStage = 'init' | 'recenter';
+/** Spacing type options for grid level distribution */
+export type GridSpacingType = 'percent' | 'fixed' | 'logarithmic';
 
-export interface GridRange {
+/** Strategy configuration parameters */
+export interface GridBotStrategyParams {
+  /** Number of buy levels below center price */
+  buyLevels: number;
+  /** Number of sell levels above center price */
+  sellLevels: number;
+  /** How levels are spaced apart */
+  spacingType: GridSpacingType;
+  /**
+   * Distance between levels:
+   * - percent: expressed in percent (1 === 1%)
+   * - fixed: price units
+   * - logarithmic: multiplier increment (0.01 === +1% per hop)
+   */
+  spacingValue: number;
+  /** Number of order creation/cancel retries before logging error */
+  retryOnError?: number;
+}
+
+/** State of a single grid level */
+export interface LevelState {
+  /** Level index (negative for buy, positive for sell) */
+  index: number;
+  /** Price at this level */
+  price: number;
+  /** Order side for this level */
+  side: OrderSide;
+  /** Active order ID if order is placed */
+  orderId?: UUID;
+}
+
+/** Grid price boundaries */
+export interface GridBounds {
+  /** Lowest grid price (bottom buy level) */
   min: number;
+  /** Highest grid price (top sell level) */
   max: number;
 }
 
-/** State for a single grid level (index relative to the center). */
-export interface LevelState {
-  index: number;
-  price: number;
-  desiredSide: OrderSide | null;
-  activeOrderId?: UUID;
-}
-
-export interface GridBotRebalanceParams {
-  /** Enable 50/50 portfolio rebalance before constructing a grid */
-  enabled?: boolean;
-  /** Drift threshold (% of portfolio value) before triggering a rebalance */
-  tolerancePercent?: number;
-}
-
-export interface GridBotStrategyParams {
-  /** How many buy levels below and sell levels above the center price */
-  levelsPerSide: number;
-  /** Shape of the spacing between consecutive levels */
-  spacingType: GridSpacingType;
-  /**
-   * Distance between levels.
-   * - percent => expressed in percent (1 === 1%)
-   * - fixed => price units
-   * - geometric/logarithmic => multiplier increment (0.01 === +1% per hop)
-   */
-  spacingValue: number;
-  /** Fixed quantity per level (optional). When omitted, quantity is inferred from balances. */
-  levelQuantity?: number;
-  /** Choose mode once the price leaves the grid. */
-  mode: GridMode;
-  /**
-   * Optional override for the global open-order cap. Shared by both sides, still
-   * bounded by the internal ceiling.
-   */
-  totalOpenOrderCap?: number;
-  /** Number of order creation/cancel retries before to log error */
-  retryOnError?: number;
-  /** Optional configuration for pre-grid rebalancing */
-  rebalance?: GridBotRebalanceParams;
-}
-
+/** Rebalance plan computed during init */
 export interface RebalancePlan {
-  stage: RebalanceStage;
+  /** Side of rebalance order */
   side: OrderSide;
+  /** Amount to trade */
   amount: number;
-  centerPrice: number;
-  driftPercent: number;
-  tolerancePercent: number;
-  targetValuePerSide: number;
-  currentAssetValue: number;
-  currentCurrencyValue: number;
+  /** Estimated notional value */
   estimatedNotional: number;
+  /** Current center price used for calculation */
+  centerPrice: number;
 }

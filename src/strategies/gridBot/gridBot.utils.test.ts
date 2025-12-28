@@ -1,356 +1,483 @@
-import type { Portfolio } from '@models/portfolio.types';
-import type { MarketData } from '@services/exchange/exchange.types';
-import { describe, expect, it, vi } from 'vitest';
-import type { GridRange, LevelState, RebalancePlan } from './gridBot.types';
+import { Portfolio } from '@models/portfolio.types';
+import { MarketData } from '@services/exchange/exchange.types';
+import { describe, expect, it } from 'vitest';
+import { GridBotStrategyParams, GridBounds } from './gridBot.types';
 import {
   applyAmountLimits,
   applyCostLimits,
-  buildLevelIndexes,
-  computeAffordableLevels,
+  computeGridBounds,
   computeLevelPrice,
   computeRebalancePlan,
   countDecimals,
-  estimatePriceRange,
+  deriveLevelQuantity,
+  hasOnlyOneSide,
+  inferAmountPrecision,
   inferPricePrecision,
-  isGridOutOfRange,
-  isOnlyOneSideRemaining,
-  resolveLevelQuantity,
-  resolveOrderCap,
+  isOutOfRange,
+  roundAmount,
   roundPrice,
-  validateRebalancePlan,
+  validateConfig,
 } from './gridBot.utils';
 
 describe('gridBot.utils', () => {
-  describe('isGridOutOfRange', () => {
-    it.each([
-      { currentPrice: 90, min: 100, max: 200, expected: true },
-      { currentPrice: 210, min: 100, max: 200, expected: true },
-      { currentPrice: 150, min: 100, max: 200, expected: false },
-      { currentPrice: 100, min: 100, max: 200, expected: false },
-      { currentPrice: 200, min: 100, max: 200, expected: false },
-    ])(
-      'returns $expected when price is $currentPrice for range [$min, $max]',
-      ({ currentPrice, min, max, expected }) => {
-        expect(isGridOutOfRange(currentPrice, { min, max } as GridRange)).toBe(expected);
-      },
-    );
-  });
-
-  describe('isOnlyOneSideRemaining', () => {
-    it('returns true if only BUY orders remain', () => {
-      const levels = new Map<number, LevelState>([
-        [1, { activeOrderId: '1', desiredSide: 'BUY' } as any],
-        [2, { activeOrderId: '2', desiredSide: 'BUY' } as any],
-      ]);
-      expect(isOnlyOneSideRemaining(levels)).toBe(true);
-    });
-
-    it('returns true if only SELL orders remain', () => {
-      const levels = new Map<number, LevelState>([
-        [-1, { activeOrderId: '1', desiredSide: 'SELL' } as any],
-        [-2, { activeOrderId: '2', desiredSide: 'SELL' } as any],
-      ]);
-      expect(isOnlyOneSideRemaining(levels)).toBe(true);
-    });
-
-    it('returns false if both sides have orders', () => {
-      const levels = new Map<number, LevelState>([
-        [1, { activeOrderId: '1', desiredSide: 'BUY' } as any],
-        [-1, { activeOrderId: '2', desiredSide: 'SELL' } as any],
-      ]);
-      expect(isOnlyOneSideRemaining(levels)).toBe(false);
-    });
-
-    it('ignores levels without active orders', () => {
-      const levels = new Map<number, LevelState>([
-        [1, { activeOrderId: '1', desiredSide: 'BUY' } as any],
-        [-1, { desiredSide: 'SELL' } as any], // No active order
-      ]);
-      expect(isOnlyOneSideRemaining(levels)).toBe(true);
-    });
-  });
-
-  describe('resolveOrderCap', () => {
-    it.each([
-      { override: undefined, expected: 50 },
-      { override: 0, expected: 50 },
-      { override: -5, expected: 50 },
-      { override: 1, expected: 2 },
-      { override: 10, expected: 10 },
-      { override: 100, expected: 50 },
-    ])('resolves to $expected when override is $override', ({ override, expected }) => {
-      expect(resolveOrderCap(override)).toBe(expected);
-    });
-  });
-
   describe('countDecimals', () => {
-    it.each([
-      { num: 100, expected: 0 },
-      { num: 100.5, expected: 1 },
-      { num: 100.55, expected: 2 },
-      { num: 1e-7, expected: 7 },
-      { num: 1.5e-3, expected: 4 },
-    ])('counts $expected decimals for $num', ({ num, expected }) => {
+    it.each`
+      num        | expected
+      ${100}     | ${0}
+      ${100.5}   | ${1}
+      ${100.55}  | ${2}
+      ${100.123} | ${3}
+      ${1e-7}    | ${7}
+      ${1.5e-3}  | ${4}
+      ${0.00001} | ${5}
+    `('returns $expected for $num', ({ num, expected }) => {
       expect(countDecimals(num)).toBe(expected);
+    });
+
+    it('returns default for non-finite numbers', () => {
+      expect(countDecimals(Infinity)).toBe(8);
+    });
+  });
+
+  describe('inferPricePrecision', () => {
+    it('uses market data precision when available', () => {
+      expect(inferPricePrecision(100, { precision: { price: 0.01 } })).toEqual({
+        priceDecimals: 2,
+        priceStep: 0.01,
+      });
+    });
+
+    it('falls back to current price decimals', () => {
+      expect(inferPricePrecision(123.456, {})).toEqual({ priceDecimals: 3 });
+    });
+
+    it('handles zero precision in market data', () => {
+      expect(inferPricePrecision(100.5, { precision: { price: 0 } })).toEqual({ priceDecimals: 1 });
+    });
+  });
+
+  describe('inferAmountPrecision', () => {
+    it('uses market data precision when available', () => {
+      expect(inferAmountPrecision({ precision: { amount: 0.001 } })).toBe(3);
+    });
+
+    it('returns default when not available', () => {
+      expect(inferAmountPrecision({})).toBe(8);
     });
   });
 
   describe('roundPrice', () => {
-    it.each([
-      { value: 100.123, priceDecimals: 2, priceStep: undefined, expected: 100.12 },
-      { value: 100.126, priceDecimals: 2, priceStep: undefined, expected: 100.13 },
-      { value: 100.123, priceDecimals: 2, priceStep: 0.05, expected: 100.1 },
-      { value: 100.13, priceDecimals: 2, priceStep: 0.05, expected: 100.15 },
-      { value: Infinity, priceDecimals: 2, priceStep: undefined, expected: 0 },
-    ])(
-      'rounds $value to $expected with decimals $priceDecimals and step $priceStep',
-      ({ value, priceDecimals, priceStep, expected }) => {
-        expect(roundPrice(value, priceDecimals, priceStep)).toBe(expected);
-      },
-    );
+    it.each`
+      value      | decimals | step         | expected
+      ${100.123} | ${2}     | ${undefined} | ${100.12}
+      ${100.126} | ${2}     | ${undefined} | ${100.13}
+      ${100.123} | ${2}     | ${0.05}      | ${100.1}
+      ${100.13}  | ${2}     | ${0.05}      | ${100.15}
+      ${100.025} | ${2}     | ${0.05}      | ${100.05}
+    `('rounds $value to $expected (decimals=$decimals, step=$step)', ({ value, decimals, step, expected }) => {
+      expect(roundPrice(value, decimals, step)).toBe(expected);
+    });
+
+    it('returns 0 for non-finite values', () => {
+      expect(roundPrice(Infinity, 2)).toBe(0);
+    });
+  });
+
+  describe('roundAmount', () => {
+    it.each`
+      value     | decimals | expected
+      ${1.999}  | ${2}     | ${1.99}
+      ${1.001}  | ${2}     | ${1}
+      ${0.1234} | ${3}     | ${0.123}
+    `('rounds $value down to $expected (decimals=$decimals)', ({ value, decimals, expected }) => {
+      expect(roundAmount(value, decimals)).toBe(expected);
+    });
+
+    it('returns 0 for non-positive values', () => {
+      expect(roundAmount(-1, 2)).toBe(0);
+    });
+
+    it('returns 0 for non-finite values', () => {
+      expect(roundAmount(Infinity, 2)).toBe(0);
+    });
   });
 
   describe('computeLevelPrice', () => {
     const center = 100;
     const decimals = 2;
 
-    it.each([
-      { index: 0, type: 'fixed', value: 5, expected: 100 },
-      { index: 1, type: 'fixed', value: 5, expected: 105 },
-      { index: -1, type: 'fixed', value: 5, expected: 95 },
-      { index: 2, type: 'fixed', value: 5, expected: 110 },
-      { index: 1, type: 'percent', value: 5, expected: 105 },
-      { index: -1, type: 'percent', value: 5, expected: 95 },
-      { index: 1, type: 'geometric', value: 0.1, expected: 110 },
-      { index: -1, type: 'geometric', value: 0.1, expected: 90.91 },
-    ])('computes price $expected for index $index with $type spacing of $value', ({ index, type, value, expected }) => {
-      expect(computeLevelPrice(center, index, decimals, type as any, value)).toBe(expected);
+    describe('fixed spacing', () => {
+      it.each`
+        index | value | expected
+        ${0}  | ${5}  | ${100}
+        ${1}  | ${5}  | ${105}
+        ${-1} | ${5}  | ${95}
+        ${2}  | ${5}  | ${110}
+        ${-2} | ${5}  | ${90}
+      `('returns $expected for index=$index, value=$value', ({ index, value, expected }) => {
+        expect(computeLevelPrice(center, index, decimals, 'fixed', value)).toBe(expected);
+      });
+    });
+
+    describe('percent spacing', () => {
+      it.each`
+        index | value | expected
+        ${0}  | ${5}  | ${100}
+        ${1}  | ${5}  | ${105}
+        ${-1} | ${5}  | ${95}
+        ${2}  | ${10} | ${120}
+        ${-2} | ${10} | ${80}
+      `('returns $expected for index=$index, value=$value', ({ index, value, expected }) => {
+        expect(computeLevelPrice(center, index, decimals, 'percent', value)).toBe(expected);
+      });
+    });
+
+    describe('logarithmic spacing', () => {
+      it.each`
+        index | value  | expected
+        ${0}  | ${0.1} | ${100}
+        ${1}  | ${0.1} | ${110}
+        ${-1} | ${0.1} | ${90.91}
+        ${2}  | ${0.1} | ${121}
+      `('returns $expected for index=$index, value=$value', ({ index, value, expected }) => {
+        expect(computeLevelPrice(center, index, decimals, 'logarithmic', value)).toBe(expected);
+      });
+
+      it('returns 0 for invalid multiplier', () => {
+        expect(computeLevelPrice(center, 1, decimals, 'logarithmic', -2)).toBe(0);
+      });
     });
   });
 
-  describe('estimatePriceRange', () => {
-    it('returns min/max for valid inputs', () => {
-      const result = estimatePriceRange(100, 2, 2, 'fixed', 5);
-      expect(result).toEqual({ min: 90, max: 110 });
+  describe('computeGridBounds', () => {
+    it('returns correct bounds for symmetric grid', () => {
+      expect(computeGridBounds(100, 2, 2, 2, 'fixed', 5)).toEqual({ min: 90, max: 110 });
     });
 
-    it('returns null for invalid levels', () => {
-      expect(estimatePriceRange(100, 0, 2, 'fixed', 5)).toBeNull();
+    it('returns correct bounds for asymmetric grid', () => {
+      expect(computeGridBounds(100, 1, 3, 2, 'fixed', 5)).toEqual({ min: 95, max: 115 });
+    });
+
+    it('returns null for zero levels', () => {
+      expect(computeGridBounds(100, 0, 0, 2, 'fixed', 5)).toBeNull();
     });
 
     it('returns null for invalid prices', () => {
-      // Force a case where price calculation might fail or be negative if not handled, though computeLevelPrice handles it.
-      // Here we test if computeLevelPrice returns <= 0
-      expect(estimatePriceRange(10, 5, 2, 'fixed', 5)).toBeNull(); // 10 - 25 = -15 -> null
+      expect(computeGridBounds(10, 5, 2, 2, 'fixed', 5)).toBeNull();
+    });
+
+    it('handles only buy levels', () => {
+      expect(computeGridBounds(100, 2, 0, 2, 'fixed', 5)).toEqual({ min: 90, max: 100 });
+    });
+
+    it('handles only sell levels', () => {
+      expect(computeGridBounds(100, 0, 2, 2, 'fixed', 5)).toEqual({ min: 100, max: 110 });
     });
   });
 
-  describe('buildLevelIndexes', () => {
-    it('generates indexes from -N to N', () => {
-      expect(buildLevelIndexes(2)).toEqual([-2, -1, 0, 1, 2]);
+  describe('isOutOfRange', () => {
+    const bounds: GridBounds = { min: 90, max: 110 };
+
+    it.each`
+      price  | expected
+      ${80}  | ${true}
+      ${90}  | ${false}
+      ${100} | ${false}
+      ${110} | ${false}
+      ${120} | ${true}
+    `('returns $expected for price=$price', ({ price, expected }) => {
+      expect(isOutOfRange(price, bounds)).toBe(expected);
     });
   });
 
-  describe('resolveLevelQuantity', () => {
-    const portfolio: Portfolio = {
-      asset: { free: 10, used: 0, total: 10 },
-      currency: { free: 1000, used: 0, total: 1000 },
+  describe('validateConfig', () => {
+    const validParams: GridBotStrategyParams = {
+      buyLevels: 2,
+      sellLevels: 2,
+      spacingType: 'fixed',
+      spacingValue: 5,
     };
-    const marketData: MarketData = { amount: { min: 0.1 } };
 
-    it('uses override if provided', () => {
-      expect(resolveLevelQuantity(100, portfolio, 2, marketData, 5)).toBe(5);
+    it('returns null for valid config', () => {
+      expect(validateConfig(validParams, 100, {})).toBeNull();
     });
 
-    it('calculates quantity based on portfolio and levels', () => {
-      // 2 levels per side.
-      // Asset share: 10 / 2 = 5
-      // Currency share: 1000 / (2 * 100) = 5
-      // Min is 5
-      expect(resolveLevelQuantity(100, portfolio, 2, marketData)).toBe(5);
+    it('returns error for non-positive center price', () => {
+      expect(validateConfig(validParams, 0, {})).toBe('Center price must be positive');
     });
 
-    it('respects amount rounding', () => {
-      // Asset share: 10/2 = 5
-      // Currency share: 1000 / (2*100) = 5
-      // But let's make currency share smaller: 1000 / (2*200) = 2.5
-      expect(resolveLevelQuantity(200, portfolio, 2, marketData)).toBe(2.5);
+    it('returns error for negative levels', () => {
+      expect(validateConfig({ ...validParams, buyLevels: -1 }, 100, {})).toBe('Level counts must be non-negative');
     });
 
-    it('returns 0 if levelsPerSide is 0', () => {
-      expect(resolveLevelQuantity(100, portfolio, 0, marketData)).toBe(0);
+    it('returns error for zero levels on both sides', () => {
+      expect(validateConfig({ ...validParams, buyLevels: 0, sellLevels: 0 }, 100, {})).toBe(
+        'At least one level is required',
+      );
+    });
+
+    it('returns error for non-positive spacing', () => {
+      expect(validateConfig({ ...validParams, spacingValue: 0 }, 100, {})).toBe('Spacing value must be positive');
+    });
+
+    it('returns error for negative buy prices', () => {
+      expect(validateConfig({ ...validParams, buyLevels: 25 }, 100, {})).toBe(
+        'Grid configuration would result in non-positive buy prices',
+      );
+    });
+
+    it('returns error for price below exchange minimum', () => {
+      expect(validateConfig({ ...validParams, buyLevels: 0 }, 0.5, { price: { min: 1 } })).toBe(
+        'Center price 0.5 is below exchange minimum 1',
+      );
+    });
+
+    it('returns error for price above exchange maximum', () => {
+      expect(validateConfig(validParams, 1000, { price: { max: 500 } })).toBe(
+        'Center price 1000 is above exchange maximum 500',
+      );
     });
   });
 
   describe('applyAmountLimits', () => {
-    it.each([
-      { qty: 5, min: 1, max: 10, expected: 5 },
-      { qty: 0.5, min: 1, max: 10, expected: 1 },
-      { qty: 15, min: 1, max: 10, expected: 10 },
-      { qty: -1, min: 1, max: 10, expected: -1 },
-    ])('adjusts $qty to $expected within [$min, $max]', ({ qty, min, max, expected }) => {
+    it.each`
+      qty     | min  | max   | expected
+      ${5}    | ${1} | ${10} | ${5}
+      ${0.5}  | ${1} | ${10} | ${1}
+      ${15}   | ${1} | ${10} | ${10}
+      ${0.05} | ${1} | ${10} | ${1}
+    `('adjusts $qty to $expected (min=$min, max=$max)', ({ qty, min, max, expected }) => {
       expect(applyAmountLimits(qty, { amount: { min, max } })).toBe(expected);
+    });
+
+    it('returns original for non-positive quantity', () => {
+      expect(applyAmountLimits(-1, { amount: { min: 1 } })).toBe(-1);
+    });
+
+    it('handles missing limits', () => {
+      expect(applyAmountLimits(5, {})).toBe(5);
     });
   });
 
   describe('applyCostLimits', () => {
-    it.each([
-      { qty: 1, minPrice: 100, maxPrice: 100, minCost: 10, maxCost: 200, expected: 1 },
-      { qty: 0.05, minPrice: 100, maxPrice: 100, minCost: 10, maxCost: 200, expected: 0.1 },
-      { qty: 3, minPrice: 100, maxPrice: 100, minCost: 10, maxCost: 200, expected: 2 },
-    ])(
-      'adjusts $qty to $expected for cost limits [$minCost, $maxCost]',
-      ({ qty, minPrice, maxPrice, minCost, maxCost, expected }) => {
-        expect(applyCostLimits(qty, minPrice, maxPrice, { cost: { min: minCost, max: maxCost } })).toBe(expected);
-      },
-    );
-  });
-
-  describe('computeAffordableLevels', () => {
-    const portfolio: Portfolio = {
-      asset: { free: 10, used: 0, total: 10 },
-      currency: { free: 1000, used: 0, total: 1000 },
-    };
-
-    it('returns maxLevels if affordable', () => {
-      // Price ~100. Qty 1.
-      // Max buys: 1000 / (1 * ~100) = 10
-      // Max sells: 10 / 1 = 10
-      // Request 5.
-      expect(computeAffordableLevels(100, portfolio, 1, 5, 2, 'fixed', 5)).toBe(5);
+    it.each`
+      qty     | minPrice | maxPrice | minCost | maxCost | expected
+      ${1}    | ${100}   | ${100}   | ${10}   | ${200}  | ${1}
+      ${0.05} | ${100}   | ${100}   | ${10}   | ${200}  | ${0.1}
+      ${3}    | ${100}   | ${100}   | ${10}   | ${200}  | ${2}
+    `('adjusts $qty to $expected', ({ qty, minPrice, maxPrice, minCost, maxCost, expected }) => {
+      expect(applyCostLimits(qty, minPrice, maxPrice, { cost: { min: minCost, max: maxCost } })).toBe(expected);
     });
 
-    it('limits by currency', () => {
-      // Price ~100. Qty 1.
-      // Max buys: 100 / (1 * ~100) = 1
-      const poorPortfolio: Portfolio = {
-        asset: { free: 10, used: 0, total: 10 },
-        currency: { free: 100, used: 0, total: 100 },
-      };
-      expect(computeAffordableLevels(100, poorPortfolio, 1, 5, 2, 'fixed', 5)).toBe(1);
+    it('returns original for non-positive quantity', () => {
+      expect(applyCostLimits(-1, 100, 100, { cost: { min: 10 } })).toBe(-1);
     });
 
-    it('limits by asset', () => {
-      // Max sells: 2 / 1 = 2
-      const lowAssetPortfolio: Portfolio = {
-        asset: { free: 2, used: 0, total: 2 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
-      expect(computeAffordableLevels(100, lowAssetPortfolio, 1, 5, 2, 'fixed', 5)).toBe(2);
-    });
-  });
-
-  describe('validateRebalancePlan', () => {
-    const tools: any = { log: vi.fn(), marketData: { amount: { min: 0.1, max: 100 }, cost: { min: 1, max: 1000 } } };
-    const portfolio: Portfolio = {
-      asset: { free: 10, used: 0, total: 10 },
-      currency: { free: 1000, used: 0, total: 1000 },
-    };
-    const basePlan: RebalancePlan = {
-      stage: 'init',
-      side: 'BUY',
-      amount: 1,
-      centerPrice: 100,
-      driftPercent: 5,
-      tolerancePercent: 1,
-      targetValuePerSide: 500,
-      currentAssetValue: 0,
-      currentCurrencyValue: 1000,
-      estimatedNotional: 100,
-    };
-
-    it('validates a correct plan', () => {
-      expect(validateRebalancePlan(basePlan, portfolio, tools)).toBe(true);
-    });
-
-    it('fails if amount is invalid', () => {
-      expect(validateRebalancePlan({ ...basePlan, amount: 0 }, portfolio, tools)).toBe(false);
-    });
-
-    it('fails if insufficient asset for SELL', () => {
-      expect(validateRebalancePlan({ ...basePlan, side: 'SELL', amount: 20 }, portfolio, tools)).toBe(false);
-      expect(tools.log).toHaveBeenCalledWith('warn', expect.stringContaining('insufficient asset'));
-    });
-
-    it('fails if insufficient currency for BUY', () => {
-      expect(validateRebalancePlan({ ...basePlan, side: 'BUY', estimatedNotional: 2000 }, portfolio, tools)).toBe(
-        false,
-      );
-      expect(tools.log).toHaveBeenCalledWith('warn', expect.stringContaining('insufficient currency'));
-    });
-
-    it('fails if amount below min', () => {
-      expect(validateRebalancePlan({ ...basePlan, amount: 0.01 }, portfolio, tools)).toBe(false);
-    });
-  });
-
-  describe('inferPricePrecision', () => {
-    it('infers from price step if present', () => {
-      expect(inferPricePrecision(123.45, { precision: { price: 0.5 } })).toEqual({ priceDecimals: 1, priceStep: 0.5 });
-    });
-
-    it('infers from current price if no step', () => {
-      expect(inferPricePrecision(123.456, {})).toEqual({ priceDecimals: 3 });
+    it('handles missing limits', () => {
+      expect(applyCostLimits(5, 100, 100, {})).toBe(5);
     });
   });
 
   describe('computeRebalancePlan', () => {
-    const portfolio: Portfolio = {
-      asset: { free: 0, used: 0, total: 0 },
-      currency: { free: 1000, used: 0, total: 1000 },
-    }; // Total 1000. Target 500 each.
-    const marketData: MarketData = {};
+    const marketData: MarketData = { precision: { amount: 0.01 } };
 
-    it('returns plan when drift exceeds tolerance', () => {
-      // Price 100. Asset 0 -> 0 value. Currency 1000.
-      // Gap: 500 - 0 = 500.
-      // Drift: 500 / 1000 = 50%
-      const plan = computeRebalancePlan('init', 100, portfolio, marketData, 5);
-      expect(plan).toMatchObject({
-        side: 'BUY',
-        amount: 5, // 500 / 100
-        driftPercent: 50,
-      });
-    });
-
-    it('returns null when drift is within tolerance', () => {
-      // Portfolio balanced: 5 asset * 100 = 500. Currency 500.
-      const balancedPortfolio: Portfolio = {
-        asset: { free: 5, used: 0, total: 5 },
-        currency: { free: 500, used: 0, total: 500 },
-      };
-      expect(computeRebalancePlan('init', 100, balancedPortfolio, marketData, 5)).toBeNull();
-    });
-
-    it('rounds amount according to market data', () => {
+    it('returns BUY plan when asset value is low for symmetric levels', () => {
       const portfolio: Portfolio = {
         asset: { free: 0, used: 0, total: 0 },
         currency: { free: 1000, used: 0, total: 1000 },
       };
-      // Gap 500. Price 100. Raw amount 5.
-      // Let's use a price that gives a long decimal amount.
-      // Price 33. Gap 500. Amount 15.151515...
-      const marketDataWithPrecision: MarketData = { amount: { min: 0.1 }, precision: { amount: 0.1 } };
-      // If we assume default rounding is used if not specified, or we can specify a step.
-      // Let's specify a step indirectly via min or just rely on the fact that it SHOULD round.
-      // Actually resolveLevelQuantity uses countDecimals(marketData.amount?.min ?? DEFAULT_AMOUNT_ROUNDING).
+      // 5 buy + 5 sell = target 50% asset (500 value = 5 asset at price 100)
+      const plan = computeRebalancePlan(100, portfolio, 5, 5, marketData);
 
-      const plan = computeRebalancePlan('init', 33, portfolio, marketDataWithPrecision, 1);
-      // 15.1515... should be rounded to 1 decimal place (0.1 step) -> 15.1
-      expect(plan?.amount).toBe(15.1);
+      expect(plan?.side).toBe('BUY');
     });
 
-    it('applies min/max limits to amount', () => {
+    it('returns SELL plan when asset value is high', () => {
+      const portfolio: Portfolio = {
+        asset: { free: 10, used: 0, total: 10 },
+        currency: { free: 0, used: 0, total: 0 },
+      };
+      // 5 buy + 5 sell = target 50% asset (500 value) but we have 1000 value in asset
+      const plan = computeRebalancePlan(100, portfolio, 5, 5, marketData);
+
+      expect(plan?.side).toBe('SELL');
+    });
+
+    it('returns null for balanced portfolio with symmetric levels', () => {
+      const portfolio: Portfolio = {
+        asset: { free: 5, used: 0, total: 5 },
+        currency: { free: 500, used: 0, total: 500 },
+      };
+      // 5 buy + 5 sell = target 50% asset = 500 value, we have 5*100=500
+
+      expect(computeRebalancePlan(100, portfolio, 5, 5, marketData)).toBeNull();
+    });
+
+    it('computes correct ratio for asymmetric levels', () => {
+      const portfolio: Portfolio = {
+        asset: { free: 0, used: 0, total: 0 },
+        currency: { free: 1000, used: 0, total: 1000 },
+      };
+      // 2 buy + 8 sell = target 80% asset (800 value = 8 asset at price 100)
+      const plan = computeRebalancePlan(100, portfolio, 2, 8, marketData);
+
+      expect(plan?.amount).toBe(8); // Need to buy 8 asset to reach 800 value
+    });
+
+    it('returns null for zero center price', () => {
+      const portfolio: Portfolio = {
+        asset: { free: 0, used: 0, total: 0 },
+        currency: { free: 1000, used: 0, total: 1000 },
+      };
+
+      expect(computeRebalancePlan(0, portfolio, 5, 5, marketData)).toBeNull();
+    });
+
+    it('returns null for zero levels', () => {
+      const portfolio: Portfolio = {
+        asset: { free: 5, used: 0, total: 5 },
+        currency: { free: 500, used: 0, total: 500 },
+      };
+
+      expect(computeRebalancePlan(100, portfolio, 0, 0, marketData)).toBeNull();
+    });
+
+    it('returns null for empty portfolio', () => {
+      const portfolio: Portfolio = {
+        asset: { free: 0, used: 0, total: 0 },
+        currency: { free: 0, used: 0, total: 0 },
+      };
+
+      expect(computeRebalancePlan(100, portfolio, 5, 5, marketData)).toBeNull();
+    });
+
+    it('applies amount limits', () => {
       const portfolio: Portfolio = {
         asset: { free: 0, used: 0, total: 0 },
         currency: { free: 10000, used: 0, total: 10000 },
       };
-      // Price 100. Gap 5000. Amount 50.
-      // Max limit 10.
-      const marketDataWithMaxAmount: MarketData = { amount: { min: 0.1, max: 10 } };
+      const marketDataWithMax: MarketData = { amount: { max: 10 }, precision: { amount: 0.01 } };
+      const plan = computeRebalancePlan(100, portfolio, 5, 5, marketDataWithMax);
 
-      const plan = computeRebalancePlan('init', 100, portfolio, marketDataWithMaxAmount, 1);
       expect(plan?.amount).toBe(10);
+    });
+  });
+
+  describe('deriveLevelQuantity', () => {
+    const portfolio: Portfolio = {
+      asset: { free: 10, used: 0, total: 10 },
+      currency: { free: 1000, used: 0, total: 1000 },
+    };
+    const marketData: MarketData = { precision: { amount: 0.01 } };
+
+    it('derives quantity from portfolio for symmetric levels', () => {
+      const qty = deriveLevelQuantity(100, portfolio, 2, 2, 2, 'fixed', 5, marketData);
+
+      expect(qty).toBeGreaterThan(0);
+    });
+
+    it('derives quantity from portfolio for asymmetric levels', () => {
+      const qty = deriveLevelQuantity(100, portfolio, 3, 2, 2, 'fixed', 5, marketData);
+
+      expect(qty).toBeGreaterThan(0);
+    });
+
+    it('returns 0 for zero levels', () => {
+      expect(deriveLevelQuantity(100, portfolio, 0, 0, 2, 'fixed', 5, marketData)).toBe(0);
+    });
+
+    it('handles only buy levels', () => {
+      const qty = deriveLevelQuantity(100, portfolio, 2, 0, 2, 'fixed', 5, marketData);
+
+      expect(qty).toBeGreaterThan(0);
+    });
+
+    it('handles only sell levels', () => {
+      const qty = deriveLevelQuantity(100, portfolio, 0, 2, 2, 'fixed', 5, marketData);
+
+      expect(qty).toBe(5);
+    });
+
+    it('applies amount limits', () => {
+      const marketDataWithLimits: MarketData = { amount: { min: 0.1, max: 1 }, precision: { amount: 0.01 } };
+      const qty = deriveLevelQuantity(100, portfolio, 2, 2, 2, 'fixed', 5, marketDataWithLimits);
+
+      expect(qty).toBeLessThanOrEqual(1);
+    });
+
+    it('applies cost limits when bounds exist', () => {
+      const marketDataWithCostLimits: MarketData = {
+        cost: { min: 10, max: 1000 },
+        precision: { amount: 0.01 },
+      };
+      const qty = deriveLevelQuantity(100, portfolio, 2, 2, 2, 'fixed', 5, marketDataWithCostLimits);
+
+      expect(qty).toBeGreaterThan(0);
+    });
+
+    it('returns 0 for insufficient portfolio', () => {
+      const emptyPortfolio: Portfolio = {
+        asset: { free: 0, used: 0, total: 0 },
+        currency: { free: 0, used: 0, total: 0 },
+      };
+      const qty = deriveLevelQuantity(100, emptyPortfolio, 2, 2, 2, 'fixed', 5, marketData);
+
+      expect(qty).toBe(0);
+    });
+
+    it('handles price step parameter', () => {
+      const qty = deriveLevelQuantity(100, portfolio, 2, 2, 2, 'fixed', 5, marketData, 0.5);
+
+      expect(qty).toBeGreaterThan(0);
+    });
+
+    it('handles negative level prices in calculation', () => {
+      // Low center price where some buy levels would be negative - should skip those
+      const qty = deriveLevelQuantity(10, portfolio, 5, 2, 2, 'fixed', 5, marketData);
+
+      expect(qty).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  describe('hasOnlyOneSide', () => {
+    it('returns true for only BUY orders', () => {
+      const levels = [
+        { side: 'BUY' as const, orderId: '1' },
+        { side: 'BUY' as const, orderId: '2' },
+      ];
+
+      expect(hasOnlyOneSide(levels)).toBe(true);
+    });
+
+    it('returns true for only SELL orders', () => {
+      const levels = [
+        { side: 'SELL' as const, orderId: '1' },
+        { side: 'SELL' as const, orderId: '2' },
+      ];
+
+      expect(hasOnlyOneSide(levels)).toBe(true);
+    });
+
+    it('returns false for both sides', () => {
+      const levels = [
+        { side: 'BUY' as const, orderId: '1' },
+        { side: 'SELL' as const, orderId: '2' },
+      ];
+
+      expect(hasOnlyOneSide(levels)).toBe(false);
+    });
+
+    it('ignores levels without orders', () => {
+      const levels = [
+        { side: 'BUY' as const, orderId: '1' },
+        { side: 'SELL' as const, orderId: undefined },
+      ];
+
+      expect(hasOnlyOneSide(levels)).toBe(true);
+    });
+
+    it('returns false for empty levels', () => {
+      expect(hasOnlyOneSide([])).toBe(false);
     });
   });
 });
