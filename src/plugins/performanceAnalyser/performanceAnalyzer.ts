@@ -26,7 +26,8 @@ export class PerformanceAnalyzer extends Plugin {
   private warmupCandle?: Candle;
   private warmupCompleted: boolean;
   private enableConsoleTable: boolean;
-  private balanceSamples: { date: number; balance: number }[];
+  private tradeBalanceSamples: { date: number; balance: number }[]; // For returns/volatility
+  private priceBalanceSamples: number[]; // For accurate max drawdown
 
   constructor({ riskFreeReturn, enableConsoleTable }: PerformanceAnalyzerConfig) {
     super(PerformanceAnalyzer.name);
@@ -43,7 +44,8 @@ export class PerformanceAnalyzer extends Plugin {
     this.orders = 0;
     this.warmupCompleted = false;
     this.enableConsoleTable = enableConsoleTable ?? false;
-    this.balanceSamples = [];
+    this.tradeBalanceSamples = [];
+    this.priceBalanceSamples = [];
   }
 
   // --- BEGIN LISTENERS ---
@@ -52,6 +54,11 @@ export class PerformanceAnalyzer extends Plugin {
     const event = payloads[payloads.length - 1];
     if (!this.start.balance) this.start.balance = event.balance.total;
     this.balance = event.balance.total;
+
+    // Record sample for accurate drawdown tracking
+    if (this.warmupCompleted) {
+      this.priceBalanceSamples.push(event.balance.total);
+    }
   }
 
   public onPortfolioChange(payloads: Portfolio[]): void {
@@ -79,14 +86,14 @@ export class PerformanceAnalyzer extends Plugin {
       this.orders++;
       this.balance = exchange.balance.total;
       this.latestPortfolio = exchange.portfolio;
-      const lastSample = this.balanceSamples[this.balanceSamples.length - 1];
+      const lastSample = this.tradeBalanceSamples[this.tradeBalanceSamples.length - 1];
 
       logTrade(order, exchange, this.currency, this.asset, this.enableConsoleTable, {
         startBalance: this.start.balance || exchange.balance.total,
         previousBalance: lastSample?.balance,
       });
 
-      this.balanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance.total });
+      this.tradeBalanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance.total });
 
       const isCurrentlyExposed = this.exposureActiveSince !== null;
       const isExposedAfterTrade = exchange.portfolio.asset.total > 0;
@@ -131,7 +138,7 @@ export class PerformanceAnalyzer extends Plugin {
 
     const percentExposure = elapsedMs > 0 ? (this.exposure / elapsedMs) * 100 : 0;
 
-    const orderedSamples = [...this.balanceSamples].sort((left, right) => left.date - right.date);
+    const orderedSamples = [...this.tradeBalanceSamples].sort((left, right) => left.date - right.date);
     const returns: number[] = [];
     let previousBalance = this.start.balance;
     for (const sample of orderedSamples) {
@@ -144,11 +151,8 @@ export class PerformanceAnalyzer extends Plugin {
     const volatility = stdev(returns);
     const standardDeviation = Number.isNaN(volatility) ? 0 : volatility;
 
-    // Calculate Maximum Drawdown using utility function
-    const mdd = maxDrawdown(
-      orderedSamples.map(s => s.balance),
-      this.start.balance,
-    );
+    // Calculate Maximum Drawdown using priceBalanceSamples for accurate tracking
+    const mdd = maxDrawdown(this.priceBalanceSamples, this.start.balance);
 
     const market = this.startPrice ? ((this.endPrice - this.startPrice) / this.startPrice) * 100 : 0;
     const ratioParams = {

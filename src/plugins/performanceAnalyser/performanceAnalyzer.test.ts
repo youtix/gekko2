@@ -116,6 +116,24 @@ describe('PerformanceAnalyzer', () => {
         expect(analyzer['balance']).toBe(expectedCurrent);
       },
     );
+
+    it('should record sample to priceBalanceSamples when warmup is completed', () => {
+      analyzer['warmupCompleted'] = true;
+
+      analyzer.onPortfolioValueChange([{ balance: { free: 1000, used: 0, total: 1000 } }]);
+      analyzer.onPortfolioValueChange([{ balance: { free: 900, used: 0, total: 900 } }]);
+      analyzer.onPortfolioValueChange([{ balance: { free: 1100, used: 0, total: 1100 } }]);
+
+      expect(analyzer['priceBalanceSamples']).toEqual([1000, 900, 1100]);
+    });
+
+    it('should NOT record sample to priceBalanceSamples before warmup', () => {
+      analyzer['warmupCompleted'] = false;
+
+      analyzer.onPortfolioValueChange([{ balance: { free: 1000, used: 0, total: 1000 } }]);
+
+      expect(analyzer['priceBalanceSamples']).toEqual([]);
+    });
   });
 
   describe('onPortfolioChange', () => {
@@ -188,7 +206,7 @@ describe('PerformanceAnalyzer', () => {
       expect(analyzer['orders']).toBe(1);
       expect(analyzer['balance']).toBe(1000);
       expect(analyzer['latestPortfolio']).toEqual(buy.exchange.portfolio);
-      expect(analyzer['balanceSamples']).toHaveLength(1);
+      expect(analyzer['tradeBalanceSamples']).toHaveLength(1);
       expect(logTrade).toHaveBeenCalled();
     });
 
@@ -308,7 +326,8 @@ describe('PerformanceAnalyzer', () => {
       analyzer['latestPortfolio'] = fullLatestPortfolio;
       analyzer['endPrice'] = endPrice;
       analyzer['dates'] = { start: timestamp, end: timestamp + 31536000000 }; // 1 Year
-      analyzer['balanceSamples'] = samples;
+      analyzer['tradeBalanceSamples'] = samples;
+      analyzer['priceBalanceSamples'] = samples.map(s => s.balance);
     };
 
     it('should return undefined if no start data', () => {
