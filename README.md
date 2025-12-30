@@ -10,46 +10,39 @@
 
 _The most valuable commodity I know of is information._
 
--Gordon Gekko
+— Gordon Gekko
 
-Gekko 2 is a modular crypto trading bot framework supporting backtesting, real-time trading, and custom strategies. It is written in TypeScript and runs on [Bun](https://bun.sh/).
+## About
 
-_Use Gekko 2 at your own risk._
+**Gekko 2** is a modular crypto trading bot framework for backtesting, alerting, paper trading, and live automated trading. Built with TypeScript and powered by [Bun](https://bun.sh/), it lets you develop, test, and deploy custom trading strategies on cryptocurrency markets.
 
-## 📚 Summary
+---
 
-- [Introduction](./documentation/introduction/about-gekko.md)
-  - [Getting Started](./documentation/introduction/getting-started.md)
-  - [Supported Exchanges](./documentation/introduction/supported-exchanges.md)
-  - [Supporting The Project](./documentation/introduction/supporting-project.md)
+## ⚠️ Disclaimer
 
-- [Modes](./documentation/modes/introduction.md)
-  - [Backtest](./documentation/modes/backtest.md)
-  - [Importer](./documentation/modes/importer.md)
-  - [Realtime](./documentation/modes/realtime.md)
+**USE AT YOUR OWN RISK.**
 
-- [Indicators](./documentation/indicators/introduction.md)
-  - [Directional Movement](./documentation/indicators/directional-movement.md)
-  - [Momentum](./documentation/indicators/momentum.md)
-  - [Moving Averages](./documentation/indicators/moving-averages.md)
-  - [Oscillators](./documentation/indicators/oscillators.md)
-  - [volatility](./documentation/indicators/volatility.md)
-  - [Volume](./documentation/indicators/volume.md)
+Gekko 2 is not financial advice software. The author is not responsible for any losses. Always test thoroughly with backtesting and paper trading before using real funds.
 
-- [Plugins](./documentation/plugins/introduction.md)
-  - [Candle Writer](./documentation/plugins/candle-writer.md)
-  - [Performance Analyzer](./documentation/plugins/performance-analyzer.md)
-  - [EventSubscriber](./documentation/plugins/event-subscriber.md)
-  - [Supervision](./documentation/plugins/supervision.md)
-  - [Trader](./documentation/plugins/trader.md)
-  - [Trading Advisor](./documentation/plugins/trading-advisor.md)
+---
 
-- [Strategies](./documentation/strategies/introduction.md)
-  - [DEMA](./documentation/strategies/dema.md)
-  - [MACD](./documentation/strategies/macd.md)
-  - [TMA](./documentation/strategies/tma.md)
-  - [RSI](./documentation/strategies/rsi.md)
-  - [CCI](./documentation/strategies/cci.md)
+## Summary
+
+- **[Quick Start](./documentation/quick-start.md)** — Step-by-step instructions for importing data, backtesting, setting up alerts, sandbox trading, and live trading with real money.
+- **[Modes](./documentation/modes.md)** — Gekko 2 operates in three modes that cover the complete trading workflow — from data collection to live trading.
+- **[Built-in Strategies](./documentation/built-in-strategies.md)** — Comprehensive guide to all 9 built-in strategies including DEMA, MACD, RSI, CCI, TMA, GridBot, SMACrossover, EMARibbon, and VolumeDelta with configuration examples.
+- **[Custom Strategies](./documentation/custom-strategies.md)** — Step-by-step guide to building your own external trading strategies, with full interface documentation, lifecycle methods, indicator usage, and deployment with the standalone executable.
+- **[Technical Indicators](./documentation/indicators.md)** — Complete reference for 25+ built-in indicators including moving averages (SMA, EMA, DEMA, WMA, TEMA), momentum (MACD, Stochastic, RSI), volatility (ATR, Bollinger Bands), and volume indicators.
+- **[Plugins](./documentation/plugins.md)** — Comprehensive guide to all 7 plugins including TradingAdvisor, Trader, PerformanceAnalyzer, PerformanceReporter, CandleWriter, EventSubscriber, and Supervision with configuration examples and event documentation.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines.
 
 This project adheres to a [Code of Conduct](./CODE_OF_CONDUCT.md).
-See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines.
+
+## License
+
+[MIT](./LICENSE)
