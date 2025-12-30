@@ -1,7 +1,9 @@
+import { BalanceSnapshot } from '@models/event.types';
 import { bench, describe } from 'vitest';
 import {
   addPrecise,
   linreg,
+  longestDrawdownDuration,
   maxDrawdown,
   percentile,
   sharpeRatio,
@@ -195,5 +197,44 @@ describe('maxDrawdown Performance', () => {
 
   bench('maxDrawdown - large balances (1000 samples)', () => {
     maxDrawdown(largeBalances, 1000);
+  });
+});
+
+describe('longestDrawdownDuration Performance', () => {
+  const smallSamples = Array.from(
+    { length: 10 },
+    (_, i) =>
+      ({
+        date: i * 1000,
+        balance: { total: 1000 + (i % 3 === 0 ? -50 : 30) * i },
+      }) as BalanceSnapshot,
+  );
+  const mediumSamples = Array.from(
+    { length: 100 },
+    (_, i) =>
+      ({
+        date: i * 1000,
+        balance: { total: 1000 + (i % 3 === 0 ? -50 : 30) * Math.sin(i) },
+      }) as BalanceSnapshot,
+  );
+  const largeSamples = Array.from(
+    { length: 1000 },
+    (_, i) =>
+      ({
+        date: i * 1000,
+        balance: { total: 1000 + (i % 3 === 0 ? -50 : 30) * Math.sin(i) },
+      }) as BalanceSnapshot,
+  );
+
+  bench('longestDrawdownDuration - small samples (10)', () => {
+    longestDrawdownDuration(smallSamples, 1000);
+  });
+
+  bench('longestDrawdownDuration - medium samples (100)', () => {
+    longestDrawdownDuration(mediumSamples, 1000);
+  });
+
+  bench('longestDrawdownDuration - large samples (1000)', () => {
+    longestDrawdownDuration(largeSamples, 1000);
   });
 });

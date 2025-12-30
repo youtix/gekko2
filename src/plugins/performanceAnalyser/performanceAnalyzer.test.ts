@@ -119,12 +119,19 @@ describe('PerformanceAnalyzer', () => {
 
     it('should record sample to priceBalanceSamples when warmup is completed', () => {
       analyzer['warmupCompleted'] = true;
+      analyzer['dates'] = { start: 0, end: 1000 };
 
       analyzer.onPortfolioValueChange([{ balance: { free: 1000, used: 0, total: 1000 } }]);
+      analyzer['dates'].end = 2000;
       analyzer.onPortfolioValueChange([{ balance: { free: 900, used: 0, total: 900 } }]);
+      analyzer['dates'].end = 3000;
       analyzer.onPortfolioValueChange([{ balance: { free: 1100, used: 0, total: 1100 } }]);
 
-      expect(analyzer['priceBalanceSamples']).toEqual([1000, 900, 1100]);
+      expect(analyzer['priceBalanceSamples']).toEqual([
+        { date: 1000, balance: { total: 1000, free: 1000, used: 0 } },
+        { date: 2000, balance: { total: 900, free: 900, used: 0 } },
+        { date: 3000, balance: { total: 1100, free: 1100, used: 0 } },
+      ]);
     });
 
     it('should NOT record sample to priceBalanceSamples before warmup', () => {
@@ -327,7 +334,7 @@ describe('PerformanceAnalyzer', () => {
       analyzer['endPrice'] = endPrice;
       analyzer['dates'] = { start: timestamp, end: timestamp + 31536000000 }; // 1 Year
       analyzer['tradeBalanceSamples'] = samples;
-      analyzer['priceBalanceSamples'] = samples.map(s => s.balance);
+      analyzer['priceBalanceSamples'] = samples.map(s => ({ date: s.date, balance: s.balance }));
     };
 
     it('should return undefined if no start data', () => {
@@ -358,8 +365,8 @@ describe('PerformanceAnalyzer', () => {
 
     it('should calculate volatility metrics (Sharpe, Sortino)', () => {
       const samples = [
-        { date: timestamp + 1000, balance: 1010 }, // +1%
-        { date: timestamp + 2000, balance: 1020.1 }, // +1%
+        { date: timestamp + 1000, balance: { total: 1010, free: 1010, used: 0 } }, // +1%
+        { date: timestamp + 2000, balance: { total: 1020.1, free: 1020.1, used: 0 } }, // +1%
       ];
       // Start 1000. Returns: 1%, 1%. Avg 1%. Stdev 0.
       // If stdev 0, sharpe 0.
@@ -372,8 +379,8 @@ describe('PerformanceAnalyzer', () => {
 
       // Add volatility
       const samples2 = [
-        { date: timestamp + 1000, balance: 1100 }, // +10%
-        { date: timestamp + 2000, balance: 990 }, // -10% from 1100
+        { date: timestamp + 1000, balance: { total: 1100, free: 1100, used: 0 } }, // +10%
+        { date: timestamp + 2000, balance: { total: 990, free: 990, used: 0 } }, // -10% from 1100
       ];
       setupAnalyzer(990, 1000, undefined, undefined, 100, samples2);
       report = analyzer['calculateReportStatistics']();

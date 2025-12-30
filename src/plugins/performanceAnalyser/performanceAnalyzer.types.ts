@@ -41,5 +41,7 @@ export type Report = {
   standardDeviation: number;
   /** Maximum drawdown: largest percentage decline from peak to trough */
   maxDrawdown: number;
+  /** Longest drawdown duration: formatted as human-readable duration string */
+  longestDrawdownDuration: string;
   alpha: number;
 };

@@ -81,6 +81,7 @@ describe('performanceAnalyzer.utils', () => {
       sortino: 1.3,
       standardDeviation: 0.1,
       maxDrawdown: 0.2,
+      longestDrawdownDuration: '1 day 2 hours',
       alpha: 0.05,
     };
 
@@ -136,6 +137,7 @@ describe('performanceAnalyzer.utils', () => {
         sortinoRatio: 'ratio(1.3)',
         standardDeviation: 'ratio(0.1)',
         maxDrawdown: 'round(0.2)%',
+        longestDrawdownDuration: '1 day 2 hours',
       });
     });
 

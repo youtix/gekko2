@@ -2,6 +2,11 @@ import { UUID } from 'node:crypto';
 import { OrderSide, OrderType } from './order.types';
 import { BalanceDetail, Portfolio } from './portfolio.types';
 
+export interface BalanceSnapshot {
+  date: number;
+  balance: BalanceDetail;
+}
+
 export type DeffferedEvent = {
   name: string;
   payload: unknown;

@@ -1,9 +1,9 @@
 import { PERFORMANCE_REPORT_EVENT } from '@constants/event.const';
 import { Candle } from '@models/candle.types';
-import { OrderCompletedEvent } from '@models/event.types';
-import { BalanceDetail, Portfolio } from '@models/portfolio.types';
+import { BalanceSnapshot, OrderCompletedEvent } from '@models/event.types';
+import { Portfolio } from '@models/portfolio.types';
 import { warning } from '@services/logger';
-import { maxDrawdown, sharpeRatio, sortinoRatio, stdev } from '@utils/math/math.utils';
+import { longestDrawdownDuration, maxDrawdown, sharpeRatio, sortinoRatio, stdev } from '@utils/math/math.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
@@ -26,8 +26,8 @@ export class PerformanceAnalyzer extends Plugin {
   private warmupCandle?: Candle;
   private warmupCompleted: boolean;
   private enableConsoleTable: boolean;
-  private tradeBalanceSamples: { date: number; balance: number }[]; // For returns/volatility
-  private priceBalanceSamples: number[]; // For accurate max drawdown
+  private tradeBalanceSamples: BalanceSnapshot[]; // For returns/volatility
+  private priceBalanceSamples: BalanceSnapshot[]; // For drawdown metrics
 
   constructor({ riskFreeReturn, enableConsoleTable }: PerformanceAnalyzerConfig) {
     super(PerformanceAnalyzer.name);
@@ -49,15 +49,15 @@ export class PerformanceAnalyzer extends Plugin {
   }
 
   // --- BEGIN LISTENERS ---
-  public onPortfolioValueChange(payloads: { balance: BalanceDetail }[]): void {
+  public onPortfolioValueChange(payloads: BalanceSnapshot[]): void {
     // Latest strategy: only process the most recent payload
     const event = payloads[payloads.length - 1];
     if (!this.start.balance) this.start.balance = event.balance.total;
     this.balance = event.balance.total;
 
     // Record sample for accurate drawdown tracking
-    if (this.warmupCompleted) {
-      this.priceBalanceSamples.push(event.balance.total);
+    if (this.warmupCompleted && this.dates.end > 0) {
+      this.priceBalanceSamples.push({ date: this.dates.end, balance: event.balance });
     }
   }
 
@@ -90,10 +90,10 @@ export class PerformanceAnalyzer extends Plugin {
 
       logTrade(order, exchange, this.currency, this.asset, this.enableConsoleTable, {
         startBalance: this.start.balance || exchange.balance.total,
-        previousBalance: lastSample?.balance,
+        previousBalance: lastSample?.balance.total,
       });
 
-      this.tradeBalanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance.total });
+      this.tradeBalanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance });
 
       const isCurrentlyExposed = this.exposureActiveSince !== null;
       const isExposedAfterTrade = exchange.portfolio.asset.total > 0;
@@ -126,33 +126,21 @@ export class PerformanceAnalyzer extends Plugin {
     }
 
     const profit = this.balance - this.start.balance;
-
-    const timespan = intervalToDuration({
-      start: this.dates.start,
-      end: this.dates.end,
-    });
+    const timespan = intervalToDuration({ start: this.dates.start, end: this.dates.end });
     const elapsedMs = differenceInMilliseconds(this.dates.end, this.dates.start);
     const elapsedYears = elapsedMs / YEAR_MS;
     const relativeProfit = (this.balance / this.start.balance) * 100 - 100;
     const relativeYearlyProfit = relativeProfit / (elapsedYears || 1);
-
     const percentExposure = elapsedMs > 0 ? (this.exposure / elapsedMs) * 100 : 0;
-
     const orderedSamples = [...this.tradeBalanceSamples].sort((left, right) => left.date - right.date);
     const returns: number[] = [];
     let previousBalance = this.start.balance;
     for (const sample of orderedSamples) {
       if (!previousBalance) break;
-      const change = (sample.balance / previousBalance - 1) * 100;
+      const change = (sample.balance.total / previousBalance - 1) * 100;
       if (Number.isFinite(change)) returns.push(change);
-      previousBalance = sample.balance;
+      previousBalance = sample.balance.total;
     }
-
-    const volatility = stdev(returns);
-    const standardDeviation = Number.isNaN(volatility) ? 0 : volatility;
-
-    // Calculate Maximum Drawdown using priceBalanceSamples for accurate tracking
-    const mdd = maxDrawdown(this.priceBalanceSamples, this.start.balance);
 
     const market = this.startPrice ? ((this.endPrice - this.startPrice) / this.startPrice) * 100 : 0;
     const ratioParams = {
@@ -162,10 +150,15 @@ export class PerformanceAnalyzer extends Plugin {
       elapsedYears,
     };
 
+    const balancesOnly = this.priceBalanceSamples.map(s => s.balance.total);
+    const lddMs = longestDrawdownDuration(this.priceBalanceSamples, this.start.balance);
+    const lddFormatted = lddMs > 0 ? formatDuration(intervalToDuration({ start: 0, end: lddMs })) : '0';
+
     const report: Report = {
       alpha: relativeProfit - market,
       balance: this.balance,
-      maxDrawdown: mdd,
+      maxDrawdown: maxDrawdown(balancesOnly, this.start.balance),
+      longestDrawdownDuration: lddFormatted,
       endPrice: this.endPrice,
       endTime: this.dates.end,
       exposure: percentExposure,
@@ -175,7 +168,7 @@ export class PerformanceAnalyzer extends Plugin {
       relativeYearlyProfit,
       sharpe: sharpeRatio(ratioParams),
       sortino: sortinoRatio(ratioParams),
-      standardDeviation,
+      standardDeviation: stdev(returns) || 0,
       startBalance: this.start.balance,
       startPrice: this.startPrice,
       startTime: this.dates.start,

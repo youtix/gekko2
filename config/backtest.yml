@@ -2,12 +2,12 @@ watch:
   asset: BTC
   currency: USDT
   mode: backtest
-  timeframe: '1d'
+  timeframe: 1h
   warmup:
     candleCount: 365
   daterange:
     start: '2018-01-01T00:00:00.000Z'
-    end: '2025-05-01T00:00:00.000Z'
+    end: '2025-11-01T00:00:00.000Z'
 
 exchange:
   name: dummy-cex
@@ -18,7 +18,7 @@ storage:
 
 strategy:
   name: RSI
-  src: 'ohlc4'
+  src: ohlc4
   period: 21
   thresholds:
     high: 70

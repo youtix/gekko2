@@ -25,7 +25,7 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 
 const HEADER =
-  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total orders;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;max drawdown\n';
+  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total orders;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;max drawdown;longest drawdown duration\n';
 
 const baseConfig = {
   name: 'PerformanceReporter',
@@ -51,6 +51,7 @@ const sampleReport: Report = {
   sortino: 1.1,
   standardDeviation: 2.5,
   maxDrawdown: 0.08,
+  longestDrawdownDuration: '2 hours 30 minutes',
   profit: 10,
   relativeProfit: 1,
 };
@@ -119,6 +120,7 @@ describe('PerformanceReporter', () => {
           '1.10',
           '2.50',
           '0.08%',
+          '2 hours 30 minutes',
         ].join(';') + '\n';
 
       expect(fs.appendFileSync).toHaveBeenCalledWith(expectedPath, expectedLine, 'utf8');

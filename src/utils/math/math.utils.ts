@@ -1,3 +1,4 @@
+import { BalanceSnapshot } from '@models/event.types';
 import { add, divide, map, mean, multiply, reduce, sum } from 'lodash-es';
 
 const valuesMinusMeanSquared = (values: number[] = []) => {
@@ -169,4 +170,46 @@ export const maxDrawdown = (balances: number[], initialBalance: number): number 
   );
 
   return result;
+};
+
+/**
+ * Calculates the longest drawdown duration in milliseconds.
+ * This is the longest time it takes for the portfolio to recover from a peak.
+ *
+ * @param samples - Array of {date, balance} samples in chronological order
+ * @param initialBalance - The starting balance
+ * @returns Longest drawdown duration in milliseconds
+ */
+export const longestDrawdownDuration = (samples: BalanceSnapshot[], initialBalance: number): number => {
+  if (!samples.length || initialBalance <= 0) return 0;
+
+  let peak = initialBalance;
+  let peakDate = samples[0]?.date ?? 0;
+  let longestDuration = 0;
+  let wasInDrawdown = false;
+
+  for (const { date, balance } of samples) {
+    if (balance.total < peak) {
+      // We're in a drawdown
+      wasInDrawdown = true;
+    } else if (balance.total >= peak) {
+      // New peak or recovery - calculate duration only if we were in a drawdown
+      if (wasInDrawdown) {
+        const duration = date - peakDate;
+        if (duration > longestDuration) longestDuration = duration;
+      }
+      peak = balance.total;
+      peakDate = date;
+      wasInDrawdown = false;
+    }
+  }
+
+  // Check if we're still in a drawdown at the end
+  const lastSample = samples[samples.length - 1];
+  if (lastSample && wasInDrawdown) {
+    const duration = lastSample.date - peakDate;
+    if (duration > longestDuration) longestDuration = duration;
+  }
+
+  return longestDuration;
 };

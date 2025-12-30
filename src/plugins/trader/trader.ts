@@ -13,7 +13,13 @@ import { DEFAULT_FEE_BUFFER } from '@constants/order.const';
 import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
+import {
+  BalanceSnapshot,
+  OrderCanceledEvent,
+  OrderCompletedEvent,
+  OrderErroredEvent,
+  OrderInitiatedEvent,
+} from '@models/event.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
@@ -89,15 +95,16 @@ export class Trader extends Plugin {
   /* -------------------------------------------------------------------------- */
 
   private emitPortfolioChangeEvent() {
-    this.addDeferredEmit(PORTFOLIO_CHANGE_EVENT, {
+    this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, {
       asset: { ...this.portfolio.asset },
       currency: { ...this.portfolio.currency },
     });
   }
 
   private emitPortfolioValueChangeEvent() {
-    this.addDeferredEmit(PORTFOLIO_VALUE_CHANGE_EVENT, {
+    this.addDeferredEmit<BalanceSnapshot>(PORTFOLIO_VALUE_CHANGE_EVENT, {
       balance: { ...this.balance },
+      date: this.currentTimestamp,
     });
   }
 
