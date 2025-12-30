@@ -345,6 +345,7 @@ describe('Trader', () => {
       trader['emitPortfolioValueChangeEvent']();
       expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_VALUE_CHANGE_EVENT, {
         balance: { free: 321.45, used: 0, total: 321.45 },
+        date: 0,
       });
     });
   });

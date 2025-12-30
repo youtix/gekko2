@@ -46,6 +46,7 @@ export const logFinalize = (report: Report, currency: string, enableConsoleTable
       sortinoRatio: formatRatio(report.sortino),
       standardDeviation: formatRatio(report.standardDeviation),
       maxDrawdown: `${round(report.maxDrawdown, 2, 'down')}%`,
+      longestDrawdownDuration: report.longestDrawdownDuration,
     });
   }
   info('performance analyzer', report);

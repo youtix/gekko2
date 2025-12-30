@@ -1,7 +1,9 @@
+import { BalanceSnapshot } from '@models/event.types';
 import { describe, expect, it } from 'vitest';
 import {
   addPrecise,
   linreg,
+  longestDrawdownDuration,
   maxDrawdown,
   percentile,
   sharpeRatio,
@@ -234,5 +236,42 @@ describe('maxDrawdown', () => {
     const copy = [...balances];
     maxDrawdown(balances, 1000);
     expect(balances).toEqual(copy);
+  });
+});
+
+describe('longestDrawdownDuration', () => {
+  it.each`
+    description                                     | samples                                                                                                                                                                                                              | initialBalance | expected
+    ${'return 0 for empty samples'}                 | ${[]}                                                                                                                                                                                                                | ${1000}        | ${0}
+    ${'return 0 when initialBalance is 0'}          | ${[{ date: 1000, balance: { total: 900 } }]}                                                                                                                                                                         | ${0}           | ${0}
+    ${'return 0 when initialBalance is negative'}   | ${[{ date: 1000, balance: { total: 900 } }]}                                                                                                                                                                         | ${-100}        | ${0}
+    ${'return 0 if balance never drops below peak'} | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 1100 } }]}                                                                                                                              | ${1000}        | ${0}
+    ${'calculate duration of single drawdown'}      | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 900 } }, { date: 3000, balance: { total: 1000 } }]}                                                                                     | ${1000}        | ${2000}
+    ${'find longest among multiple drawdowns'}      | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 900 } }, { date: 3000, balance: { total: 1000 } }, { date: 4000, balance: { total: 800 } }, { date: 10000, balance: { total: 1000 } }]} | ${1000}        | ${7000}
+    ${'handle ongoing drawdown at end'}             | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 900 } }]}                                                                                                                               | ${1000}        | ${1000}
+  `('should $description', ({ samples, initialBalance, expected }) => {
+    expect(longestDrawdownDuration(samples, initialBalance)).toBe(expected);
+  });
+
+  it('should track recovery to exact peak value', () => {
+    // Drop from 1000 to 800, then recover to exactly 1000 at date 5000
+    const samples = [
+      { date: 1000, balance: { total: 1000 } },
+      { date: 2000, balance: { total: 800 } },
+      { date: 3000, balance: { total: 900 } },
+      { date: 4000, balance: { total: 950 } },
+      { date: 5000, balance: { total: 1000 } },
+    ] as BalanceSnapshot[];
+    expect(longestDrawdownDuration(samples, 1000)).toBe(4000);
+  });
+
+  it('should not mutate input array', () => {
+    const samples = [
+      { date: 1000, balance: { total: 1000 } },
+      { date: 2000, balance: { total: 900 } },
+    ] as BalanceSnapshot[];
+    const copy = JSON.parse(JSON.stringify(samples));
+    longestDrawdownDuration(samples, 1000);
+    expect(samples).toEqual(copy);
   });
 });
