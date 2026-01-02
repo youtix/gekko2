@@ -6,10 +6,11 @@ import { toISOString } from '@utils/date/date.utils';
 import { shallowObjectDiff } from '@utils/object/object.utils';
 import { filter, isEmpty } from 'lodash-es';
 import { supervisionSchema } from './supervision.schema';
-import { SupervisionConfig } from './supervision.types';
+import { Subscription, SUBSCRIPTION_NAMES, SupervisionConfig } from './supervision.types';
 
 export class Supervision extends Plugin {
   private bot: TelegramBot;
+  private subscriptions = new Set<Subscription>();
   private cpuThreshold: number;
   private memoryThreshold: number;
   private cpuIntervalTime: number;
@@ -19,7 +20,6 @@ export class Supervision extends Plugin {
   private logMonitorInterval?: Timer;
   private lastCpuUsage = process.cpuUsage();
   private lastCpuCheck = Date.now();
-  private timeframeCandleCheck = false;
   private lastTimeframeCandle?: Candle;
   private logMonitorIntervalTime: number;
   private lastSentTimestamp = 0;
@@ -45,34 +45,81 @@ export class Supervision extends Plugin {
 
   private handleCommand(command: string): string {
     switch (command) {
+      case '/help':
+        return [
+          'healthcheck - Check if gekko is up',
+          'sub_cpu_check - Check CPU usage',
+          'sub_memory_check - Check memory usage',
+          'sub_candle_check - Check timeframe candle calculations',
+          'sub_monitor_log - Monitor log application',
+          'subscribe_all - Subscribe to all notifications',
+          'unsubscribe_all - Unsubscribe from all notifications',
+          'subscriptions - View current subscriptions',
+          'help - Show help information',
+        ].join('\n');
       case '/healthcheck':
         return this.isRunning() ? '✅ Gekko is running' : '❌ Gekko is not running';
-      case '/launchcpucheck':
-        this.launchCpuCheck();
-        return '✅ CPU Check started';
-      case '/stopcpucheck':
-        this.stopCpuCheck();
-        return '✅ CPU Check stopped';
-      case '/launchmemorycheck':
-        this.launchMemoryCheck();
-        return '✅ Memory Check started';
-      case '/stopmemorycheck':
-        this.stopMemoryCheck();
-        return '✅ Memory Check stopped';
-      case '/launchtimeframecandlecheck':
-        this.launchTimeframeCandleCheck();
-        return '✅ Timeframe Candle Check started';
-      case '/stoptimeframecandlecheck':
-        this.stopTimeframeCandleCheck();
-        return '✅ Timeframe Candle Check stopped';
-      case '/startlogmonitoring':
-        this.startLogMonitoring();
-        return '✅ Log Monitoring started';
-      case '/stoplogmonitoring':
-        this.stopLogMonitoring();
-        return '✅ Log Monitoring stopped';
+      case '/subscribe_all':
+        SUBSCRIPTION_NAMES.forEach(s => this.toggleSubscription(s, true));
+        return 'Subscribed to all monitoring';
+      case '/unsubscribe_all':
+        SUBSCRIPTION_NAMES.forEach(s => this.toggleSubscription(s, false));
+        return 'Unsubscribed from all monitoring';
+      case '/subscriptions':
+        return this.subscriptions.size ? [...this.subscriptions].join('\n') : 'No subscriptions';
       default:
+        if (command.startsWith('/sub_')) {
+          const subscription = command.replace('/sub_', '') as Subscription;
+          if (!SUBSCRIPTION_NAMES.includes(subscription)) return 'Unknown command';
+          const isSubscribed = this.subscriptions.has(subscription);
+          this.toggleSubscription(subscription, !isSubscribed);
+          return isSubscribed ? `Unsubscribed from ${subscription}` : `Subscribed to ${subscription}`;
+        }
         return 'Unknown command';
+    }
+  }
+
+  private toggleSubscription(subscription: Subscription, subscribe: boolean) {
+    if (subscribe) {
+      this.subscriptions.add(subscription);
+      this.startMonitoring(subscription);
+    } else {
+      this.subscriptions.delete(subscription);
+      this.stopMonitoring(subscription);
+    }
+  }
+
+  private startMonitoring(subscription: Subscription) {
+    switch (subscription) {
+      case 'cpu_check':
+        this.launchCpuCheck();
+        break;
+      case 'memory_check':
+        this.launchMemoryCheck();
+        break;
+      case 'candle_check':
+        this.launchTimeframeCandleCheck();
+        break;
+      case 'monitor_log':
+        this.startLogMonitoring();
+        break;
+    }
+  }
+
+  private stopMonitoring(subscription: Subscription) {
+    switch (subscription) {
+      case 'cpu_check':
+        this.stopCpuCheck();
+        break;
+      case 'memory_check':
+        this.stopMemoryCheck();
+        break;
+      case 'candle_check':
+        this.stopTimeframeCandleCheck();
+        break;
+      case 'monitor_log':
+        this.stopLogMonitoring();
+        break;
     }
   }
 
@@ -117,12 +164,10 @@ export class Supervision extends Plugin {
   }
 
   private launchTimeframeCandleCheck() {
-    this.timeframeCandleCheck = true;
     debug('supervision', 'Starting Timeframe Candle monitoring');
   }
 
   private stopTimeframeCandleCheck() {
-    this.timeframeCandleCheck = false;
     debug('supervision', 'Stopped Timeframe Candle monitoring');
   }
 
@@ -187,7 +232,7 @@ export class Supervision extends Plugin {
     // Sequential strategy: process each payload in order
     for (const candle of payloads) {
       this.lastTimeframeCandle = candle;
-      if (!this.timeframeCandleCheck) continue;
+      if (!this.subscriptions.has('candle_check')) continue;
       await this.checkTimeframeCandle();
     }
   }
