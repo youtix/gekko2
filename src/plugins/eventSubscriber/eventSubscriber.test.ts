@@ -151,24 +151,24 @@ describe('EventSubscriber', () => {
     const onOrderCompleted = (p: EventSubscriber, overrides = {}) =>
       p.onOrderCompleted([makeOrderCompletedEvent(overrides)]);
     it.each`
-      name                 | handler
-      ${'strategy_info'}   | ${onStrategyInfo}
-      ${'strategy_advice'} | ${onStrategyCreateOrder}
-      ${'order_initiated'} | ${onOrderInitiated}
-      ${'order_canceled'}  | ${onOrderCanceled}
-      ${'order_errored'}   | ${onOrderErrored}
-      ${'order_completed'} | ${onOrderCompleted}
+      name                | handler
+      ${'strat_info'}     | ${onStrategyInfo}
+      ${'strat_create'}   | ${onStrategyCreateOrder}
+      ${'order_init'}     | ${onOrderInitiated}
+      ${'order_cancel'}   | ${onOrderCanceled}
+      ${'order_error'}    | ${onOrderErrored}
+      ${'order_complete'} | ${onOrderCompleted}
     `('sends message only when subscribed for $name', ({ name, handler }) => {
       fakeBot.sendMessage.mockReset();
       handler(plugin);
-      plugin['handleCommand'](`/subscribe_to_${name}`);
+      plugin['handleCommand'](`/sub_${name}`);
       handler(plugin);
       expect(fakeBot.sendMessage).toHaveBeenCalledTimes(1);
     });
 
     it('formats strategy advice message with order metadata', () => {
       fakeBot.sendMessage.mockReset();
-      plugin['handleCommand']('/subscribe_to_strategy_advice');
+      plugin['handleCommand']('/sub_strat_create');
       onStrategyCreateOrder(plugin, { type: 'MARKET', side: 'SELL', amount: 3 });
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('MARKET SELL advice'));
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested amount: 3'));
@@ -176,7 +176,7 @@ describe('EventSubscriber', () => {
 
     it('reports trade initiation details including order type and requested amount', () => {
       fakeBot.sendMessage.mockReset();
-      plugin['handleCommand']('/subscribe_to_order_initiated');
+      plugin['handleCommand']('/sub_order_init');
       onOrderInitiated(plugin, {
         order: { type: 'MARKET', amount: 5, price: 321 },
         exchange: {
@@ -196,7 +196,7 @@ describe('EventSubscriber', () => {
 
     it('includes fill details when reporting canceled orders', () => {
       fakeBot.sendMessage.mockReset();
-      plugin['handleCommand']('/subscribe_to_order_canceled');
+      plugin['handleCommand']('/sub_order_cancel');
       onOrderCanceled(plugin, {
         order: { type: 'LIMIT', side: 'SELL', amount: 2, filled: 1, remaining: 1, price: 999 },
       });
@@ -208,18 +208,18 @@ describe('EventSubscriber', () => {
   describe('commands', () => {
     it.each`
       preSubscribed | expected
-      ${false}      | ${'Subscribed to order_initiated'}
-      ${true}       | ${'Unsubscribed from order_initiated'}
+      ${false}      | ${'Subscribed to order_init'}
+      ${true}       | ${'Unsubscribed from order_init'}
     `('toggles subscription', ({ preSubscribed, expected }) => {
-      if (preSubscribed) plugin['handleCommand']('/subscribe_to_order_initiated');
-      const res = plugin['handleCommand']('/subscribe_to_order_initiated');
+      if (preSubscribed) plugin['handleCommand']('/sub_order_init');
+      const res = plugin['handleCommand']('/sub_order_init');
       expect(res).toBe(expected);
     });
 
     it.each`
-      setup                                                             | expected
-      ${() => undefined}                                                | ${'No subscriptions'}
-      ${() => plugin['handleCommand']('/subscribe_to_order_initiated')} | ${'order_initiated'}
+      setup                                               | expected
+      ${() => undefined}                                  | ${'No subscriptions'}
+      ${() => plugin['handleCommand']('/sub_order_init')} | ${'order_init'}
     `('lists subscriptions', ({ setup, expected }) => {
       setup();
       const res = plugin['handleCommand']('/subscriptions');
@@ -227,16 +227,16 @@ describe('EventSubscriber', () => {
     });
 
     it.each`
-      command                | size
-      ${'/subscribe_to_all'} | ${EVENT_NAMES.length}
+      command             | size
+      ${'/subscribe_all'} | ${EVENT_NAMES.length}
     `('subscribes to all', ({ command, size }) => {
       plugin['handleCommand'](command);
       expect(plugin['subscriptions'].size).toBe(size);
     });
 
     it.each`
-      setup                                                 | command                    | size
-      ${() => plugin['handleCommand']('/subscribe_to_all')} | ${'/unsubscribe_from_all'} | ${0}
+      setup                                              | command               | size
+      ${() => plugin['handleCommand']('/subscribe_all')} | ${'/unsubscribe_all'} | ${0}
     `('unsubscribes from all', ({ setup, command, size }) => {
       setup();
       plugin['handleCommand'](command);
@@ -245,17 +245,31 @@ describe('EventSubscriber', () => {
 
     it('returns help', () => {
       const res = plugin['handleCommand']('/help');
-      expect(res).toBe(`Available commands:
-/subscribe_to_strategy_info
-/subscribe_to_strategy_advice
-/subscribe_to_order_initiated
-/subscribe_to_order_canceled
-/subscribe_to_order_errored
-/subscribe_to_order_completed
-/subscribe_to_all
-/unsubscribe_from_all
-/subscriptions
-/help`);
+      expect(res).toBe(`sub_strat_info - Subscribe to strategy logs
+sub_strat_create - Notify on strategy order creation
+sub_strat_cancel - Notify on strategy order cancellation
+sub_order_init - Notify on order initiation
+sub_order_cancel - Notify on order cancellation
+sub_order_error - Notify on order error
+sub_order_complete - Notify on order completion
+subscribe_all - Subscribe to all notifications
+unsubscribe_all - Unsubscribe from all notifications
+subscriptions - View current subscriptions
+help - Show help information`);
+    });
+
+    it('sends message only when subscribed for strat_cancel', () => {
+      fakeBot.sendMessage.mockReset();
+      const orderId = 'ee21e130-48bc-405f-be0c-46e9bf17b52e' as UUID;
+      plugin.onStrategyCancelOrder([orderId]);
+      expect(fakeBot.sendMessage).not.toHaveBeenCalled();
+      plugin['handleCommand']('/sub_strat_cancel');
+      plugin.onStrategyCancelOrder([orderId]);
+      expect(fakeBot.sendMessage).toHaveBeenCalledTimes(1);
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(
+        expect.stringContaining('Strategy requested order cancellation'),
+      );
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining(orderId));
     });
   });
 

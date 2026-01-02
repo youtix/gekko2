@@ -6,6 +6,7 @@ import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { toISOString } from '@utils/date/date.utils';
 import { bindAll, filter } from 'lodash-es';
+import { UUID } from 'node:crypto';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
 import { Event, EVENT_NAMES, EventSubscriberConfig } from './eventSubscriber.types';
 
@@ -24,24 +25,29 @@ export class EventSubscriber extends Plugin {
     switch (command) {
       case '/help':
         return [
-          'Available commands:',
-          ...EVENT_NAMES.map(e => `/subscribe_to_${e}`),
-          '/subscribe_to_all',
-          '/unsubscribe_from_all',
-          '/subscriptions',
-          '/help',
+          'sub_strat_info - Subscribe to strategy logs',
+          'sub_strat_create - Notify on strategy order creation',
+          'sub_strat_cancel - Notify on strategy order cancellation',
+          'sub_order_init - Notify on order initiation',
+          'sub_order_cancel - Notify on order cancellation',
+          'sub_order_error - Notify on order error',
+          'sub_order_complete - Notify on order completion',
+          'subscribe_all - Subscribe to all notifications',
+          'unsubscribe_all - Unsubscribe from all notifications',
+          'subscriptions - View current subscriptions',
+          'help - Show help information',
         ].join('\n');
-      case '/subscribe_to_all':
+      case '/subscribe_all':
         EVENT_NAMES.forEach(e => this.subscriptions.add(e));
         return 'Subscribed to all events';
-      case '/unsubscribe_from_all':
+      case '/unsubscribe_all':
         this.subscriptions.clear();
         return 'Unsubscribed from all events';
       case '/subscriptions':
         return this.subscriptions.size ? [...this.subscriptions].join('\n') : 'No subscriptions';
       default:
-        if (command.startsWith('/subscribe_to_')) {
-          const event = command.replace('/subscribe_to_', '') as Event;
+        if (command.startsWith('/sub_')) {
+          const event = command.replace('/sub_', '') as Event;
           if (!EVENT_NAMES.includes(event)) return 'Unknown command';
           if (this.subscriptions.has(event)) {
             this.subscriptions.delete(event);
@@ -58,7 +64,7 @@ export class EventSubscriber extends Plugin {
   public async onStrategyInfo(payloads: StrategyInfo[]) {
     await Promise.all(
       payloads.map(({ timestamp, level, tag, message }) => {
-        if (!this.subscriptions.has('strategy_info')) return;
+        if (!this.subscriptions.has('strat_info')) return;
         const msg = `• ${toISOString(timestamp)} [${level.toUpperCase()}] (${tag})\n${message}\n------\n`;
         this.bot.sendMessage(msg);
       }),
@@ -68,7 +74,7 @@ export class EventSubscriber extends Plugin {
   public async onStrategyCreateOrder(payloads: AdviceOrder[]) {
     await Promise.all(
       payloads.map(({ id, orderCreationDate, side, type, amount, price }) => {
-        if (!this.subscriptions.has('strategy_advice')) return;
+        if (!this.subscriptions.has('strat_create')) return;
         const priceLine =
           type === 'LIMIT'
             ? `Requested limit price: ${price} ${this.currency}`
@@ -88,7 +94,7 @@ export class EventSubscriber extends Plugin {
   public async onOrderInitiated(payloads: OrderInitiatedEvent[]) {
     await Promise.all(
       payloads.map(({ order, exchange }) => {
-        if (!this.subscriptions.has('order_initiated')) return;
+        if (!this.subscriptions.has('order_init')) return;
         const { balance, portfolio, price: currentPrice } = exchange;
         const { id, amount, side, type, price, orderCreationDate } = order;
         const priceLine = price
@@ -110,7 +116,7 @@ export class EventSubscriber extends Plugin {
   public async onOrderCanceled(payloads: OrderCanceledEvent[]) {
     await Promise.all(
       payloads.map(({ order, exchange }) => {
-        if (!this.subscriptions.has('order_canceled')) return;
+        if (!this.subscriptions.has('order_cancel')) return;
         const { price: currentPrice } = exchange;
         const { id, amount, side, type, price, orderCancelationDate, filled, remaining } = order;
         const priceLine = price
@@ -131,7 +137,7 @@ export class EventSubscriber extends Plugin {
   public async onOrderErrored(payloads: OrderErroredEvent[]) {
     await Promise.all(
       payloads.map(({ order }) => {
-        if (!this.subscriptions.has('order_errored')) return;
+        if (!this.subscriptions.has('order_error')) return;
         const { id, amount, side, type, reason, orderErrorDate } = order;
         const message = [
           `${side} ${type} order errored (${id})`,
@@ -148,7 +154,7 @@ export class EventSubscriber extends Plugin {
   public async onOrderCompleted(payloads: OrderCompletedEvent[]) {
     await Promise.all(
       payloads.map(({ order, exchange }) => {
-        if (!this.subscriptions.has('order_completed')) return;
+        if (!this.subscriptions.has('order_complete')) return;
         const { portfolio, balance } = exchange;
         const { id, amount, side, type, orderExecutionDate, effectivePrice, feePercent, fee } = order;
         const message = [
@@ -160,6 +166,20 @@ export class EventSubscriber extends Plugin {
           `At time: ${toISOString(orderExecutionDate)}`,
           `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
           `Current balance: ${balance}`,
+        ].join('\n');
+        this.bot.sendMessage(message);
+      }),
+    );
+  }
+
+  public async onStrategyCancelOrder(payloads: UUID[]) {
+    await Promise.all(
+      payloads.map(id => {
+        if (!this.subscriptions.has('strat_cancel')) return;
+        const message = [
+          'Strategy requested order cancellation',
+          `Order Id: ${id}`,
+          `At time: ${toISOString(Date.now())}`,
         ].join('\n');
         this.bot.sendMessage(message);
       }),
