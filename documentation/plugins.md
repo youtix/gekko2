@@ -348,6 +348,7 @@ plugins:
 **Listens to:**
 - `StrategyInfo` — Strategy log messages
 - `StrategyCreateOrder` — New order signals from strategy
+- `StrategyCancelOrder` — Order cancellation signals from strategy
 - `OrderInitiated` — Orders submitted to exchange
 - `OrderCanceled` — Canceled orders
 - `OrderErrored` — Failed orders
@@ -360,21 +361,22 @@ Control your subscriptions via Telegram commands:
 | Command                   | Description                                |
 |---------------------------|--------------------------------------------|
 | `/help`                   | Show all available commands                |
-| `/subscribe_to_all`       | Subscribe to all event types               |
-| `/unsubscribe_from_all`   | Unsubscribe from all events                |
+| `/subscribe_all`          | Subscribe to all event types               |
+| `/unsubscribe_all`        | Unsubscribe from all events                |
 | `/subscriptions`          | List current active subscriptions          |
-| `/subscribe_to_<event>`   | Toggle subscription for specific event     |
+| `/sub_<event>`            | Toggle subscription for specific event     |
 
 ### Available Event Types
 
 | Event Type        | Description                              |
 |-------------------|------------------------------------------|
-| `strategy_info`   | Strategy log messages and debug info     |
-| `strategy_advice` | New order signals from strategy          |
-| `order_initiated` | Order submitted to exchange              |
-| `order_canceled`  | Order cancellation confirmed             |
-| `order_errored`   | Order execution failed                   |
-| `order_completed` | Order fully executed                     |
+| `strat_info`      | Log messages from strategy               |
+| `strat_create`    | New order signals from strategy          |
+| `strat_cancel`    | Order cancellation signals from strategy |
+| `order_init`      | Order submitted to exchange              |
+| `order_cancel`    | Order cancellation confirmed             |
+| `order_error`     | Order execution failed                   |
+| `order_complete`  | Order fully executed                     |
 
 ### Example Notifications
 
