@@ -447,15 +447,15 @@ Control monitoring via Telegram commands:
 
 | Command                      | Description                               |
 |------------------------------|-------------------------------------------|
+| `/help`                      | Show all available commands               |
 | `/healthcheck`               | Check if Gekko is running                 |
-| `/launchcpucheck`            | Start CPU monitoring                      |
-| `/stopcpucheck`              | Stop CPU monitoring                       |
-| `/launchmemorycheck`         | Start memory monitoring                   |
-| `/stopmemorycheck`           | Stop memory monitoring                    |
-| `/launchtimeframecandlecheck`| Start candle validation                   |
-| `/stoptimeframecandlecheck`  | Stop candle validation                    |
-| `/startlogmonitoring`        | Start log monitoring (warns/errors)       |
-| `/stoplogmonitoring`         | Stop log monitoring                       |
+| `/sub_cpu_check`             | Toggle CPU usage monitoring               |
+| `/sub_memory_check`          | Toggle memory usage monitoring            |
+| `/sub_candle_check`          | Toggle candle validation                  |
+| `/sub_monitor_log`           | Toggle log monitoring (warns/errors)      |
+| `/subscribe_all`             | Subscribe to all monitoring               |
+| `/unsubscribe_all`           | Unsubscribe from all monitoring           |
+| `/subscriptions`             | List current active subscriptions         |
 
 ### Monitoring Features
 

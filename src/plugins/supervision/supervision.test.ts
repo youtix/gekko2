@@ -2,6 +2,7 @@ import { getBufferedLogs } from '@services/logger';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Supervision } from './supervision';
 import { supervisionSchema } from './supervision.schema';
+import { SUBSCRIPTION_NAMES } from './supervision.types';
 
 vi.mock('@services/logger', () => ({ debug: vi.fn(), getBufferedLogs: vi.fn(() => []) }));
 vi.mock('@services/configuration/configuration', () => {
@@ -55,27 +56,27 @@ describe('Supervision', () => {
 
   it('should send alert when CPU usage exceeds threshold', async () => {
     plugin['getCpuUsage'] = vi.fn().mockReturnValue(60);
-    plugin['handleCommand']('/launchcpucheck');
+    plugin['handleCommand']('/sub_cpu_check');
     await vi.advanceTimersByTimeAsync(100);
     expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('⚠️ CPU usage exceeded'));
   });
 
-  it('should stop CPU monitoring on command', () => {
-    plugin['handleCommand']('/launchcpucheck');
-    plugin['handleCommand']('/stopcpucheck');
+  it('should stop CPU monitoring on unsubscribe', () => {
+    plugin['handleCommand']('/sub_cpu_check');
+    plugin['handleCommand']('/sub_cpu_check');
     expect(plugin['cpuInterval']).toBeUndefined();
   });
 
   it('should send alert when Memory usage exceeds threshold', async () => {
     plugin['getMemoryUsage'] = vi.fn().mockReturnValue(100);
-    plugin['handleCommand']('/launchmemorycheck');
+    plugin['handleCommand']('/sub_memory_check');
     await vi.advanceTimersByTimeAsync(100);
     expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('⚠️ Memory usage exceeded'));
   });
 
-  it('should stop Memory monitoring on command', () => {
-    plugin['handleCommand']('/launchmemorycheck');
-    plugin['handleCommand']('/stopmemorycheck');
+  it('should stop Memory monitoring on unsubscribe', () => {
+    plugin['handleCommand']('/sub_memory_check');
+    plugin['handleCommand']('/sub_memory_check');
     expect(plugin['memoryInterval']).toBeUndefined();
   });
 
@@ -85,7 +86,7 @@ describe('Supervision', () => {
     plugin['getExchange'] = vi.fn().mockReturnValue({
       fetchOHLCV: vi.fn().mockResolvedValue([exchangeCandle]),
     });
-    plugin['handleCommand']('/launchtimeframecandlecheck');
+    plugin['handleCommand']('/sub_candle_check');
     await plugin.onTimeframeCandle([timeframeCandle as any]);
     const message = (fakeBot.sendMessage as any).mock.calls[0][0];
     expect(message).toContain('⚠️ Timeframe candle mismatch detected');
@@ -95,24 +96,24 @@ describe('Supervision', () => {
     expect(message).toContain('volume: 10 | 11');
   });
 
-  it('should stop timeframe candle monitoring on command', async () => {
+  it('should stop timeframe candle monitoring on unsubscribe', async () => {
     const exchangeCandle = { open: 1, high: 2, low: 1, close: 2, volume: 10 };
     const timeframeCandle = { open: 2, high: 3, low: 1, close: 3, volume: 11 };
     plugin['getExchange'] = vi.fn().mockReturnValue({
       fetchOHLCV: vi.fn().mockResolvedValue([exchangeCandle]),
     });
-    plugin['handleCommand']('/launchtimeframecandlecheck');
-    plugin['handleCommand']('/stoptimeframecandlecheck');
+    plugin['handleCommand']('/sub_candle_check');
+    plugin['handleCommand']('/sub_candle_check');
     await plugin.onTimeframeCandle([timeframeCandle as any]);
     expect(fakeBot.sendMessage).not.toHaveBeenCalledWith(
       expect.stringContaining('⚠️ Timeframe candle mismatch detected'),
     );
   });
 
-  it('should start and stop log monitoring on command', () => {
-    plugin['handleCommand']('/startlogmonitoring');
+  it('should start and stop log monitoring on subscription toggle', () => {
+    plugin['handleCommand']('/sub_monitor_log');
     expect(plugin['logMonitorInterval']).toBeDefined();
-    plugin['handleCommand']('/stoplogmonitoring');
+    plugin['handleCommand']('/sub_monitor_log');
     expect(plugin['logMonitorInterval']).toBeUndefined();
   });
 
@@ -122,13 +123,48 @@ describe('Supervision', () => {
       { timestamp: 2, level: 'warning', tag: 'gekko', message: 'm2' },
     ];
     vi.mocked(getBufferedLogs).mockReturnValue(logs as any);
-    plugin['handleCommand']('/startlogmonitoring');
+    plugin['handleCommand']('/sub_monitor_log');
 
     const newLogs = [...logs, { timestamp: 3, level: 'error', tag: 'gekko', message: 'm3' }];
     vi.mocked(getBufferedLogs).mockReturnValue(newLogs as any);
 
     await vi.advanceTimersByTimeAsync(100);
     expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('m3'));
+  });
+
+  it('should return help information', () => {
+    const res = plugin['handleCommand']('/help');
+    expect(res).toBe(`healthcheck - Check if gekko is up
+sub_cpu_check - Check CPU usage
+sub_memory_check - Check memory usage
+sub_candle_check - Check timeframe candle calculations
+sub_monitor_log - Monitor log application
+subscribe_all - Subscribe to all notifications
+unsubscribe_all - Unsubscribe from all notifications
+subscriptions - View current subscriptions
+help - Show help information`);
+  });
+
+  it('should subscribe to all monitoring', () => {
+    plugin['handleCommand']('/subscribe_all');
+    expect(plugin['subscriptions'].size).toBe(SUBSCRIPTION_NAMES.length);
+  });
+
+  it('should unsubscribe from all monitoring', () => {
+    plugin['handleCommand']('/subscribe_all');
+    plugin['handleCommand']('/unsubscribe_all');
+    expect(plugin['subscriptions'].size).toBe(0);
+  });
+
+  it('should list current subscriptions', () => {
+    plugin['handleCommand']('/sub_cpu_check');
+    const res = plugin['handleCommand']('/subscriptions');
+    expect(res).toBe('cpu_check');
+  });
+
+  it('should return no subscriptions when empty', () => {
+    const res = plugin['handleCommand']('/subscriptions');
+    expect(res).toBe('No subscriptions');
   });
 
   it('getStaticConfiguration returns expected meta', () => {
