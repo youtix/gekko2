@@ -67,5 +67,19 @@ export const mergeSequentialStreams = (...streams: Readable[]) => {
       }
     }
   }
-  return Readable.from(concatGenerator());
+
+  const merged = Readable.from(concatGenerator());
+
+  // Ensure all underlying streams are destroyed when the merged stream is destroyed
+  const originalDestroy = merged.destroy.bind(merged);
+  merged.destroy = (error?: Error | null) => {
+    for (const stream of streams) {
+      if (!stream.destroyed) {
+        stream.destroy(error ?? undefined);
+      }
+    }
+    return originalDestroy(error ?? undefined);
+  };
+
+  return merged;
 };

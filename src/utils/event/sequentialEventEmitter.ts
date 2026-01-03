@@ -1,4 +1,4 @@
-import { info } from '@services/logger';
+import { debug } from '@services/logger';
 
 type Listener<T = unknown> = (payload: T) => Promise<void> | void;
 
@@ -40,7 +40,7 @@ export class SequentialEventEmitter {
   }
 
   public addDeferredEmit<T = unknown>(name: string, payload: T): void {
-    info('event', `[${this.emitterName}] Adding deferred event: ${name}`);
+    debug('event', `[${this.emitterName}] Adding deferred event: ${name}`);
     const existing = this.deferredEvents.get(name);
     if (existing) {
       existing.push(payload);
@@ -54,7 +54,7 @@ export class SequentialEventEmitter {
     if (!entry) return false;
     const [name, payloads] = entry;
     this.deferredEvents.delete(name);
-    info('event', `[${this.emitterName}] Broadcasting deferred event: ${name} (${payloads.length} payloads)`);
+    debug('event', `[${this.emitterName}] Broadcasting deferred event: ${name} (${payloads.length} payloads)`);
     await this.emit(name, payloads); // Broadcast all deferred events sequentially to avoid race conditions
     return true;
   }
