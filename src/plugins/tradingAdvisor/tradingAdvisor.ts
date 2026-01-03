@@ -128,6 +128,8 @@ export class TradingAdvisor extends Plugin {
     await this.setUpStrategy();
     this.setUpListeners();
     this.strategyManager?.setMarketData(this.getExchange().getMarketData());
+    // TODO: Ignore balance for strategy that not use it
+    // You need to be connected to the exchange to fetch the balance (api key, etc)
     const balance = await this.getExchange().fetchBalance();
     this.strategyManager?.setPortfolio(balance);
     info('trading advisor', `Using the strategy: ${this.strategyName}`);

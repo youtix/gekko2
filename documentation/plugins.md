@@ -65,6 +65,7 @@ plugins:
 ### Dependencies
 
 - Requires **exchange** injection for market data access
+- Requires **exchange** credentials to fetch balance portfolio for strategy
 
 > [!IMPORTANT]
 > The TradingAdvisor is required for any mode that involves running a strategy (backtest or realtime trading).

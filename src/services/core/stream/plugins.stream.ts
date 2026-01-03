@@ -46,6 +46,7 @@ export class PluginsStream extends Writable {
       // Tell the stream that we're done
       done();
     } catch (error) {
+      // TODO: On error (select the good ones) close app calling processFinalize of all plugins
       done(error as Error);
     }
   }

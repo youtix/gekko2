@@ -8,7 +8,7 @@ import { subMinutes } from 'date-fns';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { BacktestStream } from '../stream/backtest/backtest.stream';
-import { GapFillerStream } from '../stream/gapFiller/gapFiller.stream';
+import { CandleValidatorStream } from '../stream/candleValidator/candleValidator.stream';
 import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCandle.stream';
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
@@ -24,7 +24,7 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
       new HistoricalCandleStream({ startDate, endDate: now, tickrate: warmup.tickrate }),
       new RealtimeStream(),
     ),
-    new GapFillerStream(),
+    new CandleValidatorStream(),
     new PluginsStream(plugins),
   );
 };
@@ -34,7 +34,7 @@ const buildBacktestPipeline = async (plugins: Plugin[]) => {
 
   await pipeline(
     new BacktestStream({ start: toTimestamp(daterange?.start), end: toTimestamp(daterange?.end) }),
-    new GapFillerStream(),
+    new CandleValidatorStream(),
     new PluginsStream(plugins),
   );
 };
@@ -48,7 +48,7 @@ const buildImporterPipeline = async (plugins: Plugin[]) => {
       endDate: toTimestamp(daterange!.end),
       tickrate,
     }),
-    new GapFillerStream(),
+    new CandleValidatorStream(),
     new PluginsStream(plugins),
   );
 };
