@@ -4,12 +4,13 @@ import { Plugin } from '@plugins/plugin';
 import { DummyExchange } from '@services/exchange/exchange.types';
 import { isDummyExchange } from '@services/exchange/exchange.utils';
 import { inject } from '@services/injecter/injecter';
-import { info } from '@services/logger';
+import { info, warning } from '@services/logger';
 import { Writable } from 'node:stream';
 
 export class PluginsStream extends Writable {
   private readonly plugins: Plugin[];
   private readonly dummyExchange?: DummyExchange;
+  private finalized = false;
 
   constructor(plugins: Plugin[]) {
     super({ objectMode: true });
@@ -46,18 +47,43 @@ export class PluginsStream extends Writable {
       // Tell the stream that we're done
       done();
     } catch (error) {
-      // TODO: On error (select the good ones) close app calling processFinalize of all plugins
-      done(error as Error);
+      // Finalize all plugins before destroying the stream
+      await this.finalizeAllPlugins();
+      info('stream', 'Gekko is closing the application due to an error!');
+      this.destroy(error instanceof Error ? error : new Error(String(error)));
     }
   }
 
   public async _final(done: (error?: Nullable<Error>) => void) {
     try {
-      for (const plugin of this.plugins) await plugin.processCloseStream();
+      if (this.finalized) {
+        done();
+        return;
+      }
+      await this.finalizeAllPlugins();
       info('stream', 'Gekko is closing the application !');
       done();
     } catch (error) {
-      if (error instanceof Error) done(error);
+      done(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+
+  /**
+   * Safely finalize all plugins, ensuring each plugin's cleanup runs
+   * regardless of errors in other plugins.
+   */
+  private async finalizeAllPlugins(): Promise<void> {
+    if (this.finalized) return;
+    this.finalized = true;
+
+    const results = await Promise.allSettled(this.plugins.map(plugin => plugin.processCloseStream()));
+
+    const errors = results
+      .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+      .map(r => (r.reason instanceof Error ? r.reason : new Error(String(r.reason))));
+
+    if (errors.length > 0) {
+      warning('stream', `Finalization errors: ${errors.map(e => e.message).join(', ')}`);
     }
   }
 }
