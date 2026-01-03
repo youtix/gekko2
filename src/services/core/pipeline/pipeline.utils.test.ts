@@ -7,7 +7,7 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { describe, expect, it, Mock, vi } from 'vitest';
 import { BacktestStream } from '../stream/backtest/backtest.stream';
-import { GapFillerStream } from '../stream/gapFiller/gapFiller.stream';
+import { CandleValidatorStream } from '../stream/candleValidator/candleValidator.stream';
 import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCandle.stream';
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
@@ -54,8 +54,8 @@ vi.mock('stream/promises', () => ({
 vi.mock('../stream/backtest/backtest.stream', () => ({
   BacktestStream: vi.fn(),
 }));
-vi.mock('../stream/gapFiller/gapFiller.stream', () => ({
-  GapFillerStream: vi.fn(),
+vi.mock('../stream/candleValidator/candleValidator.stream', () => ({
+  CandleValidatorStream: vi.fn(),
 }));
 vi.mock('../stream/historicalCandle/historicalCandle.stream', () => ({
   HistoricalCandleStream: vi.fn(),
@@ -124,7 +124,7 @@ describe('Pipeline Utils', () => {
           tickrate: 1000,
         });
         expect(RealtimeStream).toHaveBeenCalled();
-        expect(GapFillerStream).toHaveBeenCalled();
+        expect(CandleValidatorStream).toHaveBeenCalled();
         expect(PluginsStream).toHaveBeenCalledWith(mockPlugins);
 
         // check correct composition is passed to pipeline
@@ -150,7 +150,7 @@ describe('Pipeline Utils', () => {
           start: new Date(mockDaterange.start).getTime(),
           end: new Date(mockDaterange.end).getTime(),
         });
-        expect(GapFillerStream).toHaveBeenCalled();
+        expect(CandleValidatorStream).toHaveBeenCalled();
         expect(PluginsStream).toHaveBeenCalledWith(mockPlugins);
         expect(pipeline).toHaveBeenCalled();
       });
@@ -175,7 +175,7 @@ describe('Pipeline Utils', () => {
           endDate: new Date(mockDaterange.end).getTime(),
           tickrate: mockTickrate,
         });
-        expect(GapFillerStream).toHaveBeenCalled();
+        expect(CandleValidatorStream).toHaveBeenCalled();
         expect(PluginsStream).toHaveBeenCalledWith(mockPlugins);
         expect(pipeline).toHaveBeenCalled();
       });
