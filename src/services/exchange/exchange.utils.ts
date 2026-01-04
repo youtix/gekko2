@@ -15,7 +15,7 @@ export const isDummyExchange = (exchange: unknown): exchange is DummyExchange =>
   exchange &&
   'getExchangeName' in exchange &&
   typeof exchange.getExchangeName === 'function' &&
-  exchange.getExchangeName().includes('dummy') &&
+  (exchange.getExchangeName().includes('dummy') || exchange.getExchangeName().includes('paper')) &&
   'processOneMinuteCandle' in exchange &&
   typeof exchange.processOneMinuteCandle === 'function';
 

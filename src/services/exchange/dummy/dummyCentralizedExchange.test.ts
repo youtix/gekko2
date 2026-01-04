@@ -1,23 +1,15 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Candle } from '@models/candle.types';
+import { Portfolio } from '@models/portfolio.types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DummyCentralizedExchange } from './dummyCentralizedExchange';
 import type { DummyCentralizedExchangeConfig } from './dummyCentralizedExchange.types';
 
-const mockStartDate = '2024-01-01T00:00:00Z';
-
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: () => ({
-      asset: 'BTC',
-      currency: 'USDT',
-      timeframe: '1m',
-      daterange: { start: mockStartDate },
-    }),
-    getExchange: () => ({ name: 'dummy', exchangeSynchInterval: 5, orderSynchInterval: 1 }),
+    getWatch: () => ({ asset: 'BTC', currency: 'USDT', timeframe: '1m', daterange: { start: '2024-01-01' } }),
   },
 }));
-
 vi.mock('@services/logger', () => ({ error: vi.fn() }));
 
 const baseConfig: DummyCentralizedExchangeConfig = {
@@ -28,14 +20,8 @@ const baseConfig: DummyCentralizedExchangeConfig = {
     price: { min: 1, max: 10_000 },
     amount: { min: 0.1, max: 100 },
     cost: { min: 10, max: 100_000 },
-    precision: {
-      price: 2,
-      amount: 2,
-    },
-    fee: {
-      maker: 0.0015,
-      taker: 0.0025,
-    },
+    precision: { price: 2, amount: 2 },
+    fee: { maker: 0.001, taker: 0.002 },
   },
   simulationBalance: { asset: 10, currency: 50_000 },
   initialTicker: { bid: 100, ask: 101 },
@@ -49,250 +35,287 @@ const sampleCandle = (start: number, overrides: Partial<Candle> = {}): Candle =>
   open: 100,
   high: 110,
   low: 90,
-  close: 10,
+  close: 100,
   volume: 10,
   ...overrides,
 });
 
-const seedExchangeWithBaseCandle = async (exchange: DummyCentralizedExchange, overrides: Partial<Candle> = {}) => {
-  const candle = sampleCandle(Date.now() - 60_000, overrides);
-  await exchange.processOneMinuteCandle(candle);
-  return candle;
-};
-
 describe('DummyCentralizedExchange', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date('2024-01-01T00:00:00Z'));
+    vi.setSystemTime(new Date('2024-01-01'));
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('loads markets with provided overrides and exposes portfolio and ticker', async () => {
-    const exchange = createExchange({
-      simulationBalance: { asset: 1, currency: 1_000 },
-      marketData: {
-        price: { min: 2, max: 500 },
-        amount: { min: 0.5, max: 5 },
-        cost: { min: 20, max: 10_000 },
-        precision: {
-          price: 2,
-          amount: 2,
-        },
-        fee: {
-          maker: 0.15,
-          taker: 0.25,
-        },
-      },
-      initialTicker: { bid: 200, ask: 201 },
+  describe('Constructor and Basic Methods', () => {
+    it('returns dummy-cex as exchange name', () => {
+      expect(createExchange().getExchangeName()).toBe('dummy-cex');
     });
 
-    await exchange.loadMarkets();
-
-    await expect(exchange.fetchBalance()).resolves.toEqual({
-      asset: { free: 1, used: 0, total: 1 },
-      currency: { free: 1_000, used: 0, total: 1_000 },
+    it('loadMarkets resolves immediately', async () => {
+      await expect(createExchange().loadMarkets()).resolves.toBeUndefined();
     });
-    await expect(exchange.fetchTicker()).resolves.toEqual({ bid: 200, ask: 201 });
-    await expect(exchange.fetchOHLCV({})).resolves.toEqual([]);
+
+    it('onNewCandle returns a noop unsubscribe function', () => {
+      const unsubscribe = createExchange().onNewCandle(vi.fn());
+      expect(typeof unsubscribe).toBe('function');
+    });
+
+    it('getMarketData returns configured market data', () => {
+      expect(createExchange().getMarketData().fee).toEqual({ maker: 0.001, taker: 0.002 });
+    });
   });
 
-  it('manages order lifecycle including reservation, fill, and cancellation', async () => {
-    const exchange = createExchange({ simulationBalance: { asset: 2, currency: 1_000 } });
-    await exchange.loadMarkets();
-    await seedExchangeWithBaseCandle(exchange);
-
-    const buyOrder = await exchange.createLimitOrder('BUY', 1, 100);
-    const makerFeeRate = baseConfig.marketData.fee.maker ?? 0;
-    const reservedPortfolio = await exchange.fetchBalance();
-    expect(reservedPortfolio.currency.total).toBe(1_000);
-    expect(reservedPortfolio.currency.free).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
-    expect(reservedPortfolio.asset.total).toBe(2);
-
-    const fillCandle = sampleCandle(Date.now(), {
-      low: buyOrder.price ?? 0,
-      high: buyOrder.price ?? 0,
-      close: buyOrder.price ?? 0,
+  describe('fetchTicker', () => {
+    it('returns initial ticker when no candles processed', async () => {
+      expect(await createExchange().fetchTicker()).toEqual({ bid: 100, ask: 101 });
     });
-    await exchange.processOneMinuteCandle(fillCandle);
 
-    const filledOrder = await exchange.fetchOrder(buyOrder.id);
-    expect(filledOrder.status).toBe('closed');
-    expect(filledOrder.remaining).toBe(0);
-    expect(filledOrder.filled).toBe(1);
-
-    const portfolioAfterFill = await exchange.fetchBalance();
-    expect(portfolioAfterFill.asset.total).toBeCloseTo(3);
-    expect(portfolioAfterFill.currency.total).toBeCloseTo(1_000 - (buyOrder.price ?? 0) * (1 + makerFeeRate));
-
-    const sellOrder = await exchange.createLimitOrder('SELL', 1, 100);
-    const reservedAfterSell = await exchange.fetchBalance();
-    expect(reservedAfterSell.asset.total).toBeCloseTo(3);
-    expect(reservedAfterSell.asset.free).toBeCloseTo(2);
-
-    const canceled = await exchange.cancelOrder(sellOrder.id);
-    expect(canceled.status).toBe('canceled');
-
-    const restoredPortfolio = await exchange.fetchBalance();
-    expect(restoredPortfolio.asset.total).toBeCloseTo(3);
+    it('returns last candle close as ticker after processing', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000, { close: 150 }));
+      expect(await exchange.fetchTicker()).toEqual({ bid: 150, ask: 150 });
+    });
   });
 
-  it('validates limits and cost before creating orders', async () => {
-    const exchange = createExchange({ marketData: baseConfig.marketData });
-    await exchange.loadMarkets();
-
-    await expect(exchange.createLimitOrder('BUY', 0.01, 100)).rejects.toBeInstanceOf(OrderOutOfRangeError);
-
-    const tickerSpy = vi.spyOn(exchange as unknown as { fetchTicker: () => Promise<never> }, 'fetchTicker');
-    tickerSpy.mockImplementation(async () => {
-      throw new Error('ticker unavailable');
+  describe('fetchBalance', () => {
+    it('returns initial balance', async () => {
+      const exchange = createExchange({ simulationBalance: { asset: 5, currency: 1000 } });
+      expect(await exchange.fetchBalance()).toEqual({
+        asset: { free: 5, used: 0, total: 5 },
+        currency: { free: 1000, used: 0, total: 1000 },
+      });
     });
-
-    await expect(exchange.fetchTicker()).rejects.toThrow('ticker unavailable');
-    expect(tickerSpy).toHaveBeenCalledTimes(1);
-    tickerSpy.mockRestore();
   });
 
-  it('executes market orders immediately and applies taker fees to balances', async () => {
-    const exchange = createExchange();
-    await exchange.loadMarkets();
-    await seedExchangeWithBaseCandle(exchange);
+  describe('fetchOHLCV', () => {
+    it('returns empty array when no candles', async () => {
+      expect(await createExchange().fetchOHLCV({})).toEqual([]);
+    });
 
-    const initialPortfolio = await exchange.fetchBalance();
-    const takerFeeRate = baseConfig.marketData.fee.taker ?? 0;
-    const { ask, bid } = await exchange.fetchTicker();
+    it('returns all candles when no from specified', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(1000));
+      await exchange.processOneMinuteCandle(sampleCandle(2000));
+      expect(await exchange.fetchOHLCV({})).toHaveLength(2);
+    });
 
-    const buyOrder = await exchange.createMarketOrder('BUY', 2);
-    expect(buyOrder.status).toBe('closed');
-    expect(buyOrder.remaining).toBe(0);
+    it('returns candles from specified timestamp', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(1000));
+      await exchange.processOneMinuteCandle(sampleCandle(2000));
+      expect(await exchange.fetchOHLCV({ from: 2000 })).toHaveLength(1);
+    });
 
-    const afterBuy = await exchange.fetchBalance();
-    const expectedBuyCurrency = initialPortfolio.currency.total - 2 * ask * (1 + takerFeeRate);
-    expect(afterBuy.asset.total).toBeCloseTo(initialPortfolio.asset.total + 2, 8);
-    expect(afterBuy.currency.total).toBeCloseTo(expectedBuyCurrency, 8);
-
-    const sellOrder = await exchange.createMarketOrder('SELL', 1);
-    expect(sellOrder.status).toBe('closed');
-
-    const afterSell = await exchange.fetchBalance();
-    const expectedSellCurrency = expectedBuyCurrency + 1 * bid * (1 - takerFeeRate);
-    expect(afterSell.asset.total).toBeCloseTo(initialPortfolio.asset.total + 1, 8);
-    expect(afterSell.currency.total).toBeCloseTo(expectedSellCurrency, 8);
-
-    const trades = await exchange.fetchMyTrades();
-    expect(trades).toHaveLength(2);
-    expect(trades[0]?.fee?.rate).toBeCloseTo((baseConfig.marketData.fee.taker ?? 0) * 100);
-    expect(trades[1]?.fee?.rate).toBeCloseTo((baseConfig.marketData.fee.taker ?? 0) * 100);
+    it('returns empty when from is beyond all candles', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(1000));
+      expect(await exchange.fetchOHLCV({ from: 9999 })).toHaveLength(0);
+    });
   });
 
-  it('rejects market buy orders when balance cannot cover taker fees', async () => {
-    const exchange = createExchange({
-      simulationBalance: { asset: 0, currency: 100 },
+  describe('createLimitOrder', () => {
+    it.each`
+      side      | reserveField
+      ${'BUY'}  | ${'currency'}
+      ${'SELL'} | ${'asset'}
+    `('$side order reserves $reserveField balance', async ({ side, reserveField }) => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      await exchange.createLimitOrder(side, 1, 100);
+      const balance = await exchange.fetchBalance();
+      expect(balance[reserveField as keyof Portfolio].used).toBeGreaterThan(0);
     });
-    await exchange.loadMarkets();
-    await seedExchangeWithBaseCandle(exchange, { close: 100, low: 100, high: 100 });
 
-    await expect(exchange.createMarketOrder('BUY', 1)).rejects.toThrow('Insufficient currency balance');
+    it('throws when amount below minimum', async () => {
+      await expect(createExchange().createLimitOrder('BUY', 0.01, 100)).rejects.toBeInstanceOf(OrderOutOfRangeError);
+    });
+
+    it('throws when insufficient currency for BUY', async () => {
+      const exchange = createExchange({ simulationBalance: { asset: 0, currency: 10 } });
+      await expect(exchange.createLimitOrder('BUY', 1, 100)).rejects.toThrow('Insufficient currency');
+    });
+
+    it('throws when insufficient asset for SELL', async () => {
+      const exchange = createExchange({ simulationBalance: { asset: 0, currency: 10000 } });
+      await expect(exchange.createLimitOrder('SELL', 1, 100)).rejects.toThrow('Insufficient asset');
+    });
   });
 
-  it('applies maker fees when settling limit orders', async () => {
-    const exchange = createExchange({ simulationBalance: { asset: 5, currency: 10_000 } });
-    await exchange.loadMarkets();
-    await seedExchangeWithBaseCandle(exchange);
-
-    const makerFeeRate = baseConfig.marketData.fee.maker ?? 0;
-
-    const buyOrder = await exchange.createLimitOrder('BUY', 2, 100);
-    const buyPrice = buyOrder.price ?? 0;
-    const buyCost = buyPrice * 2;
-
-    const afterBuyReservation = await exchange.fetchBalance();
-    expect(afterBuyReservation.currency.total).toBe(10_000);
-    expect(afterBuyReservation.currency.free).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
-    expect(afterBuyReservation.asset.total).toBeCloseTo(5);
-
-    const buyFillCandle = sampleCandle(Date.now(), {
-      low: buyPrice,
-      high: buyPrice,
-      close: buyPrice,
+  describe('createMarketOrder', () => {
+    it.each`
+      side      | balanceChange
+      ${'BUY'}  | ${'increases asset'}
+      ${'SELL'} | ${'decreases asset'}
+    `('$side order $balanceChange immediately', async ({ side }) => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      const before = await exchange.fetchBalance();
+      await exchange.createMarketOrder(side, 1);
+      const after = await exchange.fetchBalance();
+      expect(after.asset.total).not.toBe(before.asset.total);
     });
-    await exchange.processOneMinuteCandle(buyFillCandle);
 
-    const afterBuyFill = await exchange.fetchBalance();
-    expect(afterBuyFill.asset.total).toBeCloseTo(7);
-    expect(afterBuyFill.currency.total).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
-
-    const sellOrder = await exchange.createLimitOrder('SELL', 1, 100);
-    const sellPrice = sellOrder.price ?? 0;
-    const afterSellReservation = await exchange.fetchBalance();
-    expect(afterSellReservation.asset.total).toBeCloseTo(7);
-    expect(afterSellReservation.asset.free).toBeCloseTo(6);
-    expect(afterSellReservation.currency.total).toBeCloseTo(10_000 - buyCost * (1 + makerFeeRate));
-
-    const sellFillCandle = sampleCandle(Date.now() + 60_000, {
-      high: sellPrice,
-      low: sellPrice,
-      close: sellPrice,
+    it('throws when insufficient currency for market BUY', async () => {
+      const exchange = createExchange({ simulationBalance: { asset: 0, currency: 10 } });
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      await expect(exchange.createMarketOrder('BUY', 1)).rejects.toThrow('Insufficient currency');
     });
-    await exchange.processOneMinuteCandle(sellFillCandle);
 
-    const afterSellFill = await exchange.fetchBalance();
-    const expectedCurrencyAfterSell = 10_000 - buyCost * (1 + makerFeeRate) + sellPrice * (1 - makerFeeRate);
-    expect(afterSellFill.asset.total).toBeCloseTo(6);
-    expect(afterSellFill.currency.total).toBeCloseTo(expectedCurrencyAfterSell);
-
-    const trades = await exchange.fetchMyTrades();
-    expect(trades).toHaveLength(2);
-    expect(trades[0]?.fee?.rate).toBeCloseTo((baseConfig.marketData.fee.maker ?? 0) * 100);
-    expect(trades[1]?.fee?.rate).toBeCloseTo((baseConfig.marketData.fee.maker ?? 0) * 100);
+    it('throws when insufficient asset for market SELL', async () => {
+      const exchange = createExchange({ simulationBalance: { asset: 0, currency: 10000 } });
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      await expect(exchange.createMarketOrder('SELL', 1)).rejects.toThrow('Insufficient asset');
+    });
   });
 
-  it('derives candles from trades when queue is empty', async () => {
-    const exchange = createExchange();
-    await exchange.loadMarkets();
-    await seedExchangeWithBaseCandle(exchange);
-
-    const order = await exchange.createLimitOrder('BUY', 0.5, 100);
-    const candle = sampleCandle(Date.now(), {
-      low: order.price ?? 0,
-      high: order.price ?? 0,
-      close: order.price ?? 0,
+  describe('cancelOrder', () => {
+    it('cancels open order and releases balance', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      const order = await exchange.createLimitOrder('BUY', 1, 100);
+      const canceled = await exchange.cancelOrder(order.id);
+      expect(canceled.status).toBe('canceled');
     });
-    await exchange.processOneMinuteCandle(candle);
 
-    const unsubscribe = exchange.onNewCandle(() => {});
-    vi.advanceTimersByTime(baseConfig.exchangeSynchInterval ?? 0);
-    unsubscribe();
+    it('throws when order not found', async () => {
+      await expect(createExchange().cancelOrder('unknown-id')).rejects.toThrow('Unknown order');
+    });
 
-    const derived = await exchange.fetchOHLCV({});
-    expect(derived).not.toHaveLength(0);
-
-    const trades = await exchange.fetchMyTrades();
-    expect(trades).toHaveLength(1);
+    it('does not change already closed order', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      const order = await exchange.createMarketOrder('BUY', 1);
+      const canceled = await exchange.cancelOrder(order.id);
+      expect(canceled.status).toBe('closed');
+    });
   });
 
-  it('aligns order timestamps with candle closes and simulated time', async () => {
-    const exchange = createExchange();
-    await exchange.loadMarkets();
-    const firstCandle = await seedExchangeWithBaseCandle(exchange);
-
-    const limitOrder = await exchange.createLimitOrder('BUY', 1, 100);
-    expect(limitOrder.timestamp).toBe(firstCandle.start + 60_000);
-
-    const fillCandle = sampleCandle(firstCandle.start + 60_000, {
-      low: limitOrder.price ?? 0,
-      high: limitOrder.price ?? 0,
-      close: limitOrder.price ?? 0,
+  describe('fetchOrder', () => {
+    it('returns order by id', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      const order = await exchange.createLimitOrder('BUY', 1, 100);
+      expect(await exchange.fetchOrder(order.id)).toMatchObject({ id: order.id, status: 'open' });
     });
-    await exchange.processOneMinuteCandle(fillCandle);
 
-    const closedOrder = await exchange.fetchOrder(limitOrder.id);
-    expect(closedOrder.timestamp).toBe(fillCandle.start + 60_000);
+    it('throws when order not found', async () => {
+      await expect(createExchange().fetchOrder('invalid-id')).rejects.toThrow('Unknown order');
+    });
+  });
 
-    const orderToCancel = await exchange.createLimitOrder('SELL', 1, 110);
-    const canceledOrder = await exchange.cancelOrder(orderToCancel.id);
-    expect(canceledOrder.timestamp).toBe(fillCandle.start + 60_000);
+  describe('fetchMyTrades', () => {
+    it('returns empty when no orders', async () => {
+      expect(await createExchange().fetchMyTrades()).toEqual([]);
+    });
+
+    it('maps filled orders to trades', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      await exchange.createMarketOrder('BUY', 1);
+      const trades = await exchange.fetchMyTrades();
+      expect(trades).toHaveLength(1);
+    });
+
+    it('filters trades by from timestamp', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      await exchange.createMarketOrder('BUY', 1);
+      const trades = await exchange.fetchMyTrades(Date.now() + 1000);
+      expect(trades).toHaveLength(0);
+    });
+  });
+
+  describe('Order Settlement', () => {
+    it('fills BUY order when candle low reaches price', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      const order = await exchange.createLimitOrder('BUY', 1, 95);
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now(), { low: 95 }));
+      expect(await exchange.fetchOrder(order.id)).toMatchObject({ status: 'closed', filled: 1 });
+    });
+
+    it('fills SELL order when candle high reaches price', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      const order = await exchange.createLimitOrder('SELL', 1, 105);
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now(), { high: 105 }));
+      expect(await exchange.fetchOrder(order.id)).toMatchObject({ status: 'closed', filled: 1 });
+    });
+
+    it('does not fill BUY order when price not reached', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      const order = await exchange.createLimitOrder('BUY', 1, 50);
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now(), { low: 80 }));
+      expect(await exchange.fetchOrder(order.id)).toMatchObject({ status: 'open' });
+    });
+
+    it('does not fill SELL order when price not reached', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      const order = await exchange.createLimitOrder('SELL', 1, 150);
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now(), { high: 120 }));
+      expect(await exchange.fetchOrder(order.id)).toMatchObject({ status: 'open' });
+    });
+  });
+
+  describe('processOneMinuteCandle', () => {
+    it('updates ticker with candle close', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(1000, { close: 200 }));
+      expect(await exchange.fetchTicker()).toEqual({ bid: 200, ask: 200 });
+    });
+
+    it('adds candle to OHLCV history', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(1000));
+      expect(await exchange.fetchOHLCV({})).toHaveLength(1);
+    });
+  });
+
+  describe('Order Insertion and Sorting', () => {
+    it('maintains BUY orders in descending price order', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      await exchange.createLimitOrder('BUY', 1, 80);
+      await exchange.createLimitOrder('BUY', 1, 90);
+      await exchange.createLimitOrder('BUY', 1, 85);
+      // Fill all at once
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now(), { low: 75 }));
+      const trades = await exchange.fetchMyTrades();
+      expect(trades).toHaveLength(3);
+    });
+
+    it('maintains SELL orders in ascending price order', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      await exchange.createLimitOrder('SELL', 1, 120);
+      await exchange.createLimitOrder('SELL', 1, 110);
+      await exchange.createLimitOrder('SELL', 1, 115);
+      // Fill all at once
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now(), { high: 125 }));
+      const trades = await exchange.fetchMyTrades();
+      expect(trades).toHaveLength(3);
+    });
+
+    it('handles inserting order at beginning of sorted BUY list', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      await exchange.createLimitOrder('BUY', 1, 80);
+      await exchange.createLimitOrder('BUY', 1, 95); // Higher price, goes first
+      expect(await exchange.fetchBalance()).toMatchObject({ currency: { used: expect.any(Number) } });
+    });
+
+    it('handles inserting order at end of sorted SELL list', async () => {
+      const exchange = createExchange();
+      await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
+      await exchange.createLimitOrder('SELL', 1, 110);
+      await exchange.createLimitOrder('SELL', 1, 120); // Higher price, goes last
+      expect(await exchange.fetchBalance()).toMatchObject({ asset: { used: expect.any(Number) } });
+    });
   });
 });

@@ -1,93 +1,111 @@
 import { GekkoError } from '@errors/gekko.error';
 import { Watch } from '@models/configuration.types';
-import { DummyCentralizedExchangeConfig } from '@services/exchange/dummy/dummyCentralizedExchange.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../configuration/configuration';
 import { inject } from './injecter';
 
-const { BinanceExchangeMock, DummyCentralizedExchangeMock } = vi.hoisted(() => ({
-  BinanceExchangeMock: vi.fn(function () {
-    return { exchangeName: 'binance', type: 'binance' };
+const { BinanceExchangeMock, DummyCentralizedExchangeMock, PaperTradingBinanceExchangeMock } = vi.hoisted(() => ({
+  BinanceExchangeMock: vi.fn(function (cfg) {
+    return { exchangeName: cfg.name, type: 'ccxt' };
   }),
-  DummyCentralizedExchangeMock: vi.fn(function ({ name }) {
-    return { exchangeName: name, type: 'dummy-cex' };
+  DummyCentralizedExchangeMock: vi.fn(function (cfg) {
+    return { exchangeName: cfg.name, type: 'dummy' };
+  }),
+  PaperTradingBinanceExchangeMock: vi.fn(function (cfg) {
+    return { exchangeName: cfg.name, type: 'paper' };
   }),
 }));
 
-vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn(function () {
-    return { getStorage: vi.fn(), getExchange: vi.fn(), getWatch: vi.fn() };
-  });
-  return { config: new Configuration() };
-});
-vi.mock('@services/storage/sqlite.storage', () => ({
-  SQLiteStorage: vi.fn(function () {
-    return {};
-  }),
+vi.mock('@services/configuration/configuration', () => ({
+  config: { getStorage: vi.fn(), getExchange: vi.fn(), getWatch: vi.fn() },
 }));
+
+vi.mock('@services/storage/sqlite.storage', () => ({
+  SQLiteStorage: vi.fn().mockImplementation(() => ({})),
+}));
+
 vi.mock('@services/exchange/ccxtExchange', () => ({
   CCXTExchange: BinanceExchangeMock,
 }));
 vi.mock('@services/exchange/dummy/dummyCentralizedExchange', () => ({
   DummyCentralizedExchange: DummyCentralizedExchangeMock,
 }));
+vi.mock('@services/exchange/paper/paperTradingBinanceExchange', () => ({
+  PaperTradingBinanceExchange: PaperTradingBinanceExchangeMock,
+}));
 
 describe('Injecter', () => {
-  const getStorageMock = vi.spyOn(config, 'getStorage');
-  const getExchangeMock = vi.spyOn(config, 'getExchange');
-  const getWatchMock = vi.spyOn(config, 'getWatch');
+  const getStorageMock = vi.mocked(config.getStorage);
+  const getExchangeMock = vi.mocked(config.getExchange);
+  const getWatchMock = vi.mocked(config.getWatch);
 
   beforeEach(() => {
-    inject['storageInstance'] = undefined;
-    inject['exchangeInstance'] = undefined;
+    // Reset singleton state (accessing private property for testing)
+    (inject as any).storageInstance = undefined;
+    (inject as any).exchangeInstance = undefined;
+    vi.clearAllMocks();
   });
 
   describe('storage', () => {
-    it('should cache the storage instance and return the same object on multiple calls', () => {
+    it('returns cached storage instance on subsequent calls', () => {
       getStorageMock.mockReturnValue({ type: 'sqlite', database: '' });
       const first = inject.storage();
       const second = inject.storage();
       expect(second).toBe(first);
+      expect(getStorageMock).toHaveBeenCalledTimes(1);
     });
 
-    it('should throw GekkoError if no config returned', () => {
+    it('throws GekkoError if storage config is missing', () => {
       getStorageMock.mockReturnValue(undefined);
       expect(() => inject.storage()).toThrow(GekkoError);
     });
   });
 
   describe('exchange', () => {
-    it('should cache the exchange instance and return the same object on multiple calls', () => {
-      const binanceConfig = { name: 'binance', verbose: false, sandbox: false, interval: 1000 };
-      getExchangeMock.mockReturnValue(binanceConfig as unknown as DummyCentralizedExchangeConfig);
+    const testCases = [
+      {
+        name: 'binance',
+        config: { name: 'binance', apiKey: 'k', secret: 's' },
+        mock: BinanceExchangeMock,
+      },
+      {
+        name: 'hyperliquid',
+        config: { name: 'hyperliquid', privateKey: 'pk', walletAddress: 'wa' },
+        mock: BinanceExchangeMock,
+      },
+      {
+        name: 'dummy-cex',
+        config: { name: 'dummy-cex', simulationBalance: {} },
+        mock: DummyCentralizedExchangeMock,
+      },
+      {
+        name: 'paper-binance',
+        config: { name: 'paper-binance', simulationBalance: {} },
+        mock: PaperTradingBinanceExchangeMock,
+      },
+    ];
+
+    it.each(testCases)('instantiates and caches $name exchange', ({ config: cfg, mock }) => {
+      getExchangeMock.mockReturnValue(cfg as any);
+      getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT' } as Watch);
+
       const first = inject.exchange();
       const second = inject.exchange();
+
+      expect(first).toMatchObject({ exchangeName: cfg.name });
       expect(second).toBe(first);
-      expect(BinanceExchangeMock).toHaveBeenCalledTimes(1);
-      expect(BinanceExchangeMock).toHaveBeenCalledWith();
+      expect(mock).toHaveBeenCalledTimes(1);
+      expect(mock).toHaveBeenCalledWith(cfg);
     });
 
-    it('should throw GekkoError if no exchange config is returned', () => {
-      getExchangeMock.mockReturnValue(undefined as unknown as DummyCentralizedExchangeConfig);
+    it('throws GekkoError if exchange config is missing', () => {
+      getExchangeMock.mockReturnValue(undefined as any);
       expect(() => inject.exchange()).toThrow(GekkoError);
     });
 
-    it('should instantiate dummy centralized exchange when requested', () => {
-      const dummyConfig = {
-        name: 'dummy-cex',
-        verbose: false,
-        sandbox: false,
-        feeMaker: 0.15,
-        feeTaker: 0.25,
-        simulationBalance: { asset: 0, currency: 0 },
-      };
-      getExchangeMock.mockReturnValue(dummyConfig as unknown as DummyCentralizedExchangeConfig);
-      getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT' } as Watch);
-      const exchange = inject.exchange();
-
-      expect(exchange).toMatchObject({ exchangeName: 'dummy-cex' });
-      expect(DummyCentralizedExchangeMock).toHaveBeenCalledTimes(1);
-      expect(DummyCentralizedExchangeMock).toHaveBeenCalledWith(dummyConfig);
+    it('throws GekkoError for unknown exchange name', () => {
+      getExchangeMock.mockReturnValue({ name: 'unknown' } as any);
+      expect(() => inject.exchange()).toThrow(GekkoError);
     });
   });
 });

@@ -1,6 +1,7 @@
 import { binanceExchangeSchema } from '@services/exchange/binance/binance.schema';
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
 import { hyperliquidExchangeSchema } from '@services/exchange/hyperliquid/hyperliquid.schema';
+import { paperBinanceExchangeSchema } from '@services/exchange/paper/paperTradingBinanceExchange.schema';
 import { some } from 'lodash-es';
 import { z } from 'zod';
 import { TIMEFRAMES } from './configuration.const';
@@ -52,15 +53,32 @@ export const configurationSchema = z
   .object({
     showLogo: z.boolean().default(true),
     watch: watchSchema,
-    exchange: z.discriminatedUnion('name', [dummyExchangeSchema, binanceExchangeSchema, hyperliquidExchangeSchema]),
+    exchange: z.discriminatedUnion('name', [
+      dummyExchangeSchema,
+      binanceExchangeSchema,
+      hyperliquidExchangeSchema,
+      paperBinanceExchangeSchema,
+    ]),
     storage: storageSchema.nullable().optional().default(null),
     plugins: z.array(z.looseObject({ name: z.string() })),
     strategy: z.looseObject({ name: z.string() }).optional(),
     [disclaimerField]: z.boolean().nullable().default(null),
   })
   .superRefine((data, ctx) => {
+    // Paper trading only works in realtime mode
+    if (data.exchange.name === 'paper-binance' && data.watch.mode !== 'realtime') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['exchange', 'name'],
+        message: 'Paper trading exchange (paper-binance) can only be used in realtime mode',
+      });
+    }
+
+    // Disclaimer validation for real exchanges (exclude dummy-cex and paper-binance)
     const hasTraderPlugin = some(data.plugins, plugin => plugin.name?.toLowerCase() === 'trader');
-    const isUsingRealExchange = data.exchange && data.exchange.name !== 'dummy-cex' && !data.exchange.sandbox;
+    const isSimulatedExchange = data.exchange.name === 'dummy-cex' || data.exchange.name === 'paper-binance';
+    const isUsingRealExchange =
+      data.exchange && !isSimulatedExchange && !('sandbox' in data.exchange && data.exchange.sandbox);
     const isDisclaimerIgnored = !data[disclaimerField];
     if (hasTraderPlugin && isUsingRealExchange && isDisclaimerIgnored) {
       ctx.addIssue({

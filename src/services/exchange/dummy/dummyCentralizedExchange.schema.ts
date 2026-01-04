@@ -1,6 +1,7 @@
+import { DEFAULT_MARKET_DATA, DEFAULT_SIMULATION_BALANCE } from '@services/exchange/exchange.const';
 import { exchangeSchema } from '@services/exchange/exchange.schema';
 import z from 'zod';
-import { DEFAULT_MARKET_DATA, DEFAULT_SIMULATION_BALANCE, DEFAULT_TICKER } from './dummyCentralizedExchange.const';
+import { DEFAULT_TICKER } from './dummyCentralizedExchange.const';
 
 const simulationBalanceSchema = z
   .object({

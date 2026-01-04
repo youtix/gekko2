@@ -12,6 +12,8 @@ import { toISOString } from '@utils/date/date.utils';
 import ccxt, { Exchange as CCXT, MarketInterface } from 'ccxt';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { each, first, isNil, last } from 'lodash-es';
+import { z } from 'zod';
+import { binanceExchangeSchema } from './binance/binance.schema';
 import { BROKER_MANDATORY_FEATURES, LIMITS, PARAMS } from './exchange.const';
 import { Exchange, FetchOHLCVParams, MarketData } from './exchange.types';
 import {
@@ -23,6 +25,11 @@ import {
   mapOhlcvToCandles,
   retry,
 } from './exchange.utils';
+import { hyperliquidExchangeSchema } from './hyperliquid/hyperliquid.schema';
+
+type BinanceExchangeConfig = z.infer<typeof binanceExchangeSchema>;
+type HyperliquidExchangeConfig = z.infer<typeof hyperliquidExchangeSchema>;
+export type CCXTExchangeConfig = BinanceExchangeConfig | HyperliquidExchangeConfig;
 
 export class CCXTExchange implements Exchange {
   protected heart: Heart;
@@ -30,14 +37,11 @@ export class CCXTExchange implements Exchange {
   protected exchangeName: string;
   protected symbol: string;
 
-  constructor() {
+  constructor(exchangeConfig: CCXTExchangeConfig) {
     const { asset, currency } = config.getWatch();
-    const exchangeConfig = config.getExchange();
     const { name } = exchangeConfig;
 
     switch (name) {
-      case 'dummy-cex':
-        throw new GekkoError('exchange', 'Dummy exchange is not supported with CCXT library');
       case 'hyperliquid': {
         const { privateKey, walletAddress, verbose } = exchangeConfig;
         const options = { fetchMarkets: { types: ['spot'] } };
@@ -50,11 +54,12 @@ export class CCXTExchange implements Exchange {
         break;
       }
     }
-    const mandatoryFeatures = [...BROKER_MANDATORY_FEATURES, ...(exchangeConfig.sandbox ? ['sandbox'] : [])];
+    const hasSandbox = 'sandbox' in exchangeConfig && exchangeConfig.sandbox;
+    const mandatoryFeatures = [...BROKER_MANDATORY_FEATURES, ...(hasSandbox ? ['sandbox'] : [])];
     each(mandatoryFeatures, feature => {
       if (!this.client.has[feature]) throw new GekkoError('exchange', `Missing ${feature} feature in ${name} exchange`);
     });
-    this.client.setSandboxMode(exchangeConfig.sandbox);
+    this.client.setSandboxMode(hasSandbox);
     this.client.options['maxRetriesOnFailure'] = 0; // we handle it manualy
     this.exchangeName = name;
     this.symbol = `${asset}/${currency}`;
