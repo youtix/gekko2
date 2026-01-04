@@ -1,7 +1,8 @@
 import { Candle } from '@models/candle.types';
 import { bench, describe, vi } from 'vitest';
+import { DEFAULT_MARKET_DATA } from '../exchange.const';
 import { DummyCentralizedExchange } from './dummyCentralizedExchange';
-import { DEFAULT_MARKET_DATA, DEFAULT_TICKER } from './dummyCentralizedExchange.const';
+import { DEFAULT_TICKER } from './dummyCentralizedExchange.const';
 import { DummyCentralizedExchangeConfig } from './dummyCentralizedExchange.types';
 
 vi.mock('@services/configuration/configuration', () => ({

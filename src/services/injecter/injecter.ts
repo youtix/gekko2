@@ -3,6 +3,7 @@ import { config } from '@services/configuration/configuration';
 import { CCXTExchange } from '@services/exchange/ccxtExchange';
 import { DummyCentralizedExchange } from '@services/exchange/dummy/dummyCentralizedExchange';
 import { Exchange } from '@services/exchange/exchange.types';
+import { PaperTradingBinanceExchange } from '@services/exchange/paper/paperTradingBinanceExchange';
 import { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { Storage } from '@services/storage/storage';
 
@@ -25,10 +26,13 @@ class Injecter {
     switch (exchangeConfig.name) {
       case 'binance':
       case 'hyperliquid':
-        this.exchangeInstance = new CCXTExchange();
+        this.exchangeInstance = new CCXTExchange(exchangeConfig);
         break;
       case 'dummy-cex':
         this.exchangeInstance = new DummyCentralizedExchange(exchangeConfig);
+        break;
+      case 'paper-binance':
+        this.exchangeInstance = new PaperTradingBinanceExchange(exchangeConfig);
         break;
       default:
         throw new GekkoError('injecter', 'Missing or unknown exchange.');

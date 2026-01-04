@@ -1,4 +1,3 @@
-import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
@@ -41,8 +40,7 @@ export class DummyCentralizedExchange implements Exchange {
     this.buyOrders = [];
     this.sellOrders = [];
     const start = config.getWatch().daterange?.start;
-    if (!start) throw new GekkoError('exchange', 'Inconsistent state: In backtest mode dateranges are mandatory');
-    this.currentTimestamp = toTimestamp(start);
+    this.currentTimestamp = start ? toTimestamp(start) : Date.now();
 
     bindAll(this, [this.mapOrderToTrade.name]);
   }
@@ -54,7 +52,6 @@ export class DummyCentralizedExchange implements Exchange {
   /** Because dummy exchange is not a plugin, I need to call this function manualy in the plugins stream */
   public async processOneMinuteCandle(candle: Candle): Promise<void> {
     return this.mutex.runExclusive(() => {
-      // console.table(this.orders.toArray().slice(-10));
       // I need the close time of the candle
       this.currentTimestamp = addMinutes(candle.start, 1).getTime();
       this.candles.push(candle);

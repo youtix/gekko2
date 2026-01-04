@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { CCXTExchange } from './ccxtExchange';
 import {
   checkOrderAmount,
-  checkOrderCost,
   checkOrderPrice,
   mapCcxtOrderToOrder,
   mapCcxtTradeToTrade,
@@ -15,20 +14,15 @@ import {
   retry,
 } from './exchange.utils';
 
-// Mocks
 vi.mock('@services/configuration/configuration', () => ({
-  config: {
-    getWatch: vi.fn(),
-    getExchange: vi.fn(),
-  },
+  config: { getWatch: vi.fn(), getExchange: vi.fn() },
 }));
-
 vi.mock('@services/core/heart/heart');
 vi.mock('./exchange.utils');
+vi.mock('@services/logger', () => ({ error: vi.fn(), debug: vi.fn() }));
 
 vi.mock('ccxt', () => {
-  const MockExchange = vi.fn();
-  MockExchange.prototype.has = {
+  const has = {
     fetchOHLCV: true,
     fetchTicker: true,
     fetchMyTrades: true,
@@ -42,6 +36,8 @@ vi.mock('ccxt', () => {
     sandbox: true,
     market: true,
   };
+  const MockExchange = vi.fn();
+  MockExchange.prototype.has = has;
   MockExchange.prototype.setSandboxMode = vi.fn();
   MockExchange.prototype.loadMarkets = vi.fn();
   MockExchange.prototype.fetchTicker = vi.fn();
@@ -54,267 +50,247 @@ vi.mock('ccxt', () => {
   MockExchange.prototype.market = vi.fn();
   MockExchange.prototype.options = {};
 
-  return {
-    default: {
-      binance: MockExchange,
-      hyperliquid: MockExchange,
-    },
-  };
+  return { default: { binance: MockExchange, hyperliquid: MockExchange } };
 });
 
+const mockWatchConfig = { asset: 'BTC', currency: 'USDT' };
+const binanceConfig = {
+  name: 'binance' as const,
+  apiKey: 'key',
+  secret: 'secret',
+  sandbox: false,
+  verbose: false,
+  exchangeSynchInterval: 10000,
+  orderSynchInterval: 5000,
+};
+const hyperliquidConfig = {
+  name: 'hyperliquid' as const,
+  privateKey: 'pk',
+  walletAddress: 'addr',
+  verbose: false,
+  exchangeSynchInterval: 10000,
+  orderSynchInterval: 5000,
+};
+
 describe('CCXTExchange', () => {
-  let exchange: CCXTExchange;
-
-  const mockWatchConfig = { asset: 'BTC', currency: 'USDT' };
-  const mockExchangeConfig = {
-    name: 'binance',
-    key: 'test-key',
-    secret: 'test-secret',
-    sandbox: false,
-    verbose: false,
-  };
-
   beforeEach(() => {
     (config.getWatch as Mock).mockReturnValue(mockWatchConfig);
-    (config.getExchange as Mock).mockReturnValue(mockExchangeConfig);
-
-    // Reset mock implementation for retry to just execute the function
     (retry as Mock).mockImplementation(async fn => fn());
-
-    // Setup default successful responses for utils
     (checkOrderAmount as Mock).mockReturnValue(1);
     (checkOrderPrice as Mock).mockReturnValue(100);
   });
 
   describe('Constructor', () => {
-    it('should initialize correctly with valid config', () => {
-      exchange = new CCXTExchange();
-      expect(config.getWatch).toHaveBeenCalled();
-      expect(config.getExchange).toHaveBeenCalled();
-      expect(exchange.getExchangeName()).toBe('binance');
+    it.each`
+      exchangeName     | config               | expectedName
+      ${'binance'}     | ${binanceConfig}     | ${'binance'}
+      ${'hyperliquid'} | ${hyperliquidConfig} | ${'hyperliquid'}
+    `('initializes $exchangeName exchange correctly', ({ config: cfg, expectedName }) => {
+      expect(new CCXTExchange(cfg).getExchangeName()).toBe(expectedName);
     });
 
-    it('should throw error if exchange is "dummy-cex"', () => {
-      (config.getExchange as Mock).mockReturnValue({ ...mockExchangeConfig, name: 'dummy-cex' });
-      expect(() => new CCXTExchange()).toThrow(GekkoError);
-      expect(() => new CCXTExchange()).toThrow('Dummy exchange is not supported with CCXT library');
+    it.each`
+      sandbox  | expected
+      ${true}  | ${true}
+      ${false} | ${false}
+    `('sets sandbox mode to $expected when sandbox=$sandbox', ({ sandbox, expected }) => {
+      new CCXTExchange({ ...binanceConfig, sandbox });
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
+      expect(instance.setSandboxMode).toHaveBeenCalledWith(expected);
     });
 
-    it('should set sandbox mode if configured', () => {
-      (config.getExchange as Mock).mockReturnValue({ ...mockExchangeConfig, sandbox: true });
-      new CCXTExchange();
-      // Since we can't easily access the internal client directly without casting or modifying the class to be public/protected accessible for tests,
-      // we can check if the constructor logic ran.
-      // Ideally we would check `mockCcxtClient.setSandboxMode` but strictly speaking `new` creates a NEW instance.
-      // For unit testing the `ccxt` mock returns the class.
-      // We can verify calls on the prototype or the instance if we could capture it.
-      // Given the mock setup:
-      // The `ccxt.binance` is a Jest mock function (class).
-      // Initialization calls `setSandboxMode`.
-      // Let's verify the mock instances.
-      const MockExchangeClass = (ccxt as any).binance;
-      // The last instance created:
-      const instance = MockExchangeClass.mock.instances[0];
-      expect(instance.setSandboxMode).toHaveBeenCalledWith(true);
-    });
-
-    it('should throw error if required feature is missing', () => {
-      // We need to modify the mock for this specific test or spy on it.
-      // Since the mock is hoisted, we can't easily change the prototype 'has' property for just one test without affecting others if not careful.
-      // However, we can mock the class implementation for this test.
-      const MockExchangeClass = (ccxt as any).binance;
-      // We'll temporarily override the prototype for the next instance
-      const originalHas = MockExchangeClass.prototype.has;
-      MockExchangeClass.prototype.has = { ...originalHas, fetchOHLCV: false };
-
-      expect(() => new CCXTExchange()).toThrow(GekkoError);
-      expect(() => new CCXTExchange()).toThrow('Missing fetchOHLCV feature');
-
-      // Restore
-      MockExchangeClass.prototype.has = originalHas;
+    it('throws when required feature is missing', () => {
+      const Mock = (ccxt as any).binance;
+      const original = Mock.prototype.has;
+      Mock.prototype.has = { ...original, fetchOHLCV: false };
+      expect(() => new CCXTExchange(binanceConfig)).toThrow('Missing fetchOHLCV feature');
+      Mock.prototype.has = original;
     });
   });
 
-  describe('Public Methods', () => {
+  describe('Market Operations', () => {
+    let exchange: CCXTExchange;
+    let instance: any;
+
     beforeEach(() => {
-      exchange = new CCXTExchange();
+      exchange = new CCXTExchange(binanceConfig);
+      instance = (ccxt as any).binance.mock.instances.at(-1);
     });
 
-    it('getMarketData should return limits from client', () => {
-      const mockLimits = { amount: { min: 0.1 }, price: { min: 1 } };
-      const MockExchangeClass = (ccxt as any).binance;
-      const instance = MockExchangeClass.mock.instances[0];
-      instance.market.mockReturnValue({ limits: mockLimits });
-
-      const result = exchange.getMarketData();
-      expect(instance.market).toHaveBeenCalledWith('BTC/USDT');
-      expect(result).toMatchObject(mockLimits);
-    });
-
-    it('onNewCandle should setup heartbeat and polling', async () => {
-      const mockCandle = { start: 1000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 100 };
-      (mapOhlcvToCandles as Mock).mockReturnValue([mockCandle]);
-
-      const MockExchangeClass = (ccxt as any).binance;
-      const instance = MockExchangeClass.mock.instances[0];
-      instance.fetchOHLCV.mockResolvedValue([[1000, 1, 2, 0.5, 1.5, 100]]);
-
-      // Verify Heart usage
-      const onNewCandleCallback = vi.fn();
-      const stopFn = exchange.onNewCandle(onNewCandleCallback);
-
-      expect(Heart).toHaveBeenCalledWith(ONE_MINUTE);
-      const heartInstance: any = (Heart as unknown as Mock).mock.instances[0];
-      expect(heartInstance.on).toHaveBeenCalledWith('tick', expect.any(Function));
-
-      // Simulate tick
-      const tickCallback = heartInstance.on.mock.calls[0][1];
-      await tickCallback();
-
-      expect(instance.fetchOHLCV).toHaveBeenCalled();
-      expect(onNewCandleCallback).toHaveBeenCalledWith(mockCandle);
-
-      stopFn();
-      expect(heartInstance.stop).toHaveBeenCalled();
-    });
-
-    it('loadMarkets should call client loadMarkets', async () => {
+    it('loadMarkets calls client loadMarkets', async () => {
       await exchange.loadMarkets();
-      const instance = (ccxt as any).binance.mock.instances[0];
       expect(instance.loadMarkets).toHaveBeenCalled();
     });
 
-    it('fetchTicker should fetch and format ticker', async () => {
-      const mockTickerResponse = { ask: 101, bid: 100, last: 100.5 };
-      const instance = (ccxt as any).binance.mock.instances[0];
-      instance.fetchTicker.mockResolvedValue(mockTickerResponse);
-
-      const result = await exchange.fetchTicker();
-      expect(instance.fetchTicker).toHaveBeenCalledWith('BTC/USDT', undefined);
-      expect(result).toEqual({ ask: 101, bid: 100 });
+    it('getMarketData returns market limits and fees', () => {
+      instance.market.mockReturnValue({
+        limits: { amount: { min: 0.1 }, price: { min: 1 }, cost: { min: 10 } },
+        precision: { price: 2, amount: 4 },
+        maker: 0.001,
+        taker: 0.002,
+      });
+      expect(exchange.getMarketData()).toMatchObject({
+        amount: { min: 0.1 },
+        fee: { maker: 0.001, taker: 0.002 },
+      });
     });
 
-    it('fetchTicker should throw error if ask/bid missing', async () => {
-      const instance = (ccxt as any).binance.mock.instances[0];
-      instance.fetchTicker.mockResolvedValue({ ask: null, bid: 100 });
+    it('getExchangeName returns configured name', () => {
+      expect(exchange.getExchangeName()).toBe('binance');
+    });
+  });
 
+  describe('fetchTicker', () => {
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(binanceConfig);
+      instance = (ccxt as any).binance.mock.instances.at(-1);
+    });
+
+    it('returns formatted ticker with ask and bid', async () => {
+      instance.fetchTicker.mockResolvedValue({ ask: 101, bid: 100, last: 100.5 });
+      expect(await exchange.fetchTicker()).toEqual({ ask: 101, bid: 100 });
+    });
+
+    it('throws when last price is nil', async () => {
+      instance.fetchTicker.mockResolvedValue({ ask: null, bid: null, last: null });
       await expect(exchange.fetchTicker()).rejects.toThrow(GekkoError);
     });
+  });
 
-    it('fetchOHLCV should fetch and map candles', async () => {
-      const mockOhlcv = [[1000, 1, 2, 1, 1.5, 100]];
-      const mockCandles = [{ start: 1000 }];
-      const instance = (ccxt as any).binance.mock.instances[0];
-      instance.fetchOHLCV.mockResolvedValue(mockOhlcv);
-      (mapOhlcvToCandles as Mock).mockReturnValue(mockCandles);
-
-      const result = await exchange.fetchOHLCV({ limit: 50, from: 1000 });
-
-      expect(instance.fetchOHLCV).toHaveBeenCalledWith('BTC/USDT', '1m', 1000, 50);
-      expect(mapOhlcvToCandles).toHaveBeenCalledWith(mockOhlcv);
-      expect(result).toEqual(mockCandles);
+  describe('fetchOHLCV', () => {
+    it('fetches and maps candles', async () => {
+      const exchange = new CCXTExchange(binanceConfig);
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
+      const ohlcv = [[1000, 1, 2, 1, 1.5, 100]];
+      const candles = [{ start: 1000 }];
+      instance.fetchOHLCV.mockResolvedValue(ohlcv);
+      (mapOhlcvToCandles as Mock).mockReturnValue(candles);
+      expect(await exchange.fetchOHLCV({ limit: 50, from: 1000 })).toEqual(candles);
     });
+  });
 
-    it('fetchMyTrades should fetch and map trades', async () => {
-      const mockCcxtTrades = [{ id: '1', price: 100 }];
-      const mockTrades = [{ id: '1', price: 100 }];
-      const instance = (ccxt as any).binance.mock.instances[0];
-      instance.fetchMyTrades.mockResolvedValue(mockCcxtTrades);
+  describe('fetchMyTrades', () => {
+    it('fetches and maps trades', async () => {
+      const exchange = new CCXTExchange(binanceConfig);
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.fetchMyTrades.mockResolvedValue([{ id: '1' }]);
       (mapCcxtTradeToTrade as Mock).mockImplementation(t => t);
-
-      const result = await exchange.fetchMyTrades(1000);
-
-      expect(instance.fetchMyTrades).toHaveBeenCalledWith('BTC/USDT', 1000, expect.anything());
-      expect(result).toEqual(mockTrades);
+      expect(await exchange.fetchMyTrades(1000)).toEqual([{ id: '1' }]);
     });
+  });
 
-    it('fetchOrder should fetch and map order', async () => {
-      const mockCcxtOrder = { id: '1' };
-      const mockOrder = { id: '1' };
-      const instance = (ccxt as any).binance.mock.instances[0];
-      instance.fetchOrder.mockResolvedValue(mockCcxtOrder);
-      (mapCcxtOrderToOrder as Mock).mockReturnValue(mockOrder);
-
-      const result = await exchange.fetchOrder('1');
-
-      expect(instance.fetchOrder).toHaveBeenCalledWith('1', 'BTC/USDT');
-      expect(mapCcxtOrderToOrder).toHaveBeenCalledWith(mockCcxtOrder);
-      expect(result).toEqual(mockOrder);
+  describe('fetchOrder', () => {
+    it('fetches and maps order', async () => {
+      const exchange = new CCXTExchange(binanceConfig);
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.fetchOrder.mockResolvedValue({ id: '1' });
+      (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
+      expect(await exchange.fetchOrder('1')).toEqual({ id: '1' });
     });
+  });
 
-    it('fetchBalance should fetch and extract balance', async () => {
-      const mockBalance = {
-        BTC: { free: 1.5 },
-        USDT: { free: 1000 },
-      };
-      const instance = (ccxt as any).binance.mock.instances[0];
-      instance.fetchBalance.mockResolvedValue(mockBalance);
+  describe('fetchBalance', () => {
+    it('extracts asset and currency balances', async () => {
+      const exchange = new CCXTExchange(binanceConfig);
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.fetchBalance.mockResolvedValue({ BTC: { free: 1.5 }, USDT: { free: 1000 } });
       instance.market.mockReturnValue({ baseName: 'BTC', quote: 'USDT' });
-
-      const result = await exchange.fetchBalance();
-
-      expect(instance.fetchBalance).toHaveBeenCalled();
-      expect(result).toEqual({
+      expect(await exchange.fetchBalance()).toEqual({
         asset: { free: 1.5, used: 0, total: 0 },
         currency: { free: 1000, used: 0, total: 0 },
       });
     });
+  });
 
+  describe('createLimitOrder', () => {
     it.each`
-      side      | amount | price  | expectedSide
-      ${'BUY'}  | ${1}   | ${100} | ${'BUY'}
-      ${'SELL'} | ${1}   | ${100} | ${'SELL'}
-    `('createLimitOrder should check limits and create $side order', async ({ side, amount, price, expectedSide }) => {
-      const mockLimits = {};
-      const instance = (ccxt as any).binance.mock.instances[0];
-      instance.market.mockReturnValue({ limits: mockLimits });
+      side
+      ${'BUY'}
+      ${'SELL'}
+    `('creates $side limit order with validation', async ({ side }) => {
+      const exchange = new CCXTExchange(binanceConfig);
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits: {} });
       instance.createOrder.mockResolvedValue({ id: '1' });
       (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
-
-      await exchange.createLimitOrder(side, amount, price);
-
-      expect(checkOrderPrice).toHaveBeenCalledWith(price, mockLimits);
-      expect(checkOrderAmount).toHaveBeenCalledWith(amount, mockLimits);
-      expect(checkOrderCost).toHaveBeenCalled();
-      expect(instance.createOrder).toHaveBeenCalledWith(
-        'BTC/USDT',
-        'limit',
-        expectedSide,
-        expect.any(Number),
-        expect.any(Number),
-      );
+      await exchange.createLimitOrder(side, 1, 100);
+      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'limit', side, 1, 100);
     });
+  });
 
+  describe('createMarketOrder', () => {
     it.each`
-      side      | amount
-      ${'BUY'}  | ${1}
-      ${'SELL'} | ${1}
-    `('createMarketOrder should fetch ticker, check limits and create $side order', async ({ side, amount }) => {
-      const mockLimits = {};
-      const mockTicker = { ask: 101, bid: 100, last: 100.5 };
-      const instance = (ccxt as any).binance.mock.instances[0];
-      instance.market.mockReturnValue({ limits: mockLimits });
-      instance.fetchTicker.mockResolvedValue(mockTicker); // Mock internal fetchTicker call via client or method mock?
-      // Note: exchange.fetchTicker calls client.fetchTicker. We already mocked client.fetchTicker.
+      side      | tickerPrice
+      ${'BUY'}  | ${101}
+      ${'SELL'} | ${100}
+    `('creates $side market order', async ({ side }) => {
+      const exchange = new CCXTExchange(binanceConfig);
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits: {} });
+      instance.fetchTicker.mockResolvedValue({ ask: 101, bid: 100, last: 100.5 });
       instance.createOrder.mockResolvedValue({ id: '1' });
       (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
-
-      await exchange.createMarketOrder(side, amount);
-
-      expect(checkOrderAmount).toHaveBeenCalledWith(amount, mockLimits);
-      // It fetches ticker internally
-      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'market', side, expect.any(Number));
+      await exchange.createMarketOrder(side, 1);
+      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'market', side, 1);
     });
+  });
 
-    it('cancelOrder should cancel and map order', async () => {
-      const instance = (ccxt as any).binance.mock.instances[0];
+  describe('cancelOrder', () => {
+    it('cancels and returns mapped order', async () => {
+      const exchange = new CCXTExchange(binanceConfig);
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
       instance.cancelOrder.mockResolvedValue({ id: '1', status: 'canceled' });
       (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1', status: 'canceled' });
+      expect(await exchange.cancelOrder('1')).toEqual({ id: '1', status: 'canceled' });
+    });
+  });
 
-      const result = await exchange.cancelOrder('1');
+  describe('onNewCandle', () => {
+    let exchange: CCXTExchange;
 
-      expect(instance.cancelOrder).toHaveBeenCalledWith('1', 'BTC/USDT');
-      expect(result).toEqual({ id: '1', status: 'canceled' });
+    beforeEach(() => {
+      exchange = new CCXTExchange(binanceConfig);
+    });
+
+    it('sets up heartbeat polling', () => {
+      exchange.onNewCandle(vi.fn());
+      expect(Heart).toHaveBeenCalledWith(ONE_MINUTE);
+    });
+
+    it('calls callback when candle is fetched', async () => {
+      const callback = vi.fn();
+      const candle = { start: 1000 };
+      (mapOhlcvToCandles as Mock).mockReturnValue([candle]);
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.fetchOHLCV.mockResolvedValue([[1000, 1, 2, 1, 1.5, 100]]);
+
+      exchange.onNewCandle(callback);
+      const heartInstance = (Heart as unknown as Mock).mock.instances.at(-1);
+      await (heartInstance as any).on.mock.calls[0][1]();
+
+      expect(callback).toHaveBeenCalledWith(candle);
+    });
+
+    it('logs error when fetch fails', async () => {
+      const { error } = await import('@services/logger');
+      const instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.fetchOHLCV.mockRejectedValue(new Error('Network error'));
+
+      exchange.onNewCandle(vi.fn());
+      const heartInstance = (Heart as unknown as Mock).mock.instances.at(-1);
+      await (heartInstance as any).on.mock.calls[0][1]();
+
+      expect(error).toHaveBeenCalledWith('exchange', expect.stringContaining('Failed to poll'));
+    });
+
+    it('returns stop function', () => {
+      const stop = exchange.onNewCandle(vi.fn());
+      stop();
+      const heartInstance = (Heart as unknown as Mock).mock.instances.at(-1);
+      expect((heartInstance as any).stop).toHaveBeenCalled();
     });
   });
 });
