@@ -29,4 +29,3 @@ export * from './volatility/bollingerBands/bollingerBands.indicator';
 export * from './volatility/trueRange/trueRange.indicator';
 export * from './volume/efi/efi.indicator';
 export * from './volume/obv/obv.indicator';
-export * from './volume/volumeDelta/volumeDelta.indicator';
