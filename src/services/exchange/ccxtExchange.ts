@@ -10,7 +10,7 @@ import { Heart } from '@services/core/heart/heart';
 import { debug, error } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import ccxt, { Exchange as CCXT, MarketInterface } from 'ccxt';
-import { formatDuration, intervalToDuration } from 'date-fns';
+import { formatDuration, intervalToDuration, startOfMinute, subMinutes } from 'date-fns';
 import { each, first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
 import { binanceExchangeSchema } from './binance/binance.schema';
@@ -100,7 +100,9 @@ export class CCXTExchange implements Exchange {
     if (!this.heart.isHeartBeating()) {
       this.heart.on('tick', async () => {
         try {
-          const candles = await this.fetchOHLCV({ limit: 1 });
+          // Calculate the start of the previous minute to ensure we fetch the last completed candle
+          const from = startOfMinute(subMinutes(Date.now(), 1)).getTime();
+          const candles = await this.fetchOHLCV({ from, limit: 1 });
           if (candles.length > 0) onNewCandle(candles[0]);
         } catch (err) {
           error('exchange', `Failed to poll for new candle: ${err}`);
