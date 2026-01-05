@@ -206,7 +206,7 @@ Realtime mode supports several use cases depending on your plugin configuration:
 
 #### 1. Screener (Alerts Only)
 
-Monitor markets and receive Telegram alerts when your strategy signals — no trading executed.
+Monitor markets and receive Telegram alerts when your strategy emit signals.
 
 ```yaml
 watch:
@@ -217,8 +217,10 @@ watch:
   warmup:
     candleCount: 365
 
+# It will simulate authenticated calls to the exchange (place orders, cancel orders, fetchBalance, etc.) 
+# and use real unauthenticated data (fetchCandles, etc.)
 exchange:
-  name: binance
+  name: paper-binance
 
 strategy:
   name: RSI
@@ -230,6 +232,8 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: RSI
+
+  - name: Trader # Your strategy sometimes waits for events from trader plugin to emit signals, so we need to include it here
 
   - name: EventSubscriber        # Telegram alerts
     token: YOUR_BOT_TOKEN
@@ -275,7 +279,57 @@ plugins:
 > [!TIP]
 > Get Binance testnet API keys at: https://testnet.binance.vision/
 
-#### 3. Live Trading (Real Money)
+#### 3. Paper Trading (Local Simulation)
+
+Trade with simulated money using **real market data** from Binance, but with orders executed locally. No API keys required for trading.
+
+```yaml
+watch:
+  asset: BTC
+  currency: USDT
+  mode: realtime
+  timeframe: 1h
+  warmup:
+    candleCount: 365
+
+exchange:
+  name: paper-binance            # Uses real Binance data, simulates orders locally
+  simulationBalance:
+    asset: 1                     # Starting BTC balance
+    currency: 10000              # Starting USDT balance
+  # feeOverride:                 # Optional: override exchange fees
+  #   maker: 0.001
+  #   taker: 0.002
+
+strategy:
+  name: DEMA
+  period: 12
+  thresholds:
+    up: 100
+    down: -150
+
+plugins:
+  - name: TradingAdvisor
+    strategyName: DEMA
+
+  - name: Trader
+
+  - name: PerformanceAnalyzer
+    enableConsoleTable: true
+```
+
+| Feature              | Sandbox (`sandbox: true`)       | Paper Trading (`paper-binance`) |
+|----------------------|---------------------------------|---------------------------------|
+| Market data source   | Binance Testnet                 | Binance Mainnet (real prices)   |
+| Order execution      | Real orders on testnet          | Simulated locally               |
+| API keys required    | ✅ Testnet keys                 | ❌ Not required                 |
+| Network dependency   | Requires testnet availability   | Only needs price feed           |
+| Best for             | Testing order execution logic   | Quick strategy iteration        |
+
+> [!TIP]
+> Use `paper-binance` for rapid strategy testing with real market conditions. Switch to `sandbox` when you need to test actual order execution and API integration.
+
+#### 4. Live Trading (Real Money)
 
 > [!CAUTION]
 > **REAL MONEY AT RISK.** Only use live trading if you fully understand the risks and have thoroughly tested your strategy via backtesting and sandbox trading.
@@ -317,7 +371,7 @@ plugins:
 [I understand that Gekko only automates MY OWN trading strategies]: true
 ```
 
-#### 4. Supervision Mode
+#### 5. Supervision Mode
 
 Monitor your bot's health with Telegram commands and receive system alerts.
 
