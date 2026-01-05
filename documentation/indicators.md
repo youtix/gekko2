@@ -550,30 +550,6 @@ Volume indicators analyze trading activity to confirm trends and predict reversa
 
 ---
 
-### Volume Delta
-
-**Volume Delta** analyzes the difference between buying and selling volume, applying MACD analysis for trend detection.
-
-| Parameter   | Type   | Default    | Description                      |
-|-------------|--------|------------|----------------------------------|
-| `src`       | string | 'quote'    | Volume source: `quote` or `base` |
-| `short`     | number | 12         | Fast EMA period                  |
-| `long`      | number | 26         | Slow EMA period                  |
-| `signal`    | number | 9          | Signal line period               |
-
-**Output:**
-- `volumeDelta` — Raw volume delta (buy - sell volume)
-- `macd` — MACD of volume delta
-- `signal` — Signal line
-- `hist` — MACD histogram
-
-**Use Cases:**
-- Confirming price breakouts
-- Identifying accumulation/distribution
-- Detecting smart money activity
-
----
-
 ### EFI — Elder's Force Index
 
 **Elder's Force Index** measures the force of bulls during upward movements and bears during downward movements.

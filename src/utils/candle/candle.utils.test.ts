@@ -10,9 +10,6 @@ const createCandle = (start: number, open: number, close: number, high: number, 
   high,
   low,
   volume,
-  volumeActive: 0,
-  quoteVolume: 0,
-  quoteVolumeActive: 0,
 });
 const candles: [Candle, Candle] = [
   createCandle(toTimestamp('2024-06-01T00:00:00Z'), 100, 100, 100, 100, 1),

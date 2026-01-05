@@ -8,9 +8,6 @@ export const candleSchema = z.object({
   low: z.number().min(0),
   close: z.number().min(0),
   volume: z.number().min(0),
-  volumeActive: z.number().min(0).optional(),
-  quoteVolume: z.number().min(0).optional(),
-  quoteVolumeActive: z.number().min(0).optional(),
 });
 
 export const candlesSchema = z.array(candleSchema);

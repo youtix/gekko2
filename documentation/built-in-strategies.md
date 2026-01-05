@@ -15,7 +15,6 @@ Gekko 2 comes with a variety of pre-built trading strategies that you can use ri
 | [TMA](#tma---triple-moving-average)                             | Trend Following   | STICKY     | Strong trends       |
 | [SMACrossover](#smacrossover---simple-moving-average-crossover) | Trend Following   | MARKET     | Quick entries       |
 | [EMARibbon](#emaribbon---exponential-moving-average-ribbon)     | Trend Following   | STICKY     | Trend confirmation  |
-| [VolumeDelta](#volumedelta---volume-based-signals)              | Volume Analysis   | STICKY     | Volume-driven moves |
 | [GridBot](#gridbot---grid-trading-strategy)                     | Range Trading     | LIMIT      | Sideways markets    |
 
 ---
@@ -306,58 +305,6 @@ strategy:
 
 ---
 
-## Volume Analysis Strategies
-
-### VolumeDelta — Volume-Based Signals
-
-The VolumeDelta strategy analyzes **buying vs selling volume** using the Volume Delta indicator with MACD smoothing. It generates signals based on volume momentum.
-
-#### How It Works
-
-1. Calculates Volume Delta (difference between buy and sell volume)
-2. Applies MACD calculation on the volume delta
-3. Uses the configured output (`volumeDelta`, `macd`, `signal`, or `hist`) for comparison
-4. When the output exceeds the **up threshold** for persistence → **BUY**
-5. When the output drops below the **down threshold** for persistence → **SELL**
-
-#### Parameters
-
-| Parameter                | Type                                    | Description                           |
-|--------------------------|-----------------------------------------|---------------------------------------|
-| `src`                    | `quote` or `base`                       | Volume source                         |
-| `short`                  | number                                  | Short period for MACD calculation     |
-| `long`                   | number                                  | Long period for MACD calculation      |
-| `signal`                 | number                                  | Signal line period                    |
-| `output`                 | `volumeDelta`, `macd`, `signal`, `hist` | Output to use for signals             |
-| `thresholds.up`          | number                                  | Positive threshold for bullish signal |
-| `thresholds.down`        | number                                  | Negative threshold for bearish signal |
-| `thresholds.persistence` | number                                  | Candles the condition must persist    |
-
-#### Example Configuration
-
-```yaml
-strategy:
-  name: VolumeDelta
-  params:
-    src: quote
-    short: 12
-    long: 26
-    signal: 9
-    output: hist
-    thresholds:
-      up: 0
-      down: 0
-      persistence: 1
-```
-
-#### When to Use
-
-- High-volume markets
-- When volume is a leading indicator
-- Confirming price moves with volume
-
----
-
 ## Range Trading Strategies
 
 ### GridBot — Grid Trading Strategy
@@ -430,4 +377,3 @@ strategy:
 | Trade overbought/oversold   | RSI, CCI             |
 | Profit from ranging markets | GridBot              |
 | Quick entries on crossovers | SMACrossover         |
-| Volume-confirmed signals    | VolumeDelta          |

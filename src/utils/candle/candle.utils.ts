@@ -37,9 +37,6 @@ export const fillMissingCandles = (candles: Candle[]): Candle[] => {
         low: Math.min(previousClose, close),
         close,
         volume: previousCandle?.volume ?? 0,
-        volumeActive: previousCandle?.volumeActive ?? 0,
-        quoteVolume: previousCandle?.quoteVolume ?? 0,
-        quoteVolumeActive: previousCandle?.quoteVolumeActive ?? 0,
       };
     });
 };

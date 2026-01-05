@@ -8,4 +8,3 @@ export * from './macd/macd.strategy';
 export * from './rsi/rsi.strategy';
 export * from './smaCrossover/smaCrossover.strategy';
 export * from './tma/tma.strategy';
-export * from './volumeDelta/volumeDelta.strategy';
