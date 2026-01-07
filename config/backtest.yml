@@ -6,8 +6,8 @@ watch:
   warmup:
     candleCount: 365
   daterange:
-    start: '2018-01-01T00:00:00.000Z'
-    end: '2025-11-01T00:00:00.000Z'
+    start: '2017-10-01T00:00:00.000Z'
+    end: '2026-01-01T00:00:00.000Z'
 
 exchange:
   name: dummy-cex

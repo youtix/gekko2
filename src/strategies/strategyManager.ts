@@ -172,7 +172,7 @@ export class StrategyManager extends EventEmitter {
         break;
       case 'error':
         error('strategy', message);
-        break;
+        throw new GekkoError('strategy', message);
     }
     this.emit<StrategyInfo>(STRATEGY_INFO_EVENT, {
       timestamp: Date.now(),

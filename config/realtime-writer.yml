@@ -2,9 +2,6 @@ watch:
   asset: BTC
   currency: USDT
   mode: realtime
-  timeframe: '1d'
-  warmup:
-    candleCount: 365
 
 exchange:
   name: binance
