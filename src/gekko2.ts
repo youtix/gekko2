@@ -40,6 +40,7 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
     await gekkoPipeline(); // Launch bot
   } catch (e) {
     error('gekko', e instanceof Error ? e.message : e);
+    process.exit(1);
   }
 };
 

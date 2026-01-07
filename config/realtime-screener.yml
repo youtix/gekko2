@@ -2,12 +2,13 @@ watch:
   asset: BTC
   currency: USDT
   mode: realtime # backtest | importer | realtime
-  timeframe: 4h
-  warmup:
-    candleCount: 365
+  timeframe: 5m
 
 exchange:
-  name: binance
+  name: paper-binance
+  simulationBalance:
+    asset: 100
+    currency: 300000
 
 strategy:
   name: DebugAdvice
@@ -17,6 +18,8 @@ strategy:
 plugins:
   - name: TradingAdvisor
     strategyName: DebugAdvice
+
+  - name: Trader
 
   - name: EventSubscriber
     token: # Your Telegram bot token

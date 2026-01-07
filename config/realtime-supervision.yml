@@ -5,7 +5,10 @@ watch:
   timeframe: 5m
 
 exchange:
-  name: binance
+  name: paper-binance
+  simulationBalance:
+    asset: 100
+    currency: 300000
 
 strategy:
   name: DebugAdvice
@@ -16,8 +19,10 @@ plugins:
   - name: TradingAdvisor
     strategyName: DebugAdvice
 
+  - name: Trader
+
   - name: Supervision
-    token: # Your telegram bot token>
+    token: # Your telegram bot token
     botUsername: # Your telegram bot username
     cpuThreshold: 80
     memoryThreshold: 1024

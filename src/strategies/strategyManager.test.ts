@@ -375,10 +375,14 @@ describe('StrategyManager', () => {
         { level: 'debug' as LogLevel, logger: debug },
         { level: 'info' as LogLevel, logger: info },
         { level: 'warn' as LogLevel, logger: warning },
-        { level: 'error' as LogLevel, logger: error },
       ])('calls $level logger', ({ level, logger }) => {
         manager['log'](level, 'message');
         expect(logger).toHaveBeenCalledWith('strategy', 'message');
+      });
+
+      it('calls error logger', () => {
+        expect(() => manager['log']('error', 'message')).toThrow(GekkoError);
+        expect(error).toHaveBeenCalledWith('strategy', 'message');
       });
 
       it('emits STRATEGY_INFO_EVENT with metadata', () => {
@@ -389,11 +393,11 @@ describe('StrategyManager', () => {
           const listener = vi.fn();
           manager.on(STRATEGY_INFO_EVENT, listener);
 
-          manager['log']('error', 'Something happened');
+          manager['log']('info', 'Something happened');
 
           expect(listener).toHaveBeenCalledWith({
             timestamp: timestamp.getTime(),
-            level: 'error',
+            level: 'info',
             tag: 'strategy',
             message: 'Something happened',
           });
