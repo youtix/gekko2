@@ -7,7 +7,7 @@ import { info } from '@services/logger';
 import { CCXTExchange } from '../ccxtExchange';
 import { DummyCentralizedExchange } from '../dummy/dummyCentralizedExchange';
 import { DummyCentralizedExchangeConfig } from '../dummy/dummyCentralizedExchange.types';
-import { DummyExchange, Exchange, FetchOHLCVParams, MarketData } from '../exchange.types';
+import { DummyExchange, Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from '../exchange.types';
 import { PaperTradingBinanceExchangeConfig } from './paperTradingBinanceExchange.types';
 
 /**
@@ -103,8 +103,13 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
     return this.simulatedExchange.fetchBalance();
   }
 
-  public async createLimitOrder(side: OrderSide, amount: number, price: number): Promise<OrderState> {
-    return this.simulatedExchange.createLimitOrder(side, amount, price);
+  public async createLimitOrder(
+    side: OrderSide,
+    amount: number,
+    price: number,
+    onSettled?: OrderSettledCallback,
+  ): Promise<OrderState> {
+    return this.simulatedExchange.createLimitOrder(side, amount, price, onSettled);
   }
 
   public async createMarketOrder(side: OrderSide, amount: number): Promise<OrderState> {

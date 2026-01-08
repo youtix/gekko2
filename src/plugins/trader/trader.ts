@@ -300,12 +300,10 @@ export class Trader extends Plugin {
     // Update warmup candle until warmup is completed
     if (!this.warmupCompleted) this.warmupCandle = candle;
 
-    // Check orders in backtest mode
+    // Synchronize periodically in backtest mode (order fills are handled by exchange callbacks)
     if (this.mode === 'backtest') {
       const minutes = differenceInMinutes(candle.start, 0);
-      const promises = Array.from(this.orders.values()).map(({ orderInstance }) => orderInstance.checkOrder());
-      if (this.currentTimestamp && minutes % BACKTEST_SYNC_INTERVAL === 0) promises.push(this.synchronize());
-      await Promise.all(promises);
+      if (this.currentTimestamp && minutes % BACKTEST_SYNC_INTERVAL === 0) await this.synchronize();
     }
 
     // Then update current timestamp

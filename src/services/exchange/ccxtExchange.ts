@@ -15,7 +15,7 @@ import { each, first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
 import { binanceExchangeSchema } from './binance/binance.schema';
 import { BROKER_MANDATORY_FEATURES, LIMITS, PARAMS } from './exchange.const';
-import { Exchange, FetchOHLCVParams, MarketData } from './exchange.types';
+import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from './exchange.types';
 import {
   checkOrderAmount,
   checkOrderCost,
@@ -182,7 +182,12 @@ export class CCXTExchange implements Exchange {
     });
   }
 
-  public async createLimitOrder(side: OrderSide, amount: number, price: number) {
+  public async createLimitOrder(
+    side: OrderSide,
+    amount: number,
+    price: number,
+    _onSettled?: OrderSettledCallback, // Ignored - real exchanges use polling
+  ) {
     return retry<OrderState>(async () => {
       const limits = this.client.market(this.symbol).limits;
       const orderPrice = checkOrderPrice(price, limits);

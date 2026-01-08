@@ -133,7 +133,7 @@ describe('PaperTradingBinanceExchange', () => {
 
     it('createLimitOrder delegates to simulated exchange', async () => {
       await exchange.createLimitOrder('BUY', 0.1, 100);
-      expect(DummyCentralizedExchange.prototype.createLimitOrder).toHaveBeenCalledWith('BUY', 0.1, 100);
+      expect(DummyCentralizedExchange.prototype.createLimitOrder).toHaveBeenCalledWith('BUY', 0.1, 100, undefined);
     });
 
     it('createMarketOrder delegates to simulated exchange', async () => {

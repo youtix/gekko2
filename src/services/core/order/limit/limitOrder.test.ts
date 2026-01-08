@@ -95,7 +95,7 @@ describe('LimitOrder', () => {
 
       await order.launch();
 
-      expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BUY', 1.5, 101);
+      expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BUY', 1.5, 101, expect.any(Function));
       expect([...order['transactions'].values()]).toEqual([
         {
           id: defaultOrderId,

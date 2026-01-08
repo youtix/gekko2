@@ -24,7 +24,7 @@ export class StickyOrder extends Order {
     this.isChecking = false;
     this.amount = amount;
 
-    bindAll(this, [this.checkOrder.name]);
+    bindAll(this, [this.checkOrder.name, this.createLimitOrderWithCallback.name]);
 
     if (this.mode === 'realtime') this.interval = setInterval(this.checkOrder, orderSync);
   }
@@ -32,9 +32,14 @@ export class StickyOrder extends Order {
   public async launch(): Promise<void> {
     const price = await this.processStickyPrice();
     const filledAmount = sumBy(Array.from(this.transactions.values()), 'filled');
+    const amount = this.amount - filledAmount;
 
     // Creating initial order
-    this.createLimitOrder(this.side, this.amount - filledAmount, price);
+    if (this.mode === 'backtest') {
+      await this.createLimitOrderWithCallback(this.side, amount, price);
+    } else {
+      await this.createLimitOrder(this.side, amount, price);
+    }
   }
 
   public async cancel() {
@@ -238,5 +243,16 @@ export class StickyOrder extends Order {
 
   protected handleFetchOrderError(error: Error) {
     return Promise.resolve(this.orderErrored(error));
+  }
+
+  /** Only used in backtesting mode */
+  private async createLimitOrderWithCallback(side: OrderSide, amount: number, price: number) {
+    try {
+      const callback = (order: OrderState) => this.handleCreateOrderSuccess(order);
+      const order = await this.exchange.createLimitOrder(side, amount, price, callback);
+      await this.handleCreateOrderSuccess(order);
+    } catch (error) {
+      await this.handleCreateOrderError(error);
+    }
   }
 }
