@@ -43,6 +43,8 @@ export type FetchOHLCVParams = {
   limit?: number;
 };
 
+export type OrderSettledCallback = (orderState: OrderState) => void;
+
 export interface Exchange {
   fetchTicker(): Promise<Ticker>;
   fetchOHLCV(params?: FetchOHLCVParams): Promise<Candle[]>;
@@ -50,7 +52,12 @@ export interface Exchange {
   fetchBalance(): Promise<Portfolio>;
   getExchangeName(): string;
   getMarketData(): MarketData;
-  createLimitOrder(side: OrderSide, amount: number, price: number): Promise<OrderState>;
+  createLimitOrder(
+    side: OrderSide,
+    amount: number,
+    price: number,
+    onSettled?: OrderSettledCallback,
+  ): Promise<OrderState>;
   createMarketOrder(side: OrderSide, amount: number): Promise<OrderState>;
   cancelOrder(id: string): Promise<OrderState>;
   loadMarkets(): Promise<void>;

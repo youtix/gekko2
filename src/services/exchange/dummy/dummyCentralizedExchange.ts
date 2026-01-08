@@ -6,7 +6,7 @@ import { Trade } from '@models/trade.types';
 import { config } from '@services/configuration/configuration';
 import { LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
-import { Exchange, FetchOHLCVParams, MarketData } from '@services/exchange/exchange.types';
+import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from '@services/exchange/exchange.types';
 import { toTimestamp } from '@utils/date/date.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
@@ -18,6 +18,7 @@ import { findCandleIndexByTimestamp } from './dummyCentralizedExchange.utils';
 export class DummyCentralizedExchange implements Exchange {
   private readonly mutex = new AsyncMutex();
   private readonly ordersMap: Map<string, DummyInternalOrder>;
+  private readonly orderSettledCallbacks: Map<string, OrderSettledCallback>;
   private readonly buyOrders: DummyInternalOrder[]; // Sorted by price DESC
   private readonly sellOrders: DummyInternalOrder[]; // Sorted by price ASC
   private readonly candles: Candle[];
@@ -37,6 +38,7 @@ export class DummyCentralizedExchange implements Exchange {
     this.ticker = { ...initialTicker };
     this.candles = [];
     this.ordersMap = new Map();
+    this.orderSettledCallbacks = new Map();
     this.buyOrders = [];
     this.sellOrders = [];
     const start = config.getWatch().daterange?.start;
@@ -106,7 +108,12 @@ export class DummyCentralizedExchange implements Exchange {
     }));
   }
 
-  public async createLimitOrder(side: OrderSide, amount: number, price: number): Promise<OrderState> {
+  public async createLimitOrder(
+    side: OrderSide,
+    amount: number,
+    price: number,
+    onSettled?: OrderSettledCallback,
+  ): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
       const checkedPrice = checkOrderPrice(price, this.marketData);
       const normalizedAmount = checkOrderAmount(amount, this.marketData);
@@ -127,6 +134,8 @@ export class DummyCentralizedExchange implements Exchange {
         type: 'LIMIT',
       };
       this.ordersMap.set(id, order);
+
+      if (onSettled) this.orderSettledCallbacks.set(id, onSettled);
 
       if (side === 'BUY') this.insertBuyOrder(order);
       else this.insertSellOrder(order);
@@ -200,6 +209,8 @@ export class DummyCentralizedExchange implements Exchange {
           const idx = this.sellOrders.indexOf(order);
           if (idx !== -1) this.sellOrders.splice(idx, 1);
         }
+
+        this.notifyAndCleanupCallback(order);
       }
 
       return this.cloneOrder(order);
@@ -309,6 +320,16 @@ export class DummyCentralizedExchange implements Exchange {
       this.portfolio.asset.total -= order.amount;
       this.portfolio.currency.free += gain;
       this.portfolio.currency.total += gain;
+    }
+
+    this.notifyAndCleanupCallback(order);
+  }
+
+  private notifyAndCleanupCallback(order: DummyInternalOrder) {
+    const callback = this.orderSettledCallbacks.get(order.id);
+    if (callback) {
+      callback(this.cloneOrder(order));
+      this.orderSettledCallbacks.delete(order.id);
     }
   }
 

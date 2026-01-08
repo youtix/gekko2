@@ -68,7 +68,7 @@ describe('StickyOrder', () => {
 
         await createOrder(side, amount);
 
-        expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith(side, amount, expectedPrice);
+        expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith(side, amount, expectedPrice, expect.any(Function));
       },
     );
 
@@ -81,7 +81,7 @@ describe('StickyOrder', () => {
 
       await order.launch(); // Re-launch (e.g. after move)
 
-      expect(fakeExchange.createLimitOrder).toHaveBeenLastCalledWith('SELL', 2, 58);
+      expect(fakeExchange.createLimitOrder).toHaveBeenLastCalledWith('SELL', 2, 58, expect.any(Function));
     });
   });
 
