@@ -23,13 +23,17 @@ export class LimitOrder extends Order {
     this.isChecking = false;
     this.isCanceling = false;
 
-    bindAll(this, [this.checkOrder.name]);
+    bindAll(this, [this.checkOrder.name, this.createLimitOrderWithCallback.name]);
 
     if (this.mode === 'realtime') this.interval = setInterval(this.checkOrder, orderSync);
   }
 
   public async launch(): Promise<void> {
-    await this.createLimitOrder(this.side, this.amount, this.price);
+    if (this.mode === 'backtest') {
+      await this.createLimitOrderWithCallback(this.side, this.amount, this.price);
+    } else {
+      await this.createLimitOrder(this.side, this.amount, this.price);
+    }
   }
 
   public async cancel() {
@@ -128,6 +132,17 @@ export class LimitOrder extends Order {
           'order',
           `[${this.gekkoOrderId}] ${this.side} ${this.type} order update returned unexpected status: ${status ?? 'unknown'}`,
         );
+    }
+  }
+
+  /** Only used in backtesting mode */
+  private async createLimitOrderWithCallback(side: OrderSide, amount: number, price: number) {
+    try {
+      const callback = (order: OrderState) => this.applyOrderUpdate(order);
+      const order = await this.exchange.createLimitOrder(side, amount, price, callback);
+      await this.handleCreateOrderSuccess(order);
+    } catch (error) {
+      await this.handleCreateOrderError(error);
     }
   }
 }
