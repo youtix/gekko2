@@ -1,3 +1,62 @@
+# [2.0.0](https://github.com/youtix/gekko2/compare/v1.2.0...v2.0.0) (2026-01-09)
+
+### Bug Fixes
+
+- align dummy exchange timeline and order sizing ([1ec04e5](https://github.com/youtix/gekko2/commit/1ec04e5cec2b0be21f8878749707972310e04362))
+- balance, timestamp, invalid order ([bc0103e](https://github.com/youtix/gekko2/commit/bc0103e6d9c2729f8ab506e45630a08925e36de7))
+- ci with array.from() function ([a7e305e](https://github.com/youtix/gekko2/commit/a7e305e39be051972ad56aa9150d1479766c7d9b))
+- **date:** include end candle in splitIntervals ([b281aea](https://github.com/youtix/gekko2/commit/b281aeaa38cfc9588c7f4e4dfd4828a65b7e5323))
+- delegate order validation to exchange & fix strategy warmup ([a8610d6](https://github.com/youtix/gekko2/commit/a8610d61d26efe190416cd3d39d449a7b985d04b))
+- emit correct event when order cancel fails ([ed3a8f1](https://github.com/youtix/gekko2/commit/ed3a8f1f2987f0b0c513b01a29dd5303480ca9a4))
+- **exchange:** interpret dummy fees as percentages ([e2bb370](https://github.com/youtix/gekko2/commit/e2bb3707c7a7b68621983f539658e6d4e90ce8ef))
+- fetch last completed candle on new candle using ccxt exchange ([da00e12](https://github.com/youtix/gekko2/commit/da00e129ad41b3a959735697e588e04b7efd86e0))
+- importer schema configuration ([a0920da](https://github.com/youtix/gekko2/commit/a0920dacf49cce60acf8e1ac1be3fc47258709fe))
+- maker fee handling for dummy exchange limit orders ([7649c98](https://github.com/youtix/gekko2/commit/7649c986d7885cc307fe6417bc058fdc565889e7))
+- return binance fee rate in percentage ([e020e1a](https://github.com/youtix/gekko2/commit/e020e1a86602f70f0e37f66089fb4df2d8bf7f9d))
+- synchronize in order completed event ([810dd1a](https://github.com/youtix/gekko2/commit/810dd1afa83609b249812d66e31575ff83c5c07a))
+- taker fee handling for dummy market buys ([1b49e95](https://github.com/youtix/gekko2/commit/1b49e95db54607d173794be746d100de44fb9969))
+- **trader:** handle order cancel success event ([a102e71](https://github.com/youtix/gekko2/commit/a102e7102e2937eaacf627e9dc23669b89341573))
+
+### Features
+
+- add event and shorten event subscriber command names and prefixes ([0055f88](https://github.com/youtix/gekko2/commit/0055f88360dbbc6403b12475a95b20c921f2668e))
+- add utility with tests and benchmarks ([118f74c](https://github.com/youtix/gekko2/commit/118f74c4bd72df5f806b5f47f876ea337bf61067))
+- add hyperliquid exchange & migrate to CCXT ([8d1863e](https://github.com/youtix/gekko2/commit/8d1863e93c3fc23e51f363d4bf0e04b1c6dee9cb))
+- add limit order ([6721b67](https://github.com/youtix/gekko2/commit/6721b674be45baf88186bfd429cf40a6960d0bad))
+- add market limits informations to strategies ([700963e](https://github.com/youtix/gekko2/commit/700963e7c0e71e67bed9574bd92655fcdd738283))
+- add market order support and summary helper ([4cac6dd](https://github.com/youtix/gekko2/commit/4cac6ddbc333e353fd149c5e963740d0d671db81))
+- add order cancel event in strategy & add log on each trade in perf analyzer ([1ae4bcc](https://github.com/youtix/gekko2/commit/1ae4bccc192b53adb2f56cbbaa550605ed1d1aa1))
+- add order canceled hook in strategies ([3703d85](https://github.com/youtix/gekko2/commit/3703d85ff5f719cb6b6e8481adc78bbc4b33327d))
+- add paper trading Binance exchange with real market data and simulated orders ([079bfd2](https://github.com/youtix/gekko2/commit/079bfd25c70918211e7395391ba46aaba449a4e7))
+- add realtime-trader config, update various strategy and exchange settings, and improve error handling ([1953ef6](https://github.com/youtix/gekko2/commit/1953ef6e42eaf56c07a6b8bff9ede8ddd2e1e71a))
+- add SMA Crossover strategy with its implementation, types, tests, and benchmarks ([c3509a5](https://github.com/youtix/gekko2/commit/c3509a557c2f4a1f0a5a2be6d2fe82e03eeda89b))
+- create GridBot strat and use a sequential event emitter for plugin streams and trader events ([b9549d8](https://github.com/youtix/gekko2/commit/b9549d8b2f5246c2e1c8ea5aec9557ee5a7e968f))
+- enhance PluginsStream error handling and lifecycle management ([d6be55f](https://github.com/youtix/gekko2/commit/d6be55f891709bbfc593a741dfe0b935ffdd7b00))
+- implement per-order synchronization for realtime orders ([2101213](https://github.com/youtix/gekko2/commit/2101213c6132330914d2e10872871f8e431a6b6d))
+- implement Sharpe and Sortino ratio calculations, integrate them into the performance analyzer ([dad5bcf](https://github.com/youtix/gekko2/commit/dad5bcf7da82d7a2f68840319b048aa62ab00503))
+- implement subscription-based monitoring with new commands and refactor existing checks in Supervision plugin ([452aaa5](https://github.com/youtix/gekko2/commit/452aaa581c47b4b5e75081daf1a452494171496a))
+- improve backtest performance ([0a60686](https://github.com/youtix/gekko2/commit/0a60686e66ae342fff674696ccde83fc51db49b1))
+- introduce for accurate maximum drawdown calculation ([e18387a](https://github.com/youtix/gekko2/commit/e18387a65bf0af4e711b7eb5fb56164c49cde0dd))
+- introduce free, used, and total balance tracking for portfolio assets and currencies ([2b79214](https://github.com/youtix/gekko2/commit/2b79214c967ce220b3331c3f5d019759bd88f656))
+- introduce longest drawdown duration metric for performance analysis and reporting ([f2a1e2c](https://github.com/youtix/gekko2/commit/f2a1e2c85e64d264e310e09124ed700ffbf010e5))
+- **plugins:** merge paper trader with trader plugin ([12790d4](https://github.com/youtix/gekko2/commit/12790d4c2a9c9fc58e7820144d2af1328aad331c))
+- **plugins:** merge paper trader with trader plugin ([c25f69a](https://github.com/youtix/gekko2/commit/c25f69ad3998ec0b00b3b2d4018ff04a4affd958))
+- refactor trader exchange synchronization for realtime and backtest modes ([fe27b19](https://github.com/youtix/gekko2/commit/fe27b19164c66251e49b91553a746ff7c6a62402))
+- remove backtest scanner option ([100931e](https://github.com/youtix/gekko2/commit/100931e20d4f2d857a9f6bdf29c7cbb6b6c4f7ff))
+- remove stop gekko error & add portfolio in strategy tool & add weight to plugins ([0ae4867](https://github.com/youtix/gekko2/commit/0ae486706efbf7b0140a610c97185f2222881a15))
+- remove VolumeDelta strategy and indicator, and simplify candle data by removing active volume properties ([3c3d957](https://github.com/youtix/gekko2/commit/3c3d957eb49b20e46559ca3d7ca8195169f5380a))
+- replace gap filler stream with candle validator stream, adding future candle rejection and duplicate detection ([5917654](https://github.com/youtix/gekko2/commit/5917654941a87bacf67a33877cebb5f7cc19f184))
+- replacing metric by metric ([2d23261](https://github.com/youtix/gekko2/commit/2d23261464d1de5f04613a39824f82511ef8448c))
+- rework the event flow of orders and plugins ([8c91bf8](https://github.com/youtix/gekko2/commit/8c91bf844157349a00425b946cb64cbee6cc523c))
+- strategies can create order in init function ([f0161fd](https://github.com/youtix/gekko2/commit/f0161fda7d7e9c0fb9f859a97c03ca9c0508b6c4))
+- update event system to support batched event processing with sequential, parallel, and latest strategies ([2b9b6fb](https://github.com/youtix/gekko2/commit/2b9b6fb13de57db2258274bc40300d0d80a7e8d0))
+- update trader and performance analyzer plugin to accept different order type ([0f2e487](https://github.com/youtix/gekko2/commit/0f2e487ca9e7d9b16490f9bb68ab66a8a4412c0e))
+- use taker fee when using market order ([c7c31eb](https://github.com/youtix/gekko2/commit/c7c31eb025ef1614f865856512b3f6c2f44a0292))
+
+### BREAKING CHANGES
+
+- Last commit before version 2
+
 # [1.2.0](https://github.com/youtix/gekko2/compare/v1.1.0...v1.2.0) (2025-10-30)
 
 ### Bug Fixes
