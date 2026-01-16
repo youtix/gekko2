@@ -42,6 +42,9 @@ export const computeOrderPricing: ComputeOrderPricingFn = (side, price, amount, 
   return { effectivePrice: price, base, fee: 0, total: base };
 };
 
-export const isEmptyPortfolio = (portfolio: Portfolio) => {
-  return portfolio.asset.total <= 0 && portfolio.currency.total <= 0;
+export const isEmptyPortfolio = (portfolio: Portfolio): boolean => {
+  for (const balance of portfolio.values()) {
+    if (balance.total > 0) return false;
+  }
+  return true;
 };

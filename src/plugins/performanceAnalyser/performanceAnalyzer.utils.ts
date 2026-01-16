@@ -2,6 +2,7 @@ import { OrderCompletedEvent } from '@models/event.types';
 import { debug, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
+import { getBalance } from '@utils/portfolio/portfolio.utils';
 import { formatRatio, formatSignedAmount, formatSignedPercent } from '@utils/string/string.utils';
 import { ROUND } from './performanceAnalyzer.const';
 import { Report, TradeBalances } from './performanceAnalyzer.types';
@@ -96,11 +97,14 @@ export const logTrade = (
     });
   }
 
+  const assetBalance = getBalance(exchange.portfolio, asset);
+  const currencyBalance = getBalance(exchange.portfolio, currency);
+
   debug(
     'performance analyzer',
     [
       `${order.side === 'BUY' ? 'Bought' : 'Sold'}`,
-      `${order.side === 'BUY' ? round(exchange.portfolio.asset.total, ROUND) : round(exchange.portfolio.currency.total, ROUND)}`,
+      `${order.side === 'BUY' ? round(assetBalance.total, ROUND) : round(currencyBalance.total, ROUND)}`,
       `${order.side === 'BUY' ? asset : currency}`,
       `at ${toISOString(order.orderCreationDate)}`,
     ].join(' '),

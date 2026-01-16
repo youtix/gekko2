@@ -12,9 +12,9 @@ import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import { Portfolio } from '@models/portfolio.types';
+import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
-import { Nullable } from '@models/utility.types';
+import { Asset, Nullable, Pair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { MarketData } from '@services/exchange/exchange.types';
 import { debug, error, info, warning } from '@services/logger';
@@ -32,6 +32,7 @@ export class StrategyManager extends EventEmitter {
   private warmupPeriod: number;
   private indicators: Indicator[];
   private strategyParams: object;
+  private pairs: Pair[];
   private marketData: Nullable<MarketData>;
   private portfolio: Portfolio;
   private strategy?: Strategy<object>;
@@ -44,10 +45,8 @@ export class StrategyManager extends EventEmitter {
     this.age = 0;
     this.indicators = [];
     this.strategyParams = config.getStrategy() ?? {};
-    this.portfolio = {
-      asset: { free: 0, used: 0, total: 0 },
-      currency: { free: 0, used: 0, total: 0 },
-    };
+    this.pairs = [[config.getWatch().asset, config.getWatch().currency]];
+    this.portfolio = new Map<Asset, BalanceDetail>();
     this.marketData = null;
     this.oneMinuteCandle = null;
 
@@ -199,6 +198,7 @@ export class StrategyManager extends EventEmitter {
       log: this.log,
       strategyParams: this.strategyParams,
       marketData: this.marketData,
+      pairs: this.pairs,
     };
   }
 }

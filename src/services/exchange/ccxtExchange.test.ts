@@ -198,10 +198,9 @@ describe('CCXTExchange', () => {
       const instance = (ccxt as any).binance.mock.instances.at(-1);
       instance.fetchBalance.mockResolvedValue({ BTC: { free: 1.5 }, USDT: { free: 1000 } });
       instance.market.mockReturnValue({ baseName: 'BTC', quote: 'USDT' });
-      expect(await exchange.fetchBalance()).toEqual({
-        asset: { free: 1.5, used: 0, total: 0 },
-        currency: { free: 1000, used: 0, total: 0 },
-      });
+      const balance = await exchange.fetchBalance();
+      expect(balance.get('BTC')).toEqual({ free: 1.5, used: 0, total: 0 });
+      expect(balance.get('USDT')).toEqual({ free: 1000, used: 0, total: 0 });
     });
   });
 

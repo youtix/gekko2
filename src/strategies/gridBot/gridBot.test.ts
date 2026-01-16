@@ -29,15 +29,15 @@ const makeCandle = (close: number): Candle =>
     volume: 1,
   }) as Candle;
 
-const balancedPortfolio: Portfolio = {
-  asset: { free: 5, used: 0, total: 5 },
-  currency: { free: 500, used: 0, total: 500 },
-};
+const balancedPortfolio: Portfolio = new Map<string, BalanceDetail>([
+  ['BTC', { free: 5, used: 0, total: 5 }],
+  ['USDT', { free: 500, used: 0, total: 500 }],
+]);
 
-const unbalancedPortfolio: Portfolio = {
-  asset: { free: 0, used: 0, total: 0 },
-  currency: { free: 1000, used: 0, total: 1000 },
-};
+const unbalancedPortfolio: Portfolio = new Map<string, BalanceDetail>([
+  ['BTC', { free: 0, used: 0, total: 0 }],
+  ['USDT', { free: 1000, used: 0, total: 1000 }],
+]);
 
 const defaultBalance: BalanceDetail = { free: 0, used: 0, total: 0 };
 
@@ -59,7 +59,7 @@ describe('GridBot', () => {
       issuedOrders.push({ id, price: order.price ?? 0, side: order.side, type: order.type });
       return id;
     });
-    tools = { strategyParams: defaultParams, marketData, createOrder, cancelOrder, log };
+    tools = { strategyParams: defaultParams, marketData, createOrder, cancelOrder, log, pairs: [['BTC', 'USDT']] };
   });
 
   const initStrategy = (
@@ -70,7 +70,7 @@ describe('GridBot', () => {
     tools.strategyParams = { ...defaultParams, ...params };
     strategy.init({
       candle: makeCandle(price),
-      portfolio: { asset: { ...portfolio.asset }, currency: { ...portfolio.currency } },
+      portfolio,
       tools,
       addIndicator: vi.fn(),
     });
@@ -110,10 +110,10 @@ describe('GridBot', () => {
         const assetAmount = assetValue / 100; // at price 100
         const currencyValue = totalValue - assetValue;
 
-        const balancedForLevels: Portfolio = {
-          asset: { free: assetAmount, used: 0, total: assetAmount },
-          currency: { free: currencyValue, used: 0, total: currencyValue },
-        };
+        const balancedForLevels: Portfolio = new Map<string, BalanceDetail>([
+          ['BTC', { free: assetAmount, used: 0, total: assetAmount }],
+          ['USDT', { free: currencyValue, used: 0, total: currencyValue }],
+        ]);
 
         initStrategy(100, { buyLevels, sellLevels }, balancedForLevels);
 
@@ -220,10 +220,10 @@ describe('GridBot', () => {
     it('skips rebalance if insufficient currency for buy', () => {
       // Asset value is 0, currency is 50 - total value 50, needs 25 asset value
       // That's buying 0.25 at price 100 = 25 in currency (but free currency is only 10)
-      const lowCurrencyPortfolio: Portfolio = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 10, used: 0, total: 50 },
-      };
+      const lowCurrencyPortfolio: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0, used: 0, total: 0 }],
+        ['USDT', { free: 10, used: 0, total: 50 }],
+      ]);
       initStrategy(100, {}, lowCurrencyPortfolio);
 
       expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('Insufficient currency'));
@@ -231,10 +231,10 @@ describe('GridBot', () => {
 
     it('skips rebalance if insufficient asset for sell', () => {
       // Currency is 0, asset is low - would need to SELL but not enough asset
-      const lowAssetPortfolio: Portfolio = {
-        asset: { free: 0.001, used: 0, total: 0.001 },
-        currency: { free: 100, used: 0, total: 100 },
-      };
+      const lowAssetPortfolio: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0.001, used: 0, total: 0.001 }],
+        ['USDT', { free: 100, used: 0, total: 100 }],
+      ]);
       initStrategy(100, {}, lowAssetPortfolio);
 
       // This portfolio needs a BUY to rebalance (asset value is low)

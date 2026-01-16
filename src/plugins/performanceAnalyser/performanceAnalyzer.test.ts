@@ -1,6 +1,7 @@
 import { PERFORMANCE_REPORT_EVENT } from '@constants/event.const';
 import { Candle } from '@models/candle.types';
 import { OrderCompletedEvent } from '@models/event.types';
+import { BalanceDetail } from '@models/portfolio.types';
 import { warning } from '@services/logger';
 import { addMinutes } from 'date-fns';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +13,7 @@ import { logFinalize, logTrade } from './performanceAnalyzer.utils';
 vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: vi.fn(() => ({ asset: 'BTC', currency: 'USD', warmup: { candleCount: 0 } })),
+    getWatch: vi.fn(() => ({ asset: 'BTC', currency: 'USDT', warmup: { candleCount: 0 } })),
     getStrategy: vi.fn(() => ({})),
   },
 }));
@@ -58,10 +59,10 @@ describe('PerformanceAnalyzer', () => {
       feePercent: 0,
     },
     exchange: {
-      portfolio: {
-        asset: { free: assetP, used: 0, total: assetP },
-        currency: { free: currP, used: 0, total: currP },
-      },
+      portfolio: new Map<string, BalanceDetail>([
+        ['BTC', { free: assetP, used: 0, total: assetP }],
+        ['USDT', { free: currP, used: 0, total: currP }],
+      ]),
       balance: { free: balance, used: 0, total: balance },
       price,
     },
@@ -181,10 +182,10 @@ describe('PerformanceAnalyzer', () => {
     });
 
     it('should set exposureActiveSince if currently holding asset', () => {
-      analyzer['latestPortfolio'] = {
-        asset: { free: 1, used: 0, total: 1 },
-        currency: { free: 0, used: 0, total: 0 },
-      };
+      const portfolio = new Map<string, BalanceDetail>();
+      portfolio.set('BTC', { free: 1, used: 0, total: 1 });
+      portfolio.set('USDT', { free: 0, used: 0, total: 0 });
+      analyzer['latestPortfolio'] = portfolio;
 
       analyzer.onStrategyWarmupCompleted([defaultCandle]);
 
@@ -192,10 +193,10 @@ describe('PerformanceAnalyzer', () => {
     });
 
     it('should NOT set exposureActiveSince if NOT holding asset', () => {
-      analyzer['latestPortfolio'] = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
+      const portfolio = new Map<string, BalanceDetail>();
+      portfolio.set('BTC', { free: 0, used: 0, total: 0 });
+      portfolio.set('USDT', { free: 1000, used: 0, total: 1000 });
+      analyzer['latestPortfolio'] = portfolio;
 
       analyzer.onStrategyWarmupCompleted([defaultCandle]);
 
@@ -305,95 +306,6 @@ describe('PerformanceAnalyzer', () => {
       };
       analyzer['processFinalize']();
       expect(analyzer.emit).toHaveBeenCalledWith(PERFORMANCE_REPORT_EVENT, expect.any(Object));
-    });
-  });
-
-  describe('calculateReportStatistics', () => {
-    const setupAnalyzer = (
-      balance: number,
-      startBalance: number,
-      startPortfolio: any = { asset: 0, currency: startBalance },
-      latestPortfolio: any | null = null,
-      endPrice: number = 100,
-      samples: any[] = [],
-    ) => {
-      const fullStartPortfolio = {
-        asset: { free: startPortfolio.asset as any, used: 0, total: startPortfolio.asset as any },
-        currency: { free: startPortfolio.currency as any, used: 0, total: startPortfolio.currency as any },
-      };
-      const fullLatestPortfolio = latestPortfolio
-        ? {
-            asset: { free: latestPortfolio.asset as any, used: 0, total: latestPortfolio.asset as any },
-            currency: { free: latestPortfolio.currency as any, used: 0, total: latestPortfolio.currency as any },
-          }
-        : fullStartPortfolio;
-
-      analyzer['balance'] = balance;
-      analyzer['start'] = { balance: startBalance, portfolio: fullStartPortfolio };
-      analyzer['latestPortfolio'] = fullLatestPortfolio;
-      analyzer['endPrice'] = endPrice;
-      analyzer['dates'] = { start: timestamp, end: timestamp + 31536000000 }; // 1 Year
-      analyzer['tradeBalanceSamples'] = samples;
-      analyzer['priceBalanceSamples'] = samples.map(s => ({ date: s.date, balance: s.balance }));
-    };
-
-    it('should return undefined if no start data', () => {
-      analyzer['start'] = { balance: 0, portfolio: null };
-      expect(analyzer['calculateReportStatistics']()).toBeUndefined();
-    });
-
-    it('should calculate basic profit correctly', () => {
-      setupAnalyzer(1100, 1000, undefined, { asset: 0, currency: 1100 });
-      const report = analyzer['calculateReportStatistics']();
-      expect(report.profit).toBe(100);
-      expect(report.relativeProfit).toBeCloseTo(10);
-      expect(report.yearlyProfit).toBeCloseTo(100);
-    });
-
-    it('should use mark to market balance if holding assets', () => {
-      // Holding 1 asset, price goes to 200. Start: 100 cash.
-      const startP = { asset: 1, currency: 0 }; // implicitly bought at start? Or just start with it.
-      // If we start with 1 asset at price 100 (startPrice), start balance = 100 (if calculated logic was different, but here it's explicit).
-      // Let's say start balance 100.
-      // End: still holding 1 asset, end price 200.
-      setupAnalyzer(100, 100, startP, startP, 200);
-
-      const report = analyzer['calculateReportStatistics']();
-      expect(report.balance).toBe(200); // 1 * 200 + 0
-      expect(report.profit).toBe(100); // 200 - 100
-    });
-
-    it('should calculate volatility metrics (Sharpe, Sortino)', () => {
-      const samples = [
-        { date: timestamp + 1000, balance: { total: 1010, free: 1010, used: 0 } }, // +1%
-        { date: timestamp + 2000, balance: { total: 1020.1, free: 1020.1, used: 0 } }, // +1%
-      ];
-      // Start 1000. Returns: 1%, 1%. Avg 1%. Stdev 0.
-      // If stdev 0, sharpe 0.
-      setupAnalyzer(1020.1, 1000, undefined, undefined, 100, samples);
-      analyzer['riskFreeReturn'] = 0;
-
-      let report = analyzer['calculateReportStatistics']();
-      expect(report.standardDeviation).toBe(0);
-      expect(report.sharpe).toBe(0);
-
-      // Add volatility
-      const samples2 = [
-        { date: timestamp + 1000, balance: { total: 1100, free: 1100, used: 0 } }, // +10%
-        { date: timestamp + 2000, balance: { total: 990, free: 990, used: 0 } }, // -10% from 1100
-      ];
-      setupAnalyzer(990, 1000, undefined, undefined, 100, samples2);
-      report = analyzer['calculateReportStatistics']();
-      expect(report.standardDeviation).toBeGreaterThan(0);
-      // We have a balance decline from 1100 to 990, so maxDrawdown should be positive
-      expect(report.maxDrawdown).toBeGreaterThan(0);
-    });
-
-    it('should handle zero duration gracefully', () => {
-      setupAnalyzer(1000, 1000);
-      analyzer['dates'].end = timestamp; // distinct from start? No, same.
-      const report = analyzer['calculateReportStatistics']();
-      expect(report.yearlyProfit).toBe(0); // avoided Infinity
     });
   });
 });

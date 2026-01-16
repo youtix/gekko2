@@ -167,18 +167,24 @@ export class CCXTExchange implements Exchange {
       const asset = balance[baseName ?? base];
       const currency = balance[quote];
 
-      return {
-        asset: {
-          free: asset?.free ?? 0,
-          used: asset?.used ?? 0,
-          total: asset?.total ?? 0,
-        },
-        currency: {
-          free: currency?.free ?? 0,
-          used: currency?.used ?? 0,
-          total: currency?.total ?? 0,
-        },
-      };
+      return new Map([
+        [
+          baseName ?? base,
+          {
+            free: asset?.free ?? 0,
+            used: asset?.used ?? 0,
+            total: asset?.total ?? 0,
+          },
+        ],
+        [
+          quote,
+          {
+            free: currency?.free ?? 0,
+            used: currency?.used ?? 0,
+            total: currency?.total ?? 0,
+          },
+        ],
+      ]);
     });
   }
 

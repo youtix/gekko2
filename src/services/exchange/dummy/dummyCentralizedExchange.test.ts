@@ -1,6 +1,5 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Candle } from '@models/candle.types';
-import { Portfolio } from '@models/portfolio.types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DummyCentralizedExchange } from './dummyCentralizedExchange';
 import type { DummyCentralizedExchangeConfig } from './dummyCentralizedExchange.types';
@@ -84,10 +83,9 @@ describe('DummyCentralizedExchange', () => {
   describe('fetchBalance', () => {
     it('returns initial balance', async () => {
       const exchange = createExchange({ simulationBalance: { asset: 5, currency: 1000 } });
-      expect(await exchange.fetchBalance()).toEqual({
-        asset: { free: 5, used: 0, total: 5 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      });
+      const balance = await exchange.fetchBalance();
+      expect(balance.get('BTC')).toEqual({ free: 5, used: 0, total: 5 });
+      expect(balance.get('USDT')).toEqual({ free: 1000, used: 0, total: 1000 });
     });
   });
 
@@ -120,14 +118,14 @@ describe('DummyCentralizedExchange', () => {
   describe('createLimitOrder', () => {
     it.each`
       side      | reserveField
-      ${'BUY'}  | ${'currency'}
-      ${'SELL'} | ${'asset'}
+      ${'BUY'}  | ${'USDT'}
+      ${'SELL'} | ${'BTC'}
     `('$side order reserves $reserveField balance', async ({ side, reserveField }) => {
       const exchange = createExchange();
       await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
       await exchange.createLimitOrder(side, 1, 100);
       const balance = await exchange.fetchBalance();
-      expect(balance[reserveField as keyof Portfolio].used).toBeGreaterThan(0);
+      expect(balance.get(reserveField as string)?.used).toBeGreaterThan(0);
     });
 
     it('throws when amount below minimum', async () => {
@@ -156,7 +154,7 @@ describe('DummyCentralizedExchange', () => {
       const before = await exchange.fetchBalance();
       await exchange.createMarketOrder(side, 1);
       const after = await exchange.fetchBalance();
-      expect(after.asset.total).not.toBe(before.asset.total);
+      expect(after.get('BTC')?.total).not.toBe(before.get('BTC')?.total);
     });
 
     it('throws when insufficient currency for market BUY', async () => {
@@ -307,7 +305,8 @@ describe('DummyCentralizedExchange', () => {
       await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
       await exchange.createLimitOrder('BUY', 1, 80);
       await exchange.createLimitOrder('BUY', 1, 95); // Higher price, goes first
-      expect(await exchange.fetchBalance()).toMatchObject({ currency: { used: expect.any(Number) } });
+      const balance = await exchange.fetchBalance();
+      expect(balance.get('USDT')?.used).toBeGreaterThan(0);
     });
 
     it('handles inserting order at end of sorted SELL list', async () => {
@@ -315,7 +314,8 @@ describe('DummyCentralizedExchange', () => {
       await exchange.processOneMinuteCandle(sampleCandle(Date.now() - 60_000));
       await exchange.createLimitOrder('SELL', 1, 110);
       await exchange.createLimitOrder('SELL', 1, 120); // Higher price, goes last
-      expect(await exchange.fetchBalance()).toMatchObject({ asset: { used: expect.any(Number) } });
+      const balance = await exchange.fetchBalance();
+      expect(balance.get('BTC')?.used).toBeGreaterThan(0);
     });
   });
 });

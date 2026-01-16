@@ -8,6 +8,7 @@ import { LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from '@services/exchange/exchange.types';
 import { toTimestamp } from '@utils/date/date.utils';
+import { clonePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
 import { AsyncMutex } from '../../../utils/async/asyncMutex';
@@ -23,26 +24,26 @@ export class DummyCentralizedExchange implements Exchange {
   private readonly sellOrders: DummyInternalOrder[]; // Sorted by price ASC
   private readonly candles: Candle[];
   private readonly marketData: MarketData;
-  private portfolio: Portfolio;
+  private readonly portfolio: Portfolio;
   private ticker: Ticker;
   private currentTimestamp: EpochTimeStamp;
   private orderSequence = 0;
 
   constructor(exchangeConfig: DummyCentralizedExchangeConfig) {
     const { marketData, simulationBalance, initialTicker } = exchangeConfig;
+    const { asset, currency, daterange } = config.getWatch();
     this.marketData = marketData;
-    this.portfolio = {
-      asset: { free: simulationBalance.asset, used: 0, total: simulationBalance.asset },
-      currency: { free: simulationBalance.currency, used: 0, total: simulationBalance.currency },
-    };
+    this.portfolio = new Map([
+      [asset, { free: simulationBalance.asset, used: 0, total: simulationBalance.asset }],
+      [currency, { free: simulationBalance.currency, used: 0, total: simulationBalance.currency }],
+    ]);
     this.ticker = { ...initialTicker };
     this.candles = [];
     this.ordersMap = new Map();
     this.orderSettledCallbacks = new Map();
     this.buyOrders = [];
     this.sellOrders = [];
-    const start = config.getWatch().daterange?.start;
-    this.currentTimestamp = start ? toTimestamp(start) : Date.now();
+    this.currentTimestamp = daterange?.start ? toTimestamp(daterange.start) : Date.now();
 
     bindAll(this, [this.mapOrderToTrade.name]);
   }
@@ -102,10 +103,7 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   public async fetchBalance(): Promise<Portfolio> {
-    return this.mutex.runExclusive(() => ({
-      asset: { ...this.portfolio.asset },
-      currency: { ...this.portfolio.currency },
-    }));
+    return this.mutex.runExclusive(() => clonePortfolio(this.portfolio));
   }
 
   public async createLimitOrder(
@@ -154,26 +152,34 @@ export class DummyCentralizedExchange implements Exchange {
       const cost = normalizedAmount * price;
       const totalCost = cost * (1 + (this.marketData.fee?.taker ?? 0));
 
+      const [asset, currency] = this.portfolio.keys();
+      const currencyBalance = this.portfolio.get(currency)!;
+      const assetBalance = this.portfolio.get(asset)!;
+
       if (side === 'BUY') {
-        if (this.portfolio.currency.free < totalCost)
+        if (currencyBalance.free < totalCost)
           throw new InvalidOrder(
-            `Insufficient currency balance (portfolio: ${this.portfolio.currency.free}, order cost: ${totalCost})`,
+            `Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`,
           );
-        this.portfolio.currency.free -= totalCost;
-        this.portfolio.currency.total -= totalCost;
-        this.portfolio.asset.free += normalizedAmount;
-        this.portfolio.asset.total += normalizedAmount;
+        currencyBalance.free -= totalCost;
+        currencyBalance.total -= totalCost;
+        assetBalance.free += normalizedAmount;
+        assetBalance.total += normalizedAmount;
       } else {
-        if (this.portfolio.asset.free < normalizedAmount)
+        if (assetBalance.free < normalizedAmount)
           throw new InvalidOrder(
-            `Insufficient asset balance (portfolio: ${this.portfolio.asset.free}, amount: ${normalizedAmount})`,
+            `Insufficient asset balance (portfolio: ${assetBalance.free}, amount: ${normalizedAmount})`,
           );
-        this.portfolio.asset.free -= normalizedAmount;
-        this.portfolio.asset.total -= normalizedAmount;
+        assetBalance.free -= normalizedAmount;
+        assetBalance.total -= normalizedAmount;
         const gain = cost * (1 - (this.marketData.fee?.taker ?? 0));
-        this.portfolio.currency.free += gain;
-        this.portfolio.currency.total += gain;
+        currencyBalance.free += gain;
+        currencyBalance.total += gain;
       }
+
+      // Update portfolio with modified balances
+      this.portfolio.set(asset, assetBalance);
+      this.portfolio.set(currency, currencyBalance);
 
       const order: DummyInternalOrder = {
         id,
@@ -230,22 +236,26 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   private reserveBalance(side: OrderSide, amount: number, price: number) {
+    const [asset, currency] = this.portfolio.keys();
+    const currencyBalance = this.portfolio.get(currency)!;
+    const assetBalance = this.portfolio.get(asset)!;
+
     if (side === 'BUY') {
       const cost = amount * price;
       const totalCost = cost * (1 + (this.marketData.fee?.maker ?? 0));
-      if (this.portfolio.currency.free < totalCost)
+      if (currencyBalance.free < totalCost)
         throw new InvalidOrder(
-          `Insufficient currency balance (portfolio: ${this.portfolio.currency.free}, order cost: ${totalCost})`,
+          `Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`,
         );
-      this.portfolio.currency.free -= totalCost;
-      this.portfolio.currency.used += totalCost;
+      currencyBalance.free -= totalCost;
+      currencyBalance.used += totalCost;
+      this.portfolio.set(currency, currencyBalance);
     } else {
-      if (this.portfolio.asset.free < amount)
-        throw new InvalidOrder(
-          `Insufficient asset balance (portfolio: ${this.portfolio.asset.free}, order cost: ${amount})`,
-        );
-      this.portfolio.asset.free -= amount;
-      this.portfolio.asset.used += amount;
+      if (assetBalance.free < amount)
+        throw new InvalidOrder(`Insufficient asset balance (portfolio: ${assetBalance.free}, order cost: ${amount})`);
+      assetBalance.free -= amount;
+      assetBalance.used += amount;
+      this.portfolio.set(asset, assetBalance);
     }
   }
 
@@ -254,13 +264,19 @@ export class DummyCentralizedExchange implements Exchange {
     const remaining = order.amount - filled;
     if (remaining <= 0) return;
 
+    const [asset, currency] = this.portfolio.keys();
+    const currencyBalance = this.portfolio.get(currency)!;
+    const assetBalance = this.portfolio.get(asset)!;
+
     if (order.side === 'BUY') {
       const release = remaining * (order.price ?? 0) * (1 + (this.marketData.fee?.maker ?? 0));
-      this.portfolio.currency.free += release;
-      this.portfolio.currency.used -= release;
+      currencyBalance.free += release;
+      currencyBalance.used -= release;
+      this.portfolio.set(currency, currencyBalance);
     } else {
-      this.portfolio.asset.free += remaining;
-      this.portfolio.asset.used -= remaining;
+      assetBalance.free += remaining;
+      assetBalance.used -= remaining;
+      this.portfolio.set(asset, assetBalance);
     }
   }
 
@@ -308,19 +324,27 @@ export class DummyCentralizedExchange implements Exchange {
     order.remaining = 0;
     order.timestamp = this.currentTimestamp;
 
+    const [asset, currency] = this.portfolio.keys();
+    const currencyBalance = this.portfolio.get(currency)!;
+    const assetBalance = this.portfolio.get(asset)!;
+
     if (order.side === 'BUY') {
       const cost = order.amount * price * (1 + (this.marketData.fee?.maker ?? 0));
-      this.portfolio.currency.used -= cost;
-      this.portfolio.currency.total -= cost;
-      this.portfolio.asset.free += order.amount;
-      this.portfolio.asset.total += order.amount;
+      currencyBalance.used -= cost;
+      currencyBalance.total -= cost;
+      assetBalance.free += order.amount;
+      assetBalance.total += order.amount;
     } else {
       const gain = order.amount * price * (1 - (this.marketData.fee?.maker ?? 0));
-      this.portfolio.asset.used -= order.amount;
-      this.portfolio.asset.total -= order.amount;
-      this.portfolio.currency.free += gain;
-      this.portfolio.currency.total += gain;
+      assetBalance.used -= order.amount;
+      assetBalance.total -= order.amount;
+      currencyBalance.free += gain;
+      currencyBalance.total += gain;
     }
+
+    // Update portfolio with modified balances
+    this.portfolio.set(asset, assetBalance);
+    this.portfolio.set(currency, currencyBalance);
 
     this.notifyAndCleanupCallback(order);
   }

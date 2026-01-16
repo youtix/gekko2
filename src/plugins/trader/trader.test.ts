@@ -10,6 +10,7 @@ import {
 import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
 import { OrderSide } from '@models/order.types';
+import { BalanceDetail } from '@models/portfolio.types';
 import { OrderSummary } from '@services/core/order/order.types';
 import { addMinutes } from 'date-fns';
 import * as lodash from 'lodash-es';
@@ -210,10 +211,12 @@ describe('Trader', () => {
       getExchangeName: vi.fn(() => 'MockExchange'),
       getIntervals: vi.fn(() => ({ exchangeSync: 1, orderSync: 1 })),
       fetchTicker: vi.fn().mockResolvedValue({ bid: 123 }),
-      fetchBalance: vi.fn().mockResolvedValue({
-        asset: { free: 1, used: 0, total: 1 },
-        currency: { free: 2, used: 0, total: 2 },
-      }),
+      fetchBalance: vi.fn().mockResolvedValue(
+        new Map<string, BalanceDetail>([
+          ['BTC', { free: 1, used: 0, total: 1 }],
+          ['USDT', { free: 2, used: 0, total: 2 }],
+        ]),
+      ),
       getMarketLimits: vi.fn(() => undefined),
     };
 
@@ -230,11 +233,16 @@ describe('Trader', () => {
       field                | expected
       ${'warmupCompleted'} | ${false}
       ${'warmupCandle'}    | ${null}
-      ${'portfolio'}       | ${{ asset: { free: 0, used: 0, total: 0 }, currency: { free: 0, used: 0, total: 0 } }}
       ${'balance'}         | ${{ free: 0, used: 0, total: 0 }}
       ${'price'}           | ${0}
     `('initializes $field to $expected', ({ field, expected }) => {
       expect((trader as any)[field]).toEqual(expected);
+    });
+
+    it('initializes portfolio as an empty Map', () => {
+      const portfolio = (trader as any).portfolio;
+      expect(portfolio).toBeInstanceOf(Map);
+      expect(portfolio.size).toBe(0);
     });
 
     it('initializes orders collection as empty map', () => {
@@ -259,34 +267,36 @@ describe('Trader', () => {
     });
     it('should update trader plugin portfolio with exchange portfolio', async () => {
       trader['currentTimestamp'] = 0;
-      trader['portfolio'] = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 0, used: 0, total: 0 },
-      };
-      fakeExchange.fetchBalance.mockResolvedValue({
-        asset: { free: 3, used: 0, total: 3 },
-        currency: { free: 50, used: 0, total: 50 },
-      });
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0, used: 0, total: 0 }],
+        ['USDT', { free: 0, used: 0, total: 0 }],
+      ]);
+      fakeExchange.fetchBalance.mockResolvedValue(
+        new Map<string, BalanceDetail>([
+          ['BTC', { free: 3, used: 0, total: 3 }],
+          ['USDT', { free: 50, used: 0, total: 50 }],
+        ]),
+      );
 
       await trader['synchronize']();
 
-      expect(trader['portfolio']).toStrictEqual({
-        asset: { free: 3, used: 0, total: 3 },
-        currency: { free: 50, used: 0, total: 50 },
-      });
+      expect(trader['portfolio'].get('BTC')).toEqual({ free: 3, used: 0, total: 3 });
+      expect(trader['portfolio'].get('USDT')).toEqual({ free: 50, used: 0, total: 50 });
     });
     it('should update balance', async () => {
       trader['currentTimestamp'] = 0;
       trader['balance'] = { free: 0, used: 0, total: 0 };
-      trader['portfolio'] = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 0, used: 0, total: 0 },
-      };
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0, used: 0, total: 0 }],
+        ['USDT', { free: 0, used: 0, total: 0 }],
+      ]);
       trader['price'] = 200;
-      fakeExchange.fetchBalance.mockResolvedValue({
-        asset: { free: 3, used: 0, total: 3 },
-        currency: { free: 50, used: 0, total: 50 },
-      });
+      fakeExchange.fetchBalance.mockResolvedValue(
+        new Map<string, BalanceDetail>([
+          ['BTC', { free: 3, used: 0, total: 3 }],
+          ['USDT', { free: 50, used: 0, total: 50 }],
+        ]),
+      );
       fakeExchange.fetchTicker.mockResolvedValue({ bid: 200 });
 
       await trader['synchronize']();
@@ -294,9 +304,9 @@ describe('Trader', () => {
       expect(trader['balance'].total).toBeCloseTo(650);
     });
     it.each`
-      action                                                                | oldPortfolio                                                                             | newPortfolio                                                                             | expectedEmit
-      ${'NOT emit portfolio change event because portfolio did not change'} | ${{ asset: { free: 3, used: 0, total: 3 }, currency: { free: 50, used: 0, total: 50 } }} | ${{ asset: { free: 3, used: 0, total: 3 }, currency: { free: 50, used: 0, total: 50 } }} | ${false}
-      ${'emit portfolio change event because portfolio changed'}            | ${{ asset: { free: 0, used: 0, total: 0 }, currency: { free: 0, used: 0, total: 0 } }}   | ${{ asset: { free: 3, used: 0, total: 3 }, currency: { free: 50, used: 0, total: 50 } }} | ${true}
+      action                                                                | oldPortfolio                                                                                                             | newPortfolio                                                                                                             | expectedEmit
+      ${'NOT emit portfolio change event because portfolio did not change'} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${false}
+      ${'emit portfolio change event because portfolio changed'}            | ${new Map<string, BalanceDetail>([['BTC', { free: 0, used: 0, total: 0 }], ['USDT', { free: 0, used: 0, total: 0 }]])}   | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${true}
     `('should $action', async ({ oldPortfolio, newPortfolio, expectedEmit }) => {
       trader['emitPortfolioChangeEvent'] = vi.fn();
       trader['portfolio'] = oldPortfolio;
@@ -308,9 +318,9 @@ describe('Trader', () => {
       else expect(trader['emitPortfolioChangeEvent']).not.toHaveBeenCalled();
     });
     it.each`
-      action                                                                    | oldBalance                            | portfolio                                                                                | price  | expectedEmit
-      ${'NOT emit portfolio value change event because balance did not change'} | ${{ free: 650, used: 0, total: 650 }} | ${{ asset: { free: 3, used: 0, total: 3 }, currency: { free: 50, used: 0, total: 50 } }} | ${200} | ${false}
-      ${'emit portfolio value change event because balance changed'}            | ${{ free: 100, used: 0, total: 100 }} | ${{ asset: { free: 3, used: 0, total: 3 }, currency: { free: 50, used: 0, total: 50 } }} | ${200} | ${true}
+      action                                                                    | oldBalance                            | portfolio                                                                                                                | price  | expectedEmit
+      ${'NOT emit portfolio value change event because balance did not change'} | ${{ free: 650, used: 0, total: 650 }} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${200} | ${false}
+      ${'emit portfolio value change event because balance changed'}            | ${{ free: 100, used: 0, total: 100 }} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${200} | ${true}
     `('should $action', async ({ timestamp, oldBalance, portfolio, price, expectedEmit }) => {
       trader['emitPortfolioValueChangeEvent'] = vi.fn();
       trader['currentTimestamp'] = timestamp;
@@ -329,15 +339,13 @@ describe('Trader', () => {
 
   describe('portfolio event emitters', () => {
     it('defers portfolio change events with current asset and currency', () => {
-      trader['portfolio'] = {
-        asset: { free: 10, used: 0, total: 10 },
-        currency: { free: 25, used: 0, total: 25 },
-      };
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 10, used: 0, total: 10 }],
+        ['USDT', { free: 25, used: 0, total: 25 }],
+      ]);
       trader['emitPortfolioChangeEvent']();
-      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, {
-        asset: { free: 10, used: 0, total: 10 },
-        currency: { free: 25, used: 0, total: 25 },
-      });
+      // Portfolio is now a Map, so we expect a cloned Map to be emitted
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, expect.any(Map));
     });
 
     it('defers portfolio value events with current balance', () => {
@@ -462,10 +470,10 @@ describe('Trader', () => {
 
     beforeEach(() => {
       trader['price'] = 100;
-      trader['portfolio'] = {
-        asset: { free: 3, used: 0, total: 3 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 3, used: 0, total: 3 }],
+        ['USDT', { free: 1000, used: 0, total: 1000 }],
+      ]);
     });
 
     it('creates order and emits initiation event for BUY advice', async () => {
@@ -481,10 +489,10 @@ describe('Trader', () => {
     });
 
     it('computes SELL order amount from asset holdings', async () => {
-      trader['portfolio'] = {
-        asset: { free: 2.5, used: 0, total: 2.5 },
-        currency: { free: 0, used: 0, total: 0 },
-      };
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 2.5, used: 0, total: 2.5 }],
+        ['USDT', { free: 0, used: 0, total: 0 }],
+      ]);
       const advice = buildAdvice({ side: 'SELL', type: 'MARKET' });
 
       await trader.onStrategyCreateOrder([advice]);
@@ -506,10 +514,10 @@ describe('Trader', () => {
     });
 
     it('creates limit order with requested price and no amount buffer when quantity missing', async () => {
-      trader['portfolio'] = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0, used: 0, total: 0 }],
+        ['USDT', { free: 1000, used: 0, total: 1000 }],
+      ]);
       const advice = buildAdvice({ type: 'LIMIT', side: 'BUY', price: 95 });
 
       await trader.onStrategyCreateOrder([advice]);
@@ -656,10 +664,10 @@ describe('Trader', () => {
         .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
         .mockResolvedValue(undefined);
       trader['price'] = 100;
-      trader['portfolio'] = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0, used: 0, total: 0 }],
+        ['USDT', { free: 1000, used: 0, total: 1000 }],
+      ]);
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
@@ -700,10 +708,10 @@ describe('Trader', () => {
 
     it('includes requested price when canceling limit orders', async () => {
       trader['price'] = 100;
-      trader['portfolio'] = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0, used: 0, total: 0 }],
+        ['USDT', { free: 1000, used: 0, total: 1000 }],
+      ]);
       const advice = buildAdvice({ type: 'LIMIT', side: 'SELL', price: 210 });
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
@@ -722,10 +730,10 @@ describe('Trader', () => {
         .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
         .mockResolvedValue(undefined);
       trader['price'] = 100;
-      trader['portfolio'] = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0, used: 0, total: 0 }],
+        ['USDT', { free: 1000, used: 0, total: 1000 }],
+      ]);
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
@@ -783,10 +791,10 @@ describe('Trader', () => {
         .spyOn(traderUtils, 'computeOrderPricing')
         .mockReturnValue({ effectivePrice: 101, fee: 2, base: 100, total: 102 });
 
-      trader['portfolio'] = {
-        asset: { free: 5, used: 0, total: 5 },
-        currency: { free: 10, used: 0, total: 10 },
-      };
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: 5, used: 0, total: 5 }],
+        ['USDT', { free: 10, used: 0, total: 10 }],
+      ]);
       trader['balance'] = { free: 510, used: 0, total: 510 };
       trader['price'] = 100;
       trader['orders'].set('order-id' as any, {

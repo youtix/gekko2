@@ -6,6 +6,7 @@ import {
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { LogLevel } from '@models/logLevel.types';
+import { BalanceDetail } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { debug, error, info, warning } from '@services/logger';
 import path from 'node:path';
@@ -67,6 +68,7 @@ vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(function () {
     return {
       getStrategy: vi.fn(() => ({ each: 1, wait: 0 })),
+      getWatch: vi.fn(() => ({ asset: 'BTC', currency: 'USDT' })),
     };
   });
   return { config: new Configuration() };
@@ -146,39 +148,33 @@ describe('StrategyManager', () => {
 
         expect(strategy.init).toHaveBeenCalledTimes(1);
         const initArgs = strategy.init.mock.calls[0]?.[0];
-        expect(initArgs).toMatchObject({
-          candle,
-          portfolio: {
-            asset: { free: 0, used: 0, total: 0 },
-            currency: { free: 0, used: 0, total: 0 },
-          },
-          addIndicator: manager['addIndicator'],
-        });
+        expect(initArgs.candle).toEqual(candle);
+        expect(initArgs.portfolio).toBeInstanceOf(Map);
+        expect(initArgs.portfolio.size).toBe(0); // Empty portfolio initially
+        expect(initArgs.addIndicator).toBe(manager['addIndicator']);
         expect(initArgs.tools).toEqual({
           strategyParams: { each: 1, wait: 0 },
           marketData: defaultMarketData,
           createOrder: manager['createOrder'],
           cancelOrder: manager['cancelOrder'],
           log: manager['log'],
+          pairs: [['BTC', 'USDT']],
         });
         expect(indicator.onNewCandle).toHaveBeenCalledWith(candle);
         expect(indicator.getResult).toHaveBeenCalled();
         expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(1);
 
         const [params, indicatorResult] = strategy.onEachTimeframeCandle.mock.calls[0] as [any, number];
-        expect(params).toMatchObject({
-          candle,
-          portfolio: {
-            asset: { free: 0, used: 0, total: 0 },
-            currency: { free: 0, used: 0, total: 0 },
-          },
-          tools: expect.objectContaining({
-            strategyParams: { each: 1, wait: 0 },
-            marketData: defaultMarketData,
-            createOrder: manager['createOrder'],
-            cancelOrder: manager['cancelOrder'],
-            log: manager['log'],
-          }),
+        expect(params.candle).toEqual(candle);
+        expect(params.portfolio).toBeInstanceOf(Map);
+        expect(params.portfolio.size).toBe(0); // Empty portfolio initially
+        expect(params.tools).toMatchObject({
+          strategyParams: { each: 1, wait: 0 },
+          marketData: defaultMarketData,
+          createOrder: manager['createOrder'],
+          cancelOrder: manager['cancelOrder'],
+          log: manager['log'],
+          pairs: [['BTC', 'USDT']],
         });
         expect(indicatorResult).toBe(42);
         expect(strategy.log).not.toHaveBeenCalled();
@@ -219,6 +215,7 @@ describe('StrategyManager', () => {
               createOrder: manager['createOrder'],
               cancelOrder: manager['cancelOrder'],
               log: manager['log'],
+              pairs: [['BTC', 'USDT']],
             },
           },
           'indicator',
@@ -246,6 +243,7 @@ describe('StrategyManager', () => {
               createOrder: manager['createOrder'],
               cancelOrder: manager['cancelOrder'],
               log: manager['log'],
+              pairs: [['BTC', 'USDT']],
             },
           },
           'indicator',
@@ -273,6 +271,7 @@ describe('StrategyManager', () => {
               createOrder: manager['createOrder'],
               cancelOrder: manager['cancelOrder'],
               log: manager['log'],
+              pairs: [['BTC', 'USDT']],
             },
           },
           'indicator',
@@ -295,10 +294,9 @@ describe('StrategyManager', () => {
   describe('setters function', () => {
     describe('setPortfolio', () => {
       it('updates the portfolio reference used by tools', () => {
-        const portfolio = {
-          asset: { free: 2, used: 0, total: 2 },
-          currency: { free: 3, used: 0, total: 3 },
-        };
+        const portfolio = new Map<string, BalanceDetail>();
+        portfolio.set('BTC', { free: 2, used: 0, total: 2 });
+        portfolio.set('USDT', { free: 3, used: 0, total: 3 });
         const strategy = {
           init: vi.fn(),
           onEachTimeframeCandle: vi.fn(),
@@ -419,6 +417,7 @@ describe('StrategyManager', () => {
           createOrder: manager['createOrder'],
           cancelOrder: manager['cancelOrder'],
           log: manager['log'],
+          pairs: [['BTC', 'USDT']],
         } as Tools<object>);
       });
 
