@@ -7,7 +7,6 @@ import { config } from '@services/configuration/configuration';
 import { LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from '@services/exchange/exchange.types';
-import { toTimestamp } from '@utils/date/date.utils';
 import { clonePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
@@ -45,7 +44,7 @@ export class DummyCentralizedExchange implements Exchange {
     this.orderSettledCallbacks = new Map();
     this.buyOrders = [];
     this.sellOrders = [];
-    this.currentTimestamp = daterange?.start ? toTimestamp(daterange.start) : Date.now();
+    this.currentTimestamp = daterange?.start ? daterange.start : Date.now();
 
     bindAll(this, [this.mapOrderToTrade.name]);
   }

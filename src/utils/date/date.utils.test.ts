@@ -29,18 +29,18 @@ describe('', () => {
 
   describe('isDaterangeValid', () => {
     it.each`
-      startDate         | endDate           | expected
-      ${undefined}      | ${undefined}      | ${false}
-      ${null}           | ${null}           | ${false}
-      ${''}             | ${''}             | ${false}
-      ${'invalid-date'} | ${'2023-01-01'}   | ${false}
-      ${'2023-01-01'}   | ${'invalid-date'} | ${false}
-      ${'invalid-date'} | ${'invalid-date'} | ${false}
-      ${'2023-12-31'}   | ${'2023-01-01'}   | ${false}
-      ${'2023-05-15'}   | ${'2023-05-14'}   | ${false}
-      ${'2023-01-01'}   | ${'2023-01-01'}   | ${false}
-      ${'2023-01-01'}   | ${'2023-12-31'}   | ${true}
-      ${'2023-05-14'}   | ${'2023-05-15'}   | ${true}
+      startDate                           | endDate                             | expected
+      ${undefined}                        | ${undefined}                        | ${false}
+      ${null}                             | ${null}                             | ${false}
+      ${''}                               | ${''}                               | ${false}
+      ${'invalid-date'}                   | ${new Date('2023-01-01').getTime()} | ${false}
+      ${new Date('2023-01-01').getTime()} | ${'invalid-date'}                   | ${false}
+      ${'invalid-date'}                   | ${'invalid-date'}                   | ${false}
+      ${new Date('2023-12-31').getTime()} | ${new Date('2023-01-01').getTime()} | ${false}
+      ${new Date('2023-05-15').getTime()} | ${new Date('2023-05-14').getTime()} | ${false}
+      ${new Date('2023-01-01').getTime()} | ${new Date('2023-01-01').getTime()} | ${false}
+      ${new Date('2023-01-01').getTime()} | ${new Date('2023-12-31').getTime()} | ${true}
+      ${new Date('2023-05-14').getTime()} | ${new Date('2023-05-15').getTime()} | ${true}
     `('returns $expected for startDate: $startDate and endDate: $endDate', ({ startDate, endDate, expected }) => {
       expect(isDaterangeValid(startDate, endDate)).toBe(expected);
     });

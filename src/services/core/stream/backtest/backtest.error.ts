@@ -6,6 +6,7 @@ import { Interval } from 'date-fns';
 
 export class MissingCandlesError extends GekkoError {
   constructor(
+    symbol: string,
     { start, end }: Interval<EpochTimeStamp, EpochTimeStamp>,
     availableDateRanges: Nullable<CandleDateranges[]> = [],
   ) {
@@ -19,7 +20,7 @@ export class MissingCandlesError extends GekkoError {
 
     const message = [
       'Missing candles in database:',
-      `${toISOString(start)} -> ${toISOString(end)},`,
+      `${symbol} ${toISOString(start)} -> ${toISOString(end)},`,
       'Available date ranges:',
       availableRangesMessage,
     ];

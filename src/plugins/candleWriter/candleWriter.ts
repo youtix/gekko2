@@ -17,11 +17,11 @@ export class CandleWriter extends Plugin {
   }
 
   protected processOneMinuteCandle(candle: Candle): void {
-    this.getStorage().addCandle(candle);
+    this.getStorage().addCandle(`${this.asset}/${this.currency}`, candle);
   }
 
   protected processFinalize(): void {
-    this.getStorage().insertCandles();
+    this.getStorage().insertCandles(`${this.asset}/${this.currency}`);
     this.getStorage().close();
   }
 

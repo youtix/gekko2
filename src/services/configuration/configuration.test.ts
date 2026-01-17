@@ -14,7 +14,6 @@ describe('Configuration Service', () => {
       fillGaps: 'no',
       warmup: { candleCount: 100, tickrate: 1000 },
       tickrate: 1000,
-      daterange: null,
     },
     plugins: [{ name: 'PerformanceAnalyzer' }],
     strategy: { name: 'CCI' },
@@ -154,7 +153,13 @@ describe('Configuration Service', () => {
         vi.resetModules();
         const { config } = await import('./configuration');
 
-        expect(config.getWatch()).toEqual(importerConfig.watch);
+        expect(config.getWatch()).toEqual({
+          ...importerConfig.watch,
+          daterange: {
+            start: new Date(importerConfig.watch.daterange.start).getTime(),
+            end: new Date(importerConfig.watch.daterange.end).getTime(),
+          },
+        });
       });
 
       it('should throw on invalid daterange in importer mode', async () => {

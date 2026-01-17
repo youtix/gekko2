@@ -47,7 +47,7 @@ describe('CandleWriter', () => {
         start: 1620000000000,
       };
       writer['processOneMinuteCandle'](candle);
-      expect(fakeStorage.addCandle).toHaveBeenCalledWith(candle);
+      expect(fakeStorage.addCandle).toHaveBeenCalledWith('BTC/USDT', candle);
     });
   });
 

@@ -136,15 +136,16 @@ describe('Pipeline Utils', () => {
 
     describe('backtest', () => {
       it('should build backtest pipeline correctly', async () => {
-        const mockDaterange = { start: '2023-01-01', end: '2023-01-02' };
+        const mockDaterange = {
+          start: new Date('2023-01-01').getTime(),
+          end: new Date('2023-01-02').getTime(),
+        };
         (config.getWatch as Mock).mockReturnValue({ daterange: mockDaterange });
         (toTimestamp as Mock).mockImplementation(date => new Date(date).getTime());
 
         await streamPipelines.backtest(mockPlugins);
 
         expect(config.getWatch).toHaveBeenCalled();
-        expect(toTimestamp).toHaveBeenCalledWith(mockDaterange.start);
-        expect(toTimestamp).toHaveBeenCalledWith(mockDaterange.end);
 
         expect(BacktestStream).toHaveBeenCalledWith({
           start: new Date(mockDaterange.start).getTime(),
@@ -158,7 +159,10 @@ describe('Pipeline Utils', () => {
 
     describe('importer', () => {
       it('should build importer pipeline correctly', async () => {
-        const mockDaterange = { start: '2023-01-01', end: '2023-01-02' };
+        const mockDaterange = {
+          start: new Date('2023-01-01').getTime(),
+          end: new Date('2023-01-02').getTime(),
+        };
         const mockTickrate = 500;
 
         (config.getWatch as Mock).mockReturnValue({

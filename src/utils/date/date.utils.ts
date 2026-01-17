@@ -25,13 +25,11 @@ export const toISOString = (timestamp?: EpochTimeStamp): string =>
 
 export const toTimestamp = (iso8601String?: string): EpochTimeStamp => new Date(iso8601String ?? 0).getTime();
 
-export const isDaterangeValid = (startDate: string, endDate: string) => {
-  const start = toTimestamp(startDate);
-  const end = toTimestamp(endDate);
+export const isDaterangeValid = (start: EpochTimeStamp, end: EpochTimeStamp) => {
   return isValid(start) && isValid(end) && isBefore(start, end);
 };
 
-export const splitIntervals = (startDate: number, endDate: number, batchSize = 1440) => {
+export const splitIntervals = (startDate: EpochTimeStamp, endDate: EpochTimeStamp, batchSize = 1440) => {
   const alignedStart = startOfMinute(new Date(startDate));
   const alignedEnd = subMilliseconds(addMinutes(startOfMinute(new Date(endDate)), 1), 1);
   const totalMinutes = differenceInMinutes(alignedEnd, alignedStart) + 1;

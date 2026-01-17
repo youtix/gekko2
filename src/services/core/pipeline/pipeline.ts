@@ -8,6 +8,7 @@ import { debug } from '@services/logger';
 import { keepDuplicates } from '@utils/collection/array.utils';
 import { toCamelCase } from '@utils/string/string.utils';
 import { compact, each, filter, flatMap, map } from 'lodash-es';
+import { MissingCandlesError } from '../stream/backtest/backtest.error';
 import { PluginsEmitSameEventError } from './pipeline.error';
 import { streamPipelines } from './pipeline.utils';
 
@@ -110,8 +111,24 @@ export const getPluginsStaticConfiguration = async (context: PipelineContext) =>
     return { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject };
   });
 
+export const checkDateRange = async (context: PipelineContext) => {
+  const { pairs, mode, daterange } = config.getWatch();
+  if (mode === 'backtest' && daterange) {
+    const storage = inject.storage();
+    for (const { symbol } of pairs) {
+      const result = storage.checkInterval(symbol, daterange);
+      if (result?.missingCandleCount) {
+        const availableDateranges = storage.getCandleDateranges(symbol);
+        throw new MissingCandlesError(symbol, daterange, availableDateranges);
+      }
+    }
+  }
+  return context;
+};
+
 export const gekkoPipeline = () =>
   [
+    checkDateRange,
     getPluginsStaticConfiguration,
     checkPluginsModesCompatibility,
     validatePluginsSchema,

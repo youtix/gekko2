@@ -2,7 +2,7 @@ import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
 import { getCandleTimeOffset } from '@utils/candle/candle.utils';
-import { resetDateParts, toTimestamp } from '@utils/date/date.utils';
+import { resetDateParts } from '@utils/date/date.utils';
 import { processStartTime } from '@utils/process/process.utils';
 import { subMinutes } from 'date-fns';
 import { Readable } from 'stream';
@@ -34,21 +34,16 @@ const buildBacktestPipeline = async (plugins: Plugin[]) => {
   const { daterange } = config.getWatch(); // Daterange is always set thanks to zod
 
   await pipeline(
-    new BacktestStream({ start: toTimestamp(daterange?.start), end: toTimestamp(daterange?.end) }),
+    new BacktestStream({ start: daterange!.start, end: daterange!.end }),
     new CandleValidatorStream(),
     new PluginsStream(plugins),
   );
 };
 
 const buildImporterPipeline = async (plugins: Plugin[]) => {
-  const { daterange, tickrate } = config.getWatch();
-  // Here we have already checked the watch.daterange in configuration
+  const { daterange, tickrate } = config.getWatch(); // Daterange is always set thanks to zod
   await pipeline(
-    new HistoricalCandleStream({
-      startDate: toTimestamp(daterange!.start),
-      endDate: toTimestamp(daterange!.end),
-      tickrate,
-    }),
+    new HistoricalCandleStream({ startDate: daterange!.start, endDate: daterange!.end, tickrate }),
     new CandleValidatorStream(),
     new PluginsStream(plugins),
   );

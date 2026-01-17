@@ -25,7 +25,7 @@ describe('pairConfigSchema', () => {
   it('rejects empty symbol', () => {
     const result = pairConfigSchema.safeParse({ symbol: '', timeframe: '1h' });
     expect(result.success).toBe(false);
-    expect(result.error?.issues[0].message).toBe('Symbol is required');
+    expect(result.error?.issues[0].message).toBe('Symbol must contain a slash');
   });
 
   it('rejects invalid timeframe', () => {
@@ -167,7 +167,7 @@ describe('watchSchema', () => {
       expect(result.pairs).toEqual(basePairs);
       expect(result.fillGaps).toBe('empty');
       expect(result.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
-      expect(result.daterange).toBeNull();
+      expect(result.daterange).toBeUndefined();
     });
   });
 });
@@ -192,7 +192,7 @@ describe('configurationSchema', () => {
     expect(result.watch.pairs).toEqual(basePairs);
     expect(result.watch.fillGaps).toBe('empty');
     expect(result.watch.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
-    expect(result.watch.daterange).toBeNull();
+    expect(result.watch.daterange).toBeUndefined();
     expect(result.exchange).toMatchObject({
       name: 'dummy-cex',
       exchangeSynchInterval: 600000,

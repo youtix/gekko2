@@ -1,8 +1,9 @@
+import { Symbol } from '@models/utility.types';
 import { TIMEFRAMES } from '@services/configuration/configuration.const';
 import { z } from 'zod';
 
 export const pairConfigSchema = z.object({
-  symbol: z.string().min(1, 'Symbol is required'),
+  symbol: z.custom<Symbol>().refine(symbol => symbol?.includes('/'), 'Symbol must contain a slash'),
   timeframe: z.enum(TIMEFRAMES),
 });
 

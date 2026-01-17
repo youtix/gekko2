@@ -16,12 +16,6 @@ export class BacktestStream extends Readable {
     super({ objectMode: true });
     this.storage = inject.storage();
 
-    const result = this.storage.checkInterval(daterange);
-    if (result?.missingCandleCount) {
-      const availableDateranges = this.storage.getCandleDateranges();
-      throw new MissingCandlesError(daterange, availableDateranges);
-    }
-
     warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
 
     const { batchSize, pairs } = config.getWatch();
@@ -49,10 +43,12 @@ export class BacktestStream extends Readable {
     const daterange = this.dateranges[this.iteration];
 
     if (daterange) {
-      const candles = this.storage.getCandles(daterange);
+      const { pairs } = config.getWatch();
+      const { symbol } = pairs[0]; // TODO: support multiple pairs
+      const candles = this.storage.getCandles(symbol, daterange);
       const expectedCandles = differenceInMinutes(daterange.end, daterange.start) + 1;
       if (candles.length === expectedCandles) candles.forEach(candle => this.push(candle));
-      else throw new MissingCandlesError(daterange);
+      else throw new MissingCandlesError(symbol, daterange);
 
       debug('stream', `Reading database data from ${toISOString(daterange.start)} -> to ${toISOString(daterange.end)}`);
     }

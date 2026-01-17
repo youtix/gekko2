@@ -43,11 +43,21 @@ describe('Injecter', () => {
     // Reset singleton state (accessing private property for testing)
     (inject as any).storageInstance = undefined;
     (inject as any).exchangeInstance = undefined;
+    getStorageMock.mockClear();
+    getExchangeMock.mockClear();
+    getWatchMock.mockClear();
   });
 
   describe('storage', () => {
     it('returns cached storage instance on subsequent calls', () => {
       getStorageMock.mockReturnValue({ type: 'sqlite', database: '' });
+      getWatchMock.mockReturnValue({
+        pairs: [{ symbol: 'BTC/USDT', timeframe: '1h' }],
+        mode: 'backtest',
+        tickrate: 1000,
+        fillGaps: 'no',
+        warmup: { candleCount: 100, tickrate: 1000 },
+      } as Watch);
       const first = inject.storage();
       const second = inject.storage();
       expect(second).toBe(first);
@@ -89,6 +99,9 @@ describe('Injecter', () => {
       getWatchMock.mockReturnValue({
         pairs: [{ symbol: 'BTC/USDT', timeframe: '1h' }],
         mode: 'backtest',
+        tickrate: 1000,
+        fillGaps: 'no',
+        warmup: { candleCount: 100, tickrate: 1000 },
       } as Watch);
 
       const first = inject.exchange();

@@ -3,15 +3,18 @@ import { binanceExchangeSchema } from '@services/exchange/binance/binance.schema
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
 import { hyperliquidExchangeSchema } from '@services/exchange/hyperliquid/hyperliquid.schema';
 import { paperBinanceExchangeSchema } from '@services/exchange/paper/paperTradingBinanceExchange.schema';
+import { toTimestamp } from '@utils/date/date.utils';
 import { some } from 'lodash-es';
 import { z } from 'zod';
 
 const disclaimerField = 'I understand that Gekko only automates MY OWN trading strategies' as const;
 
-const daterangeSchema = z.object({
-  start: z.iso.datetime(),
-  end: z.iso.datetime(),
-});
+const daterangeSchema = z
+  .object({
+    start: z.iso.datetime(),
+    end: z.iso.datetime(),
+  })
+  .transform(({ start, end }) => ({ start: toTimestamp(start), end: toTimestamp(end) }));
 
 const warmupSchema = z
   .object({
@@ -27,12 +30,12 @@ export const watchSchema = z
     mode: z.enum(['realtime', 'backtest', 'importer']),
     fillGaps: z.enum(['no', 'empty']).default('empty'),
     warmup: warmupSchema,
-    daterange: z.union([daterangeSchema, z.null()]).default(null),
+    daterange: daterangeSchema.optional(),
     batchSize: z.number().optional(),
   })
   .superRefine((data, ctx) => {
     const requiresDaterange = data.mode === 'importer' || data.mode === 'backtest';
-    if (requiresDaterange && data.daterange === null) {
+    if (requiresDaterange && !data.daterange) {
       ctx.addIssue({
         code: 'custom',
         path: ['daterange'],
