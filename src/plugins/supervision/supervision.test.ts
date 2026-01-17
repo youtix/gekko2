@@ -8,7 +8,11 @@ vi.mock('@services/logger', () => ({ debug: vi.fn(), getBufferedLogs: vi.fn(() =
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(function () {
     return {
-      getWatch: vi.fn(() => ({ mode: 'realtime', warmup: { candleCount: 0 } })),
+      getWatch: vi.fn(() => ({
+        pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
+        mode: 'realtime',
+        warmup: { candleCount: 0 },
+      })),
       getStrategy: vi.fn(() => ({})),
       showLogo: vi.fn(),
       getPlugins: vi.fn(),

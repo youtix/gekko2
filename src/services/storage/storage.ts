@@ -12,7 +12,9 @@ export abstract class Storage {
   protected insertThreshold: number;
 
   constructor() {
-    const { asset, currency, mode } = config.getWatch();
+    const { pairs, mode } = config.getWatch();
+    const { symbol } = pairs[0]; // TODO: support multiple pairs
+    const [asset, currency] = symbol.split('/');
     const storage = config.getStorage();
     this.buffer = [];
     this.table = `CANDLES_${upperCase(asset)}_${upperCase(currency)}`;

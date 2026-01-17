@@ -19,7 +19,10 @@ vi.mock('@services/logger', () => ({
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: vi.fn(() => ({ asset: 'BTC', currency: 'USDT', warmup: {} })),
+    getWatch: vi.fn(() => ({
+      pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
+      warmup: {},
+    })),
     getStrategy: vi.fn(() => ({ name: 'DEMA' })),
   },
 }));

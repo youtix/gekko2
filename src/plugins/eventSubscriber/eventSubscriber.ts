@@ -5,6 +5,7 @@ import { StrategyInfo } from '@models/strategyInfo.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { toISOString } from '@utils/date/date.utils';
+import { getBalance } from '@utils/portfolio/portfolio.utils';
 import { bindAll, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
@@ -100,10 +101,12 @@ export class EventSubscriber extends Plugin {
         const priceLine = price
           ? `Requested limit price: ${price} ${this.currency}`
           : `Target price: ${currentPrice} ${this.currency}`;
+        const assetBalance = getBalance(portfolio, this.asset);
+        const currencyBalance = getBalance(portfolio, this.currency);
         const message = [
           `${side} ${type} order created (${id})`,
           `Requested amount: ${amount}`,
-          `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
+          `Current portfolio: ${assetBalance.total} ${this.asset} / ${currencyBalance.total} ${this.currency}`,
           `Current balance: ${balance.total}`,
           priceLine,
           `At time: ${toISOString(orderCreationDate)}`,
@@ -157,6 +160,8 @@ export class EventSubscriber extends Plugin {
         if (!this.subscriptions.has('order_complete')) return;
         const { portfolio, balance } = exchange;
         const { id, amount, side, type, orderExecutionDate, effectivePrice, feePercent, fee } = order;
+        const assetBalance = getBalance(portfolio, this.asset);
+        const currencyBalance = getBalance(portfolio, this.currency);
         const message = [
           `${side} ${type} order completed (${id})`,
           `Amount: ${amount} ${this.asset}`,
@@ -164,7 +169,7 @@ export class EventSubscriber extends Plugin {
           `Fee percent: ${feePercent ?? '0'}%`,
           `Fee: ${fee} ${this.currency}`,
           `At time: ${toISOString(orderExecutionDate)}`,
-          `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
+          `Current portfolio: ${assetBalance.total} ${this.asset} / ${currencyBalance.total} ${this.currency}`,
           `Current balance: ${balance}`,
         ].join('\n');
         this.bot.sendMessage(message);

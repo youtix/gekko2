@@ -27,6 +27,7 @@ import { config } from '@services/configuration/configuration';
 import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
+import { clonePortfolio, createEmptyPortfolio, getBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
 import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
@@ -50,10 +51,7 @@ export class Trader extends Plugin {
     this.orders = new Map();
     this.warmupCompleted = false;
     this.warmupCandle = null;
-    this.portfolio = {
-      asset: { free: 0, used: 0, total: 0 },
-      currency: { free: 0, used: 0, total: 0 },
-    };
+    this.portfolio = createEmptyPortfolio();
     this.balance = { free: 0, used: 0, total: 0 };
     this.price = 0;
     this.currentTimestamp = 0;
@@ -74,15 +72,17 @@ export class Trader extends Plugin {
     const { bid } = await exchange.fetchTicker();
     this.portfolio = await exchange.fetchBalance();
     this.price = bid;
+    const assetBalance = getBalance(this.portfolio, this.asset);
+    const currencyBalance = getBalance(this.portfolio, this.currency);
     this.balance = {
-      free: this.price * this.portfolio.asset.free + this.portfolio.currency.free,
-      used: this.price * this.portfolio.asset.used + this.portfolio.currency.used,
-      total: this.price * this.portfolio.asset.total + this.portfolio.currency.total,
+      free: this.price * assetBalance.free + currencyBalance.free,
+      used: this.price * assetBalance.used + currencyBalance.used,
+      total: this.price * assetBalance.total + currencyBalance.total,
     };
 
     debug(
       'trader',
-      `Current portfolio: ${this.portfolio.asset.total} ${this.asset} / ${this.portfolio.currency.total} ${this.currency}`,
+      `Current portfolio: ${assetBalance.total} ${this.asset} / ${currencyBalance.total} ${this.currency}`,
     );
 
     // Emit portfolio events if changes are detected
@@ -95,10 +95,7 @@ export class Trader extends Plugin {
   /* -------------------------------------------------------------------------- */
 
   private emitPortfolioChangeEvent() {
-    this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, {
-      asset: { ...this.portfolio.asset },
-      currency: { ...this.portfolio.currency },
-    });
+    this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, clonePortfolio(this.portfolio));
   }
 
   private emitPortfolioValueChangeEvent() {
@@ -212,7 +209,8 @@ export class Trader extends Plugin {
     await Promise.all(
       payloads.map(async advice => {
         const { id, side, orderCreationDate, type, price = this.price } = advice;
-        const { asset, currency } = this.portfolio;
+        const asset = getBalance(this.portfolio, this.asset);
+        const currency = getBalance(this.portfolio, this.currency);
 
         // Price cannot be zero here because we call processOneMinuteCandle before events (plugins stream)
         // We delegate the order validation (notional, lot, amount) to the exchange

@@ -1,4 +1,4 @@
-import { Watch } from '@models/configuration.types';
+import { Timeframe, Watch } from '@models/configuration.types';
 import { Exchange } from '@services/exchange/exchange.types';
 import { Storage } from '@services/storage/storage';
 import { SequentialEventEmitter } from '@utils/event/sequentialEventEmitter';
@@ -11,7 +11,7 @@ export abstract class Plugin extends SequentialEventEmitter {
   private exchange?: Exchange;
   protected readonly asset: string;
   protected readonly currency: string;
-  protected readonly timeframe: Watch['timeframe'];
+  protected readonly timeframe: Timeframe;
   protected readonly warmupPeriod: number;
   protected readonly pluginName: string;
   protected readonly strategySettings: unknown;
@@ -19,7 +19,9 @@ export abstract class Plugin extends SequentialEventEmitter {
 
   constructor(pluginName: string) {
     super(pluginName);
-    const { asset, currency, timeframe, warmup, mode } = config.getWatch();
+    const { pairs, warmup, mode } = config.getWatch();
+    const { symbol, timeframe } = pairs[0]; // TODO: support multiple pairs
+    const [asset, currency] = symbol.split('/');
 
     this.strategySettings = config.getStrategy();
 

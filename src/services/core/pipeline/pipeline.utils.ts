@@ -14,7 +14,8 @@ import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
 
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
-  const { timeframe, warmup } = config.getWatch();
+  const { pairs, warmup } = config.getWatch();
+  const { timeframe } = pairs[0]; // TODO: support multiple pairs
   const now = resetDateParts(processStartTime(), ['s', 'ms']);
   const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe], now);
   const startDate = subMinutes(now, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe] + offset).getTime();

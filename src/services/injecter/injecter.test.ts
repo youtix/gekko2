@@ -43,7 +43,6 @@ describe('Injecter', () => {
     // Reset singleton state (accessing private property for testing)
     (inject as any).storageInstance = undefined;
     (inject as any).exchangeInstance = undefined;
-    vi.clearAllMocks();
   });
 
   describe('storage', () => {
@@ -87,7 +86,10 @@ describe('Injecter', () => {
 
     it.each(testCases)('instantiates and caches $name exchange', ({ config: cfg, mock }) => {
       getExchangeMock.mockReturnValue(cfg as any);
-      getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT' } as Watch);
+      getWatchMock.mockReturnValue({
+        pairs: [{ symbol: 'BTC/USDT', timeframe: '1h' }],
+        mode: 'backtest',
+      } as Watch);
 
       const first = inject.exchange();
       const second = inject.exchange();

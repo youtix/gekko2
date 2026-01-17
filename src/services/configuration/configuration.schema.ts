@@ -1,10 +1,10 @@
+import { pairsSchema } from '@models/schema/pairConfig.schema';
 import { binanceExchangeSchema } from '@services/exchange/binance/binance.schema';
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
 import { hyperliquidExchangeSchema } from '@services/exchange/hyperliquid/hyperliquid.schema';
 import { paperBinanceExchangeSchema } from '@services/exchange/paper/paperTradingBinanceExchange.schema';
 import { some } from 'lodash-es';
 import { z } from 'zod';
-import { TIMEFRAMES } from './configuration.const';
 
 const disclaimerField = 'I understand that Gekko only automates MY OWN trading strategies' as const;
 
@@ -22,11 +22,9 @@ const warmupSchema = z
 
 export const watchSchema = z
   .object({
-    currency: z.string(),
-    asset: z.string(),
+    pairs: pairsSchema,
     tickrate: z.number().default(1000),
     mode: z.enum(['realtime', 'backtest', 'importer']),
-    timeframe: z.enum(TIMEFRAMES).default('1m'),
     fillGaps: z.enum(['no', 'empty']).default('empty'),
     warmup: warmupSchema,
     daterange: z.union([daterangeSchema, z.null()]).default(null),

@@ -1,6 +1,7 @@
 watch:
-  asset: BTC
-  currency: USDT
+  pairs:
+    - symbol: BTC/USDT
+      timeframe: 1h
   mode: importer # backtest | importer | realtime
   tickrate: 500
   fillGaps: empty

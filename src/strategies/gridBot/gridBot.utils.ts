@@ -1,8 +1,25 @@
-import { Portfolio } from '@models/portfolio.types';
+import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
+import { Tools } from '@strategies/strategy.types';
 import { round } from '@utils/math/round.utils';
-import { DEFAULT_AMOUNT_PRECISION, DEFAULT_PRICE_PRECISION } from './gridBot.const';
+import { DEFAULT_AMOUNT_PRECISION, DEFAULT_PRICE_PRECISION, EMPTY_BALANCE } from './gridBot.const';
 import { GridBotStrategyParams, GridBounds, GridSpacingType, RebalancePlan } from './gridBot.types';
+
+export const getPair = (tools: Tools<GridBotStrategyParams>): { base: string; quote: string } => {
+  if (tools.pairs.length !== 1) tools.log('error', 'GridBot: Only one pair is supported for this strategy');
+  const [base, quote] = tools.pairs[0];
+  return { base, quote };
+};
+
+export const getPortfolioContent = (
+  portfolio: Portfolio,
+  base: string,
+  quote: string,
+): { asset: BalanceDetail; currency: BalanceDetail } => {
+  const asset = portfolio.get(base) ?? { ...EMPTY_BALANCE };
+  const currency = portfolio.get(quote) ?? { ...EMPTY_BALANCE };
+  return { asset, currency };
+};
 
 /**
  * Infer price precision from market data or use default.
@@ -185,17 +202,17 @@ export const validateConfig = (
  */
 export const computeRebalancePlan = (
   centerPrice: number,
-  portfolio: Portfolio,
+  totalAssetValue: number,
+  totalCurrencyValue: number,
   buyLevels: number,
   sellLevels: number,
   marketData: MarketData,
 ): RebalancePlan | null => {
   if (centerPrice <= 0) return null;
   if (buyLevels <= 0 && sellLevels <= 0) return null;
-
   const totalLevels = buyLevels + sellLevels;
-  const assetValue = portfolio.asset.total * centerPrice;
-  const currencyValue = portfolio.currency.total;
+  const assetValue = totalAssetValue * centerPrice;
+  const currencyValue = totalCurrencyValue;
   const totalValue = assetValue + currencyValue;
 
   if (totalValue <= 0) return null;
@@ -271,7 +288,8 @@ export const applyCostLimits = (
  */
 export const deriveLevelQuantity = (
   centerPrice: number,
-  portfolio: Portfolio,
+  assetFree: number,
+  currencyFree: number,
   buyLevels: number,
   sellLevels: number,
   priceDecimals: number,
@@ -283,7 +301,7 @@ export const deriveLevelQuantity = (
   if (buyLevels <= 0 && sellLevels <= 0) return 0;
 
   // Calculate sell capacity: assets / sell levels
-  const assetShare = sellLevels > 0 ? portfolio.asset.free / sellLevels : Infinity;
+  const assetShare = sellLevels > 0 ? assetFree / sellLevels : Infinity;
 
   // Calculate buy capacity using actual level prices
   let currencyShare = Infinity;
@@ -294,7 +312,7 @@ export const deriveLevelQuantity = (
       if (levelPrice > 0) totalBuyCost += levelPrice;
     }
     if (totalBuyCost > 0) {
-      currencyShare = portfolio.currency.free / totalBuyCost;
+      currencyShare = currencyFree / totalBuyCost;
     }
   }
 

@@ -15,9 +15,10 @@ export class RealtimeStream extends Readable {
 
   constructor() {
     super({ objectMode: true });
-    const { asset, currency } = config.getWatch();
+    const { pairs } = config.getWatch();
+    const { symbol } = pairs[0]; // TODO: support multiple pairs
     this.exchange = inject.exchange();
-    this.symbol = `${asset}/${currency}`;
+    this.symbol = symbol;
 
     bindAll(this, ['onNewCandle']);
 

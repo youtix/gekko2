@@ -38,7 +38,7 @@ vi.mock('../dummy/dummyCentralizedExchange', () => {
   return { DummyCentralizedExchange: MockDummy };
 });
 
-const mockWatchConfig = { asset: 'BTC', currency: 'USDT', timeframe: '1m' };
+const mockWatchConfig = { pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }] };
 const mockExchangeConfig = {
   name: 'paper-binance' as const,
   verbose: false,

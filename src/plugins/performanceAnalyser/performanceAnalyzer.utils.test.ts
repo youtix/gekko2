@@ -1,4 +1,5 @@
 import { OrderCompletedEvent } from '@models/event.types';
+import { BalanceDetail } from '@models/portfolio.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Report } from './performanceAnalyzer.types';
 import { logFinalize, logTrade } from './performanceAnalyzer.utils';
@@ -162,10 +163,10 @@ describe('performanceAnalyzer.utils', () => {
     };
 
     const baseExchange: OrderCompletedEvent['exchange'] = {
-      portfolio: {
-        asset: { free: 10, used: 0, total: 10 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      },
+      portfolio: new Map<string, BalanceDetail>([
+        ['BTC', { free: 10, used: 0, total: 10 }],
+        ['USD', { free: 1000, used: 0, total: 1000 }],
+      ]),
       balance: { free: 2000, used: 0, total: 2000 },
       price: 100,
     };

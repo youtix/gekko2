@@ -1,5 +1,6 @@
 import { AdviceOrder } from '@models/advice.types';
 import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
+import { BalanceDetail } from '@models/portfolio.types';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
@@ -11,7 +12,11 @@ vi.mock('@services/logger', () => ({ debug: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(function () {
     return {
-      getWatch: vi.fn(() => ({ mode: 'realtime', warmup: {}, asset: 'BTC', currency: 'USD' })),
+      getWatch: vi.fn(() => ({
+        pairs: [{ symbol: 'BTC/USD', timeframe: '1m' }],
+        mode: 'realtime',
+        warmup: {},
+      })),
       getStrategy: vi.fn(() => ({})),
       showLogo: vi.fn(),
       getPlugins: vi.fn(),
@@ -62,10 +67,10 @@ describe('EventSubscriber', () => {
     const baseExchange = {
       price: 123,
       balance: { free: 1, used: 0, total: 1 },
-      portfolio: {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 0, used: 0, total: 0 },
-      },
+      portfolio: new Map<string, BalanceDetail>([
+        ['asset', { free: 0, used: 0, total: 0 }],
+        ['currency', { free: 0, used: 0, total: 0 }],
+      ]),
     };
     const onStrategyInfo = (p: EventSubscriber) =>
       p.onStrategyInfo([{ timestamp: eventTimestamp, level: 'debug', message: 'M', tag: 'strategy' }]);
@@ -175,16 +180,16 @@ describe('EventSubscriber', () => {
     });
 
     it('reports trade initiation details including order type and requested amount', () => {
+      const portfolio = new Map<string, BalanceDetail>();
+      portfolio.set('BTC', { free: 1, used: 0, total: 1 });
+      portfolio.set('USDT', { free: 2, used: 0, total: 2 });
       fakeBot.sendMessage.mockReset();
       plugin['handleCommand']('/sub_order_init');
       onOrderInitiated(plugin, {
         order: { type: 'MARKET', amount: 5, price: 321 },
         exchange: {
           balance: { free: 10, used: 0, total: 10 },
-          portfolio: {
-            asset: { free: 1, used: 0, total: 1 },
-            currency: { free: 2, used: 0, total: 2 },
-          },
+          portfolio,
         },
       });
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(

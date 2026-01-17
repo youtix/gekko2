@@ -1,4 +1,3 @@
-import { Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { describe, expect, it } from 'vitest';
 import { GridBotStrategyParams, GridBounds } from './gridBot.types';
@@ -282,125 +281,92 @@ describe('gridBot.utils', () => {
     const marketData: MarketData = { precision: { amount: 0.01 } };
 
     it('returns BUY plan when asset value is low for symmetric levels', () => {
-      const portfolio: Portfolio = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
       // 5 buy + 5 sell = target 50% asset (500 value = 5 asset at price 100)
-      const plan = computeRebalancePlan(100, portfolio, 5, 5, marketData);
+      // totalAssetValue = 0, totalCurrencyValue = 1000
+      const plan = computeRebalancePlan(100, 0, 1000, 5, 5, marketData);
 
       expect(plan?.side).toBe('BUY');
     });
 
     it('returns SELL plan when asset value is high', () => {
-      const portfolio: Portfolio = {
-        asset: { free: 10, used: 0, total: 10 },
-        currency: { free: 0, used: 0, total: 0 },
-      };
       // 5 buy + 5 sell = target 50% asset (500 value) but we have 1000 value in asset
-      const plan = computeRebalancePlan(100, portfolio, 5, 5, marketData);
+      // totalAssetValue = 10, totalCurrencyValue = 0
+      const plan = computeRebalancePlan(100, 10, 0, 5, 5, marketData);
 
       expect(plan?.side).toBe('SELL');
     });
 
     it('returns null for balanced portfolio with symmetric levels', () => {
-      const portfolio: Portfolio = {
-        asset: { free: 5, used: 0, total: 5 },
-        currency: { free: 500, used: 0, total: 500 },
-      };
       // 5 buy + 5 sell = target 50% asset = 500 value, we have 5*100=500
-
-      expect(computeRebalancePlan(100, portfolio, 5, 5, marketData)).toBeNull();
+      // totalAssetValue = 5, totalCurrencyValue = 500
+      expect(computeRebalancePlan(100, 5, 500, 5, 5, marketData)).toBeNull();
     });
 
     it('computes correct ratio for asymmetric levels', () => {
-      const portfolio: Portfolio = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
       // 2 buy + 8 sell = target 80% asset (800 value = 8 asset at price 100)
-      const plan = computeRebalancePlan(100, portfolio, 2, 8, marketData);
+      // totalAssetValue = 0, totalCurrencyValue = 1000
+      const plan = computeRebalancePlan(100, 0, 1000, 2, 8, marketData);
 
       expect(plan?.amount).toBe(8); // Need to buy 8 asset to reach 800 value
     });
 
     it('returns null for zero center price', () => {
-      const portfolio: Portfolio = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 1000, used: 0, total: 1000 },
-      };
-
-      expect(computeRebalancePlan(0, portfolio, 5, 5, marketData)).toBeNull();
+      expect(computeRebalancePlan(0, 0, 1000, 5, 5, marketData)).toBeNull();
     });
 
     it('returns null for zero levels', () => {
-      const portfolio: Portfolio = {
-        asset: { free: 5, used: 0, total: 5 },
-        currency: { free: 500, used: 0, total: 500 },
-      };
-
-      expect(computeRebalancePlan(100, portfolio, 0, 0, marketData)).toBeNull();
+      expect(computeRebalancePlan(100, 5, 500, 0, 0, marketData)).toBeNull();
     });
 
     it('returns null for empty portfolio', () => {
-      const portfolio: Portfolio = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 0, used: 0, total: 0 },
-      };
-
-      expect(computeRebalancePlan(100, portfolio, 5, 5, marketData)).toBeNull();
+      expect(computeRebalancePlan(100, 0, 0, 5, 5, marketData)).toBeNull();
     });
 
     it('applies amount limits', () => {
-      const portfolio: Portfolio = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 10000, used: 0, total: 10000 },
-      };
       const marketDataWithMax: MarketData = { amount: { max: 10 }, precision: { amount: 0.01 } };
-      const plan = computeRebalancePlan(100, portfolio, 5, 5, marketDataWithMax);
+      // totalAssetValue = 0, totalCurrencyValue = 10000
+      const plan = computeRebalancePlan(100, 0, 10000, 5, 5, marketDataWithMax);
 
       expect(plan?.amount).toBe(10);
     });
   });
 
   describe('deriveLevelQuantity', () => {
-    const portfolio: Portfolio = {
-      asset: { free: 10, used: 0, total: 10 },
-      currency: { free: 1000, used: 0, total: 1000 },
-    };
+    // assetFree = 10, currencyFree = 1000
     const marketData: MarketData = { precision: { amount: 0.01 } };
 
     it('derives quantity from portfolio for symmetric levels', () => {
-      const qty = deriveLevelQuantity(100, portfolio, 2, 2, 2, 'fixed', 5, marketData);
+      // deriveLevelQuantity(centerPrice, assetFree, currencyFree, buyLevels, sellLevels, priceDecimals, spacingType, spacingValue, marketData, priceStep?)
+      const qty = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('derives quantity from portfolio for asymmetric levels', () => {
-      const qty = deriveLevelQuantity(100, portfolio, 3, 2, 2, 'fixed', 5, marketData);
+      const qty = deriveLevelQuantity(100, 10, 1000, 3, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('returns 0 for zero levels', () => {
-      expect(deriveLevelQuantity(100, portfolio, 0, 0, 2, 'fixed', 5, marketData)).toBe(0);
+      expect(deriveLevelQuantity(100, 10, 1000, 0, 0, 2, 'fixed', 5, marketData)).toBe(0);
     });
 
     it('handles only buy levels', () => {
-      const qty = deriveLevelQuantity(100, portfolio, 2, 0, 2, 'fixed', 5, marketData);
+      const qty = deriveLevelQuantity(100, 10, 1000, 2, 0, 2, 'fixed', 5, marketData);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('handles only sell levels', () => {
-      const qty = deriveLevelQuantity(100, portfolio, 0, 2, 2, 'fixed', 5, marketData);
+      const qty = deriveLevelQuantity(100, 10, 1000, 0, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBe(5);
     });
 
     it('applies amount limits', () => {
       const marketDataWithLimits: MarketData = { amount: { min: 0.1, max: 1 }, precision: { amount: 0.01 } };
-      const qty = deriveLevelQuantity(100, portfolio, 2, 2, 2, 'fixed', 5, marketDataWithLimits);
+      const qty = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketDataWithLimits);
 
       expect(qty).toBeLessThanOrEqual(1);
     });
@@ -410,30 +376,27 @@ describe('gridBot.utils', () => {
         cost: { min: 10, max: 1000 },
         precision: { amount: 0.01 },
       };
-      const qty = deriveLevelQuantity(100, portfolio, 2, 2, 2, 'fixed', 5, marketDataWithCostLimits);
+      const qty = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketDataWithCostLimits);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('returns 0 for insufficient portfolio', () => {
-      const emptyPortfolio: Portfolio = {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 0, used: 0, total: 0 },
-      };
-      const qty = deriveLevelQuantity(100, emptyPortfolio, 2, 2, 2, 'fixed', 5, marketData);
+      // assetFree = 0, currencyFree = 0
+      const qty = deriveLevelQuantity(100, 0, 0, 2, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBe(0);
     });
 
     it('handles price step parameter', () => {
-      const qty = deriveLevelQuantity(100, portfolio, 2, 2, 2, 'fixed', 5, marketData, 0.5);
+      const qty = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketData, 0.5);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('handles negative level prices in calculation', () => {
       // Low center price where some buy levels would be negative - should skip those
-      const qty = deriveLevelQuantity(10, portfolio, 5, 2, 2, 'fixed', 5, marketData);
+      const qty = deriveLevelQuantity(10, 10, 1000, 5, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBeGreaterThanOrEqual(0);
     });
