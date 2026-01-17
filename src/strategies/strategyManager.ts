@@ -45,7 +45,9 @@ export class StrategyManager extends EventEmitter {
     this.age = 0;
     this.indicators = [];
     this.strategyParams = config.getStrategy() ?? {};
-    this.pairs = [[config.getWatch().asset, config.getWatch().currency]];
+    const { symbol } = config.getWatch().pairs[0]; // TODO: support multiple pairs
+    const [asset, currency] = symbol.split('/');
+    this.pairs = [[asset, currency]];
     this.portfolio = new Map<Asset, BalanceDetail>();
     this.marketData = null;
     this.oneMinuteCandle = null;

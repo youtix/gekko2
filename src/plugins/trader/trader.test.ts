@@ -25,11 +25,9 @@ import * as traderUtils from './trader.utils';
 vi.mock('@services/logger');
 
 const baseWatch = {
-  asset: 'BTC',
-  currency: 'USDT',
+  pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
   tickrate: 1000,
   mode: 'realtime' as const,
-  timeframe: '1m' as const,
   fillGaps: 'empty' as const,
   warmup: { tickrate: 1000, candleCount: 0 },
   daterange: null,
@@ -37,6 +35,7 @@ const baseWatch = {
 
 const cloneWatch = () => ({
   ...baseWatch,
+  pairs: [...baseWatch.pairs],
   warmup: { ...baseWatch.warmup },
 });
 

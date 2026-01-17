@@ -12,7 +12,11 @@ vi.mock('@services/logger', () => ({ debug: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(function () {
     return {
-      getWatch: vi.fn(() => ({ mode: 'realtime', warmup: {}, asset: 'BTC', currency: 'USD' })),
+      getWatch: vi.fn(() => ({
+        pairs: [{ symbol: 'BTC/USD', timeframe: '1m' }],
+        mode: 'realtime',
+        warmup: {},
+      })),
       getStrategy: vi.fn(() => ({})),
       showLogo: vi.fn(),
       getPlugins: vi.fn(),

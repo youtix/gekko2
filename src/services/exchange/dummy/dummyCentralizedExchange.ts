@@ -31,7 +31,9 @@ export class DummyCentralizedExchange implements Exchange {
 
   constructor(exchangeConfig: DummyCentralizedExchangeConfig) {
     const { marketData, simulationBalance, initialTicker } = exchangeConfig;
-    const { asset, currency, daterange } = config.getWatch();
+    const { pairs, daterange } = config.getWatch();
+    const { symbol } = pairs[0]; // TODO: support multiple pairs
+    const [asset, currency] = symbol.split('/');
     this.marketData = marketData;
     this.portfolio = new Map([
       [asset, { free: simulationBalance.asset, used: 0, total: simulationBalance.asset }],

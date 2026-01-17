@@ -1,8 +1,8 @@
 watch:
-  asset: BTC
-  currency: USDT
+  pairs:
+    - symbol: BTC/USDT
+      timeframe: 1d
   mode: realtime # backtest | importer | realtime
-  timeframe: 1d
   warmup:
     candleCount: 365
 

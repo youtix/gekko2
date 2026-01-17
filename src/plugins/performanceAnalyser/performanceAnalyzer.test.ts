@@ -13,7 +13,10 @@ import { logFinalize, logTrade } from './performanceAnalyzer.utils';
 vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: vi.fn(() => ({ asset: 'BTC', currency: 'USDT', warmup: { candleCount: 0 } })),
+    getWatch: vi.fn(() => ({
+      pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
+      warmup: { candleCount: 0 },
+    })),
     getStrategy: vi.fn(() => ({})),
   },
 }));

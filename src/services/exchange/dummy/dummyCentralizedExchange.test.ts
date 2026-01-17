@@ -6,7 +6,10 @@ import type { DummyCentralizedExchangeConfig } from './dummyCentralizedExchange.
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: () => ({ asset: 'BTC', currency: 'USDT', timeframe: '1m', daterange: { start: '2024-01-01' } }),
+    getWatch: () => ({
+      pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
+      daterange: { start: '2024-01-01' },
+    }),
   },
 }));
 vi.mock('@services/logger', () => ({ error: vi.fn() }));

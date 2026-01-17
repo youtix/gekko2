@@ -104,7 +104,7 @@ describe('Pipeline Utils', () => {
         (subMinutes as Mock).mockReturnValue(mockStartDate);
 
         const mockWatchConfig = {
-          timeframe: '1m',
+          pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
           warmup: { candleCount: 60, tickrate: 1000 },
         };
         (config.getWatch as Mock).mockReturnValue(mockWatchConfig);

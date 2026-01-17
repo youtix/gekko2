@@ -9,10 +9,8 @@ describe('Configuration Service', () => {
   const mockConfig = {
     showLogo: true,
     watch: {
-      asset: 'BTC',
-      currency: 'USDT',
+      pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
       mode: 'realtime',
-      timeframe: '1m',
       fillGaps: 'no',
       warmup: { candleCount: 100, tickrate: 1000 },
       tickrate: 1000,
@@ -55,11 +53,11 @@ describe('Configuration Service', () => {
     it.each([
       [
         'config.yaml',
-        'showLogo: true\nwatch:\n  asset: BTC\n  currency: USDT\n  mode: realtime\n  timeframe: 1m\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex',
+        'showLogo: true\nwatch:\n  pairs:\n    - symbol: BTC/USDT\n      timeframe: 1m\n  mode: realtime\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex',
       ],
       [
         'config.yml',
-        'showLogo: true\nwatch:\n  asset: BTC\n  currency: USDT\n  mode: realtime\n  timeframe: 1m\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex',
+        'showLogo: true\nwatch:\n  pairs:\n    - symbol: BTC/USDT\n      timeframe: 1m\n  mode: realtime\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex',
       ],
     ])('should load valid YAML config from %s', async (path, content) => {
       setConfigFile(path, content);

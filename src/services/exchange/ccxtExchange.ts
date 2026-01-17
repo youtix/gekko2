@@ -38,7 +38,8 @@ export class CCXTExchange implements Exchange {
   protected symbol: string;
 
   constructor(exchangeConfig: CCXTExchangeConfig) {
-    const { asset, currency } = config.getWatch();
+    const { pairs } = config.getWatch();
+    const { symbol } = pairs[0]; // TODO: support multiple pairs
     const { name } = exchangeConfig;
 
     switch (name) {
@@ -62,7 +63,7 @@ export class CCXTExchange implements Exchange {
     this.client.setSandboxMode(hasSandbox);
     this.client.options['maxRetriesOnFailure'] = 0; // we handle it manualy
     this.exchangeName = name;
-    this.symbol = `${asset}/${currency}`;
+    this.symbol = symbol;
     this.heart = new Heart(ONE_MINUTE);
   }
 

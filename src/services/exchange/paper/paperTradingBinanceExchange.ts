@@ -61,10 +61,13 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
       orderSynchInterval: this.exchangeConfig.orderSynchInterval,
     });
 
+    const { pairs } = config.getWatch();
+    const { symbol } = pairs[0]; // TODO: support multiple pairs
+    const [asset, currency] = symbol.split('/');
     info('exchange', '🔶 PAPER TRADING MODE - Using simulated orders with real market data');
     info(
       'exchange',
-      `Initial balance: ${this.exchangeConfig.simulationBalance.asset} ${config.getWatch().asset} / ${this.exchangeConfig.simulationBalance.currency} ${config.getWatch().currency}`,
+      `Initial balance: ${this.exchangeConfig.simulationBalance.asset} ${asset} / ${this.exchangeConfig.simulationBalance.currency} ${currency}`,
     );
   }
 

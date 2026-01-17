@@ -53,7 +53,7 @@ vi.mock('ccxt', () => {
   return { default: { binance: MockExchange, hyperliquid: MockExchange } };
 });
 
-const mockWatchConfig = { asset: 'BTC', currency: 'USDT' };
+const mockWatchConfig = { pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }] };
 const binanceConfig = {
   name: 'binance' as const,
   apiKey: 'key',

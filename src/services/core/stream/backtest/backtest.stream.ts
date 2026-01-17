@@ -24,7 +24,9 @@ export class BacktestStream extends Readable {
 
     warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
 
-    const { batchSize, asset, currency } = config.getWatch();
+    const { batchSize, pairs } = config.getWatch();
+    const { symbol } = pairs[0]; // TODO: support multiple pairs
+    const [asset, currency] = symbol.split('/');
     const strategy = config.getStrategy();
     this.dateranges = splitIntervals(daterange.start, daterange.end, batchSize ?? 1440);
     this.iteration = 0;

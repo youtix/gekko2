@@ -1,3 +1,4 @@
+import { pairConfigSchema, pairsSchema } from '@models/schema/pairConfig.schema';
 import { describe, expect, it } from 'vitest';
 import { configurationSchema, watchSchema } from './configuration.schema';
 
@@ -6,10 +7,99 @@ const DISCLAIMER_FIELD = 'I understand that Gekko only automates MY OWN trading 
 const ISO_START = '2023-01-01T00:00:00.000Z';
 const ISO_END = '2023-01-02T00:00:00.000Z';
 
+// Base pairs for v3 config format
+const basePairs = [{ symbol: 'BTC/USDT', timeframe: '1h' as const }];
+
+describe('pairConfigSchema', () => {
+  it('accepts valid pair config', () => {
+    const result = pairConfigSchema.safeParse({ symbol: 'BTC/USDT', timeframe: '1h' });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects missing symbol', () => {
+    const result = pairConfigSchema.safeParse({ timeframe: '1h' });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]).toMatchObject({ path: ['symbol'] });
+  });
+
+  it('rejects empty symbol', () => {
+    const result = pairConfigSchema.safeParse({ symbol: '', timeframe: '1h' });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toBe('Symbol is required');
+  });
+
+  it('rejects invalid timeframe', () => {
+    const result = pairConfigSchema.safeParse({ symbol: 'BTC/USDT', timeframe: 'invalid' });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]).toMatchObject({ path: ['timeframe'] });
+  });
+});
+
+describe('pairsSchema', () => {
+  it('accepts valid config with 2 pairs', () => {
+    const pairs = [
+      { symbol: 'BTC/USDT', timeframe: '1h' },
+      { symbol: 'ETH/USDT', timeframe: '4h' },
+    ];
+    const result = pairsSchema.safeParse(pairs);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).toHaveLength(2);
+    }
+  });
+
+  it('accepts maximum of 5 pairs', () => {
+    const pairs = [
+      { symbol: 'BTC/USDT', timeframe: '1h' },
+      { symbol: 'ETH/USDT', timeframe: '4h' },
+      { symbol: 'SOL/USDT', timeframe: '1h' },
+      { symbol: 'AVAX/USDT', timeframe: '15m' },
+      { symbol: 'LINK/USDT', timeframe: '1d' },
+    ];
+    const result = pairsSchema.safeParse(pairs);
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects config with 6 pairs with specific error message', () => {
+    const pairs = [
+      { symbol: 'BTC/USDT', timeframe: '1h' },
+      { symbol: 'ETH/USDT', timeframe: '4h' },
+      { symbol: 'SOL/USDT', timeframe: '1h' },
+      { symbol: 'AVAX/USDT', timeframe: '15m' },
+      { symbol: 'LINK/USDT', timeframe: '1d' },
+      { symbol: 'DOT/USDT', timeframe: '1h' },
+    ];
+    const result = pairsSchema.safeParse(pairs);
+    expect(result.success).toBe(false);
+    // Check for the "Maximum 5 pairs allowed" message
+    const hasMaxPairsError = result.error?.issues.some(
+      issue => issue.message.includes('Maximum 5 pairs allowed') || issue.message.includes('5'),
+    );
+    expect(hasMaxPairsError).toBe(true);
+  });
+
+  it('rejects empty pairs array', () => {
+    const result = pairsSchema.safeParse([]);
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toBe('At least one pair is required');
+  });
+
+  it('rejects pair with missing symbol', () => {
+    const pairs = [{ timeframe: '1h' }];
+    const result = pairsSchema.safeParse(pairs);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects pair with invalid timeframe', () => {
+    const pairs = [{ symbol: 'BTC/USDT', timeframe: 'invalid' }];
+    const result = pairsSchema.safeParse(pairs);
+    expect(result.success).toBe(false);
+  });
+});
+
 describe('watchSchema', () => {
   const baseWatch = {
-    currency: 'USD',
-    asset: 'BTC',
+    pairs: basePairs,
   };
 
   describe('importer mode', () => {
@@ -74,7 +164,7 @@ describe('watchSchema', () => {
       const result = watchSchema.parse(candidate);
 
       expect(result.tickrate).toBe(1000);
-      expect(result.timeframe).toBe('1m');
+      expect(result.pairs).toEqual(basePairs);
       expect(result.fillGaps).toBe('empty');
       expect(result.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
       expect(result.daterange).toBeNull();
@@ -85,8 +175,7 @@ describe('watchSchema', () => {
 describe('configurationSchema', () => {
   const createBaseConfig = () => ({
     watch: {
-      currency: 'USD',
-      asset: 'BTC',
+      pairs: basePairs,
       mode: 'realtime' as const,
     },
     plugins: [] as Array<{ name?: string }>,
@@ -100,7 +189,7 @@ describe('configurationSchema', () => {
 
     expect(result.showLogo).toBe(true);
     expect(result.watch.tickrate).toBe(1000);
-    expect(result.watch.timeframe).toBe('1m');
+    expect(result.watch.pairs).toEqual(basePairs);
     expect(result.watch.fillGaps).toBe('empty');
     expect(result.watch.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
     expect(result.watch.daterange).toBeNull();

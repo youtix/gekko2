@@ -1,8 +1,8 @@
 watch:
-  asset: BTC
-  currency: USDT
+  pairs:
+    - symbol: BTC/USDT
+      timeframe: 1h
   mode: backtest
-  timeframe: 1h
   warmup:
     candleCount: 365
   daterange:

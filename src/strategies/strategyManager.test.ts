@@ -68,7 +68,9 @@ vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(function () {
     return {
       getStrategy: vi.fn(() => ({ each: 1, wait: 0 })),
-      getWatch: vi.fn(() => ({ asset: 'BTC', currency: 'USDT' })),
+      getWatch: vi.fn(() => ({
+        pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
+      })),
     };
   });
   return { config: new Configuration() };
