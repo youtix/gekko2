@@ -21,4 +21,8 @@ export const paperBinanceExchangeSchema = exchangeSchema.extend({
   verbose: z.boolean().default(false),
   simulationBalance: simulationBalanceSchema,
   feeOverride: feeOverrideSchema,
+  proxy: z
+    .string()
+    .regex(/^(https?|socks5):\/\/.+/, 'Proxy must be a valid URL (http://, https://, or socks5://)')
+    .optional(),
 });

@@ -9,17 +9,19 @@ import { config } from '@services/configuration/configuration';
 import { Heart } from '@services/core/heart/heart';
 import { debug, error } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import ccxt, { Exchange as CCXT, MarketInterface } from 'ccxt';
+import { Exchange as CCXT, MarketInterface } from 'ccxt';
 import { formatDuration, intervalToDuration, startOfMinute, subMinutes } from 'date-fns';
-import { each, first, isNil, last } from 'lodash-es';
+import { first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
 import { binanceExchangeSchema } from './binance/binance.schema';
-import { BROKER_MANDATORY_FEATURES, LIMITS, PARAMS } from './exchange.const';
+import { LIMITS, PARAMS } from './exchange.const';
 import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from './exchange.types';
 import {
+  checkMandatoryFeatures,
   checkOrderAmount,
   checkOrderCost,
   checkOrderPrice,
+  createExchange,
   mapCcxtOrderToOrder,
   mapCcxtTradeToTrade,
   mapOhlcvToCandles,
@@ -33,42 +35,29 @@ export type CCXTExchangeConfig = BinanceExchangeConfig | HyperliquidExchangeConf
 
 export class CCXTExchange implements Exchange {
   protected heart: Heart;
-  protected client: CCXT;
+  protected publicClient: CCXT;
+  protected privateClient: CCXT;
   protected exchangeName: string;
   protected symbol: string;
 
   constructor(exchangeConfig: CCXTExchangeConfig) {
     const { pairs } = config.getWatch();
-    const { symbol } = pairs[0]; // TODO: support multiple pairs
-    const { name } = exchangeConfig;
+    const { symbol } = pairs[0]; // TODO: Regression - currently only supports the first pair. Need to refactor CCXTExchange to be multi-pair aware or instantiate per pair.
+    const { name, sandbox } = exchangeConfig;
 
-    switch (name) {
-      case 'hyperliquid': {
-        const { privateKey, walletAddress, verbose } = exchangeConfig;
-        const options = { fetchMarkets: { types: ['spot'] } };
-        this.client = new ccxt.hyperliquid({ privateKey, walletAddress, verbose, options });
-        break;
-      }
-      default: {
-        const { apiKey, secret, verbose } = exchangeConfig;
-        this.client = new ccxt[name]({ apiKey, secret, verbose });
-        break;
-      }
-    }
-    const hasSandbox = 'sandbox' in exchangeConfig && exchangeConfig.sandbox;
-    const mandatoryFeatures = [...BROKER_MANDATORY_FEATURES, ...(hasSandbox ? ['sandbox'] : [])];
-    each(mandatoryFeatures, feature => {
-      if (!this.client.has[feature]) throw new GekkoError('exchange', `Missing ${feature} feature in ${name} exchange`);
-    });
-    this.client.setSandboxMode(hasSandbox);
-    this.client.options['maxRetriesOnFailure'] = 0; // we handle it manualy
+    const { publicClient, privateClient } = createExchange(exchangeConfig);
+    this.publicClient = publicClient;
+    this.privateClient = privateClient;
+
+    checkMandatoryFeatures(this.publicClient, sandbox);
+
     this.exchangeName = name;
     this.symbol = symbol;
     this.heart = new Heart(ONE_MINUTE);
   }
 
   getMarketData(): MarketData {
-    const market = this.client.market(this.symbol);
+    const market = this.publicClient.market(this.symbol);
     return {
       amount: {
         min: market.limits?.amount?.min,
@@ -117,12 +106,12 @@ export class CCXTExchange implements Exchange {
   }
 
   public async loadMarkets() {
-    await this.client.loadMarkets();
+    await Promise.all([this.publicClient.loadMarkets(), this.privateClient.loadMarkets()]);
   }
 
   public async fetchTicker() {
     return retry<Ticker>(async () => {
-      const ticker = await this.client.fetchTicker(this.symbol, PARAMS.fetchTicker[this.exchangeName]);
+      const ticker = await this.publicClient.fetchTicker(this.symbol, PARAMS.fetchTicker[this.exchangeName]);
       if (isNil(ticker.last)) throw new GekkoError('exchange', 'Fetch ticker failed to return data');
       return { ask: ticker.ask ?? ticker.last, bid: ticker.bid ?? ticker.last };
     });
@@ -130,7 +119,7 @@ export class CCXTExchange implements Exchange {
 
   public async fetchOHLCV({ from, timeframe = '1m', limit = LIMITS[this.exchangeName].candles }: FetchOHLCVParams) {
     return retry<Candle[]>(async () => {
-      const ohlcvList = await this.client.fetchOHLCV(this.symbol, timeframe, from, limit);
+      const ohlcvList = await this.publicClient.fetchOHLCV(this.symbol, timeframe, from, limit);
       const candles = mapOhlcvToCandles(ohlcvList);
 
       debug(
@@ -149,22 +138,22 @@ export class CCXTExchange implements Exchange {
 
   public async fetchMyTrades(from?: EpochTimeStamp) {
     return retry<Trade[]>(async () => {
-      const trades = await this.client.fetchMyTrades(this.symbol, from, LIMITS[this.exchangeName].trades);
+      const trades = await this.privateClient.fetchMyTrades(this.symbol, from, LIMITS[this.exchangeName].trades);
       return trades.map(mapCcxtTradeToTrade);
     });
   }
 
   public async fetchOrder(id: string) {
     return retry<OrderState>(async () => {
-      const order = await this.client.fetchOrder(id, this.symbol);
+      const order = await this.privateClient.fetchOrder(id, this.symbol);
       return mapCcxtOrderToOrder(order);
     });
   }
 
   public async fetchBalance() {
     return retry<Portfolio>(async () => {
-      const balance = await this.client.fetchBalance(PARAMS.fetchBalance[this.exchangeName]);
-      const { baseName, quote, base } = this.client.market(this.symbol) as MarketInterface & { baseName: string }; // Bug CCXT
+      const balance = await this.privateClient.fetchBalance(PARAMS.fetchBalance[this.exchangeName]);
+      const { baseName, quote, base } = this.publicClient.market(this.symbol) as MarketInterface & { baseName: string }; // Workaround: CCXT sometimes misses 'base' in market structure
       const asset = balance[baseName ?? base];
       const currency = balance[quote];
 
@@ -196,32 +185,32 @@ export class CCXTExchange implements Exchange {
     _onSettled?: OrderSettledCallback, // Ignored - real exchanges use polling
   ) {
     return retry<OrderState>(async () => {
-      const limits = this.client.market(this.symbol).limits;
+      const limits = this.publicClient.market(this.symbol).limits;
       const orderPrice = checkOrderPrice(price, limits);
       const orderAmount = checkOrderAmount(amount, limits);
       checkOrderCost(orderAmount, orderPrice, limits);
 
-      const order = await this.client.createOrder(this.symbol, 'limit', side, orderAmount, orderPrice);
+      const order = await this.privateClient.createOrder(this.symbol, 'limit', side, orderAmount, orderPrice);
       return mapCcxtOrderToOrder(order);
     });
   }
 
   public async createMarketOrder(side: OrderSide, amount: number) {
     return retry<OrderState>(async () => {
-      const limits = this.client.market(this.symbol).limits;
+      const limits = this.publicClient.market(this.symbol).limits;
       const orderAmount = checkOrderAmount(amount, limits);
       const ticker = await this.fetchTicker();
       const price = side === 'BUY' ? ticker.ask : ticker.bid;
       checkOrderCost(orderAmount, price, limits);
 
-      const order = await this.client.createOrder(this.symbol, 'market', side, orderAmount);
+      const order = await this.privateClient.createOrder(this.symbol, 'market', side, orderAmount);
       return mapCcxtOrderToOrder(order);
     });
   }
 
   public async cancelOrder(id: string) {
     return retry<OrderState>(async () => {
-      const order = await this.client.cancelOrder(id, this.symbol);
+      const order = await this.privateClient.cancelOrder(id, this.symbol);
       return mapCcxtOrderToOrder(order);
     });
   }

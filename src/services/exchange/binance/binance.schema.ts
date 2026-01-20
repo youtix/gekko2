@@ -7,4 +7,8 @@ export const binanceExchangeSchema = exchangeSchema.extend({
   secret: z.string().optional(), // Optional for importer mode
   sandbox: z.boolean().default(false),
   verbose: z.boolean().default(false),
+  proxy: z
+    .string()
+    .regex(/^(https?|socks5):\/\/.+/, 'Proxy must be a valid URL (http://, https://, or socks5://)')
+    .optional(),
 });

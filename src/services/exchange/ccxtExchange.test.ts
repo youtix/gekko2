@@ -6,8 +6,10 @@ import ccxt from 'ccxt';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { CCXTExchange } from './ccxtExchange';
 import {
+  checkMandatoryFeatures,
   checkOrderAmount,
   checkOrderPrice,
+  createExchange,
   mapCcxtOrderToOrder,
   mapCcxtTradeToTrade,
   mapOhlcvToCandles,
@@ -18,7 +20,17 @@ vi.mock('@services/configuration/configuration', () => ({
   config: { getWatch: vi.fn(), getExchange: vi.fn() },
 }));
 vi.mock('@services/core/heart/heart');
-vi.mock('./exchange.utils');
+vi.mock('./exchange.utils', () => ({
+  createExchange: vi.fn(),
+  retry: vi.fn(),
+  checkOrderAmount: vi.fn(),
+  checkOrderPrice: vi.fn(),
+  checkOrderCost: vi.fn(),
+  checkMandatoryFeatures: vi.fn(),
+  mapCcxtOrderToOrder: vi.fn(),
+  mapCcxtTradeToTrade: vi.fn(),
+  mapOhlcvToCandles: vi.fn(),
+}));
 vi.mock('@services/logger', () => ({ error: vi.fn(), debug: vi.fn() }));
 
 vi.mock('ccxt', () => {
@@ -78,6 +90,15 @@ describe('CCXTExchange', () => {
     (retry as Mock).mockImplementation(async fn => fn());
     (checkOrderAmount as Mock).mockReturnValue(1);
     (checkOrderPrice as Mock).mockReturnValue(100);
+
+    // Mock createExchange to return both publicClient and privateClient
+    (createExchange as Mock).mockImplementation(config => {
+      const exchangeClass = (ccxt as any)[config.name];
+      return {
+        publicClient: new exchangeClass(),
+        privateClient: new exchangeClass(),
+      };
+    });
   });
 
   describe('Constructor', () => {
@@ -90,21 +111,19 @@ describe('CCXTExchange', () => {
     });
 
     it.each`
-      sandbox  | expected
-      ${true}  | ${true}
-      ${false} | ${false}
-    `('sets sandbox mode to $expected when sandbox=$sandbox', ({ sandbox, expected }) => {
+      sandbox
+      ${true}
+      ${false}
+    `('creates exchange with sandbox=$sandbox', ({ sandbox }) => {
       new CCXTExchange({ ...binanceConfig, sandbox });
-      const instance = (ccxt as any).binance.mock.instances.at(-1);
-      expect(instance.setSandboxMode).toHaveBeenCalledWith(expected);
+      expect(createExchange).toHaveBeenCalledWith({ ...binanceConfig, sandbox });
     });
 
     it('throws when required feature is missing', () => {
-      const Mock = (ccxt as any).binance;
-      const original = Mock.prototype.has;
-      Mock.prototype.has = { ...original, fetchOHLCV: false };
+      (checkMandatoryFeatures as Mock).mockImplementationOnce(() => {
+        throw new Error('Missing fetchOHLCV feature');
+      });
       expect(() => new CCXTExchange(binanceConfig)).toThrow('Missing fetchOHLCV feature');
-      Mock.prototype.has = original;
     });
   });
 
