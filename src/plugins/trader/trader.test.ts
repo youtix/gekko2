@@ -85,6 +85,7 @@ function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = fa
 
   function MockOrder(
     this: any,
+    symbol: string,
     id: string,
     side: string,
     amount: number,
@@ -92,6 +93,7 @@ function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = fa
     maybeExchange?: unknown,
   ) {
     ensureStore(this);
+    this.symbol = symbol;
     this.id = id;
     this.side = side;
     this.amount = amount;
@@ -99,13 +101,13 @@ function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = fa
     this.exchange = requiresPrice ? maybeExchange : priceOrExchange;
     this.cancel = vi.fn();
     this.launch = vi.fn();
-    this.createSummary = vi.fn().mockResolvedValue({
+    this.createSummary = vi.fn().mockImplementation(async () => ({
       amount: this.amount,
       price: 100,
       feePercent: 0.25,
       side: this.side,
-      date: 1_700_000_000_000,
-    });
+      orderExecutionDate: 1_700_000_000_000,
+    }));
     this.removeAllListeners = vi.fn(() => {
       listenersStore.set(this, new Map());
     });
@@ -144,7 +146,13 @@ function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = fa
     return handlers.size > 0;
   };
 
-  return MockOrder as unknown as new (id: string, side: string, amount: number, exchange: unknown) => any;
+  return MockOrder as unknown as new (
+    symbol: string,
+    id: string,
+    side: string,
+    amount: number,
+    exchange: unknown,
+  ) => any;
 }
 
 vi.mock('../../services/core/order/sticky/stickyOrder', () => ({

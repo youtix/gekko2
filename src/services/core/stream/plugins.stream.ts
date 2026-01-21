@@ -1,4 +1,4 @@
-import { Candle } from '@models/candle.types';
+import { CandleEvent } from '@models/event.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { DummyExchange } from '@services/exchange/exchange.types';
@@ -29,10 +29,10 @@ export class PluginsStream extends Writable {
     }
   }
 
-  public async _write(candle: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
+  public async _write({ symbol, candle }: CandleEvent, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
     try {
       // Forward candle to dummy exchange (if set by user) before all plugins
-      await this.dummyExchange?.processOneMinuteCandle(candle);
+      await this.dummyExchange?.processOneMinuteCandle(symbol, candle);
 
       // Forward candle to all plugins concurrently
       await Promise.all(this.plugins.map(plugin => plugin.processInputStream(candle)));

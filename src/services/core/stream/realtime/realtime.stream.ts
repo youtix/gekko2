@@ -1,5 +1,6 @@
 import { Candle } from '@models/candle.types';
 import { candleSchema } from '@models/schema/candle.schema';
+import { Symbol } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
@@ -11,18 +12,18 @@ import { Readable } from 'node:stream';
 export class RealtimeStream extends Readable {
   private readonly exchange: Exchange;
   private readonly unsubscribe: () => void;
-  private readonly symbol: string;
+  private readonly symbol: Symbol;
 
   constructor() {
     super({ objectMode: true });
     const { pairs } = config.getWatch();
-    const { symbol } = pairs[0]; // TODO: support multiple pairs
+    const { symbol } = pairs[0];
     this.exchange = inject.exchange();
     this.symbol = symbol;
 
     bindAll(this, ['onNewCandle']);
 
-    this.unsubscribe = this.exchange.onNewCandle(this.onNewCandle);
+    this.unsubscribe = this.exchange.onNewCandle(symbol, this.onNewCandle);
   }
 
   private onNewCandle(candle: Candle) {
@@ -35,7 +36,7 @@ export class RealtimeStream extends Readable {
     );
 
     candleSchema.parse(candle);
-    this.push(candle);
+    this.push({ symbol: this.symbol, candle });
   }
 
   _read(): void {

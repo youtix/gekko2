@@ -22,7 +22,7 @@ vi.mock('@services/logger', () => ({
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: () => ({ mode: 'backtest' }),
+    getWatch: () => ({ mode: 'backtest', pairs: [{ symbol: 'BTC/USDT' }] }),
   },
 }));
 
@@ -46,7 +46,7 @@ describe('MarketOrder', () => {
   const amount = 1;
 
   beforeEach(() => {
-    order = new MarketOrder(orderId, side, amount);
+    order = new MarketOrder('BTC/USDT', orderId, side, amount);
   });
 
   describe('launch', () => {
@@ -61,7 +61,7 @@ describe('MarketOrder', () => {
 
       await order.launch();
 
-      expect(fakeExchange.createMarketOrder).toHaveBeenCalledWith(side, amount);
+      expect(fakeExchange.createMarketOrder).toHaveBeenCalledWith('BTC/USDT', side, amount);
     });
 
     it('should handle successful order creation (open)', async () => {
@@ -155,7 +155,7 @@ describe('MarketOrder', () => {
 
       await order.cancel();
 
-      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith('ex-1');
+      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith('BTC/USDT', 'ex-1');
     });
   });
 

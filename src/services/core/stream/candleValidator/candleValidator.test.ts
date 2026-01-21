@@ -1,4 +1,5 @@
 import { Candle } from '@models/candle.types';
+import { CandleEvent } from '@models/event.types';
 import { config } from '@services/configuration/configuration';
 import * as logger from '@services/logger';
 import * as candleUtils from '@utils/candle/candle.utils';
@@ -14,15 +15,19 @@ const TWO_MINUTES = 120_000;
 const NOW = Date.now();
 
 const candle = (start: number): Candle => ({ start, open: 100, close: 100, high: 110, low: 90, volume: 10 });
+const candleEvent = (start: number, symbol: `${string}/${string}` = 'BTC/USDT'): CandleEvent => ({
+  symbol,
+  candle: candle(start),
+});
 
-const runStream = async (...candles: Candle[]): Promise<Candle[]> => {
+const runStream = async (...candles: Candle[]): Promise<CandleEvent[]> => {
   const stream = new CandleValidatorStream();
-  const results: Candle[] = [];
-  stream.on('data', (c: Candle) => results.push(c));
+  const results: CandleEvent[] = [];
+  stream.on('data', (c: CandleEvent) => results.push(c));
   return new Promise((resolve, reject) => {
     stream.on('end', () => resolve(results));
     stream.on('error', reject);
-    candles.forEach(c => stream.write(c));
+    candles.forEach(c => stream.write(candleEvent(c.start)));
     stream.end();
   });
 };
@@ -42,7 +47,7 @@ describe('CandleValidatorStream', () => {
       getWatchMock.mockReturnValue({ mode, fillGaps });
       const c1 = candle(NOW - TWO_MINUTES);
       const c2 = candle(NOW - ONE_MINUTE);
-      expect(await runStream(c1, c2)).toEqual([c1, c2]);
+      expect(await runStream(c1, c2)).toEqual([candleEvent(c1.start), candleEvent(c2.start)]);
     });
   });
 
@@ -70,7 +75,7 @@ describe('CandleValidatorStream', () => {
       const c1 = candle(NOW - TWO_MINUTES);
       const c2 = candle(NOW - ONE_MINUTE);
       const c3 = candle(c3Start); // duplicate/older
-      expect(await runStream(c1, c2, c3)).toEqual([c1, c2]);
+      expect(await runStream(c1, c2, c3)).toEqual([candleEvent(c1.start), candleEvent(c2.start)]);
     });
 
     it('should log a warning when ignoring a duplicate candle', async () => {
@@ -94,7 +99,7 @@ describe('CandleValidatorStream', () => {
 
     it('should not fill gaps when fillGaps is "no"', async () => {
       getWatchMock.mockReturnValue({ mode: 'backtest', fillGaps: 'no' });
-      expect(await runStream(c1, c4)).toEqual([c1, c4]);
+      expect(await runStream(c1, c4)).toEqual([candleEvent(c1.start), candleEvent(c4.start)]);
     });
 
     it('should fill gaps with empty candles when fillGaps is "empty"', async () => {
@@ -102,7 +107,12 @@ describe('CandleValidatorStream', () => {
       const c2 = candle(NOW - 3 * ONE_MINUTE);
       const c3 = candle(NOW - 2 * ONE_MINUTE);
       fillMissingCandlesMock.mockReturnValue([c1, c2, c3, c4]);
-      expect(await runStream(c1, c4)).toEqual([c1, c2, c3, c4]);
+      expect(await runStream(c1, c4)).toEqual([
+        candleEvent(c1.start),
+        candleEvent(c2.start),
+        candleEvent(c3.start),
+        candleEvent(c4.start),
+      ]);
     });
 
     it('should log a warning when filling gaps with empty candles', async () => {
@@ -155,7 +165,7 @@ describe('CandleValidatorStream', () => {
       fillMissingCandlesMock.mockReturnValue(null);
       const c1 = candle(NOW - 4 * ONE_MINUTE);
       const c4 = candle(NOW - ONE_MINUTE);
-      expect(await runStream(c1, c4)).toEqual([c1, c4]);
+      expect(await runStream(c1, c4)).toEqual([candleEvent(c1.start), candleEvent(c4.start)]);
     });
   });
 });

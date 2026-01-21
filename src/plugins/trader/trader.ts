@@ -26,6 +26,7 @@ import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
 import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
+import { EMPTY_BALANCE } from '@strategies/gridBot/gridBot.const';
 import { toISOString } from '@utils/date/date.utils';
 import { clonePortfolio, createEmptyPortfolio, getBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
@@ -52,7 +53,7 @@ export class Trader extends Plugin {
     this.warmupCompleted = false;
     this.warmupCandle = null;
     this.portfolio = createEmptyPortfolio();
-    this.balance = { free: 0, used: 0, total: 0 };
+    this.balance = EMPTY_BALANCE;
     this.price = 0;
     this.currentTimestamp = 0;
     this.syncInterval = null;
@@ -69,7 +70,7 @@ export class Trader extends Plugin {
     const oldBalance = this.balance;
 
     // Update portfolio, balance and price
-    const { bid } = await exchange.fetchTicker();
+    const { bid } = await exchange.fetchTicker(this.symbol);
     this.portfolio = await exchange.fetchBalance();
     this.price = bid;
     const assetBalance = getBalance(this.portfolio, this.asset);
@@ -223,7 +224,7 @@ export class Trader extends Plugin {
         this.addDeferredEmit<OrderInitiatedEvent>(ORDER_INITIATED_EVENT, { order: orderInitiated, exchange });
 
         // Create order
-        const orderInstance = new ORDER_FACTORY[type](id, side, amount, price);
+        const orderInstance = new ORDER_FACTORY[type](this.symbol, id, side, amount, price);
         this.orders.set(id, { amount, side, orderCreationDate, type, price, orderInstance });
 
         // UPDATE EVENTS

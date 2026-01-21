@@ -47,35 +47,36 @@ describe('createEmptyPortfolio', () => {
 
 describe('createPortfolio', () => {
   it('returns a Map instance', () => {
-    const assetBalance = createBalanceDetail(1, 0, 1);
-    const currencyBalance = createBalanceDetail(100, 0, 100);
+    const pairs: `${string}/${string}`[] = ['BTC/USDT'];
+    const initialBalance = new Map([
+      ['BTC', 1],
+      ['USDT', 100],
+    ]);
 
-    expect(createPortfolio('BTC', assetBalance, 'USDT', currencyBalance)).toBeInstanceOf(Map);
+    expect(createPortfolio(pairs, initialBalance)).toBeInstanceOf(Map);
   });
 
-  it('creates a portfolio with 2 entries', () => {
-    const assetBalance = createBalanceDetail(1, 0, 1);
-    const currencyBalance = createBalanceDetail(100, 0, 100);
+  it('creates a portfolio with 2 entries for a single pair', () => {
+    const pairs: `${string}/${string}`[] = ['ETH/EUR'];
+    const initialBalance = new Map([
+      ['ETH', 1],
+      ['EUR', 100],
+    ]);
 
-    expect(createPortfolio('ETH', assetBalance, 'EUR', currencyBalance).size).toBe(2);
+    expect(createPortfolio(pairs, initialBalance).size).toBe(2);
   });
 
   it.each`
-    asset    | assetFree | currency  | currencyFree | symbol    | expectedFree
-    ${'BTC'} | ${0.5}    | ${'USDT'} | ${1000}      | ${'BTC'}  | ${0.5}
-    ${'BTC'} | ${0.5}    | ${'USDT'} | ${1000}      | ${'USDT'} | ${1000}
-    ${'ETH'} | ${10}     | ${'EUR'}  | ${500}       | ${'ETH'}  | ${10}
-    ${'ETH'} | ${10}     | ${'EUR'}  | ${500}       | ${'EUR'}  | ${500}
-  `(
-    'portfolio.get($symbol).free equals $expectedFree when asset=$asset, currency=$currency',
-    ({ asset, assetFree, currency, currencyFree, symbol, expectedFree }) => {
-      const assetBalance = createBalanceDetail(assetFree, 0, assetFree);
-      const currencyBalance = createBalanceDetail(currencyFree, 0, currencyFree);
-      const portfolio = createPortfolio(asset, assetBalance, currency, currencyBalance);
+    pairs           | balances                                   | symbol    | expectedFree
+    ${['BTC/USDT']} | ${new Map([['BTC', 0.5], ['USDT', 1000]])} | ${'BTC'}  | ${0.5}
+    ${['BTC/USDT']} | ${new Map([['BTC', 0.5], ['USDT', 1000]])} | ${'USDT'} | ${1000}
+    ${['ETH/EUR']}  | ${new Map([['ETH', 10], ['EUR', 500]])}    | ${'ETH'}  | ${10}
+    ${['ETH/EUR']}  | ${new Map([['ETH', 10], ['EUR', 500]])}    | ${'EUR'}  | ${500}
+  `('portfolio.get($symbol).free equals $expectedFree', ({ pairs, balances, symbol, expectedFree }) => {
+    const portfolio = createPortfolio(pairs, balances);
 
-      expect(portfolio.get(symbol)?.free).toBe(expectedFree);
-    },
-  );
+    expect(portfolio.get(symbol)?.free).toBe(expectedFree);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

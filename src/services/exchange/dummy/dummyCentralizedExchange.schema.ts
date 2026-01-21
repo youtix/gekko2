@@ -1,46 +1,54 @@
-import { DEFAULT_MARKET_DATA, DEFAULT_SIMULATION_BALANCE } from '@services/exchange/exchange.const';
-import { exchangeSchema } from '@services/exchange/exchange.schema';
+import { symbolSchema } from '@models/schema/pairConfig.schema';
+import { Symbol } from '@models/utility.types';
+import { exchangeSchema, simulationBalanceSchema } from '@services/exchange/exchange.schema';
 import z from 'zod';
-import { DEFAULT_TICKER } from './dummyCentralizedExchange.const';
-
-const simulationBalanceSchema = z
-  .object({
-    asset: z.number().min(0).default(DEFAULT_SIMULATION_BALANCE.asset),
-    currency: z.number().min(0).default(DEFAULT_SIMULATION_BALANCE.currency),
-  })
-  .default(DEFAULT_SIMULATION_BALANCE);
+import { MarketData, Ticker } from '../exchange.types';
 
 const marketDataSchema = z
-  .object({
-    price: z.object({
-      min: z.number().default(DEFAULT_MARKET_DATA.price.min),
-      max: z.number().default(DEFAULT_MARKET_DATA.price.max),
+  .array(
+    z.object({
+      symbol: symbolSchema,
+      marketData: z.object({
+        price: z.object({
+          min: z.number(),
+          max: z.number(),
+        }),
+        amount: z.object({
+          min: z.number(),
+          max: z.number(),
+        }),
+        cost: z.object({
+          min: z.number(),
+          max: z.number(),
+        }),
+        precision: z.object({
+          price: z.number(),
+          amount: z.number(),
+        }),
+        fee: z.object({
+          maker: z.number(),
+          taker: z.number(),
+        }),
+      }),
     }),
-    amount: z.object({
-      min: z.number().default(DEFAULT_MARKET_DATA.amount.min),
-      max: z.number().default(DEFAULT_MARKET_DATA.amount.max),
-    }),
-    cost: z.object({
-      min: z.number().default(DEFAULT_MARKET_DATA.cost.min),
-      max: z.number().default(DEFAULT_MARKET_DATA.cost.max),
-    }),
-    precision: z.object({
-      price: z.number().default(DEFAULT_MARKET_DATA.precision.price),
-      amount: z.number().default(DEFAULT_MARKET_DATA.precision.amount),
-    }),
-    fee: z.object({
-      maker: z.number().default(DEFAULT_MARKET_DATA.fee.maker),
-      taker: z.number().default(DEFAULT_MARKET_DATA.fee.taker),
-    }),
-  })
-  .default(DEFAULT_MARKET_DATA);
+  )
+  .default([])
+  .transform(
+    marketConstraints => new Map<Symbol, MarketData>(marketConstraints?.map(mc => [mc.symbol, mc.marketData]) ?? []),
+  );
 
 const initialTickerSchema = z
-  .object({
-    bid: z.number().default(DEFAULT_TICKER.bid),
-    ask: z.number().default(DEFAULT_TICKER.ask),
-  })
-  .default(DEFAULT_TICKER);
+  .array(
+    z.object({
+      symbol: symbolSchema,
+      ticker: z.object({
+        bid: z.number(),
+        ask: z.number(),
+      }),
+    }),
+  )
+  .default([])
+  .transform(balance => new Map<Symbol, Ticker>(balance.map(b => [b.symbol, b.ticker])));
 
 export const dummyExchangeSchema = exchangeSchema.extend({
   name: z.literal('dummy-cex'),

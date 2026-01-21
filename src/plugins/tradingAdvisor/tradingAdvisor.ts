@@ -127,7 +127,7 @@ export class TradingAdvisor extends Plugin {
   protected async processInit() {
     await this.setUpStrategy();
     this.setUpListeners();
-    this.strategyManager?.setMarketData(this.getExchange().getMarketData());
+    this.strategyManager?.setMarketData(this.getExchange().getMarketData(this.symbol));
     const balance = await this.getExchange().fetchBalance();
     this.strategyManager?.setPortfolio(balance);
     info('trading advisor', `Using the strategy: ${this.strategyName}`);

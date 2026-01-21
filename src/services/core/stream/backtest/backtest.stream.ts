@@ -1,3 +1,4 @@
+import { Symbol } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { inject } from '@services/injecter/injecter';
 import { debug, info, warning } from '@services/logger';
@@ -11,6 +12,7 @@ export class BacktestStream extends Readable {
   private storage: Storage;
   private dateranges: Interval<EpochTimeStamp, EpochTimeStamp>[];
   private iteration: number;
+  private symbol: Symbol;
 
   constructor(daterange: Interval<EpochTimeStamp, EpochTimeStamp>) {
     super({ objectMode: true });
@@ -19,11 +21,12 @@ export class BacktestStream extends Readable {
     warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
 
     const { batchSize, pairs } = config.getWatch();
-    const { symbol } = pairs[0]; // TODO: support multiple pairs
+    const { symbol } = pairs[0];
     const [asset, currency] = symbol.split('/');
     const strategy = config.getStrategy();
     this.dateranges = splitIntervals(daterange.start, daterange.end, batchSize ?? 1440);
     this.iteration = 0;
+    this.symbol = symbol;
 
     info(
       'stream',
@@ -43,12 +46,10 @@ export class BacktestStream extends Readable {
     const daterange = this.dateranges[this.iteration];
 
     if (daterange) {
-      const { pairs } = config.getWatch();
-      const { symbol } = pairs[0]; // TODO: support multiple pairs
-      const candles = this.storage.getCandles(symbol, daterange);
+      const candles = this.storage.getCandles(this.symbol, daterange);
       const expectedCandles = differenceInMinutes(daterange.end, daterange.start) + 1;
-      if (candles.length === expectedCandles) candles.forEach(candle => this.push(candle));
-      else throw new MissingCandlesError(symbol, daterange);
+      if (candles.length === expectedCandles) candles.forEach(candle => this.push({ symbol: this.symbol, candle }));
+      else throw new MissingCandlesError(this.symbol, daterange);
 
       debug('stream', `Reading database data from ${toISOString(daterange.start)} -> to ${toISOString(daterange.end)}`);
     }

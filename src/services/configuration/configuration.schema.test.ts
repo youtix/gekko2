@@ -181,6 +181,10 @@ describe('configurationSchema', () => {
     plugins: [] as Array<{ name?: string }>,
     exchange: {
       name: 'dummy-cex' as const,
+      simulationBalance: [
+        { assetName: 'BTC', balance: 1 },
+        { assetName: 'USDT', balance: 10000 },
+      ],
     },
   });
 

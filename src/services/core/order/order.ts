@@ -9,6 +9,7 @@ import {
 import { GekkoError } from '@errors/gekko.error';
 import { Watch } from '@models/configuration.types';
 import { OrderSide, OrderState, OrderType } from '@models/order.types';
+import { Symbol } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
@@ -27,8 +28,9 @@ export abstract class Order extends EventEmitter {
   protected readonly side: OrderSide;
   protected readonly gekkoOrderId: UUID;
   protected readonly mode: Watch['mode'];
+  protected readonly symbol: Symbol;
 
-  constructor(gekkoOrderId: UUID, side: OrderSide, type: OrderType) {
+  constructor(symbol: Symbol, gekkoOrderId: UUID, side: OrderSide, type: OrderType) {
     super();
     const { mode } = config.getWatch();
     this.exchange = inject.exchange();
@@ -38,6 +40,7 @@ export abstract class Order extends EventEmitter {
     this.side = side;
     this.gekkoOrderId = gekkoOrderId;
     this.mode = mode;
+    this.symbol = symbol;
   }
 
   public getGekkoOrderId() {
@@ -47,7 +50,7 @@ export abstract class Order extends EventEmitter {
   protected async createLimitOrder(side: OrderSide, amount: number, price: number) {
     try {
       info('order', `[${this.gekkoOrderId}] Creating ${side} limit order with amount: ${amount} and price ${price}`);
-      const order = await this.exchange.createLimitOrder(side, amount, price);
+      const order = await this.exchange.createLimitOrder(this.symbol, side, amount, price);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
       await this.handleCreateOrderError(error);
@@ -57,7 +60,7 @@ export abstract class Order extends EventEmitter {
   protected async createMarketOrder(side: OrderSide, amount: number) {
     try {
       info('order', `[${this.gekkoOrderId}] Creating ${side} market order created with amount: ${amount}`);
-      const order = await this.exchange.createMarketOrder(side, amount);
+      const order = await this.exchange.createMarketOrder(this.symbol, side, amount);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
       await this.handleCreateOrderError(error);
@@ -67,7 +70,7 @@ export abstract class Order extends EventEmitter {
   protected async cancelOrder(id: string) {
     try {
       info('order', `[${this.gekkoOrderId}] Canceling ${this.side} ${this.type} order.`);
-      const order = await this.exchange.cancelOrder(id);
+      const order = await this.exchange.cancelOrder(this.symbol, id);
       await this.handleCancelOrderSuccess(order);
     } catch (error) {
       await this.handleCancelOrderError(error);
@@ -77,7 +80,7 @@ export abstract class Order extends EventEmitter {
   protected async fetchOrder(id: string) {
     try {
       info('order', `[${this.gekkoOrderId}] Fetching ${this.side} ${this.type} order`);
-      const order = await this.exchange.fetchOrder(id);
+      const order = await this.exchange.fetchOrder(this.symbol, id);
       await this.handleFetchOrderSuccess(order);
     } catch (error) {
       await this.handleFetchOrderError(error);
@@ -137,6 +140,7 @@ export abstract class Order extends EventEmitter {
 
     return createOrderSummary({
       id: this.gekkoOrderId,
+      symbol: this.symbol,
       exchange: this.exchange,
       type: this.type,
       side: this.side,

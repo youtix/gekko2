@@ -5,7 +5,7 @@ import { processStartTime } from '@utils/process/process.utils';
 import { subMinutes } from 'date-fns';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
-import { describe, expect, it, Mock, vi } from 'vitest';
+import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { BacktestStream } from '../stream/backtest/backtest.stream';
 import { CandleValidatorStream } from '../stream/candleValidator/candleValidator.stream';
 import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCandle.stream';
@@ -44,6 +44,12 @@ vi.mock('@utils/process/process.utils', () => ({
 
 vi.mock('date-fns', () => ({
   subMinutes: vi.fn(),
+  formatDuration: vi.fn().mockReturnValue('1h 30m'),
+  intervalToDuration: vi.fn(),
+}));
+
+vi.mock('@services/logger', () => ({
+  info: vi.fn(),
 }));
 
 vi.mock('stream/promises', () => ({
@@ -58,7 +64,9 @@ vi.mock('../stream/candleValidator/candleValidator.stream', () => ({
   CandleValidatorStream: vi.fn(),
 }));
 vi.mock('../stream/historicalCandle/historicalCandle.stream', () => ({
-  HistoricalCandleStream: vi.fn(),
+  HistoricalCandleStream: vi.fn().mockImplementation(() => ({
+    getStats: vi.fn().mockReturnValue({ symbol: 'TEST/PAIR', count: 1000 }),
+  })),
 }));
 vi.mock('../stream/plugins.stream', () => ({
   PluginsStream: vi.fn(),
@@ -122,6 +130,7 @@ describe('Pipeline Utils', () => {
           startDate: mockStartDate.getTime(),
           endDate: mockNow,
           tickrate: 1000,
+          symbol: 'BTC/USDT',
         });
         expect(RealtimeStream).toHaveBeenCalled();
         expect(CandleValidatorStream).toHaveBeenCalled();
@@ -158,16 +167,29 @@ describe('Pipeline Utils', () => {
     });
 
     describe('importer', () => {
+      beforeEach(() => {
+        (HistoricalCandleStream as unknown as Mock).mockImplementation(function () {
+          return {
+            getStats: vi.fn().mockReturnValue({ symbol: 'BTC/USDT', count: 1000 }),
+            pipe: vi.fn(),
+            on: vi.fn(),
+            once: vi.fn(),
+            emit: vi.fn(),
+          };
+        });
+      });
       it('should build importer pipeline correctly', async () => {
         const mockDaterange = {
           start: new Date('2023-01-01').getTime(),
           end: new Date('2023-01-02').getTime(),
         };
         const mockTickrate = 500;
+        const mockPairs = [{ symbol: 'BTC/USDT', timeframe: '1m' }];
 
         (config.getWatch as Mock).mockReturnValue({
           daterange: mockDaterange,
           tickrate: mockTickrate,
+          pairs: mockPairs,
         });
         (toTimestamp as Mock).mockImplementation(date => new Date(date).getTime());
 
@@ -178,10 +200,99 @@ describe('Pipeline Utils', () => {
           startDate: new Date(mockDaterange.start).getTime(),
           endDate: new Date(mockDaterange.end).getTime(),
           tickrate: mockTickrate,
+          symbol: 'BTC/USDT',
         });
         expect(CandleValidatorStream).toHaveBeenCalled();
         expect(PluginsStream).toHaveBeenCalledWith(mockPlugins);
         expect(pipeline).toHaveBeenCalled();
+      });
+
+      it('should create parallel pipelines for multiple pairs', async () => {
+        const mockDaterange = {
+          start: new Date('2023-01-01').getTime(),
+          end: new Date('2023-01-02').getTime(),
+        };
+        const mockTickrate = 500;
+        const mockPairs = [
+          { symbol: 'BTC/USDT', timeframe: '1m' },
+          { symbol: 'ETH/USDT', timeframe: '1m' },
+          { symbol: 'SOL/USDT', timeframe: '1m' },
+        ];
+
+        (config.getWatch as Mock).mockReturnValue({
+          daterange: mockDaterange,
+          tickrate: mockTickrate,
+          pairs: mockPairs,
+        });
+
+        await streamPipelines.importer(mockPlugins);
+
+        // Should create one pipeline per pair
+        expect(HistoricalCandleStream).toHaveBeenCalledTimes(3);
+
+        // Verify each pair gets its own stream with correct symbol
+        expect(HistoricalCandleStream).toHaveBeenCalledWith(expect.objectContaining({ symbol: 'BTC/USDT' }));
+        expect(HistoricalCandleStream).toHaveBeenCalledWith(expect.objectContaining({ symbol: 'ETH/USDT' }));
+        expect(HistoricalCandleStream).toHaveBeenCalledWith(expect.objectContaining({ symbol: 'SOL/USDT' }));
+      });
+
+      it('should use Promise.allSettled for error isolation', async () => {
+        const mockDaterange = {
+          start: new Date('2023-01-01').getTime(),
+          end: new Date('2023-01-02').getTime(),
+        };
+        const mockPairs = [
+          { symbol: 'BTC/USDT', timeframe: '1m' },
+          { symbol: 'ETH/USDT', timeframe: '1m' },
+          { symbol: 'SOL/USDT', timeframe: '1m' },
+        ];
+
+        (config.getWatch as Mock).mockReturnValue({
+          daterange: mockDaterange,
+          tickrate: 500,
+          pairs: mockPairs,
+        });
+
+        // Make the pipeline mock reject for one pair but resolve for others
+        let callCount = 0;
+        (pipeline as Mock).mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) return Promise.reject(new Error('First pair failed'));
+          return Promise.resolve();
+        });
+
+        // Should not throw even if one pair fails
+        await expect(streamPipelines.importer(mockPlugins)).resolves.not.toThrow();
+      });
+
+      it('should execute all pipelines regardless of individual failures', async () => {
+        const mockDaterange = {
+          start: new Date('2023-01-01').getTime(),
+          end: new Date('2023-01-02').getTime(),
+        };
+        const mockPairs = [
+          { symbol: 'FAIL/USDT', timeframe: '1m' },
+          { symbol: 'OK/USDT', timeframe: '1m' },
+        ];
+
+        (config.getWatch as Mock).mockReturnValue({
+          daterange: mockDaterange,
+          tickrate: 500,
+          pairs: mockPairs,
+        });
+
+        // Fail first, succeed second
+        let pipelineCallCount = 0;
+        (pipeline as Mock).mockImplementation(() => {
+          pipelineCallCount++;
+          if (pipelineCallCount === 1) return Promise.reject(new Error('Pipeline failed'));
+          return Promise.resolve();
+        });
+
+        await streamPipelines.importer(mockPlugins);
+
+        // Both pipelines should have been called
+        expect(pipeline).toHaveBeenCalledTimes(2);
       });
     });
   });

@@ -1,4 +1,5 @@
 import { Candle } from '@models/candle.types';
+import { Symbol } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { debug, getBufferedLogs } from '@services/logger';
@@ -196,9 +197,9 @@ export class Supervision extends Plugin {
     debug('supervision', 'Stopped Log monitoring');
   }
 
-  private async checkTimeframeCandle() {
+  private async checkTimeframeCandle(symbol: Symbol) {
     if (!this.lastTimeframeCandle) return;
-    const candles = await this.getExchange().fetchOHLCV({ timeframe: this.timeframe, limit: 100 });
+    const candles = await this.getExchange().fetchOHLCV(symbol, { timeframe: this.timeframe, limit: 100 });
     const exchangeCandle = candles.filter(candle => this.lastTimeframeCandle?.start === candle.start)[0];
     if (!exchangeCandle) return;
     const diff = shallowObjectDiff(exchangeCandle, this.lastTimeframeCandle);
@@ -233,7 +234,7 @@ export class Supervision extends Plugin {
     for (const candle of payloads) {
       this.lastTimeframeCandle = candle;
       if (!this.subscriptions.has('candle_check')) continue;
-      await this.checkTimeframeCandle();
+      await this.checkTimeframeCandle(this.symbol);
     }
   }
 

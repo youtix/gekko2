@@ -2,6 +2,7 @@ import { UUID } from 'node:crypto';
 import { Candle } from './candle.types';
 import { OrderSide, OrderType } from './order.types';
 import { BalanceDetail, Portfolio } from './portfolio.types';
+import { Symbol } from './utility.types';
 
 /**
  * Wraps a candle with its symbol context for multi-asset pipeline routing.
@@ -9,7 +10,7 @@ import { BalanceDetail, Portfolio } from './portfolio.types';
  */
 export interface CandleEvent {
   /** Trading pair symbol in CCXT format (e.g., "BTC/USDT") */
-  symbol: string;
+  symbol: Symbol;
   /** The candle data for this symbol */
   candle: Candle;
 }

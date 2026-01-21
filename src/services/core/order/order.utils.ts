@@ -1,5 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderSide, OrderType } from '@models/order.types';
+import { Symbol } from '@models/utility.types';
 import { Exchange } from '@services/exchange/exchange.types';
 import { debug } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
@@ -10,6 +11,7 @@ import { OrderSummary, Transaction } from './order.types';
 
 type CreateOrderSummaryParams = {
   id: UUID;
+  symbol: Symbol;
   exchange: Exchange;
   type: OrderType;
   side: OrderSide;
@@ -18,6 +20,7 @@ type CreateOrderSummaryParams = {
 
 export const createOrderSummary = async ({
   id,
+  symbol,
   exchange,
   type,
   side,
@@ -26,7 +29,7 @@ export const createOrderSummary = async ({
   if (!transactions.length) throw new GekkoError('core', `[${id}] Order is not completed`);
 
   const from = resetDateParts(transactions[0]?.timestamp, ['ms']);
-  const myTrades = await exchange.fetchMyTrades(from);
+  const myTrades = await exchange.fetchMyTrades(symbol, from);
   const orderIDs = map(transactions, 'id');
   const trades = sortBy(
     filter(myTrades, trade => orderIDs.includes(trade.id)),

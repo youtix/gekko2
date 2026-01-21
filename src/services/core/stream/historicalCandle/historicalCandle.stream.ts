@@ -1,4 +1,5 @@
 import { Candle } from '@models/candle.types';
+import { Symbol } from '@models/utility.types';
 import { Heart } from '@services/core/heart/heart';
 import { HistoricalCandleError } from '@services/core/stream/historicalCandle/historicalCandle.error';
 import { Exchange } from '@services/exchange/exchange.types';
@@ -16,16 +17,27 @@ export class HistoricalCandleStream extends Readable {
   private heart: Heart;
   private exchange: Exchange;
   private isLocked: boolean;
+  private symbol: Symbol;
+  private initialStartDate: EpochTimeStamp;
+  private importedCandles: number;
+  private lastProgressLog: number;
+  private totalDuration: number;
 
-  constructor({ startDate, endDate, tickrate }: HistoricalCandleStreamInput) {
+  constructor({ startDate, endDate, tickrate, symbol }: HistoricalCandleStreamInput) {
     super({ objectMode: true });
 
     this.startDate = resetDateParts(startDate, ['s', 'ms']);
     this.endDate = resetDateParts(endDate, ['s', 'ms']);
 
+    this.initialStartDate = this.startDate;
+    this.totalDuration = this.endDate - this.startDate;
+    this.importedCandles = 0;
+    this.lastProgressLog = 0;
+
     this.heart = new Heart(tickrate);
     this.exchange = inject.exchange();
     this.isLocked = false;
+    this.symbol = symbol;
 
     bindAll(this, ['pushCandles', 'pushCandle', 'onTick']);
 
@@ -33,13 +45,13 @@ export class HistoricalCandleStream extends Readable {
 
     // Close stream if nothing to download
     if (!isBefore(this.startDate, this.endDate)) {
-      info('stream', 'No historical data to download');
+      info('stream', `[${symbol}] No historical data to download`);
       process.nextTick(() => this.push(null));
     } else {
       info(
         'stream',
         [
-          `Fetching historical data from ${toISOString(this.startDate)}`,
+          `[${symbol}] Fetching historical data from ${toISOString(this.startDate)}`,
           `to ${toISOString(this.endDate)}`,
           `(${formatDuration(intervalToDuration({ start: this.startDate, end: this.endDate }))})`,
         ].join(' '),
@@ -51,16 +63,43 @@ export class HistoricalCandleStream extends Readable {
   async onTick() {
     if (this.isLocked) return;
     this.isLocked = true;
-    const candles = await this.exchange.fetchOHLCV({ from: this.startDate });
-    if (!candles?.length) throw new HistoricalCandleError('No candle data was fetched.');
-    this.startDate = last(candles)?.start ?? Number.MAX_SAFE_INTEGER;
-    this.startDate++;
-    if (!isBefore(this.startDate, this.endDate)) {
-      this.pushCandles(filter(candles, candle => !isAfter(candle.start, this.endDate)));
-      this.push(null);
-      this.heart.stop();
-    } else this.pushCandles(candles);
-    this.isLocked = false;
+    try {
+      const candles = await this.exchange.fetchOHLCV(this.symbol, { from: this.startDate });
+      if (!candles?.length) throw new HistoricalCandleError(`[${this.symbol}] No candle data was fetched.`);
+
+      this.importedCandles += candles.length;
+      this.logProgress();
+
+      this.startDate = last(candles)?.start ?? Number.MAX_SAFE_INTEGER;
+      this.startDate++;
+      if (!isBefore(this.startDate, this.endDate)) {
+        this.pushCandles(filter(candles, candle => !isAfter(candle.start, this.endDate)));
+        this.push(null);
+        this.heart.stop();
+      } else this.pushCandles(candles);
+    } catch (error) {
+      this.emit('error', error);
+      this.heart.stop(); // Stop heart on error to prevent infinite loop of errors
+    } finally {
+      this.isLocked = false;
+    }
+  }
+
+  private logProgress() {
+    if (this.totalDuration <= 0) return;
+
+    const currentDuration = this.startDate - this.initialStartDate;
+    const progress = Math.min(100, Math.floor((currentDuration / this.totalDuration) * 100));
+
+    // Log progress every 1%
+    if (progress >= this.lastProgressLog + 1) {
+      info('stream', `[${this.symbol}] Importing: ${progress}% (${toISOString(this.startDate)})`);
+      this.lastProgressLog = progress;
+    }
+  }
+
+  public getStats() {
+    return { symbol: this.symbol, count: this.importedCandles };
   }
 
   _read(): void {
@@ -72,6 +111,6 @@ export class HistoricalCandleStream extends Readable {
   }
 
   pushCandle(candle: Candle): void {
-    this.push(candle);
+    this.push({ symbol: this.symbol, candle });
   }
 }

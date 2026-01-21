@@ -1,19 +1,23 @@
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
+import { Asset, Symbol } from '@models/utility.types';
+import { uniq } from 'lodash-es';
 
-const EMPTY_BALANCE: BalanceDetail = { free: 0, used: 0, total: 0 };
+export const EMPTY_BALANCE: BalanceDetail = { free: 0, used: 0, total: 0 };
 
 export const createEmptyPortfolio = (): Portfolio => new Map();
 
-export const createPortfolio = (
-  asset: string,
-  assetBalance: BalanceDetail,
-  currency: string,
-  currencyBalance: BalanceDetail,
-): Portfolio => {
-  const portfolio = new Map<string, BalanceDetail>();
-  portfolio.set(asset, assetBalance);
-  portfolio.set(currency, currencyBalance);
-  return portfolio;
+export const createPortfolio = (pairs: Symbol[], initialBalance?: Map<Asset, number>): Portfolio => {
+  const assets = uniq(pairs.flatMap(pair => pair.split('/')));
+  return new Map(
+    assets.map(asset => [
+      asset,
+      {
+        free: initialBalance?.get(asset) ?? 0,
+        used: 0,
+        total: initialBalance?.get(asset) ?? 0,
+      },
+    ]),
+  );
 };
 
 export const getBalance = (portfolio: Portfolio, symbol: string): BalanceDetail => {

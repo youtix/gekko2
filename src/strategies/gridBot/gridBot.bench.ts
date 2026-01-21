@@ -1,6 +1,7 @@
 import type { Candle } from '@models/candle.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import type { MarketData } from '@services/exchange/exchange.types';
+import { EMPTY_BALANCE } from '@utils/portfolio/portfolio.utils';
 import type { UUID } from 'node:crypto';
 import { bench, describe } from 'vitest';
 import { GridBot } from './gridBot.strategy';
@@ -163,7 +164,7 @@ describe('GridBot Strategy Performance', () => {
       for (let i = 0; i < 100; i++) {
         strategy.onOrderCompleted({
           order: { id: `unknown-${i}` as UUID, side: 'BUY' } as any,
-          exchange: { price: 100, balance: { free: 0, used: 0, total: 0 }, portfolio: balancedPortfolio },
+          exchange: { price: 100, balance: EMPTY_BALANCE, portfolio: balancedPortfolio },
           tools,
         } as any);
       }

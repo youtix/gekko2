@@ -17,7 +17,13 @@ describe('Configuration Service', () => {
     },
     plugins: [{ name: 'PerformanceAnalyzer' }],
     strategy: { name: 'CCI' },
-    exchange: { name: 'dummy-cex' },
+    exchange: {
+      name: 'dummy-cex',
+      simulationBalance: [
+        { assetName: 'BTC', balance: 1 },
+        { assetName: 'USDT', balance: 10000 },
+      ],
+    },
   };
 
   const setConfigFile = (path: string | undefined, content: unknown) => {
@@ -52,11 +58,11 @@ describe('Configuration Service', () => {
     it.each([
       [
         'config.yaml',
-        'showLogo: true\nwatch:\n  pairs:\n    - symbol: BTC/USDT\n      timeframe: 1m\n  mode: realtime\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex',
+        'showLogo: true\nwatch:\n  pairs:\n    - symbol: BTC/USDT\n      timeframe: 1m\n  mode: realtime\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex\n  simulationBalance:\n    - assetName: BTC\n      balance: 1\n    - assetName: USDT\n      balance: 10000',
       ],
       [
         'config.yml',
-        'showLogo: true\nwatch:\n  pairs:\n    - symbol: BTC/USDT\n      timeframe: 1m\n  mode: realtime\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex',
+        'showLogo: true\nwatch:\n  pairs:\n    - symbol: BTC/USDT\n      timeframe: 1m\n  mode: realtime\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex\n  simulationBalance:\n    - assetName: BTC\n      balance: 1\n    - assetName: USDT\n      balance: 10000',
       ],
     ])('should load valid YAML config from %s', async (path, content) => {
       setConfigFile(path, content);
@@ -121,7 +127,11 @@ describe('Configuration Service', () => {
 
     describe('getExchange', () => {
       it('should return exchange', () => {
-        expect(configInstance.getExchange()).toEqual(expect.objectContaining(mockConfig.exchange));
+        const exchange = configInstance.getExchange();
+        expect(exchange.name).toBe('dummy-cex');
+        expect(exchange.simulationBalance).toBeInstanceOf(Map);
+        expect(exchange.simulationBalance.get('BTC')).toBe(1);
+        expect(exchange.simulationBalance.get('USDT')).toBe(10000);
       });
 
       it('should throw if configuration is missing', () => {

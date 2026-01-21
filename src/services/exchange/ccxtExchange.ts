@@ -3,8 +3,8 @@ import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
-import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
+import { Symbol } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Heart } from '@services/core/heart/heart';
 import { debug, error } from '@services/logger';
@@ -15,7 +15,7 @@ import { first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
 import { binanceExchangeSchema } from './binance/binance.schema';
 import { LIMITS, PARAMS } from './exchange.const';
-import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from './exchange.types';
+import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback, Ticker } from './exchange.types';
 import {
   checkMandatoryFeatures,
   checkOrderAmount,
@@ -38,11 +38,8 @@ export class CCXTExchange implements Exchange {
   protected publicClient: CCXT;
   protected privateClient: CCXT;
   protected exchangeName: string;
-  protected symbol: string;
 
   constructor(exchangeConfig: CCXTExchangeConfig) {
-    const { pairs } = config.getWatch();
-    const { symbol } = pairs[0]; // TODO: Regression - currently only supports the first pair. Need to refactor CCXTExchange to be multi-pair aware or instantiate per pair.
     const { name, sandbox } = exchangeConfig;
 
     const { publicClient, privateClient } = createExchange(exchangeConfig);
@@ -52,12 +49,11 @@ export class CCXTExchange implements Exchange {
     checkMandatoryFeatures(this.publicClient, sandbox);
 
     this.exchangeName = name;
-    this.symbol = symbol;
     this.heart = new Heart(ONE_MINUTE);
   }
 
-  getMarketData(): MarketData {
-    const market = this.publicClient.market(this.symbol);
+  getMarketData(symbol: Symbol): MarketData {
+    const market = this.publicClient.market(symbol);
     return {
       amount: {
         min: market.limits?.amount?.min,
@@ -86,13 +82,13 @@ export class CCXTExchange implements Exchange {
     return this.exchangeName;
   }
 
-  public onNewCandle(onNewCandle: (candle: Candle) => void) {
+  public onNewCandle(symbol: string, onNewCandle: (candle: Candle) => void) {
     if (!this.heart.isHeartBeating()) {
       this.heart.on('tick', async () => {
         try {
           // Calculate the start of the previous minute to ensure we fetch the last completed candle
           const from = startOfMinute(subMinutes(Date.now(), 1)).getTime();
-          const candles = await this.fetchOHLCV({ from, limit: 1 });
+          const candles = await this.fetchOHLCV(symbol, { from, limit: 1 });
           if (candles.length > 0) onNewCandle(candles[0]);
         } catch (err) {
           error('exchange', `Failed to poll for new candle: ${err}`);
@@ -109,17 +105,18 @@ export class CCXTExchange implements Exchange {
     await Promise.all([this.publicClient.loadMarkets(), this.privateClient.loadMarkets()]);
   }
 
-  public async fetchTicker() {
+  public async fetchTicker(symbol: string) {
     return retry<Ticker>(async () => {
-      const ticker = await this.publicClient.fetchTicker(this.symbol, PARAMS.fetchTicker[this.exchangeName]);
+      const ticker = await this.publicClient.fetchTicker(symbol, PARAMS.fetchTicker[this.exchangeName]);
       if (isNil(ticker.last)) throw new GekkoError('exchange', 'Fetch ticker failed to return data');
       return { ask: ticker.ask ?? ticker.last, bid: ticker.bid ?? ticker.last };
     });
   }
 
-  public async fetchOHLCV({ from, timeframe = '1m', limit = LIMITS[this.exchangeName].candles }: FetchOHLCVParams) {
+  public async fetchOHLCV(symbol: string, params: FetchOHLCVParams = {}) {
     return retry<Candle[]>(async () => {
-      const ohlcvList = await this.publicClient.fetchOHLCV(this.symbol, timeframe, from, limit);
+      const { from, timeframe = '1m', limit = LIMITS[this.exchangeName].candles } = params;
+      const ohlcvList = await this.publicClient.fetchOHLCV(symbol, timeframe, from, limit);
       const candles = mapOhlcvToCandles(ohlcvList);
 
       debug(
@@ -136,16 +133,16 @@ export class CCXTExchange implements Exchange {
     });
   }
 
-  public async fetchMyTrades(from?: EpochTimeStamp) {
+  public async fetchMyTrades(symbol: string, from?: EpochTimeStamp) {
     return retry<Trade[]>(async () => {
-      const trades = await this.privateClient.fetchMyTrades(this.symbol, from, LIMITS[this.exchangeName].trades);
+      const trades = await this.privateClient.fetchMyTrades(symbol, from, LIMITS[this.exchangeName].trades);
       return trades.map(mapCcxtTradeToTrade);
     });
   }
 
-  public async fetchOrder(id: string) {
+  public async fetchOrder(symbol: string, id: string) {
     return retry<OrderState>(async () => {
-      const order = await this.privateClient.fetchOrder(id, this.symbol);
+      const order = await this.privateClient.fetchOrder(id, symbol);
       return mapCcxtOrderToOrder(order);
     });
   }
@@ -153,64 +150,53 @@ export class CCXTExchange implements Exchange {
   public async fetchBalance() {
     return retry<Portfolio>(async () => {
       const balance = await this.privateClient.fetchBalance(PARAMS.fetchBalance[this.exchangeName]);
-      const { baseName, quote, base } = this.publicClient.market(this.symbol) as MarketInterface & { baseName: string }; // Workaround: CCXT sometimes misses 'base' in market structure
-      const asset = balance[baseName ?? base];
-      const currency = balance[quote];
-
-      return new Map([
-        [
-          baseName ?? base,
-          {
-            free: asset?.free ?? 0,
-            used: asset?.used ?? 0,
-            total: asset?.total ?? 0,
-          },
-        ],
-        [
-          quote,
-          {
-            free: currency?.free ?? 0,
-            used: currency?.used ?? 0,
-            total: currency?.total ?? 0,
-          },
-        ],
-      ]);
+      const { pairs } = config.getWatch();
+      const portfolio = new Map();
+      for (const { symbol } of pairs) {
+        const { baseName, quote, base } = this.publicClient.market(symbol) as MarketInterface & { baseName: string }; // Workaround: CCXT sometimes misses 'base' in market structure
+        const asset = balance[baseName ?? base];
+        const currency = balance[quote];
+        portfolio.set(baseName ?? base, { free: asset?.free ?? 0, used: asset?.used ?? 0, total: asset?.total ?? 0 });
+        portfolio.set(quote, { free: currency?.free ?? 0, used: currency?.used ?? 0, total: currency?.total ?? 0 });
+      }
+      return portfolio;
     });
   }
 
   public async createLimitOrder(
+    symbol: string,
     side: OrderSide,
     amount: number,
     price: number,
     _onSettled?: OrderSettledCallback, // Ignored - real exchanges use polling
   ) {
     return retry<OrderState>(async () => {
-      const limits = this.publicClient.market(this.symbol).limits;
+      const limits = this.publicClient.market(symbol).limits;
       const orderPrice = checkOrderPrice(price, limits);
       const orderAmount = checkOrderAmount(amount, limits);
       checkOrderCost(orderAmount, orderPrice, limits);
 
-      const order = await this.privateClient.createOrder(this.symbol, 'limit', side, orderAmount, orderPrice);
+      const order = await this.privateClient.createOrder(symbol, 'limit', side, orderAmount, orderPrice);
       return mapCcxtOrderToOrder(order);
     });
   }
 
-  public async createMarketOrder(side: OrderSide, amount: number) {
+  public async createMarketOrder(symbol: string, side: OrderSide, amount: number) {
     return retry<OrderState>(async () => {
-      const limits = this.publicClient.market(this.symbol).limits;
+      const limits = this.publicClient.market(symbol).limits;
       const orderAmount = checkOrderAmount(amount, limits);
-      const ticker = await this.fetchTicker();
+      const ticker = await this.fetchTicker(symbol);
       const price = side === 'BUY' ? ticker.ask : ticker.bid;
       checkOrderCost(orderAmount, price, limits);
 
-      const order = await this.privateClient.createOrder(this.symbol, 'market', side, orderAmount);
+      const order = await this.privateClient.createOrder(symbol, 'market', side, orderAmount);
       return mapCcxtOrderToOrder(order);
     });
   }
 
-  public async cancelOrder(id: string) {
+  public async cancelOrder(symbol: string, id: string) {
     return retry<OrderState>(async () => {
-      const order = await this.privateClient.cancelOrder(id, this.symbol);
+      const order = await this.privateClient.cancelOrder(id, symbol);
       return mapCcxtOrderToOrder(order);
     });
   }
