@@ -13,13 +13,7 @@ import { DEFAULT_FEE_BUFFER } from '@constants/order.const';
 import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import {
-  BalanceSnapshot,
-  OrderCanceledEvent,
-  OrderCompletedEvent,
-  OrderErroredEvent,
-  OrderInitiatedEvent,
-} from '@models/event.types';
+import { BalanceSnapshot, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
@@ -81,10 +75,7 @@ export class Trader extends Plugin {
       total: this.price * assetBalance.total + currencyBalance.total,
     };
 
-    debug(
-      'trader',
-      `Current portfolio: ${assetBalance.total} ${this.asset} / ${currencyBalance.total} ${this.currency}`,
-    );
+    debug('trader', `Current portfolio: ${assetBalance.total} ${this.asset} / ${currencyBalance.total} ${this.currency}`);
 
     // Emit portfolio events if changes are detected
     if (!isEqual(oldPortfolio, this.portfolio)) this.emitPortfolioChangeEvent();
@@ -172,9 +163,7 @@ export class Trader extends Plugin {
           } catch (err) {
             error(
               'trader',
-              err instanceof Error
-                ? `[${id}] Error in order completed ${err.message}`
-                : `[${id}] Unknown error on order completed`,
+              err instanceof Error ? `[${id}] Error in order completed ${err.message}` : `[${id}] Unknown error on order completed`,
             );
           } finally {
             this.orders.delete(id);
@@ -265,9 +254,7 @@ export class Trader extends Plugin {
           } catch (err) {
             error(
               'trader',
-              err instanceof Error
-                ? `[${id}] Error in order completed ${err.message}`
-                : `[${id}] Unknown error on order completed`,
+              err instanceof Error ? `[${id}] Error in order completed ${err.message}` : `[${id}] Unknown error on order completed`,
             );
           } finally {
             this.orders.delete(id);

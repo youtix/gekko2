@@ -55,8 +55,7 @@ export const createExchange = (config: CCXTExchangeConfig) => {
 export const checkMandatoryFeatures = (exchange: Exchange, hasSandbox: boolean) => {
   const mandatoryFeatures = [...BROKER_MANDATORY_FEATURES, ...(hasSandbox ? ['sandbox'] : [])];
   mandatoryFeatures.forEach(feature => {
-    if (!exchange.has[feature])
-      throw new GekkoError('exchange', `Missing ${feature} feature in ${exchange.name} exchange`);
+    if (!exchange.has[feature]) throw new GekkoError('exchange', `Missing ${feature} feature in ${exchange.name} exchange`);
   });
 };
 
@@ -79,11 +78,9 @@ export const checkOrderPrice = (price: number, marketData: MarketData) => {
 
   if (isNil(minimalPrice) && isNil(maximalPrice)) return price;
 
-  if (!isNil(minimalPrice) && price < minimalPrice)
-    throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
+  if (!isNil(minimalPrice) && price < minimalPrice) throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
 
-  if (!isNil(maximalPrice) && price > maximalPrice)
-    throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
+  if (!isNil(maximalPrice) && price > maximalPrice) throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
 
   return price;
 };
@@ -113,17 +110,11 @@ export const checkOrderCost = (amount: number, price: number, marketData: Market
   if (isNil(minimalCost) && isNil(maximalCost)) return;
 
   const cost = amount * price;
-  if (!isNil(minimalCost) && cost < minimalCost)
-    throw new OrderOutOfRangeError('exchange', 'cost', cost, minimalCost, maximalCost);
-  if (!isNil(maximalCost) && cost > maximalCost)
-    throw new OrderOutOfRangeError('exchange', 'cost', cost, minimalCost, maximalCost);
+  if (!isNil(minimalCost) && cost < minimalCost) throw new OrderOutOfRangeError('exchange', 'cost', cost, minimalCost, maximalCost);
+  if (!isNil(maximalCost) && cost > maximalCost) throw new OrderOutOfRangeError('exchange', 'cost', cost, minimalCost, maximalCost);
 };
 
-export const retry = async <T>(
-  fn: () => Promise<T>,
-  currRetry = 1,
-  maxRetries = BROKER_MAX_RETRIES_ON_FAILURE,
-): Promise<T> => {
+export const retry = async <T>(fn: () => Promise<T>, currRetry = 1, maxRetries = BROKER_MAX_RETRIES_ON_FAILURE): Promise<T> => {
   try {
     return await fn();
   } catch (err) {

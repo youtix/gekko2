@@ -59,8 +59,7 @@ export class StrategyManager extends EventEmitter {
     if (strategyPath) {
       const resolvedPath = isAbsolute(strategyPath) ? strategyPath : resolve(process.cwd(), strategyPath);
       const SelectedStrategy = (await import(resolvedPath))[strategyName];
-      if (!SelectedStrategy)
-        throw new GekkoError('trading advisor', `Cannot find external ${strategyName} strategy in ${resolvedPath}`);
+      if (!SelectedStrategy) throw new GekkoError('trading advisor', `Cannot find external ${strategyName} strategy in ${resolvedPath}`);
       this.strategy = new SelectedStrategy();
     } else {
       const SelectedStrategy = strategies[strategyName as keyof typeof strategies];

@@ -1,4 +1,4 @@
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 
 export type HistoricalCandleStreamInput = {
   /** It represents the beginning of the period from which candles are fetched. (timestamp in miliseconds) */
@@ -11,5 +11,5 @@ export type HistoricalCandleStreamInput = {
   tickrate: number;
 
   /** The symbol for which candles are fetched. */
-  symbol: Symbol;
+  symbol: TradingPair;
 };

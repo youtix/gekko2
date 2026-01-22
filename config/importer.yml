@@ -4,7 +4,6 @@ watch:
       timeframe: 1h
   mode: importer # backtest | importer | realtime
   tickrate: 500
-  fillGaps: empty
   daterange:
     start: '2017-10-01T00:00:00.000Z'
     end: '2026-01-01T00:00:00.000Z'

@@ -28,7 +28,6 @@ export const watchSchema = z
     pairs: pairsSchema,
     tickrate: z.number().default(1000),
     mode: z.enum(['realtime', 'backtest', 'importer']),
-    fillGaps: z.enum(['no', 'empty']).default('empty'),
     warmup: warmupSchema,
     daterange: daterangeSchema.optional(),
     batchSize: z.number().optional(),
@@ -78,8 +77,7 @@ export const configurationSchema = z
     // Disclaimer validation for real exchanges (exclude dummy-cex and paper-binance)
     const hasTraderPlugin = some(data.plugins, plugin => plugin.name?.toLowerCase() === 'trader');
     const isSimulatedExchange = data.exchange.name === 'dummy-cex' || data.exchange.name === 'paper-binance';
-    const isUsingRealExchange =
-      data.exchange && !isSimulatedExchange && !('sandbox' in data.exchange && data.exchange.sandbox);
+    const isUsingRealExchange = data.exchange && !isSimulatedExchange && !('sandbox' in data.exchange && data.exchange.sandbox);
     const isDisclaimerIgnored = !data[disclaimerField];
     if (hasTraderPlugin && isUsingRealExchange && isDisclaimerIgnored) {
       ctx.addIssue({

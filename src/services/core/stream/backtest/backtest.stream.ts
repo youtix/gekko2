@@ -1,4 +1,4 @@
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { inject } from '@services/injecter/injecter';
 import { debug, info, warning } from '@services/logger';
@@ -12,7 +12,7 @@ export class BacktestStream extends Readable {
   private storage: Storage;
   private dateranges: Interval<EpochTimeStamp, EpochTimeStamp>[];
   private iteration: number;
-  private symbol: Symbol;
+  private symbol: TradingPair;
 
   constructor(daterange: Interval<EpochTimeStamp, EpochTimeStamp>) {
     super({ objectMode: true });

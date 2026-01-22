@@ -12,9 +12,7 @@ export class MissingCandlesError extends GekkoError {
   ) {
     const availableRangesMessage = availableDateRanges?.length
       ? availableDateRanges
-          .map(
-            ({ daterange_start, daterange_end }) => `[${toISOString(daterange_start)} - ${toISOString(daterange_end)}]`,
-          )
+          .map(({ daterange_start, daterange_end }) => `[${toISOString(daterange_start)} - ${toISOString(daterange_end)}]`)
           .join(', ')
       : 'No date ranges found in database';
 

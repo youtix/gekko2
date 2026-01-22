@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
-import {
-  clonePortfolio,
-  createEmptyPortfolio,
-  createPortfolio,
-  getBalance,
-  isEmptyPortfolio,
-  setBalance,
-} from './portfolio.utils';
+import { clonePortfolio, createEmptyPortfolio, createPortfolio, getBalance, isEmptyPortfolio, setBalance } from './portfolio.utils';
 
 const createTestPortfolio = (
   legacyPortfolio: { asset: BalanceDetail; currency: BalanceDetail },

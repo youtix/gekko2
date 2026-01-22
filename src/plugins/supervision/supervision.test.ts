@@ -109,9 +109,7 @@ describe('Supervision', () => {
     plugin['handleCommand']('/sub_candle_check');
     plugin['handleCommand']('/sub_candle_check');
     await plugin.onTimeframeCandle([timeframeCandle as any]);
-    expect(fakeBot.sendMessage).not.toHaveBeenCalledWith(
-      expect.stringContaining('⚠️ Timeframe candle mismatch detected'),
-    );
+    expect(fakeBot.sendMessage).not.toHaveBeenCalledWith(expect.stringContaining('⚠️ Timeframe candle mismatch detected'));
   });
 
   it('should start and stop log monitoring on subscription toggle', () => {

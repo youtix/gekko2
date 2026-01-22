@@ -210,9 +210,7 @@ describe('gridBot.utils', () => {
     });
 
     it('returns error for zero levels on both sides', () => {
-      expect(validateConfig({ ...validParams, buyLevels: 0, sellLevels: 0 }, 100, {})).toBe(
-        'At least one level is required',
-      );
+      expect(validateConfig({ ...validParams, buyLevels: 0, sellLevels: 0 }, 100, {})).toBe('At least one level is required');
     });
 
     it('returns error for non-positive spacing', () => {
@@ -220,9 +218,7 @@ describe('gridBot.utils', () => {
     });
 
     it('returns error for negative buy prices', () => {
-      expect(validateConfig({ ...validParams, buyLevels: 25 }, 100, {})).toBe(
-        'Grid configuration would result in non-positive buy prices',
-      );
+      expect(validateConfig({ ...validParams, buyLevels: 25 }, 100, {})).toBe('Grid configuration would result in non-positive buy prices');
     });
 
     it('returns error for price below exchange minimum', () => {
@@ -232,9 +228,7 @@ describe('gridBot.utils', () => {
     });
 
     it('returns error for price above exchange maximum', () => {
-      expect(validateConfig(validParams, 1000, { price: { max: 500 } })).toBe(
-        'Center price 1000 is above exchange maximum 500',
-      );
+      expect(validateConfig(validParams, 1000, { price: { max: 500 } })).toBe('Center price 1000 is above exchange maximum 500');
     });
   });
 

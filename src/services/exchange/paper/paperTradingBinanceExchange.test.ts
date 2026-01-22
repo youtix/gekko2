@@ -134,13 +134,7 @@ describe('PaperTradingBinanceExchange', () => {
 
     it('createLimitOrder delegates to simulated exchange', async () => {
       await exchange.createLimitOrder('BTC/USDT', 'BUY', 0.1, 100);
-      expect(DummyCentralizedExchange.prototype.createLimitOrder).toHaveBeenCalledWith(
-        'BTC/USDT',
-        'BUY',
-        0.1,
-        100,
-        undefined,
-      );
+      expect(DummyCentralizedExchange.prototype.createLimitOrder).toHaveBeenCalledWith('BTC/USDT', 'BUY', 0.1, 100, undefined);
     });
 
     it('createMarketOrder delegates to simulated exchange', async () => {

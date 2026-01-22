@@ -27,10 +27,7 @@ export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
     addIndicator('SMA', { period, src });
   }
 
-  onTimeframeCandleAfterWarmup(
-    { candle, tools }: OnCandleEventParams<SMACrossoverStrategyParams>,
-    ...indicators: unknown[]
-  ): void {
+  onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<SMACrossoverStrategyParams>, ...indicators: unknown[]): void {
     const { log, createOrder } = tools;
     const [sma] = indicators;
     const price = candle.close;

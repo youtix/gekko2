@@ -1,12 +1,12 @@
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
-import { Asset, Symbol } from '@models/utility.types';
+import { Asset, TradingPair } from '@models/utility.types';
 import { uniq } from 'lodash-es';
 
 export const EMPTY_BALANCE: BalanceDetail = { free: 0, used: 0, total: 0 };
 
 export const createEmptyPortfolio = (): Portfolio => new Map();
 
-export const createPortfolio = (pairs: Symbol[], initialBalance?: Map<Asset, number>): Portfolio => {
+export const createPortfolio = (pairs: TradingPair[], initialBalance?: Map<Asset, number>): Portfolio => {
   const assets = uniq(pairs.flatMap(pair => pair.split('/')));
   return new Map(
     assets.map(asset => [

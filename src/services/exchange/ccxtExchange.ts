@@ -4,7 +4,7 @@ import { Candle } from '@models/candle.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Heart } from '@services/core/heart/heart';
 import { debug, error } from '@services/logger';
@@ -52,7 +52,7 @@ export class CCXTExchange implements Exchange {
     this.heart = new Heart(ONE_MINUTE);
   }
 
-  getMarketData(symbol: Symbol): MarketData {
+  getMarketData(symbol: TradingPair): MarketData {
     const market = this.publicClient.market(symbol);
     return {
       amount: {
@@ -82,14 +82,14 @@ export class CCXTExchange implements Exchange {
     return this.exchangeName;
   }
 
-  public onNewCandle(symbol: string, onNewCandle: (candle: Candle) => void) {
+  public onNewCandle(symbol: TradingPair, onNewCandle: (symbol: TradingPair, candle: Candle | undefined) => void) {
     if (!this.heart.isHeartBeating()) {
       this.heart.on('tick', async () => {
         try {
           // Calculate the start of the previous minute to ensure we fetch the last completed candle
           const from = startOfMinute(subMinutes(Date.now(), 1)).getTime();
           const candles = await this.fetchOHLCV(symbol, { from, limit: 1 });
-          if (candles.length > 0) onNewCandle(candles[0]);
+          onNewCandle(symbol, first(candles));
         } catch (err) {
           error('exchange', `Failed to poll for new candle: ${err}`);
         }

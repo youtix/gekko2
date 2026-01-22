@@ -165,9 +165,7 @@ describe('Pipeline Service', () => {
 
     it('should throw if dependency does not exist', async () => {
       const context: PipelineContext = [{ name: 'P', dependencies: ['non-existent-dep-xyz'] }];
-      await expect(pipelineModule.checkPluginsDependencies(context)).rejects.toThrow(
-        /Dependency non-existent-dep-xyz not installed/,
-      );
+      await expect(pipelineModule.checkPluginsDependencies(context)).rejects.toThrow(/Dependency non-existent-dep-xyz not installed/);
     });
   });
 
@@ -197,22 +195,19 @@ describe('Pipeline Service', () => {
       ${'realtime'} | ${['realtime']}             | ${false}
       ${'realtime'} | ${['backtest']}             | ${true}
       ${'backtest'} | ${['realtime', 'backtest']} | ${false}
-    `(
-      'currentMode: $currentMode, allowed: $allowedModes => throw: $shouldThrow',
-      async ({ currentMode, allowedModes, shouldThrow }) => {
-        const { config } = await import('@services/configuration/configuration');
-        vi.mocked(config.getWatch).mockReturnValue({ mode: currentMode } as any);
+    `('currentMode: $currentMode, allowed: $allowedModes => throw: $shouldThrow', async ({ currentMode, allowedModes, shouldThrow }) => {
+      const { config } = await import('@services/configuration/configuration');
+      vi.mocked(config.getWatch).mockReturnValue({ mode: currentMode } as any);
 
-        const context: PipelineContext = [{ name: 'P', modes: allowedModes }];
-        const promise = pipelineModule.checkPluginsModesCompatibility(context);
+      const context: PipelineContext = [{ name: 'P', modes: allowedModes }];
+      const promise = pipelineModule.checkPluginsModesCompatibility(context);
 
-        if (shouldThrow) {
-          await expect(promise).rejects.toThrow(/does not support/);
-        } else {
-          await expect(promise).resolves.not.toThrow();
-        }
-      },
-    );
+      if (shouldThrow) {
+        await expect(promise).rejects.toThrow(/does not support/);
+      } else {
+        await expect(promise).resolves.not.toThrow();
+      }
+    });
   });
 
   describe('getPluginsStaticConfiguration', () => {

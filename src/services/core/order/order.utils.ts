@@ -1,6 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import { OrderSide, OrderType } from '@models/order.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { Exchange } from '@services/exchange/exchange.types';
 import { debug } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
@@ -11,7 +11,7 @@ import { OrderSummary, Transaction } from './order.types';
 
 type CreateOrderSummaryParams = {
   id: UUID;
-  symbol: Symbol;
+  symbol: TradingPair;
   exchange: Exchange;
   type: OrderType;
   side: OrderSide;
@@ -39,18 +39,13 @@ export const createOrderSummary = async ({
 
   debug(
     'core',
-    [
-      `[${id}] ${trades.length} trades used to fill ${side} ${type} order.`,
-      `First trade started at: ${toISOString(from)}.`,
-    ].join(' '),
+    [`[${id}] ${trades.length} trades used to fill ${side} ${type} order.`, `First trade started at: ${toISOString(from)}.`].join(' '),
   );
 
   if (!trades.length || !orderExecutionDate) throw new GekkoError('core', `[${id}] No trades found in order`);
 
   const amounts = map(trades, 'amount');
-  const feePercents = trades
-    .map(trade => trade.fee?.rate)
-    .filter((fee): fee is number => fee !== undefined && fee !== null);
+  const feePercents = trades.map(trade => trade.fee?.rate).filter((fee): fee is number => fee !== undefined && fee !== null);
 
   return {
     amount: sumBy(trades, 'amount'),

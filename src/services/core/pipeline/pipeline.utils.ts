@@ -1,18 +1,19 @@
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
-import { info } from '@services/logger';
 import { getCandleTimeOffset } from '@utils/candle/candle.utils';
 import { resetDateParts } from '@utils/date/date.utils';
 import { processStartTime } from '@utils/process/process.utils';
-import { formatDuration, intervalToDuration, subMinutes } from 'date-fns';
+import { subMinutes } from 'date-fns';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { BacktestStream } from '../stream/backtest/backtest.stream';
-import { CandleValidatorStream } from '../stream/candleValidator/candleValidator.stream';
 import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCandle.stream';
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
+import { FillCandleGapStream } from '../stream/validation/fillCandleGap.stream';
+import { RejectDuplicateCandleStream } from '../stream/validation/rejectDuplicateCandle.stream';
+import { RejectFutureCandleStream } from '../stream/validation/rejectFuturCandle.stream';
 
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
   const { pairs, warmup } = config.getWatch();
@@ -26,7 +27,9 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
       new HistoricalCandleStream({ startDate, endDate: now, tickrate: warmup.tickrate, symbol }),
       new RealtimeStream(),
     ),
-    new CandleValidatorStream(),
+    new RejectFutureCandleStream(),
+    new RejectDuplicateCandleStream(),
+    new FillCandleGapStream(),
     new PluginsStream(plugins),
   );
 };
@@ -34,44 +37,17 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
 const buildBacktestPipeline = async (plugins: Plugin[]) => {
   const { daterange } = config.getWatch(); // Daterange is always set thanks to zod
 
-  await pipeline(
-    new BacktestStream({ start: daterange!.start, end: daterange!.end }),
-    new CandleValidatorStream(),
-    new PluginsStream(plugins),
-  );
+  await pipeline(new BacktestStream({ start: daterange!.start, end: daterange!.end }), new PluginsStream(plugins));
 };
 
 const buildImporterPipeline = async (plugins: Plugin[]) => {
   const { daterange, tickrate, pairs } = config.getWatch(); // Daterange is always set thanks to zod
-
-  const streams: HistoricalCandleStream[] = [];
+  const { symbol } = pairs[0];
 
   // Create a pipeline for each pair and run them in parallel
-  const pipelinePromises = pairs.map(({ symbol }) => {
-    const stream = new HistoricalCandleStream({
-      startDate: daterange!.start,
-      endDate: daterange!.end,
-      tickrate,
-      symbol,
-    });
-    streams.push(stream);
+  const stream = new HistoricalCandleStream({ startDate: daterange!.start, endDate: daterange!.end, tickrate, symbol });
 
-    return pipeline(stream, new CandleValidatorStream(), new PluginsStream(plugins));
-  });
-
-  const startTime = Date.now();
-
-  // Use Promise.allSettled for error isolation - one failing pair doesn't stop the others
-  await Promise.allSettled(pipelinePromises);
-  const duration = formatDuration(intervalToDuration({ start: startTime, end: Date.now() }));
-
-  // Note: Logs from different pair streams may interleave in the console output
-  info('stream', 'Import completed:');
-  streams.forEach(stream => {
-    const { symbol, count } = stream.getStats();
-    info('stream', `${symbol}: ${count.toLocaleString()} candles`);
-  });
-  info('stream', `Total time: ${duration}`);
+  return pipeline(stream, new FillCandleGapStream(), new PluginsStream(plugins));
 };
 
 export const streamPipelines = {

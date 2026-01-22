@@ -242,10 +242,7 @@ describe('TradingAdvisor', () => {
       it('should emit STRATEGY_CANCEL_ORDER_EVENT in relayCancelOrder when a candle is set', () => {
         (advisor as any).candle = defaultCandle;
         advisor['relayCancelOrder'](defaultCanceledOrder.order.id);
-        expect(advisor['addDeferredEmit']).toHaveBeenCalledExactlyOnceWith(
-          STRATEGY_CANCEL_ORDER_EVENT,
-          defaultCanceledOrder.order.id,
-        );
+        expect(advisor['addDeferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CANCEL_ORDER_EVENT, defaultCanceledOrder.order.id);
       });
     });
   });

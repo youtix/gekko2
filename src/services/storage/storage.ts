@@ -1,5 +1,5 @@
 import { Candle } from '@models/candle.types';
-import { Nullable, Symbol } from '@models/utility.types';
+import { Nullable, TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Interval } from 'date-fns';
 import { upperCase } from 'lodash-es';
@@ -19,7 +19,7 @@ export abstract class Storage {
     else this.insertThreshold = INSERT_THRESHOLD;
   }
 
-  public addCandle(symbol: Symbol, candle: Candle) {
+  public addCandle(symbol: TradingPair, candle: Candle) {
     this.buffer.push(candle);
     if (this.buffer.length >= this.insertThreshold) {
       this.insertCandles(symbol);
@@ -27,18 +27,15 @@ export abstract class Storage {
     }
   }
 
-  protected getTable(symbol: Symbol) {
+  protected getTable(symbol: TradingPair) {
     const [asset, currency] = symbol.split('/');
     return `CANDLES_${upperCase(asset)}_${upperCase(currency)}`;
   }
 
-  public abstract insertCandles(symbol: Symbol): void;
-  public abstract upsertTable(symbol: Symbol): void;
-  public abstract getCandleDateranges(symbol: Symbol): Nullable<CandleDateranges[]>;
-  public abstract getCandles(symbol: Symbol, interval: Interval<EpochTimeStamp, EpochTimeStamp>): Candle[];
-  public abstract checkInterval(
-    symbol: Symbol,
-    interval: Interval<EpochTimeStamp, EpochTimeStamp>,
-  ): Nullable<MissingCandleCount>;
+  public abstract insertCandles(symbol: TradingPair): void;
+  public abstract upsertTable(symbol: TradingPair): void;
+  public abstract getCandleDateranges(symbol: TradingPair): Nullable<CandleDateranges[]>;
+  public abstract getCandles(symbol: TradingPair, interval: Interval<EpochTimeStamp, EpochTimeStamp>): Candle[];
+  public abstract checkInterval(symbol: TradingPair, interval: Interval<EpochTimeStamp, EpochTimeStamp>): Nullable<MissingCandleCount>;
   public abstract close(): void;
 }

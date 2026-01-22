@@ -16,10 +16,7 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
     addIndicator('EMARibbon', { src, count, start, step });
   }
 
-  onTimeframeCandleAfterWarmup(
-    { tools }: OnCandleEventParams<EMARibbonStrategyParams>,
-    ...indicators: unknown[]
-  ): void {
+  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<EMARibbonStrategyParams>, ...indicators: unknown[]): void {
     const { createOrder } = tools;
     const [emaRibbon] = indicators as [{ results: number[]; spread: number }];
     if (emaRibbon === undefined || emaRibbon === null) return;

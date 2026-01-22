@@ -91,8 +91,7 @@ describe('EventSubscriber', () => {
       order: { ...baseOrder, orderCreationDate: eventTimestamp, ...overrides.order },
       exchange: { ...baseExchange, ...overrides.exchange },
     });
-    const onOrderInitiated = (p: EventSubscriber, overrides = {}) =>
-      p.onOrderInitiated([makeOrderInitiatedEvent(overrides)]);
+    const onOrderInitiated = (p: EventSubscriber, overrides = {}) => p.onOrderInitiated([makeOrderInitiatedEvent(overrides)]);
     const makeOrderCanceledEvent = (
       overrides: {
         order?: Partial<OrderCanceledEvent['order']>;
@@ -112,8 +111,7 @@ describe('EventSubscriber', () => {
         exchange: { ...initiated.exchange, ...overrides.exchange },
       };
     };
-    const onOrderCanceled = (p: EventSubscriber, overrides = {}) =>
-      p.onOrderCanceled([makeOrderCanceledEvent(overrides)]);
+    const onOrderCanceled = (p: EventSubscriber, overrides = {}) => p.onOrderCanceled([makeOrderCanceledEvent(overrides)]);
     const makeOrderErroredEvent = (
       overrides: {
         order?: Partial<OrderErroredEvent['order']>;
@@ -153,8 +151,7 @@ describe('EventSubscriber', () => {
         exchange: { ...initiated.exchange, ...overrides.exchange },
       };
     };
-    const onOrderCompleted = (p: EventSubscriber, overrides = {}) =>
-      p.onOrderCompleted([makeOrderCompletedEvent(overrides)]);
+    const onOrderCompleted = (p: EventSubscriber, overrides = {}) => p.onOrderCompleted([makeOrderCompletedEvent(overrides)]);
     it.each`
       name                | handler
       ${'strat_info'}     | ${onStrategyInfo}
@@ -271,9 +268,7 @@ help - Show help information`);
       plugin['handleCommand']('/sub_strat_cancel');
       plugin.onStrategyCancelOrder([orderId]);
       expect(fakeBot.sendMessage).toHaveBeenCalledTimes(1);
-      expect(fakeBot.sendMessage).toHaveBeenCalledWith(
-        expect.stringContaining('Strategy requested order cancellation'),
-      );
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Strategy requested order cancellation'));
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining(orderId));
     });
   });

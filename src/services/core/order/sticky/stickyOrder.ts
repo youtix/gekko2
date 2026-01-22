@@ -1,6 +1,6 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderSide, OrderState } from '@models/order.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { debug, info, warning } from '@services/logger';
@@ -17,7 +17,7 @@ export class StickyOrder extends Order {
   private id?: string;
   private interval?: Timer;
 
-  constructor(symbol: Symbol, gekkoOrderId: UUID, action: OrderSide, amount: number, _price?: number) {
+  constructor(symbol: TradingPair, gekkoOrderId: UUID, action: OrderSide, amount: number, _price?: number) {
     super(symbol, gekkoOrderId, action, 'STICKY');
     const orderSync = config.getExchange().orderSynchInterval;
     this.isCanceling = false;
@@ -148,11 +148,9 @@ export class StickyOrder extends Order {
 
   protected handleCreateOrderError(error: unknown) {
     clearInterval(this.interval);
-    if (error instanceof OrderOutOfRangeError && this.isOrderPartiallyFilled())
-      return Promise.resolve(this.orderFilled());
+    if (error instanceof OrderOutOfRangeError && this.isOrderPartiallyFilled()) return Promise.resolve(this.orderFilled());
 
-    if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError)
-      return Promise.resolve(this.orderRejected(error.message));
+    if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError) return Promise.resolve(this.orderRejected(error.message));
 
     if (error instanceof Error) this.orderErrored(error);
 

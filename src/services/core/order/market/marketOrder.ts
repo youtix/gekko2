@@ -1,5 +1,5 @@
 import { OrderSide, OrderState } from '@models/order.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { InvalidOrder } from '@services/exchange/exchange.error';
 import { warning } from '@services/logger';
 import { UUID } from 'node:crypto';
@@ -9,7 +9,7 @@ export class MarketOrder extends Order {
   public readonly amount: number;
   private id?: string;
 
-  constructor(symbol: Symbol, gekkoOrderId: UUID, side: OrderSide, amount: number, _price?: number) {
+  constructor(symbol: TradingPair, gekkoOrderId: UUID, side: OrderSide, amount: number, _price?: number) {
     super(symbol, gekkoOrderId, side, 'MARKET');
     this.amount = amount;
   }

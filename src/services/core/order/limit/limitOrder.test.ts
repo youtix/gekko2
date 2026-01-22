@@ -1,9 +1,4 @@
-import {
-  ORDER_CANCELED_EVENT,
-  ORDER_COMPLETED_EVENT,
-  ORDER_INVALID_EVENT,
-  ORDER_PARTIALLY_FILLED_EVENT,
-} from '@constants/event.const';
+import { ORDER_CANCELED_EVENT, ORDER_COMPLETED_EVENT, ORDER_INVALID_EVENT, ORDER_PARTIALLY_FILLED_EVENT } from '@constants/event.const';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderState } from '@models/order.types';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';

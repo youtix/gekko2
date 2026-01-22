@@ -106,8 +106,7 @@ export const checkPluginsModesCompatibility = async (context: PipelineContext) =
 export const getPluginsStaticConfiguration = async (context: PipelineContext) =>
   map(context, plugin => {
     const PluginClass = pluginList[plugin.name as PluginsNames];
-    const { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject } =
-      PluginClass.getStaticConfiguration();
+    const { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject } = PluginClass.getStaticConfiguration();
     return { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject };
   });
 

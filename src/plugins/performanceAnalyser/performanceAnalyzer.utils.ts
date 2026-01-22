@@ -77,20 +77,8 @@ export const logTrade = (
       effectivePrice: `${formatter.format(executedPrice)} ${currency}`,
       volume: `${formatter.format(order.amount * executedPrice)} ${currency}`,
       balance: `${formatter.format(exchange.balance.total)} ${currency}`,
-      portfolioChange: describePortfolioChange(
-        baselineLabel,
-        exchange.balance.total,
-        baselineForChange,
-        currency,
-        formatter,
-      ),
-      totalSinceStart: describePortfolioChange(
-        'since start',
-        exchange.balance.total,
-        balances.startBalance,
-        currency,
-        formatter,
-      ),
+      portfolioChange: describePortfolioChange(baselineLabel, exchange.balance.total, baselineForChange, currency, formatter),
+      totalSinceStart: describePortfolioChange('since start', exchange.balance.total, balances.startBalance, currency, formatter),
       feePaid: `${formatter.format(order.fee)} ${currency}${
         typeof order.feePercent === 'number' ? ` (${round(order.feePercent, 2, 'halfEven')}%)` : ''
       }`,

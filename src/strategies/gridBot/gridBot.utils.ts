@@ -25,10 +25,7 @@ export const getPortfolioContent = (
  * Infer price precision from market data or use default.
  * Returns both the decimal count and optional price step for tick-based rounding.
  */
-export const inferPricePrecision = (
-  currentPrice: number,
-  marketData: MarketData,
-): { priceDecimals: number; priceStep?: number } => {
+export const inferPricePrecision = (currentPrice: number, marketData: MarketData): { priceDecimals: number; priceStep?: number } => {
   const priceStep = marketData.precision?.price;
   if (priceStep && priceStep > 0) {
     return { priceDecimals: countDecimals(priceStep), priceStep };
@@ -133,14 +130,9 @@ export const computeGridBounds = (
 ): GridBounds | null => {
   if (buyLevels <= 0 && sellLevels <= 0) return null;
 
-  const min =
-    buyLevels > 0
-      ? computeLevelPrice(centerPrice, -buyLevels, priceDecimals, spacingType, spacingValue, priceStep)
-      : centerPrice;
+  const min = buyLevels > 0 ? computeLevelPrice(centerPrice, -buyLevels, priceDecimals, spacingType, spacingValue, priceStep) : centerPrice;
   const max =
-    sellLevels > 0
-      ? computeLevelPrice(centerPrice, sellLevels, priceDecimals, spacingType, spacingValue, priceStep)
-      : centerPrice;
+    sellLevels > 0 ? computeLevelPrice(centerPrice, sellLevels, priceDecimals, spacingType, spacingValue, priceStep) : centerPrice;
 
   if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max <= 0) return null;
 
@@ -158,11 +150,7 @@ export const isOutOfRange = (currentPrice: number, bounds: GridBounds): boolean 
  * Validate grid configuration against exchange limits.
  * Returns an error message if invalid, null if valid.
  */
-export const validateConfig = (
-  params: GridBotStrategyParams,
-  centerPrice: number,
-  marketData: MarketData,
-): string | null => {
+export const validateConfig = (params: GridBotStrategyParams, centerPrice: number, marketData: MarketData): string | null => {
   if (centerPrice <= 0) return 'Center price must be positive';
   if (params.buyLevels < 0 || params.sellLevels < 0) return 'Level counts must be non-negative';
   if (params.buyLevels === 0 && params.sellLevels === 0) return 'At least one level is required';
@@ -264,12 +252,7 @@ export const applyAmountLimits = (quantity: number, marketData: MarketData): num
 /**
  * Apply exchange cost limits to quantity.
  */
-export const applyCostLimits = (
-  quantity: number,
-  minPrice: number,
-  maxPrice: number,
-  marketData: MarketData,
-): number => {
+export const applyCostLimits = (quantity: number, minPrice: number, maxPrice: number, marketData: MarketData): number => {
   if (quantity <= 0) return quantity;
 
   let adjusted = quantity;
@@ -327,15 +310,7 @@ export const deriveLevelQuantity = (
   quantity = applyAmountLimits(quantity, marketData);
 
   // Apply cost limits if we have grid bounds
-  const bounds = computeGridBounds(
-    centerPrice,
-    buyLevels,
-    sellLevels,
-    priceDecimals,
-    spacingType,
-    spacingValue,
-    priceStep,
-  );
+  const bounds = computeGridBounds(centerPrice, buyLevels, sellLevels, priceDecimals, spacingType, spacingValue, priceStep);
   if (bounds) {
     quantity = applyCostLimits(quantity, bounds.min, bounds.max, marketData);
   }

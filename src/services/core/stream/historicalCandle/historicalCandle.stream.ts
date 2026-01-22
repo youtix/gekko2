@@ -1,5 +1,5 @@
 import { Candle } from '@models/candle.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { Heart } from '@services/core/heart/heart';
 import { HistoricalCandleError } from '@services/core/stream/historicalCandle/historicalCandle.error';
 import { Exchange } from '@services/exchange/exchange.types';
@@ -17,7 +17,7 @@ export class HistoricalCandleStream extends Readable {
   private heart: Heart;
   private exchange: Exchange;
   private isLocked: boolean;
-  private symbol: Symbol;
+  private symbol: TradingPair;
   private initialStartDate: EpochTimeStamp;
   private importedCandles: number;
   private lastProgressLog: number;

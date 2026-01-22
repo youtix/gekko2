@@ -62,11 +62,7 @@ describe('GridBot', () => {
     tools = { strategyParams: defaultParams, marketData, createOrder, cancelOrder, log, pairs: [['BTC', 'USDT']] };
   });
 
-  const initStrategy = (
-    price = 100,
-    params: Partial<GridBotStrategyParams> = {},
-    portfolio: Portfolio = balancedPortfolio,
-  ) => {
+  const initStrategy = (price = 100, params: Partial<GridBotStrategyParams> = {}, portfolio: Portfolio = balancedPortfolio) => {
     tools.strategyParams = { ...defaultParams, ...params };
     strategy.init({
       candle: makeCandle(price),
@@ -99,27 +95,24 @@ describe('GridBot', () => {
       ${2}      | ${2}       | ${4}
       ${3}      | ${2}       | ${5}
       ${2}      | ${3}       | ${5}
-    `(
-      'places $expectedOrders orders for $buyLevels buy and $sellLevels sell levels',
-      ({ buyLevels, sellLevels, expectedOrders }) => {
-        // Create portfolio balanced for this level ratio
-        // Target asset ratio = sellLevels / (buyLevels + sellLevels)
-        const totalValue = 1000;
-        const assetRatio = sellLevels / (buyLevels + sellLevels);
-        const assetValue = totalValue * assetRatio;
-        const assetAmount = assetValue / 100; // at price 100
-        const currencyValue = totalValue - assetValue;
+    `('places $expectedOrders orders for $buyLevels buy and $sellLevels sell levels', ({ buyLevels, sellLevels, expectedOrders }) => {
+      // Create portfolio balanced for this level ratio
+      // Target asset ratio = sellLevels / (buyLevels + sellLevels)
+      const totalValue = 1000;
+      const assetRatio = sellLevels / (buyLevels + sellLevels);
+      const assetValue = totalValue * assetRatio;
+      const assetAmount = assetValue / 100; // at price 100
+      const currencyValue = totalValue - assetValue;
 
-        const balancedForLevels: Portfolio = new Map<string, BalanceDetail>([
-          ['BTC', { free: assetAmount, used: 0, total: assetAmount }],
-          ['USDT', { free: currencyValue, used: 0, total: currencyValue }],
-        ]);
+      const balancedForLevels: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: assetAmount, used: 0, total: assetAmount }],
+        ['USDT', { free: currencyValue, used: 0, total: currencyValue }],
+      ]);
 
-        initStrategy(100, { buyLevels, sellLevels }, balancedForLevels);
+      initStrategy(100, { buyLevels, sellLevels }, balancedForLevels);
 
-        expect(createOrder).toHaveBeenCalledTimes(expectedOrders);
-      },
-    );
+      expect(createOrder).toHaveBeenCalledTimes(expectedOrders);
+    });
 
     it('places buy orders below center price', () => {
       initStrategy(100);
@@ -420,18 +413,15 @@ describe('GridBot', () => {
       ${'fixed'}       | ${5}         | ${95}            | ${105}
       ${'percent'}     | ${5}         | ${95}            | ${105}
       ${'logarithmic'} | ${0.05}      | ${95.24}         | ${105}
-    `(
-      'calculates correct prices for $spacingType spacing',
-      ({ spacingType, spacingValue, expectedBuyPrice, expectedSellPrice }) => {
-        initStrategy(100, { spacingType, spacingValue, buyLevels: 1, sellLevels: 1 });
+    `('calculates correct prices for $spacingType spacing', ({ spacingType, spacingValue, expectedBuyPrice, expectedSellPrice }) => {
+      initStrategy(100, { spacingType, spacingValue, buyLevels: 1, sellLevels: 1 });
 
-        const buyOrders = issuedOrders.filter(o => o.side === 'BUY');
-        const sellOrders = issuedOrders.filter(o => o.side === 'SELL');
+      const buyOrders = issuedOrders.filter(o => o.side === 'BUY');
+      const sellOrders = issuedOrders.filter(o => o.side === 'SELL');
 
-        expect(buyOrders[0]?.price).toBe(expectedBuyPrice);
-        expect(sellOrders[0]?.price).toBe(expectedSellPrice);
-      },
-    );
+      expect(buyOrders[0]?.price).toBe(expectedBuyPrice);
+      expect(sellOrders[0]?.price).toBe(expectedSellPrice);
+    });
   });
 
   describe('lifecycle methods', () => {

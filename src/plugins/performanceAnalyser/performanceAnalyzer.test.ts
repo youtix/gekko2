@@ -109,17 +109,14 @@ describe('PerformanceAnalyzer', () => {
     it.each([
       { initialBalance: 0, newBalance: 1000, expectedStart: 1000, expectedCurrent: 1000 },
       { initialBalance: 500, newBalance: 1000, expectedStart: 500, expectedCurrent: 1000 },
-    ])(
-      'should set balance to $newBalance (start: $expectedStart)',
-      ({ initialBalance, newBalance, expectedStart, expectedCurrent }) => {
-        if (initialBalance) analyzer['start'].balance = initialBalance;
+    ])('should set balance to $newBalance (start: $expectedStart)', ({ initialBalance, newBalance, expectedStart, expectedCurrent }) => {
+      if (initialBalance) analyzer['start'].balance = initialBalance;
 
-        analyzer.onPortfolioValueChange([{ balance: { free: newBalance, used: 0, total: newBalance } }]);
+      analyzer.onPortfolioValueChange([{ balance: { free: newBalance, used: 0, total: newBalance } }]);
 
-        expect(analyzer['start'].balance).toBe(expectedStart);
-        expect(analyzer['balance']).toBe(expectedCurrent);
-      },
-    );
+      expect(analyzer['start'].balance).toBe(expectedStart);
+      expect(analyzer['balance']).toBe(expectedCurrent);
+    });
 
     it('should record sample to priceBalanceSamples when warmup is completed', () => {
       analyzer['warmupCompleted'] = true;
@@ -235,20 +232,17 @@ describe('PerformanceAnalyzer', () => {
       ${'End Exp'}   | ${500}          | ${0}              | ${null}               | ${1000 - 500}
       ${'Cont Exp'}  | ${500}          | ${1}              | ${500}                | ${0}
       ${'No Exp'}    | ${null}         | ${0}              | ${null}               | ${0}
-    `(
-      'should handle exposure for $scenario',
-      ({ initialExposure, newPortfolioAsset, expectedExposureStart, expectedExposureAdded }) => {
-        analyzer['exposureActiveSince'] = initialExposure;
-        const order = createOrder('BUY', 100, 1, 1000, 1000, newPortfolioAsset, 0);
+    `('should handle exposure for $scenario', ({ initialExposure, newPortfolioAsset, expectedExposureStart, expectedExposureAdded }) => {
+      analyzer['exposureActiveSince'] = initialExposure;
+      const order = createOrder('BUY', 100, 1, 1000, 1000, newPortfolioAsset, 0);
 
-        analyzer.onOrderCompleted([order]);
+      analyzer.onOrderCompleted([order]);
 
-        expect(analyzer['exposureActiveSince']).toBe(expectedExposureStart);
-        if (expectedExposureAdded > 0) {
-          expect(analyzer['exposure']).toBe(expectedExposureAdded);
-        }
-      },
-    );
+      expect(analyzer['exposureActiveSince']).toBe(expectedExposureStart);
+      if (expectedExposureAdded > 0) {
+        expect(analyzer['exposure']).toBe(expectedExposureAdded);
+      }
+    });
   });
 
   describe('processOneMinuteCandle', () => {
@@ -256,20 +250,17 @@ describe('PerformanceAnalyzer', () => {
       warmupCompleted | expectedWarmupCandle | expectedEndDate
       ${false}        | ${defaultCandle}     | ${0}
       ${true}         | ${undefined}         | ${addMinutes(defaultCandle.start, 1).getTime()}
-    `(
-      'should handle candle (warmupCompleted: $warmupCompleted)',
-      ({ warmupCompleted, expectedWarmupCandle, expectedEndDate }) => {
-        analyzer['warmupCompleted'] = warmupCompleted;
+    `('should handle candle (warmupCompleted: $warmupCompleted)', ({ warmupCompleted, expectedWarmupCandle, expectedEndDate }) => {
+      analyzer['warmupCompleted'] = warmupCompleted;
 
-        analyzer['processOneMinuteCandle'](defaultCandle);
+      analyzer['processOneMinuteCandle'](defaultCandle);
 
-        expect(analyzer['warmupCandle']).toEqual(expectedWarmupCandle);
-        if (warmupCompleted) {
-          expect(analyzer['dates'].end).toBe(expectedEndDate);
-          expect(analyzer['endPrice']).toBe(defaultCandle.close);
-        }
-      },
-    );
+      expect(analyzer['warmupCandle']).toEqual(expectedWarmupCandle);
+      if (warmupCompleted) {
+        expect(analyzer['dates'].end).toBe(expectedEndDate);
+        expect(analyzer['endPrice']).toBe(defaultCandle.close);
+      }
+    });
   });
 
   describe('processFinalize', () => {

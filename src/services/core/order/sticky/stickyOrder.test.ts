@@ -68,13 +68,7 @@ describe('StickyOrder', () => {
 
         await createOrder(side, amount);
 
-        expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith(
-          'BTC/USDT',
-          side,
-          amount,
-          expectedPrice,
-          expect.any(Function),
-        );
+        expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BTC/USDT', side, amount, expectedPrice, expect.any(Function));
       },
     );
 

@@ -298,12 +298,7 @@ describe('CCXTExchange', () => {
       await (heartInstance as any).on.mock.calls[0][1]();
 
       expect(callback).toHaveBeenCalledWith(candle);
-      expect(instance.fetchOHLCV).toHaveBeenCalledWith(
-        'BTC/USDT',
-        expect.anything(),
-        expect.anything(),
-        expect.anything(),
-      );
+      expect(instance.fetchOHLCV).toHaveBeenCalledWith('BTC/USDT', expect.anything(), expect.anything(), expect.anything());
     });
 
     it('logs error when fetch fails', async () => {

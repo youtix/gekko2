@@ -9,7 +9,7 @@ import {
 import { GekkoError } from '@errors/gekko.error';
 import { Watch } from '@models/configuration.types';
 import { OrderSide, OrderState, OrderType } from '@models/order.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
@@ -28,9 +28,9 @@ export abstract class Order extends EventEmitter {
   protected readonly side: OrderSide;
   protected readonly gekkoOrderId: UUID;
   protected readonly mode: Watch['mode'];
-  protected readonly symbol: Symbol;
+  protected readonly symbol: TradingPair;
 
-  constructor(symbol: Symbol, gekkoOrderId: UUID, side: OrderSide, type: OrderType) {
+  constructor(symbol: TradingPair, gekkoOrderId: UUID, side: OrderSide, type: OrderType) {
     super();
     const { mode } = config.getWatch();
     this.exchange = inject.exchange();
@@ -135,8 +135,7 @@ export abstract class Order extends EventEmitter {
   }
 
   public async createSummary(): Promise<OrderSummary> {
-    if (!this.isOrderCompleted())
-      throw new GekkoError('order', `[${this.gekkoOrderId}] ${this.side} ${this.type} order is not completed`);
+    if (!this.isOrderCompleted()) throw new GekkoError('order', `[${this.gekkoOrderId}] ${this.side} ${this.type} order is not completed`);
 
     return createOrderSummary({
       id: this.gekkoOrderId,

@@ -162,13 +162,10 @@ describe('candle utils', () => {
       ${1}   | ${5}   | ${3}   | ${4}   | ${3.25}
       ${10}  | ${4}   | ${2}   | ${8}   | ${6}
       ${1.5} | ${3.5} | ${0.5} | ${2.5} | ${(1.5 + 3.5 + 0.5 + 2.5) / 4}
-    `(
-      'returns $expected for open=$open, high=$high, low=$low and close=$close',
-      ({ open, high, low, close, expected }) => {
-        const candle = { ...defaultCandle, open, high, low, close };
-        expect(ohlc4(candle)).toBeCloseTo(expected);
-      },
-    );
+    `('returns $expected for open=$open, high=$high, low=$low and close=$close', ({ open, high, low, close, expected }) => {
+      const candle = { ...defaultCandle, open, high, low, close };
+      expect(ohlc4(candle)).toBeCloseTo(expected);
+    });
   });
 
   describe('getCandleTimeOffset', () => {

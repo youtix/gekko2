@@ -2,9 +2,8 @@ import { Candle } from '@models/candle.types';
 import { CandleEvent } from '@models/event.types';
 import { config } from '@services/configuration/configuration';
 import * as logger from '@services/logger';
-import * as candleUtils from '@utils/candle/candle.utils';
 import { describe, expect, it, Mock, vi } from 'vitest';
-import { CandleValidatorStream } from './candleValidator.stream';
+import { CandleValidatorStream } from './rejectDuplicateCandle.stream';
 
 vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => ({ config: { getWatch: vi.fn() } }));
@@ -34,7 +33,6 @@ const runStream = async (...candles: Candle[]): Promise<CandleEvent[]> => {
 
 describe('CandleValidatorStream', () => {
   const getWatchMock = config.getWatch as Mock;
-  const fillMissingCandlesMock = candleUtils.fillMissingCandles as Mock;
   const warningMock = logger.warning as Mock;
 
   describe('passthrough (no gaps, no duplicates)', () => {
@@ -107,12 +105,7 @@ describe('CandleValidatorStream', () => {
       const c2 = candle(NOW - 3 * ONE_MINUTE);
       const c3 = candle(NOW - 2 * ONE_MINUTE);
       fillMissingCandlesMock.mockReturnValue([c1, c2, c3, c4]);
-      expect(await runStream(c1, c4)).toEqual([
-        candleEvent(c1.start),
-        candleEvent(c2.start),
-        candleEvent(c3.start),
-        candleEvent(c4.start),
-      ]);
+      expect(await runStream(c1, c4)).toEqual([candleEvent(c1.start), candleEvent(c2.start), candleEvent(c3.start), candleEvent(c4.start)]);
     });
 
     it('should log a warning when filling gaps with empty candles', async () => {

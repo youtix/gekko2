@@ -146,13 +146,7 @@ function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = fa
     return handlers.size > 0;
   };
 
-  return MockOrder as unknown as new (
-    symbol: string,
-    id: string,
-    side: string,
-    amount: number,
-    exchange: unknown,
-  ) => any;
+  return MockOrder as unknown as new (symbol: string, id: string, side: string, amount: number, exchange: unknown) => any;
 }
 
 vi.mock('../../services/core/order/sticky/stickyOrder', () => ({
@@ -549,10 +543,7 @@ describe('Trader', () => {
       order.emit(ORDER_ERRORED_EVENT, 'boom');
       await Promise.resolve();
 
-      expect(logger.error).toHaveBeenCalledWith(
-        'trader',
-        '[20a7abd2-546b-4c65-b04d-900b84fa5fe6] BUY STICKY order: boom (status: ERROR)',
-      );
+      expect(logger.error).toHaveBeenCalledWith('trader', '[20a7abd2-546b-4c65-b04d-900b84fa5fe6] BUY STICKY order: boom (status: ERROR)');
       expect(getOrdersMap().size).toBe(0);
       expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
@@ -649,10 +640,7 @@ describe('Trader', () => {
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(errorMock).toHaveBeenCalledWith(
-        'trader',
-        '[20a7abd2-546b-4c65-b04d-900b84fa5fe6] Error in order completed summary failed',
-      );
+      expect(errorMock).toHaveBeenCalledWith('trader', '[20a7abd2-546b-4c65-b04d-900b84fa5fe6] Error in order completed summary failed');
       expect(emitSpy).not.toHaveBeenCalled();
       expect(synchronizeSpy).not.toHaveBeenCalled();
       expect(getOrdersMap().size).toBe(0);

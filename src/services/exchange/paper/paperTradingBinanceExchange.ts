@@ -2,7 +2,7 @@ import { Candle } from '@models/candle.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { info } from '@services/logger';
 import { CCXTExchange } from '../ccxtExchange';
@@ -51,9 +51,7 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
     const marketData = new Map(pairs.map(({ symbol }) => [symbol, this.buildMarketData(symbol)]));
 
     // Get all tickers for initial price
-    const tickers = await Promise.all(
-      pairs.map(async ({ symbol }) => [symbol, await this.realExchange.fetchTicker(symbol)] as const),
-    );
+    const tickers = await Promise.all(pairs.map(async ({ symbol }) => [symbol, await this.realExchange.fetchTicker(symbol)] as const));
 
     // Initialize simulated exchange with real market constraints
     this.simulatedExchange = new DummyCentralizedExchange({
@@ -69,7 +67,7 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
     info('exchange', `Initial portfolio: ${JSON.stringify(this.exchangeConfig.simulationBalance)}`);
   }
 
-  private buildMarketData(symbol: Symbol): MarketData {
+  private buildMarketData(symbol: TradingPair): MarketData {
     return {
       ...this.realExchange.getMarketData(symbol),
       ...(this.exchangeConfig.feeOverride && { fee: this.exchangeConfig.feeOverride }),
@@ -80,19 +78,19 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
   /*                    UNAUTHENTICATED OPERATIONS (via CCXTExchange)           */
   /* -------------------------------------------------------------------------- */
 
-  public async fetchOHLCV(symbol: Symbol, params?: FetchOHLCVParams) {
+  public async fetchOHLCV(symbol: TradingPair, params?: FetchOHLCVParams) {
     return this.realExchange.fetchOHLCV(symbol, params);
   }
 
-  public async fetchTicker(symbol: Symbol) {
+  public async fetchTicker(symbol: TradingPair) {
     return this.realExchange.fetchTicker(symbol);
   }
 
-  public onNewCandle(symbol: Symbol, onNewCandle: (candle: Candle) => void) {
+  public onNewCandle(symbol: TradingPair, onNewCandle: (symbol: TradingPair, candle: Candle | undefined) => void) {
     return this.realExchange.onNewCandle(symbol, onNewCandle);
   }
 
-  public getMarketData(symbol: Symbol): MarketData {
+  public getMarketData(symbol: TradingPair): MarketData {
     return this.realExchange.getMarketData(symbol);
   }
 
@@ -105,7 +103,7 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
   }
 
   public async createLimitOrder(
-    symbol: Symbol,
+    symbol: TradingPair,
     side: OrderSide,
     amount: number,
     price: number,
@@ -114,19 +112,19 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
     return this.simulatedExchange.createLimitOrder(symbol, side, amount, price, onSettled);
   }
 
-  public async createMarketOrder(symbol: Symbol, side: OrderSide, amount: number): Promise<OrderState> {
+  public async createMarketOrder(symbol: TradingPair, side: OrderSide, amount: number): Promise<OrderState> {
     return this.simulatedExchange.createMarketOrder(symbol, side, amount);
   }
 
-  public async cancelOrder(symbol: Symbol, id: string): Promise<OrderState> {
+  public async cancelOrder(symbol: TradingPair, id: string): Promise<OrderState> {
     return this.simulatedExchange.cancelOrder(symbol, id);
   }
 
-  public async fetchOrder(symbol: Symbol, id: string): Promise<OrderState> {
+  public async fetchOrder(symbol: TradingPair, id: string): Promise<OrderState> {
     return this.simulatedExchange.fetchOrder(symbol, id);
   }
 
-  public async fetchMyTrades(symbol: Symbol, from?: EpochTimeStamp): Promise<Trade[]> {
+  public async fetchMyTrades(symbol: TradingPair, from?: EpochTimeStamp): Promise<Trade[]> {
     return this.simulatedExchange.fetchMyTrades(symbol, from);
   }
 
@@ -134,7 +132,7 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
   /*                          DUMMY EXCHANGE INTERFACE                          */
   /* -------------------------------------------------------------------------- */
 
-  public async processOneMinuteCandle(symbol: Symbol, candle: Candle): Promise<void> {
+  public async processOneMinuteCandle(symbol: TradingPair, candle: Candle): Promise<void> {
     return this.simulatedExchange.processOneMinuteCandle(symbol, candle);
   }
 

@@ -1,6 +1,6 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderSide, OrderState } from '@models/order.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { debug, warning } from '@services/logger';
@@ -16,7 +16,7 @@ export class LimitOrder extends Order {
   private interval?: Timer;
   private id?: string;
 
-  constructor(symbol: Symbol, gekkoOrderId: UUID, side: OrderSide, amount: number, price: number) {
+  constructor(symbol: TradingPair, gekkoOrderId: UUID, side: OrderSide, amount: number, price: number) {
     super(symbol, gekkoOrderId, side, 'LIMIT');
     const orderSync = config.getExchange().orderSynchInterval;
     this.price = price;
@@ -76,8 +76,7 @@ export class LimitOrder extends Order {
   protected handleCreateOrderError(error: unknown) {
     clearInterval(this.interval);
 
-    if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError)
-      return this.orderRejected(error.message);
+    if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError) return this.orderRejected(error.message);
 
     if (error instanceof Error) this.orderErrored(error);
     throw error;

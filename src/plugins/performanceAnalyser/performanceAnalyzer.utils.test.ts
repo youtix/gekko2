@@ -4,23 +4,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Report } from './performanceAnalyzer.types';
 import { logFinalize, logTrade } from './performanceAnalyzer.utils';
 
-const {
-  infoMock,
-  debugMock,
-  toISOStringMock,
-  roundMock,
-  formatRatioMock,
-  formatSignedAmountMock,
-  formatSignedPercentMock,
-} = vi.hoisted(() => ({
-  infoMock: vi.fn(),
-  debugMock: vi.fn(),
-  toISOStringMock: vi.fn(),
-  roundMock: vi.fn(),
-  formatRatioMock: vi.fn(),
-  formatSignedAmountMock: vi.fn(),
-  formatSignedPercentMock: vi.fn(),
-}));
+const { infoMock, debugMock, toISOStringMock, roundMock, formatRatioMock, formatSignedAmountMock, formatSignedPercentMock } = vi.hoisted(
+  () => ({
+    infoMock: vi.fn(),
+    debugMock: vi.fn(),
+    toISOStringMock: vi.fn(),
+    roundMock: vi.fn(),
+    formatRatioMock: vi.fn(),
+    formatSignedAmountMock: vi.fn(),
+    formatSignedPercentMock: vi.fn(),
+  }),
+);
 
 vi.mock('@services/logger', () => ({
   info: infoMock,
@@ -198,10 +192,7 @@ describe('performanceAnalyzer.utils', () => {
       const order = { ...baseOrder, side } as OrderCompletedEvent['order'];
       logTrade(order, baseExchange, 'USD', 'BTC', false);
 
-      expect(debugMock).toHaveBeenCalledWith(
-        'performance analyzer',
-        expect.stringContaining(`${expectedAction} ${expectedAmount}`),
-      );
+      expect(debugMock).toHaveBeenCalledWith('performance analyzer', expect.stringContaining(`${expectedAction} ${expectedAmount}`));
     });
 
     it.each`

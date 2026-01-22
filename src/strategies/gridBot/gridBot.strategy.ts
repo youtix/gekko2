@@ -94,10 +94,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     if (!this.gridBounds || this.awaitingRebalance) return;
 
     if (isOutOfRange(candle.close, this.gridBounds)) {
-      tools.log(
-        'warn',
-        `GridBot: Price ${candle.close} is out of grid range [${this.gridBounds.min}, ${this.gridBounds.max}]`,
-      );
+      tools.log('warn', `GridBot: Price ${candle.close} is out of grid range [${this.gridBounds.min}, ${this.gridBounds.max}]`);
     }
   }
 
@@ -220,14 +217,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private prepareGrid(centerPrice: number, portfolio: Portfolio, tools: Tools<GridBotStrategyParams>): void {
     const { buyLevels, sellLevels } = tools.strategyParams;
     const { asset, currency } = getPortfolioContent(portfolio, this.base, this.quote);
-    const plan = computeRebalancePlan(
-      centerPrice,
-      asset.total,
-      currency.total,
-      buyLevels,
-      sellLevels,
-      tools.marketData,
-    );
+    const plan = computeRebalancePlan(centerPrice, asset.total, currency.total, buyLevels, sellLevels, tools.marketData);
 
     if (plan) {
       // Validate rebalance is possible
@@ -323,24 +313,11 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   }
 
   /** Build the grid around the center price */
-  private buildGrid(
-    centerPrice: number,
-    assetFree: number,
-    currencyFree: number,
-    tools: Tools<GridBotStrategyParams>,
-  ): void {
+  private buildGrid(centerPrice: number, assetFree: number, currencyFree: number, tools: Tools<GridBotStrategyParams>): void {
     const { buyLevels, sellLevels, spacingType, spacingValue } = tools.strategyParams;
 
     // Compute grid bounds
-    const bounds = computeGridBounds(
-      centerPrice,
-      buyLevels,
-      sellLevels,
-      this.priceDecimals,
-      spacingType,
-      spacingValue,
-      this.priceStep,
-    );
+    const bounds = computeGridBounds(centerPrice, buyLevels, sellLevels, this.priceDecimals, spacingType, spacingValue, this.priceStep);
 
     if (!bounds) {
       tools.log('error', 'GridBot: Could not compute valid grid bounds');
@@ -395,10 +372,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       this.placeOrder(i, level.side, tools);
     }
 
-    tools.log(
-      'info',
-      `GridBot: Grid built around ${centerPrice} with ${buyLevels} buy / ${sellLevels} sell levels, qty=${this.quantity}`,
-    );
+    tools.log('info', `GridBot: Grid built around ${centerPrice} with ${buyLevels} buy / ${sellLevels} sell levels, qty=${this.quantity}`);
   }
 
   /** Place a LIMIT order for a level */

@@ -294,10 +294,7 @@ describe('MarketOrder', () => {
     it('should log warning for null status', () => {
       (order as any).applyOrderUpdate({ id: 'ex-1', status: undefined, timestamp: 1000 });
 
-      expect(Logger.warning).toHaveBeenCalledWith(
-        'order',
-        expect.stringContaining('order update returned unexpected status: unknown'),
-      );
+      expect(Logger.warning).toHaveBeenCalledWith('order', expect.stringContaining('order update returned unexpected status: unknown'));
     });
   });
 

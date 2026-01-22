@@ -145,9 +145,7 @@ describe('DummyCentralizedExchange', () => {
     });
 
     it('throws when amount below minimum', async () => {
-      await expect(createExchange().createLimitOrder(SYMBOL, 'BUY', 0.01, 100)).rejects.toBeInstanceOf(
-        OrderOutOfRangeError,
-      );
+      await expect(createExchange().createLimitOrder(SYMBOL, 'BUY', 0.01, 100)).rejects.toBeInstanceOf(OrderOutOfRangeError);
     });
 
     it('throws when insufficient currency for BUY', async () => {

@@ -1,5 +1,5 @@
 import { Timeframe, Watch } from '@models/configuration.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { Exchange } from '@services/exchange/exchange.types';
 import { Storage } from '@services/storage/storage';
 import { SequentialEventEmitter } from '@utils/event/sequentialEventEmitter';
@@ -12,7 +12,7 @@ export abstract class Plugin extends SequentialEventEmitter {
   private exchange?: Exchange;
   protected readonly asset: string;
   protected readonly currency: string;
-  protected readonly symbol: Symbol;
+  protected readonly symbol: TradingPair;
   protected readonly timeframe: Timeframe;
   protected readonly warmupPeriod: number;
   protected readonly pluginName: string;

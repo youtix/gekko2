@@ -7,10 +7,10 @@ import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { BacktestStream } from '../stream/backtest/backtest.stream';
-import { CandleValidatorStream } from '../stream/candleValidator/candleValidator.stream';
 import { HistoricalCandleStream } from '../stream/historicalCandle/historicalCandle.stream';
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
+import { CandleValidatorStream } from '../stream/validation/rejectDuplicateCandle.stream';
 import { mergeSequentialStreams, streamPipelines } from './pipeline.utils';
 
 // Mocks

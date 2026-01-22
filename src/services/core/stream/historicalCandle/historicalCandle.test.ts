@@ -94,9 +94,7 @@ describe('HistoricalCandleStream', () => {
     it('should not execute when already locked', async () => {
       const mockFetchOHLCV = vi
         .fn()
-        .mockImplementation(
-          () => new Promise(resolve => setTimeout(() => resolve([candleFactory('2023-01-01T00:00:00Z', 100)]), 20)),
-        );
+        .mockImplementation(() => new Promise(resolve => setTimeout(() => resolve([candleFactory('2023-01-01T00:00:00Z', 100)]), 20)));
       injectExchangeMock.mockReturnValue({ fetchOHLCV: mockFetchOHLCV });
 
       launchHistoricalCandleStream({

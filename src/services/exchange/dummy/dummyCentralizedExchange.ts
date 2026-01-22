@@ -2,17 +2,11 @@ import { Candle } from '@models/candle.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
-import {
-  Exchange,
-  FetchOHLCVParams,
-  MarketData,
-  OrderSettledCallback,
-  Ticker,
-} from '@services/exchange/exchange.types';
+import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback, Ticker } from '@services/exchange/exchange.types';
 import { clonePortfolio, createPortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
@@ -27,10 +21,10 @@ export class DummyCentralizedExchange implements Exchange {
   private readonly orderSettledCallbacks: Map<string, OrderSettledCallback>;
   private readonly buyOrders: DummyInternalOrder[]; // Sorted by price DESC
   private readonly sellOrders: DummyInternalOrder[]; // Sorted by price ASC
-  private readonly candles: Map<Symbol, Candle[]>;
-  private readonly marketData: Map<Symbol, MarketData>;
+  private readonly candles: Map<TradingPair, Candle[]>;
+  private readonly marketData: Map<TradingPair, MarketData>;
   private readonly portfolio: Portfolio;
-  private ticker: Map<Symbol, Ticker | undefined>;
+  private ticker: Map<TradingPair, Ticker | undefined>;
   private currentTimestamp: EpochTimeStamp;
   private orderSequence = 0;
 
@@ -58,7 +52,7 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   /** Because dummy exchange is not a plugin, I need to call this function manualy in the plugins stream */
-  public async processOneMinuteCandle(symbol: Symbol, candle: Candle): Promise<void> {
+  public async processOneMinuteCandle(symbol: TradingPair, candle: Candle): Promise<void> {
     return this.mutex.runExclusive(() => {
       // I need the close time of the candle
       this.currentTimestamp = addMinutes(candle.start, 1).getTime();
@@ -69,7 +63,7 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public onNewCandle(_symbol: Symbol, _onNewCandle: (candle: Candle) => void): () => void {
+  public onNewCandle(_symbol: TradingPair, _onNewCandle: (symbol: TradingPair, candle: Candle | undefined) => void): () => void {
     // Nothing to do because it is impossible to use this exchange in realtime
     return () => {};
   }
@@ -82,11 +76,11 @@ export class DummyCentralizedExchange implements Exchange {
    * Warning: if you fetch the ticker before the first candle is processed, it will return { bid: 0, ask: 0 }.
    * Unless you set the initialTicker in configuration.
    */
-  public async fetchTicker(symbol: Symbol): Promise<Ticker> {
+  public async fetchTicker(symbol: TradingPair): Promise<Ticker> {
     return this.mutex.runExclusive(() => ({ ...(this.ticker.get(symbol) ?? { bid: 0, ask: 0 }) }));
   }
 
-  public async fetchOHLCV(symbol: Symbol, params: FetchOHLCVParams = {}): Promise<Candle[]> {
+  public async fetchOHLCV(symbol: TradingPair, params: FetchOHLCVParams = {}): Promise<Candle[]> {
     return this.mutex.runExclusive(() => {
       const { from, limit = LIMITS[this.getExchangeName()].candles } = params;
       const candles = this.candles.get(symbol) ?? [];
@@ -103,7 +97,7 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public async fetchMyTrades(symbol: Symbol, from?: EpochTimeStamp): Promise<Trade[]> {
+  public async fetchMyTrades(symbol: TradingPair, from?: EpochTimeStamp): Promise<Trade[]> {
     return this.mutex.runExclusive(() => {
       const arr = Array.from(this.ordersMap.values());
       const filtered = isNil(from) ? arr : arr.filter(order => order.timestamp >= from && order.symbol === symbol);
@@ -116,7 +110,7 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   public async createLimitOrder(
-    symbol: Symbol,
+    symbol: TradingPair,
     side: OrderSide,
     amount: number,
     price: number,
@@ -153,7 +147,7 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public async createMarketOrder(symbol: Symbol, side: OrderSide, amount: number): Promise<OrderState> {
+  public async createMarketOrder(symbol: TradingPair, side: OrderSide, amount: number): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
       const normalizedAmount = checkOrderAmount(amount, this.marketData.get(symbol)!);
       const price = side === 'BUY' ? this.ticker.get(symbol)?.ask : this.ticker.get(symbol)?.bid;
@@ -171,18 +165,14 @@ export class DummyCentralizedExchange implements Exchange {
 
       if (side === 'BUY') {
         if (currencyBalance.free < totalCost)
-          throw new InvalidOrder(
-            `Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`,
-          );
+          throw new InvalidOrder(`Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`);
         currencyBalance.free -= totalCost;
         currencyBalance.total -= totalCost;
         assetBalance.free += normalizedAmount;
         assetBalance.total += normalizedAmount;
       } else {
         if (assetBalance.free < normalizedAmount)
-          throw new InvalidOrder(
-            `Insufficient asset balance (portfolio: ${assetBalance.free}, amount: ${normalizedAmount})`,
-          );
+          throw new InvalidOrder(`Insufficient asset balance (portfolio: ${assetBalance.free}, amount: ${normalizedAmount})`);
         assetBalance.free -= normalizedAmount;
         assetBalance.total -= normalizedAmount;
         const gain = cost * (1 - (this.marketData.get(symbol)?.fee?.taker ?? 0));
@@ -212,7 +202,7 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public async cancelOrder(symbol: Symbol, id: string): Promise<OrderState> {
+  public async cancelOrder(symbol: TradingPair, id: string): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
       const order = this.ordersMap.get(id);
       if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
@@ -237,7 +227,7 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public async fetchOrder(_symbol: Symbol, id: string): Promise<OrderState> {
+  public async fetchOrder(_symbol: TradingPair, id: string): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
       const order = this.ordersMap.get(id);
       if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
@@ -245,11 +235,11 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public getMarketData(symbol: Symbol): MarketData {
+  public getMarketData(symbol: TradingPair): MarketData {
     return this.marketData.get(symbol) ?? {};
   }
 
-  private reserveBalance(symbol: Symbol, side: OrderSide, amount: number, price: number) {
+  private reserveBalance(symbol: TradingPair, side: OrderSide, amount: number, price: number) {
     const [asset, currency] = symbol.split('/');
     const currencyBalance = this.portfolio.get(currency)!;
     const assetBalance = this.portfolio.get(asset)!;
@@ -258,9 +248,7 @@ export class DummyCentralizedExchange implements Exchange {
       const cost = amount * price;
       const totalCost = cost * (1 + (this.marketData.get(symbol)?.fee?.maker ?? 0));
       if (currencyBalance.free < totalCost)
-        throw new InvalidOrder(
-          `Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`,
-        );
+        throw new InvalidOrder(`Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`);
       currencyBalance.free -= totalCost;
       currencyBalance.used += totalCost;
       this.portfolio.set(currency, currencyBalance);
@@ -273,7 +261,7 @@ export class DummyCentralizedExchange implements Exchange {
     }
   }
 
-  private releaseBalance(symbol: Symbol, order: DummyInternalOrder) {
+  private releaseBalance(symbol: TradingPair, order: DummyInternalOrder) {
     const filled = order.filled ?? 0;
     const remaining = order.amount - filled;
     if (remaining <= 0) return;
@@ -294,7 +282,7 @@ export class DummyCentralizedExchange implements Exchange {
     }
   }
 
-  private settleOrdersWithCandle(symbol: Symbol, candle: Candle) {
+  private settleOrdersWithCandle(symbol: TradingPair, candle: Candle) {
     // Process BUYs (descending price)
     // Matches if candle.low <= order.price
     // Since sorted DESC, all orders from 0 to splitIndex match
@@ -329,7 +317,7 @@ export class DummyCentralizedExchange implements Exchange {
     }
   }
 
-  private fillOrder(symbol: Symbol, order: DummyInternalOrder, _candle?: Candle) {
+  private fillOrder(symbol: TradingPair, order: DummyInternalOrder, _candle?: Candle) {
     if (order.status !== 'open') return;
 
     const price = order.price ?? 0;

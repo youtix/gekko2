@@ -22,12 +22,7 @@ export class BollingerBands extends Indicator<'BollingerBands'> {
   private ma: MovingAverageClasses;
   private ringBuffer: RingBuffer<number>;
 
-  constructor({
-    period = 5,
-    stdevUp = 2,
-    stdevDown = 2,
-    maType = 'sma',
-  }: IndicatorRegistry['BollingerBands']['input'] = {}) {
+  constructor({ period = 5, stdevUp = 2, stdevDown = 2, maType = 'sma' }: IndicatorRegistry['BollingerBands']['input'] = {}) {
     super('BollingerBands', { upper: null, middle: null, lower: null });
     this.period = period;
     this.stdevUp = stdevUp;

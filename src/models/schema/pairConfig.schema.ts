@@ -1,8 +1,8 @@
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { TIMEFRAMES } from '@services/configuration/configuration.const';
 import { z } from 'zod';
 
-export const symbolSchema = z.custom<Symbol>().refine(symbol => symbol?.includes('/'), 'Symbol must contain a slash');
+export const symbolSchema = z.custom<TradingPair>().refine(symbol => symbol?.includes('/'), 'Symbol must contain a slash');
 
 export const pairConfigSchema = z.object({
   symbol: symbolSchema,

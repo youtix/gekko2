@@ -1,5 +1,5 @@
 import { symbolSchema } from '@models/schema/pairConfig.schema';
-import { Symbol } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { exchangeSchema, simulationBalanceSchema } from '@services/exchange/exchange.schema';
 import z from 'zod';
 import { MarketData, Ticker } from '../exchange.types';
@@ -33,9 +33,7 @@ const marketDataSchema = z
     }),
   )
   .default([])
-  .transform(
-    marketConstraints => new Map<Symbol, MarketData>(marketConstraints?.map(mc => [mc.symbol, mc.marketData]) ?? []),
-  );
+  .transform(marketConstraints => new Map<TradingPair, MarketData>(marketConstraints?.map(mc => [mc.symbol, mc.marketData]) ?? []));
 
 const initialTickerSchema = z
   .array(
@@ -48,7 +46,7 @@ const initialTickerSchema = z
     }),
   )
   .default([])
-  .transform(balance => new Map<Symbol, Ticker>(balance.map(b => [b.symbol, b.ticker])));
+  .transform(balance => new Map<TradingPair, Ticker>(balance.map(b => [b.symbol, b.ticker])));
 
 export const dummyExchangeSchema = exchangeSchema.extend({
   name: z.literal('dummy-cex'),

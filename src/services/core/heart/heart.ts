@@ -17,8 +17,7 @@ export class Heart extends EventEmitter {
 
   public tick() {
     const currentTime = Date.now();
-    if (this.lastTick && this.lastTick < currentTime - this.tickRate * 3)
-      throw new GekkoError('core', 'Failed to tick in time'); // see https://github.com/askmike/gekko/issues/514 for details
+    if (this.lastTick && this.lastTick < currentTime - this.tickRate * 3) throw new GekkoError('core', 'Failed to tick in time'); // see https://github.com/askmike/gekko/issues/514 for details
 
     this.lastTick = currentTime;
     this.emit('tick');

@@ -1,4 +1,4 @@
-import { CandleEvent } from '@models/event.types';
+import { SecuredCandleEvent } from '@models/event.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { DummyExchange } from '@services/exchange/exchange.types';
@@ -29,12 +29,14 @@ export class PluginsStream extends Writable {
     }
   }
 
-  public async _write({ symbol, candle }: CandleEvent, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
+  public async _write({ symbol, candle }: SecuredCandleEvent, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
     try {
       // Forward candle to dummy exchange (if set by user) before all plugins
+      // Candle is always defined here thanks to fillCandleGapStream
       await this.dummyExchange?.processOneMinuteCandle(symbol, candle);
 
       // Forward candle to all plugins concurrently
+      // Candle is always defined here thanks to fillCandleGapStream
       await Promise.all(this.plugins.map(plugin => plugin.processInputStream(candle)));
 
       // Broadcast all deferred events sequentially

@@ -18,8 +18,7 @@ const createCandle = (close: number) => ({
 });
 
 // Generate candle sequences that cause crossovers
-const generateOscillatingCandles = (count: number) =>
-  Array.from({ length: count }, (_, i) => createCandle(100 + (i % 2 === 0 ? -10 : 10)));
+const generateOscillatingCandles = (count: number) => Array.from({ length: count }, (_, i) => createCandle(100 + (i % 2 === 0 ? -10 : 10)));
 
 const generateTrendingCandles = (count: number) => Array.from({ length: count }, (_, i) => createCandle(100 + i));
 
