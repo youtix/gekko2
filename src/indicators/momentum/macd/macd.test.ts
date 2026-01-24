@@ -45,16 +45,13 @@ describe('MACD', () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${2.393036380961078}   | ${-5.4005082820931865} | ${7.793544663054265}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${6.297960979220697}   | ${0.4487263485637554}  | ${5.849234630656942}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-6.630182592691845}  | ${-3.090728122064045}  | ${-3.5394544706278004}
-  `(
-    'should return { macd: $macd, signal: $signal, hist: $hist } when candle close to $candle.close',
-    ({ candle, macd, signal, hist }) => {
-      macdIndicator.onNewCandle(candle);
-      const { macd: macdResult, signal: signalResult, hist: histResult } = macdIndicator.getResult();
-      expect(macdResult).toBeCloseTo(macd, 13);
-      expect(signalResult).toBeCloseTo(signal, 13);
-      expect(histResult).toBeCloseTo(hist, 13);
-    },
-  );
+  `('should return { macd: $macd, signal: $signal, hist: $hist } when candle close to $candle.close', ({ candle, macd, signal, hist }) => {
+    macdIndicator.onNewCandle(candle);
+    const { macd: macdResult, signal: signalResult, hist: histResult } = macdIndicator.getResult();
+    expect(macdResult).toBeCloseTo(macd, 13);
+    expect(signalResult).toBeCloseTo(signal, 13);
+    expect(histResult).toBeCloseTo(hist, 13);
+  });
 });
 
 //

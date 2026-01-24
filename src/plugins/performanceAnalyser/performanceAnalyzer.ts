@@ -4,6 +4,7 @@ import { BalanceSnapshot, OrderCompletedEvent } from '@models/event.types';
 import { Portfolio } from '@models/portfolio.types';
 import { warning } from '@services/logger';
 import { longestDrawdownDuration, maxDrawdown, sharpeRatio, sortinoRatio, stdev } from '@utils/math/math.utils';
+import { getBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { filter } from 'lodash-es';
 import { Plugin } from '../plugin';
@@ -74,7 +75,8 @@ export class PerformanceAnalyzer extends Plugin {
     this.dates.start = start;
     this.startPrice = close;
     const portfolio = this.latestPortfolio ?? this.start.portfolio;
-    if (portfolio?.asset && portfolio.asset.total > 0 && this.exposureActiveSince === null) {
+    const assetBalance = portfolio ? getBalance(portfolio, this.asset) : null;
+    if (assetBalance && assetBalance.total > 0 && this.exposureActiveSince === null) {
       this.exposureActiveSince = this.dates.start;
     }
     if (this.warmupCandle) this.processOneMinuteCandle(this.warmupCandle);
@@ -95,8 +97,9 @@ export class PerformanceAnalyzer extends Plugin {
 
       this.tradeBalanceSamples.push({ date: order.orderExecutionDate, balance: exchange.balance });
 
+      const assetBalance = getBalance(exchange.portfolio, this.asset);
       const isCurrentlyExposed = this.exposureActiveSince !== null;
-      const isExposedAfterTrade = exchange.portfolio.asset.total > 0;
+      const isExposedAfterTrade = assetBalance.total > 0;
 
       if (!isCurrentlyExposed && isExposedAfterTrade) {
         this.exposureActiveSince = order.orderExecutionDate;
@@ -121,7 +124,9 @@ export class PerformanceAnalyzer extends Plugin {
 
     const portfolio = this.latestPortfolio ?? this.start.portfolio;
     if (portfolio && this.endPrice > 0) {
-      const markToMarketBalance = portfolio.asset.total * this.endPrice + portfolio.currency.total;
+      const assetBalance = getBalance(portfolio, this.asset);
+      const currencyBalance = getBalance(portfolio, this.currency);
+      const markToMarketBalance = assetBalance.total * this.endPrice + currencyBalance.total;
       if (Number.isFinite(markToMarketBalance)) this.balance = markToMarketBalance;
     }
 

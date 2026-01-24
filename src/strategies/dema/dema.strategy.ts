@@ -53,12 +53,7 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
     const [dema, sma] = indicators;
     if (!isNumber(sma) || !isNumber(dema)) return;
 
-    log(
-      'debug',
-      ['Calculated DEMA and SMA properties for candle:', `DEMA: ${dema.toFixed(5)}`, `SMA: ${sma.toFixed(5)}`].join(
-        ' ',
-      ),
-    );
+    log('debug', ['Calculated DEMA and SMA properties for candle:', `DEMA: ${dema.toFixed(5)}`, `SMA: ${sma.toFixed(5)}`].join(' '));
   }
 
   // NOT USED

@@ -77,10 +77,12 @@
     "@date-fns/tz": "^1.4.1",
     "ccxt": "^4.5.28",
     "date-fns": "^4.1.0",
+    "https-proxy-agent": "^7.0.6",
     "js-yaml": "^4.1.1",
     "json5": "^2.2.3",
     "lodash-es": "^4.17.21",
     "protobufjs": "^7.5.4",
+    "socks-proxy-agent": "^8.0.5",
     "winston": "^3.19.0",
     "zod": "^4.2.0"
   }

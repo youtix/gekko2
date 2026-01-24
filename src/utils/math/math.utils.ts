@@ -37,8 +37,7 @@ export const percentile = (values: number[] = [], ptile?: number): number => {
 };
 
 export const weightedMean = (values: number[], weights: number[]): number => {
-  if (values.length !== weights.length || !values.length)
-    throw new Error('Values and weights must be non-empty arrays of equal length');
+  if (values.length !== weights.length || !values.length) throw new Error('Values and weights must be non-empty arrays of equal length');
 
   const totalWeight = sum(weights);
   if (totalWeight === 0) throw new Error('Sum of weights cannot be zero');

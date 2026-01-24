@@ -1,5 +1,6 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderSide, OrderState } from '@models/order.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { debug, warning } from '@services/logger';
@@ -15,8 +16,8 @@ export class LimitOrder extends Order {
   private interval?: Timer;
   private id?: string;
 
-  constructor(gekkoOrderId: UUID, side: OrderSide, amount: number, price: number) {
-    super(gekkoOrderId, side, 'LIMIT');
+  constructor(symbol: TradingPair, gekkoOrderId: UUID, side: OrderSide, amount: number, price: number) {
+    super(symbol, gekkoOrderId, side, 'LIMIT');
     const orderSync = config.getExchange().orderSynchInterval;
     this.price = price;
     this.amount = amount;
@@ -75,8 +76,7 @@ export class LimitOrder extends Order {
   protected handleCreateOrderError(error: unknown) {
     clearInterval(this.interval);
 
-    if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError)
-      return this.orderRejected(error.message);
+    if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError) return this.orderRejected(error.message);
 
     if (error instanceof Error) this.orderErrored(error);
     throw error;
@@ -139,7 +139,7 @@ export class LimitOrder extends Order {
   private async createLimitOrderWithCallback(side: OrderSide, amount: number, price: number) {
     try {
       const callback = (order: OrderState) => this.applyOrderUpdate(order);
-      const order = await this.exchange.createLimitOrder(side, amount, price, callback);
+      const order = await this.exchange.createLimitOrder(this.symbol, side, amount, price, callback);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
       await this.handleCreateOrderError(error);

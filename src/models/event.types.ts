@@ -1,6 +1,25 @@
 import { UUID } from 'node:crypto';
+import { Candle } from './candle.types';
 import { OrderSide, OrderType } from './order.types';
 import { BalanceDetail, Portfolio } from './portfolio.types';
+import { TradingPair } from './utility.types';
+
+export type CandleEvent = {
+  /** Trading pair symbol in CCXT format (e.g., "BTC/USDT") */
+  symbol: TradingPair;
+  /** The candle data for this symbol, can be undefined when no new candle is available (exchange maintenance) */
+  candle: Candle | undefined;
+};
+export type SecuredCandleEvent = CandleEvent & {
+  candle: Candle;
+};
+
+/**
+ * Represents a synchronized batch of candles keyed by trading pair.
+ * Used for multi-asset pipeline routing where all candles share the same timestamp.
+ * Trading pair should be in CCXT format: "BTC/USDT", "ETH/USDT", etc.
+ */
+export type CandleBucket = Record<TradingPair, Candle>;
 
 export interface BalanceSnapshot {
   date: number;

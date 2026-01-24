@@ -13,20 +13,16 @@ import { DEFAULT_FEE_BUFFER } from '@constants/order.const';
 import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import {
-  BalanceSnapshot,
-  OrderCanceledEvent,
-  OrderCompletedEvent,
-  OrderErroredEvent,
-  OrderInitiatedEvent,
-} from '@models/event.types';
+import { BalanceSnapshot, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
 import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
+import { EMPTY_BALANCE } from '@strategies/gridBot/gridBot.const';
 import { toISOString } from '@utils/date/date.utils';
+import { clonePortfolio, createEmptyPortfolio, getBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
 import { bindAll, filter, isEqual } from 'lodash-es';
 import { UUID } from 'node:crypto';
@@ -50,11 +46,8 @@ export class Trader extends Plugin {
     this.orders = new Map();
     this.warmupCompleted = false;
     this.warmupCandle = null;
-    this.portfolio = {
-      asset: { free: 0, used: 0, total: 0 },
-      currency: { free: 0, used: 0, total: 0 },
-    };
-    this.balance = { free: 0, used: 0, total: 0 };
+    this.portfolio = createEmptyPortfolio();
+    this.balance = EMPTY_BALANCE;
     this.price = 0;
     this.currentTimestamp = 0;
     this.syncInterval = null;
@@ -71,19 +64,18 @@ export class Trader extends Plugin {
     const oldBalance = this.balance;
 
     // Update portfolio, balance and price
-    const { bid } = await exchange.fetchTicker();
+    const { bid } = await exchange.fetchTicker(this.symbol);
     this.portfolio = await exchange.fetchBalance();
     this.price = bid;
+    const assetBalance = getBalance(this.portfolio, this.asset);
+    const currencyBalance = getBalance(this.portfolio, this.currency);
     this.balance = {
-      free: this.price * this.portfolio.asset.free + this.portfolio.currency.free,
-      used: this.price * this.portfolio.asset.used + this.portfolio.currency.used,
-      total: this.price * this.portfolio.asset.total + this.portfolio.currency.total,
+      free: this.price * assetBalance.free + currencyBalance.free,
+      used: this.price * assetBalance.used + currencyBalance.used,
+      total: this.price * assetBalance.total + currencyBalance.total,
     };
 
-    debug(
-      'trader',
-      `Current portfolio: ${this.portfolio.asset.total} ${this.asset} / ${this.portfolio.currency.total} ${this.currency}`,
-    );
+    debug('trader', `Current portfolio: ${assetBalance.total} ${this.asset} / ${currencyBalance.total} ${this.currency}`);
 
     // Emit portfolio events if changes are detected
     if (!isEqual(oldPortfolio, this.portfolio)) this.emitPortfolioChangeEvent();
@@ -95,10 +87,7 @@ export class Trader extends Plugin {
   /* -------------------------------------------------------------------------- */
 
   private emitPortfolioChangeEvent() {
-    this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, {
-      asset: { ...this.portfolio.asset },
-      currency: { ...this.portfolio.currency },
-    });
+    this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, clonePortfolio(this.portfolio));
   }
 
   private emitPortfolioValueChangeEvent() {
@@ -174,9 +163,7 @@ export class Trader extends Plugin {
           } catch (err) {
             error(
               'trader',
-              err instanceof Error
-                ? `[${id}] Error in order completed ${err.message}`
-                : `[${id}] Unknown error on order completed`,
+              err instanceof Error ? `[${id}] Error in order completed ${err.message}` : `[${id}] Unknown error on order completed`,
             );
           } finally {
             this.orders.delete(id);
@@ -212,7 +199,8 @@ export class Trader extends Plugin {
     await Promise.all(
       payloads.map(async advice => {
         const { id, side, orderCreationDate, type, price = this.price } = advice;
-        const { asset, currency } = this.portfolio;
+        const asset = getBalance(this.portfolio, this.asset);
+        const currency = getBalance(this.portfolio, this.currency);
 
         // Price cannot be zero here because we call processOneMinuteCandle before events (plugins stream)
         // We delegate the order validation (notional, lot, amount) to the exchange
@@ -225,7 +213,7 @@ export class Trader extends Plugin {
         this.addDeferredEmit<OrderInitiatedEvent>(ORDER_INITIATED_EVENT, { order: orderInitiated, exchange });
 
         // Create order
-        const orderInstance = new ORDER_FACTORY[type](id, side, amount, price);
+        const orderInstance = new ORDER_FACTORY[type](this.symbol, id, side, amount, price);
         this.orders.set(id, { amount, side, orderCreationDate, type, price, orderInstance });
 
         // UPDATE EVENTS
@@ -266,9 +254,7 @@ export class Trader extends Plugin {
           } catch (err) {
             error(
               'trader',
-              err instanceof Error
-                ? `[${id}] Error in order completed ${err.message}`
-                : `[${id}] Unknown error on order completed`,
+              err instanceof Error ? `[${id}] Error in order completed ${err.message}` : `[${id}] Unknown error on order completed`,
             );
           } finally {
             this.orders.delete(id);

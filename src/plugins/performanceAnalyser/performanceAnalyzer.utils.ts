@@ -2,6 +2,7 @@ import { OrderCompletedEvent } from '@models/event.types';
 import { debug, info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
+import { getBalance } from '@utils/portfolio/portfolio.utils';
 import { formatRatio, formatSignedAmount, formatSignedPercent } from '@utils/string/string.utils';
 import { ROUND } from './performanceAnalyzer.const';
 import { Report, TradeBalances } from './performanceAnalyzer.types';
@@ -76,31 +77,22 @@ export const logTrade = (
       effectivePrice: `${formatter.format(executedPrice)} ${currency}`,
       volume: `${formatter.format(order.amount * executedPrice)} ${currency}`,
       balance: `${formatter.format(exchange.balance.total)} ${currency}`,
-      portfolioChange: describePortfolioChange(
-        baselineLabel,
-        exchange.balance.total,
-        baselineForChange,
-        currency,
-        formatter,
-      ),
-      totalSinceStart: describePortfolioChange(
-        'since start',
-        exchange.balance.total,
-        balances.startBalance,
-        currency,
-        formatter,
-      ),
+      portfolioChange: describePortfolioChange(baselineLabel, exchange.balance.total, baselineForChange, currency, formatter),
+      totalSinceStart: describePortfolioChange('since start', exchange.balance.total, balances.startBalance, currency, formatter),
       feePaid: `${formatter.format(order.fee)} ${currency}${
         typeof order.feePercent === 'number' ? ` (${round(order.feePercent, 2, 'halfEven')}%)` : ''
       }`,
     });
   }
 
+  const assetBalance = getBalance(exchange.portfolio, asset);
+  const currencyBalance = getBalance(exchange.portfolio, currency);
+
   debug(
     'performance analyzer',
     [
       `${order.side === 'BUY' ? 'Bought' : 'Sold'}`,
-      `${order.side === 'BUY' ? round(exchange.portfolio.asset.total, ROUND) : round(exchange.portfolio.currency.total, ROUND)}`,
+      `${order.side === 'BUY' ? round(assetBalance.total, ROUND) : round(currencyBalance.total, ROUND)}`,
       `${order.side === 'BUY' ? asset : currency}`,
       `at ${toISOString(order.orderCreationDate)}`,
     ].join(' '),

@@ -58,15 +58,12 @@ describe('linreg', () => {
     ${[1, 2, 3]}       | ${[1, 2, 3]}        | ${1}      | ${0}
     ${[1, 2, 3]}       | ${[2, 2, 2]}        | ${0}      | ${2}
     ${[1, 2, 3, 4, 5]} | ${[1, 3, 2, 5, 4]}  | ${0.8}    | ${0.6}
-  `(
-    'should calculate regression for valuesX: $valuesX and valuesY: $valuesY',
-    ({ valuesX, valuesY, expectedM, expectedB }) => {
-      const [m, b] = linreg(valuesX, valuesY);
-      // Compare the Big numbers by converting them to string.
-      expect(m).toBeCloseTo(expectedM);
-      expect(b).toBeCloseTo(expectedB);
-    },
-  );
+  `('should calculate regression for valuesX: $valuesX and valuesY: $valuesY', ({ valuesX, valuesY, expectedM, expectedB }) => {
+    const [m, b] = linreg(valuesX, valuesY);
+    // Compare the Big numbers by converting them to string.
+    expect(m).toBeCloseTo(expectedM);
+    expect(b).toBeCloseTo(expectedB);
+  });
 
   // Test that when the input arrays are empty, the function returns [].
   it('should return [] when given empty arrays', () => {

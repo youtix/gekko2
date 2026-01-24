@@ -9,6 +9,7 @@ import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
+import { BalanceDetail } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { Exchange, MarketData } from '@services/exchange/exchange.types';
 import { StrategyManager } from '@strategies/strategyManager';
@@ -21,7 +22,11 @@ const attachMockExchange = (instance: TradingAdvisor) => {
   instance.setExchange({
     getExchangeName: (): string => 'binance',
     getMarketData: (): MarketData => ({ amount: { min: 3 } }),
-    fetchBalance: () => ({ asset: { free: 100, used: 0, total: 100 }, currency: { free: 100, used: 0, total: 100 } }),
+    fetchBalance: () =>
+      new Map<string, BalanceDetail>([
+        ['asset', { free: 100, used: 0, total: 100 }],
+        ['currency', { free: 100, used: 0, total: 100 }],
+      ]),
   } as unknown as Exchange);
 };
 
@@ -44,7 +49,10 @@ vi.mock('@strategies/index', () => ({
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(function () {
     return {
-      getWatch: vi.fn(() => ({ warmup: {} })),
+      getWatch: vi.fn(() => ({
+        pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
+        warmup: {},
+      })),
       getStrategy: vi.fn(() => ({})),
       showLogo: vi.fn(),
       getPlugins: vi.fn(),
@@ -67,7 +75,7 @@ describe('TradingAdvisor', () => {
     side: 'SELL',
     amount: 1,
   };
-  const defaultCandle: Candle = { close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
+  const defaultCandle: Candle = { id: undefined, close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
   const defaultBuyTradeEvent: OrderCompletedEvent = {
     order: {
       id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
@@ -82,10 +90,10 @@ describe('TradingAdvisor', () => {
       effectivePrice: 31,
     },
     exchange: {
-      portfolio: {
-        asset: { free: 100, used: 0, total: 100 },
-        currency: { free: 200, used: 0, total: 200 },
-      },
+      portfolio: new Map<string, BalanceDetail>([
+        ['asset', { free: 100, used: 0, total: 100 }],
+        ['currency', { free: 200, used: 0, total: 200 }],
+      ]),
       balance: { free: 1000, used: 0, total: 1000 },
       price: 100,
     },
@@ -104,10 +112,10 @@ describe('TradingAdvisor', () => {
     exchange: {
       price: 100,
       balance: { free: 1000, used: 0, total: 1000 },
-      portfolio: {
-        asset: { free: 50, used: 0, total: 50 },
-        currency: { free: 500, used: 0, total: 500 },
-      },
+      portfolio: new Map<string, BalanceDetail>([
+        ['asset', { free: 50, used: 0, total: 50 }],
+        ['currency', { free: 500, used: 0, total: 500 }],
+      ]),
     },
   };
   const defaultErroredOrder: OrderErroredEvent = {
@@ -234,10 +242,7 @@ describe('TradingAdvisor', () => {
       it('should emit STRATEGY_CANCEL_ORDER_EVENT in relayCancelOrder when a candle is set', () => {
         (advisor as any).candle = defaultCandle;
         advisor['relayCancelOrder'](defaultCanceledOrder.order.id);
-        expect(advisor['addDeferredEmit']).toHaveBeenCalledExactlyOnceWith(
-          STRATEGY_CANCEL_ORDER_EVENT,
-          defaultCanceledOrder.order.id,
-        );
+        expect(advisor['addDeferredEmit']).toHaveBeenCalledExactlyOnceWith(STRATEGY_CANCEL_ORDER_EVENT, defaultCanceledOrder.order.id);
       });
     });
   });
@@ -273,10 +278,10 @@ describe('TradingAdvisor', () => {
 
     describe('onPortfolioChange', () => {
       it('should forward latest portfolio to the strategy manager', () => {
-        const portfolio = {
-          asset: { free: 5, used: 0, total: 5 },
-          currency: { free: 10, used: 0, total: 10 },
-        };
+        const portfolio = new Map<string, BalanceDetail>([
+          ['asset', { free: 5, used: 0, total: 5 }],
+          ['currency', { free: 10, used: 0, total: 10 }],
+        ]);
         advisor['strategyManager']!.setPortfolio = vi.fn();
 
         advisor.onPortfolioChange([portfolio]);

@@ -5,6 +5,7 @@ import { StrategyInfo } from '@models/strategyInfo.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { toISOString } from '@utils/date/date.utils';
+import { getBalance } from '@utils/portfolio/portfolio.utils';
 import { bindAll, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
@@ -97,13 +98,13 @@ export class EventSubscriber extends Plugin {
         if (!this.subscriptions.has('order_init')) return;
         const { balance, portfolio, price: currentPrice } = exchange;
         const { id, amount, side, type, price, orderCreationDate } = order;
-        const priceLine = price
-          ? `Requested limit price: ${price} ${this.currency}`
-          : `Target price: ${currentPrice} ${this.currency}`;
+        const priceLine = price ? `Requested limit price: ${price} ${this.currency}` : `Target price: ${currentPrice} ${this.currency}`;
+        const assetBalance = getBalance(portfolio, this.asset);
+        const currencyBalance = getBalance(portfolio, this.currency);
         const message = [
           `${side} ${type} order created (${id})`,
           `Requested amount: ${amount}`,
-          `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
+          `Current portfolio: ${assetBalance.total} ${this.asset} / ${currencyBalance.total} ${this.currency}`,
           `Current balance: ${balance.total}`,
           priceLine,
           `At time: ${toISOString(orderCreationDate)}`,
@@ -119,9 +120,7 @@ export class EventSubscriber extends Plugin {
         if (!this.subscriptions.has('order_cancel')) return;
         const { price: currentPrice } = exchange;
         const { id, amount, side, type, price, orderCancelationDate, filled, remaining } = order;
-        const priceLine = price
-          ? `Requested limit price: ${price} ${this.currency}`
-          : `Current price: ${currentPrice} ${this.currency}`;
+        const priceLine = price ? `Requested limit price: ${price} ${this.currency}` : `Current price: ${currentPrice} ${this.currency}`;
         const message = [
           `${side} ${type} order canceled (${id})`,
           `At time: ${toISOString(orderCancelationDate)}`,
@@ -157,6 +156,8 @@ export class EventSubscriber extends Plugin {
         if (!this.subscriptions.has('order_complete')) return;
         const { portfolio, balance } = exchange;
         const { id, amount, side, type, orderExecutionDate, effectivePrice, feePercent, fee } = order;
+        const assetBalance = getBalance(portfolio, this.asset);
+        const currencyBalance = getBalance(portfolio, this.currency);
         const message = [
           `${side} ${type} order completed (${id})`,
           `Amount: ${amount} ${this.asset}`,
@@ -164,7 +165,7 @@ export class EventSubscriber extends Plugin {
           `Fee percent: ${feePercent ?? '0'}%`,
           `Fee: ${fee} ${this.currency}`,
           `At time: ${toISOString(orderExecutionDate)}`,
-          `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
+          `Current portfolio: ${assetBalance.total} ${this.asset} / ${currencyBalance.total} ${this.currency}`,
           `Current balance: ${balance}`,
         ].join('\n');
         this.bot.sendMessage(message);
@@ -176,11 +177,7 @@ export class EventSubscriber extends Plugin {
     await Promise.all(
       payloads.map(id => {
         if (!this.subscriptions.has('strat_cancel')) return;
-        const message = [
-          'Strategy requested order cancellation',
-          `Order Id: ${id}`,
-          `At time: ${toISOString(Date.now())}`,
-        ].join('\n');
+        const message = ['Strategy requested order cancellation', `Order Id: ${id}`, `At time: ${toISOString(Date.now())}`].join('\n');
         this.bot.sendMessage(message);
       }),
     );

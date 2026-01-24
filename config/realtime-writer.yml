@@ -1,6 +1,7 @@
 watch:
-  asset: BTC
-  currency: USDT
+  pairs:
+    - symbol: BTC/USDT
+      timeframe: 1m
   mode: realtime
 
 exchange:

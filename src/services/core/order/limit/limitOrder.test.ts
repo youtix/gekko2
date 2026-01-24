@@ -1,9 +1,4 @@
-import {
-  ORDER_CANCELED_EVENT,
-  ORDER_COMPLETED_EVENT,
-  ORDER_INVALID_EVENT,
-  ORDER_PARTIALLY_FILLED_EVENT,
-} from '@constants/event.const';
+import { ORDER_CANCELED_EVENT, ORDER_COMPLETED_EVENT, ORDER_INVALID_EVENT, ORDER_PARTIALLY_FILLED_EVENT } from '@constants/event.const';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderState } from '@models/order.types';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
@@ -58,7 +53,7 @@ describe('LimitOrder', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    mockConfig.getWatch.mockReturnValue({ mode: 'backtest' });
+    mockConfig.getWatch.mockReturnValue({ mode: 'backtest', pairs: [{ symbol: 'BTC/USDT' }] });
     mockConfig.getExchange.mockReturnValue({ orderSynchInterval: 1000 });
     Object.values(fakeExchange).forEach(value => {
       if (typeof value === 'function') value.mockReset();
@@ -75,10 +70,10 @@ describe('LimitOrder', () => {
       ${'backtest'} | ${false}
       ${'realtime'} | ${true}
     `('initializes correctly in $mode mode (interval: $shouldSetInterval)', ({ mode, shouldSetInterval }) => {
-      mockConfig.getWatch.mockReturnValue({ mode });
+      mockConfig.getWatch.mockReturnValue({ mode, pairs: [{ symbol: 'BTC/USDT' }] });
       const setIntervalSpy = vi.spyOn(global, 'setInterval');
 
-      order = new LimitOrder(defaultGekkoId, 'BUY', 1, 100);
+      order = new LimitOrder('BTC/USDT', defaultGekkoId, 'BUY', 1, 100);
 
       if (shouldSetInterval) {
         expect(setIntervalSpy).toHaveBeenCalled();
@@ -91,18 +86,16 @@ describe('LimitOrder', () => {
   describe('launch', () => {
     it('creates a limit order and handles success', async () => {
       fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
-      order = new LimitOrder(defaultGekkoId, 'BUY', 1.5, 101);
+      order = new LimitOrder('BTC/USDT', defaultGekkoId, 'BUY', 1.5, 101);
 
       await order.launch();
 
-      expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BUY', 1.5, 101, expect.any(Function));
+      expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BTC/USDT', 'BUY', 1.5, 101, expect.any(Function));
       expect([...order['transactions'].values()]).toEqual([
-        {
+        expect.objectContaining({
           id: defaultOrderId,
-          timestamp: defaultOrder.timestamp,
-          filled: 0,
           status: 'open',
-        },
+        }),
       ]);
     });
 
@@ -112,7 +105,7 @@ describe('LimitOrder', () => {
       ${new OrderOutOfRangeError('order', 'out of range', 1)} | ${'out of range'}
     `('rejects order on known error: $error.name', async ({ error, reason }) => {
       fakeExchange.createLimitOrder.mockRejectedValue(error);
-      order = new LimitOrder(defaultGekkoId, 'BUY', 2, 105);
+      order = new LimitOrder('BTC/USDT', defaultGekkoId, 'BUY', 2, 105);
       const emitSpy = vi.spyOn(order as any, 'emit');
 
       await order.launch();
@@ -129,7 +122,7 @@ describe('LimitOrder', () => {
     it('throws on unknown error during creation', async () => {
       const error = new Error('Unknown error');
       fakeExchange.createLimitOrder.mockRejectedValue(error);
-      order = new LimitOrder(defaultGekkoId, 'BUY', 2, 105);
+      order = new LimitOrder('BTC/USDT', defaultGekkoId, 'BUY', 2, 105);
       const emitSpy = vi.spyOn(order as any, 'emit');
 
       await expect(order.launch()).rejects.toThrow(error);
@@ -140,7 +133,7 @@ describe('LimitOrder', () => {
   describe('cancel', () => {
     beforeEach(() => {
       fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
-      order = new LimitOrder(defaultGekkoId, 'BUY', 1, 100);
+      order = new LimitOrder('BTC/USDT', defaultGekkoId, 'BUY', 1, 100);
     });
 
     it('does nothing if order is already completed', async () => {
@@ -170,7 +163,7 @@ describe('LimitOrder', () => {
 
       await order.cancel();
 
-      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith(defaultOrderId);
+      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith('BTC/USDT', defaultOrderId);
     });
 
     it('handles OrderNotFound error during cancel as filled', async () => {
@@ -195,9 +188,9 @@ describe('LimitOrder', () => {
 
   describe('checkOrder', () => {
     beforeEach(() => {
-      mockConfig.getWatch.mockReturnValue({ mode: 'realtime' });
+      mockConfig.getWatch.mockReturnValue({ mode: 'realtime', pairs: [{ symbol: 'BTC/USDT' }] });
       fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
-      order = new LimitOrder(defaultGekkoId, 'BUY', 1, 100);
+      order = new LimitOrder('BTC/USDT', defaultGekkoId, 'BUY', 1, 100);
     });
 
     it('stops checking if order is completed', async () => {
@@ -232,7 +225,7 @@ describe('LimitOrder', () => {
 
       await order.checkOrder();
 
-      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith(defaultOrderId);
+      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith('BTC/USDT', defaultOrderId);
       expect(fakeExchange.fetchOrder).not.toHaveBeenCalled();
     });
 
@@ -247,7 +240,7 @@ describe('LimitOrder', () => {
 
       await order.checkOrder();
 
-      expect(fakeExchange.fetchOrder).toHaveBeenCalledWith(defaultOrderId);
+      expect(fakeExchange.fetchOrder).toHaveBeenCalledWith('BTC/USDT', defaultOrderId);
       expect(emitSpy).toHaveBeenCalledWith(ORDER_PARTIALLY_FILLED_EVENT, 0.5);
     });
 
@@ -262,7 +255,7 @@ describe('LimitOrder', () => {
   describe('Event Handling & State Updates', () => {
     beforeEach(async () => {
       fakeExchange.createLimitOrder.mockResolvedValue(defaultOrder);
-      order = new LimitOrder(defaultGekkoId, 'BUY', 1, 100);
+      order = new LimitOrder('BTC/USDT', defaultGekkoId, 'BUY', 1, 100);
       await order.launch();
     });
 

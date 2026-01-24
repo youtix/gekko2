@@ -1,5 +1,6 @@
 import { AdviceOrder } from '@models/advice.types';
 import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
+import { BalanceDetail } from '@models/portfolio.types';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
@@ -11,7 +12,11 @@ vi.mock('@services/logger', () => ({ debug: vi.fn() }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(function () {
     return {
-      getWatch: vi.fn(() => ({ mode: 'realtime', warmup: {}, asset: 'BTC', currency: 'USD' })),
+      getWatch: vi.fn(() => ({
+        pairs: [{ symbol: 'BTC/USD', timeframe: '1m' }],
+        mode: 'realtime',
+        warmup: {},
+      })),
       getStrategy: vi.fn(() => ({})),
       showLogo: vi.fn(),
       getPlugins: vi.fn(),
@@ -62,10 +67,10 @@ describe('EventSubscriber', () => {
     const baseExchange = {
       price: 123,
       balance: { free: 1, used: 0, total: 1 },
-      portfolio: {
-        asset: { free: 0, used: 0, total: 0 },
-        currency: { free: 0, used: 0, total: 0 },
-      },
+      portfolio: new Map<string, BalanceDetail>([
+        ['asset', { free: 0, used: 0, total: 0 }],
+        ['currency', { free: 0, used: 0, total: 0 }],
+      ]),
     };
     const onStrategyInfo = (p: EventSubscriber) =>
       p.onStrategyInfo([{ timestamp: eventTimestamp, level: 'debug', message: 'M', tag: 'strategy' }]);
@@ -86,8 +91,7 @@ describe('EventSubscriber', () => {
       order: { ...baseOrder, orderCreationDate: eventTimestamp, ...overrides.order },
       exchange: { ...baseExchange, ...overrides.exchange },
     });
-    const onOrderInitiated = (p: EventSubscriber, overrides = {}) =>
-      p.onOrderInitiated([makeOrderInitiatedEvent(overrides)]);
+    const onOrderInitiated = (p: EventSubscriber, overrides = {}) => p.onOrderInitiated([makeOrderInitiatedEvent(overrides)]);
     const makeOrderCanceledEvent = (
       overrides: {
         order?: Partial<OrderCanceledEvent['order']>;
@@ -107,8 +111,7 @@ describe('EventSubscriber', () => {
         exchange: { ...initiated.exchange, ...overrides.exchange },
       };
     };
-    const onOrderCanceled = (p: EventSubscriber, overrides = {}) =>
-      p.onOrderCanceled([makeOrderCanceledEvent(overrides)]);
+    const onOrderCanceled = (p: EventSubscriber, overrides = {}) => p.onOrderCanceled([makeOrderCanceledEvent(overrides)]);
     const makeOrderErroredEvent = (
       overrides: {
         order?: Partial<OrderErroredEvent['order']>;
@@ -148,8 +151,7 @@ describe('EventSubscriber', () => {
         exchange: { ...initiated.exchange, ...overrides.exchange },
       };
     };
-    const onOrderCompleted = (p: EventSubscriber, overrides = {}) =>
-      p.onOrderCompleted([makeOrderCompletedEvent(overrides)]);
+    const onOrderCompleted = (p: EventSubscriber, overrides = {}) => p.onOrderCompleted([makeOrderCompletedEvent(overrides)]);
     it.each`
       name                | handler
       ${'strat_info'}     | ${onStrategyInfo}
@@ -175,16 +177,16 @@ describe('EventSubscriber', () => {
     });
 
     it('reports trade initiation details including order type and requested amount', () => {
+      const portfolio = new Map<string, BalanceDetail>();
+      portfolio.set('BTC', { free: 1, used: 0, total: 1 });
+      portfolio.set('USDT', { free: 2, used: 0, total: 2 });
       fakeBot.sendMessage.mockReset();
       plugin['handleCommand']('/sub_order_init');
       onOrderInitiated(plugin, {
         order: { type: 'MARKET', amount: 5, price: 321 },
         exchange: {
           balance: { free: 10, used: 0, total: 10 },
-          portfolio: {
-            asset: { free: 1, used: 0, total: 1 },
-            currency: { free: 2, used: 0, total: 2 },
-          },
+          portfolio,
         },
       });
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(
@@ -266,9 +268,7 @@ help - Show help information`);
       plugin['handleCommand']('/sub_strat_cancel');
       plugin.onStrategyCancelOrder([orderId]);
       expect(fakeBot.sendMessage).toHaveBeenCalledTimes(1);
-      expect(fakeBot.sendMessage).toHaveBeenCalledWith(
-        expect.stringContaining('Strategy requested order cancellation'),
-      );
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Strategy requested order cancellation'));
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining(orderId));
     });
   });

@@ -19,5 +19,4 @@ export const generateStrategyId = (input: unknown): string => {
   return collectPrimitives(input).join('-');
 };
 
-export const isNative = (node: unknown): node is string | number | boolean =>
-  ['string', 'number', 'boolean'].includes(typeof node);
+export const isNative = (node: unknown): node is string | number | boolean => ['string', 'number', 'boolean'].includes(typeof node);
