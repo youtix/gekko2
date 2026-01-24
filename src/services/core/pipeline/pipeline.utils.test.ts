@@ -7,7 +7,7 @@ import { subMinutes } from 'date-fns';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
-import { BacktestStream } from '../stream/backtest/backtest.stream';
+import { MultiAssetBacktestStream } from '../stream/backtest/multiAssetBacktest.stream';
 import { MultiAssetHistoricalStream } from '../stream/multiAssetHistorical.stream';
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
@@ -62,6 +62,9 @@ vi.mock('stream/promises', () => ({
 // Mock Stream Classes
 vi.mock('../stream/backtest/backtest.stream', () => ({
   BacktestStream: vi.fn(),
+}));
+vi.mock('../stream/backtest/multiAssetBacktest.stream', () => ({
+  MultiAssetBacktestStream: vi.fn(),
 }));
 vi.mock('../stream/validation/rejectDuplicateCandle.stream', () => ({
   RejectDuplicateCandleStream: vi.fn(),
@@ -122,6 +125,7 @@ describe('Pipeline Utils', () => {
         const mockWatchConfig = {
           pairs: mockPairs,
           warmup: { candleCount: 60, tickrate: 1000 },
+          timeframe: '1m',
         };
         (config.getWatch as Mock).mockReturnValue(mockWatchConfig);
 
@@ -133,8 +137,10 @@ describe('Pipeline Utils', () => {
 
         // Verify Streams Initialization
         expect(MultiAssetHistoricalStream).toHaveBeenCalledWith({
-          startDate: mockStartDate.getTime(),
-          endDate: mockNow,
+          daterange: {
+            start: mockStartDate.getTime(),
+            end: mockNow,
+          },
           tickrate: 1000,
           pairs: mockPairs,
         });
@@ -155,16 +161,20 @@ describe('Pipeline Utils', () => {
           start: new Date('2023-01-01').getTime(),
           end: new Date('2023-01-02').getTime(),
         };
-        (config.getWatch as Mock).mockReturnValue({ daterange: mockDaterange });
+        const mockPairs = [{ symbol: 'BTC/USDT' }];
+        (config.getWatch as Mock).mockReturnValue({ daterange: mockDaterange, pairs: mockPairs });
         (toTimestamp as Mock).mockImplementation(date => new Date(date).getTime());
 
         await streamPipelines.backtest(mockPlugins);
 
         expect(config.getWatch).toHaveBeenCalled();
 
-        expect(BacktestStream).toHaveBeenCalledWith({
-          start: new Date(mockDaterange.start).getTime(),
-          end: new Date(mockDaterange.end).getTime(),
+        expect(MultiAssetBacktestStream).toHaveBeenCalledWith({
+          daterange: {
+            start: new Date(mockDaterange.start).getTime(),
+            end: new Date(mockDaterange.end).getTime(),
+          },
+          pairs: mockPairs,
         });
         expect(PluginsStream).toHaveBeenCalledWith(mockPlugins);
         expect(pipeline).toHaveBeenCalled();
@@ -195,8 +205,7 @@ describe('Pipeline Utils', () => {
 
         expect(config.getWatch).toHaveBeenCalled();
         expect(MultiAssetHistoricalStream).toHaveBeenCalledWith({
-          startDate: new Date(mockDaterange.start).getTime(),
-          endDate: new Date(mockDaterange.end).getTime(),
+          daterange: mockDaterange,
           tickrate: mockTickrate,
           pairs: mockPairs,
         });

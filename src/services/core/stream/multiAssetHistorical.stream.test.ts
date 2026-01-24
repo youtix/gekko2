@@ -19,23 +19,20 @@ vi.mock('@utils/stream/stream.utils', () => ({
 
 describe('MultiAssetHistoricalStream', () => {
   it('should instantiate multiple HistoricalCandleStreams and synchronize them', () => {
-    const pairs = [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }] as any;
-    const startDate = 1000;
-    const endDate = 2000;
+    const pairs = [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }] as any; // keeping as any for simplicity if strict types aren't easily mockable here without more imports
+    const daterange = { start: 1000, end: 2000 };
     const tickrate = 60;
 
-    new MultiAssetHistoricalStream({ pairs, startDate, endDate, tickrate });
+    new MultiAssetHistoricalStream({ pairs, daterange, tickrate });
 
     expect(HistoricalCandleStream).toHaveBeenCalledTimes(2);
     expect(HistoricalCandleStream).toHaveBeenCalledWith({
-      startDate,
-      endDate,
+      daterange,
       tickrate,
       symbol: 'BTC/USDT',
     });
     expect(HistoricalCandleStream).toHaveBeenCalledWith({
-      startDate,
-      endDate,
+      daterange,
       tickrate,
       symbol: 'ETH/USDT',
     });

@@ -8,7 +8,7 @@ import { synchronizeStreams } from '@utils/stream/stream.utils';
 import { subMinutes } from 'date-fns';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
-import { BacktestStream } from '../stream/backtest/backtest.stream';
+import { MultiAssetBacktestStream } from '../stream/backtest/multiAssetBacktest.stream';
 import { MultiAssetHistoricalStream } from '../stream/multiAssetHistorical.stream';
 import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
@@ -17,15 +17,17 @@ import { RejectDuplicateCandleStream } from '../stream/validation/rejectDuplicat
 import { RejectFutureCandleStream } from '../stream/validation/rejectFuturCandle.stream';
 
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
-  const { pairs, warmup } = config.getWatch();
-  const { timeframe } = pairs[0]; // Assuming all pairs share timeframe
-  const now = resetDateParts(processStartTime(), ['s', 'ms']);
-  const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe], now);
-  const startDate = subMinutes(now, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe] + offset).getTime();
+  const { pairs, timeframe, warmup } = config.getWatch();
+  // End time of the last candle to download (now)
+  const end = resetDateParts(processStartTime(), ['s', 'ms']);
+  // Offset to align candles to the start of the timeframe
+  const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe], end);
+  // Start time of the first candle to download
+  const start = subMinutes(end, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe] + offset).getTime();
 
   await pipeline(
     mergeSequentialStreams(
-      new MultiAssetHistoricalStream({ startDate, endDate: now, tickrate: warmup.tickrate, pairs }),
+      new MultiAssetHistoricalStream({ daterange: { start, end }, tickrate: warmup.tickrate, pairs }),
       synchronizeStreams(pairs.map(p => new RealtimeStream(p.symbol))),
     ),
     new RejectFutureCandleStream(),
@@ -36,17 +38,17 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
 };
 
 const buildBacktestPipeline = async (plugins: Plugin[]) => {
-  const { daterange } = config.getWatch(); // Daterange is always set thanks to zod
+  const { daterange, pairs } = config.getWatch();
+  if (!daterange) throw new Error('daterange is not set');
 
-  await pipeline(new BacktestStream({ start: daterange!.start, end: daterange!.end }), new PluginsStream(plugins));
+  await pipeline(new MultiAssetBacktestStream({ daterange, pairs }), new PluginsStream(plugins));
 };
 
 const buildImporterPipeline = async (plugins: Plugin[]) => {
-  const { daterange, tickrate, pairs } = config.getWatch(); // Daterange is always set thanks to zod
+  const { daterange, tickrate, pairs } = config.getWatch();
+  if (!daterange) throw new Error('daterange is not set');
 
-  // Create a pipeline for each pair and run them in parallel
-  const stream = new MultiAssetHistoricalStream({ startDate: daterange!.start, endDate: daterange!.end, tickrate, pairs });
-
+  const stream = new MultiAssetHistoricalStream({ daterange, tickrate, pairs });
   return pipeline(stream, new FillCandleGapStream(), new PluginsStream(plugins));
 };
 

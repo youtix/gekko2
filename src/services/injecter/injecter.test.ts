@@ -52,7 +52,8 @@ describe('Injecter', () => {
     it('returns cached storage instance on subsequent calls', () => {
       getStorageMock.mockReturnValue({ type: 'sqlite', database: '' });
       getWatchMock.mockReturnValue({
-        pairs: [{ symbol: 'BTC/USDT', timeframe: '1h' }],
+        pairs: [{ symbol: 'BTC/USDT' }],
+        timeframe: '1h',
         mode: 'backtest',
         tickrate: 1000,
         fillGaps: 'no',
@@ -97,7 +98,8 @@ describe('Injecter', () => {
     it.each(testCases)('instantiates and caches $name exchange', ({ config: cfg, mock }) => {
       getExchangeMock.mockReturnValue(cfg as any);
       getWatchMock.mockReturnValue({
-        pairs: [{ symbol: 'BTC/USDT', timeframe: '1h' }],
+        pairs: [{ symbol: 'BTC/USDT' }],
+        timeframe: '1h',
         mode: 'backtest',
         tickrate: 1000,
         fillGaps: 'no',

@@ -8,21 +8,24 @@ import { differenceInMinutes, Interval } from 'date-fns';
 import { Readable } from 'node:stream';
 import { MissingCandlesError } from './backtest.error';
 
+interface BacktestStreamParams {
+  daterange: Interval<EpochTimeStamp, EpochTimeStamp>;
+  symbol: TradingPair;
+}
+
 export class BacktestStream extends Readable {
   private storage: Storage;
   private dateranges: Interval<EpochTimeStamp, EpochTimeStamp>[];
   private iteration: number;
   private symbol: TradingPair;
 
-  constructor(daterange: Interval<EpochTimeStamp, EpochTimeStamp>) {
+  constructor({ daterange, symbol }: BacktestStreamParams) {
     super({ objectMode: true });
     this.storage = inject.storage();
 
     warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
 
-    const { batchSize, pairs } = config.getWatch();
-    const { symbol } = pairs[0];
-    const [asset, currency] = symbol.split('/');
+    const { batchSize } = config.getWatch();
     const strategy = config.getStrategy();
     this.dateranges = splitIntervals(daterange.start, daterange.end, batchSize ?? 1440);
     this.iteration = 0;
@@ -31,7 +34,7 @@ export class BacktestStream extends Readable {
     info(
       'stream',
       [
-        `Launching backtest on ${asset}/${currency}`,
+        `Launching backtest on ${symbol}`,
         `from ${toISOString(daterange.start)} -> to ${toISOString(daterange.end)}`,
         `using ${strategy?.name} strategy`,
       ].join(' '),

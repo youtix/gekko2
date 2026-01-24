@@ -2,21 +2,20 @@ import { TradingPair } from '@models/utility.types';
 import { synchronizeStreams } from '@utils/stream/stream.utils';
 import { Interval } from 'date-fns';
 import { Readable } from 'stream';
-import { HistoricalCandleStream } from './historicalCandle/historicalCandle.stream';
+import { BacktestStream } from './backtest.stream';
 
-export type MultiAssetHistoricalStreamParams = {
+export type MultiAssetBacktestStreamParams = {
   pairs: { symbol: TradingPair }[];
   daterange: Interval<EpochTimeStamp, EpochTimeStamp>;
-  tickrate: number;
 };
 
-export class MultiAssetHistoricalStream extends Readable {
+export class MultiAssetBacktestStream extends Readable {
   private readonly synchronizedStream: Readable;
 
-  constructor({ pairs, daterange, tickrate }: MultiAssetHistoricalStreamParams) {
+  constructor({ pairs, daterange }: MultiAssetBacktestStreamParams) {
     super({ objectMode: true });
 
-    const streams = pairs.map(({ symbol }) => new HistoricalCandleStream({ daterange, tickrate, symbol }));
+    const streams = pairs.map(({ symbol }) => new BacktestStream({ daterange, symbol }));
 
     this.synchronizedStream = synchronizeStreams(streams);
 

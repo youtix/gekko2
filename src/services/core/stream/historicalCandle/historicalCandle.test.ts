@@ -3,8 +3,7 @@ import { CandleEvent } from '../../../../models/event.types';
 import { toTimestamp } from '../../../../utils/date/date.utils';
 import { inject } from '../../../injecter/injecter';
 import { HistoricalCandleError } from './historicalCandle.error';
-import { HistoricalCandleStream } from './historicalCandle.stream';
-import { HistoricalCandleStreamInput } from './historicalCandle.types';
+import { HistoricalCandleStream, HistoricalCandleStreamParams } from './historicalCandle.stream';
 
 const candleFactory = (time: string, value: number) => ({
   id: undefined,
@@ -36,9 +35,28 @@ describe('HistoricalCandleStream', () => {
   let results: CandleEvent[];
   let isStreamClosed: boolean;
 
-  const launchHistoricalCandleStream = (input: HistoricalCandleStreamInput) => {
+  // Type used in existing tests
+  type TestHistoricalCandleStreamInput = {
+    startDate: number;
+    endDate: number;
+    tickrate: number;
+    symbol: string;
+  };
+
+  const launchHistoricalCandleStream = (input: TestHistoricalCandleStreamInput) => {
     isStreamClosed = false;
-    stream = new HistoricalCandleStream(input);
+
+    // Adapt to new HistoricalCandleStreamParams
+    const params: HistoricalCandleStreamParams = {
+      daterange: {
+        start: input.startDate,
+        end: input.endDate,
+      },
+      tickrate: input.tickrate,
+      symbol: input.symbol as any, // Cast to TradingPair if needed, strictly it is string vs TradingPair type alias
+    };
+
+    stream = new HistoricalCandleStream(params);
     results = [];
     stream.on('data', data => results.push(data));
     stream.on('end', () => (isStreamClosed = true));

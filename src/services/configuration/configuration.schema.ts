@@ -6,6 +6,7 @@ import { paperBinanceExchangeSchema } from '@services/exchange/paper/paperTradin
 import { toTimestamp } from '@utils/date/date.utils';
 import { some } from 'lodash-es';
 import { z } from 'zod';
+import { TIMEFRAMES } from './configuration.const';
 
 const disclaimerField = 'I understand that Gekko only automates MY OWN trading strategies' as const;
 
@@ -26,6 +27,7 @@ const warmupSchema = z
 export const watchSchema = z
   .object({
     pairs: pairsSchema,
+    timeframe: z.enum(TIMEFRAMES),
     tickrate: z.number().default(1000),
     mode: z.enum(['realtime', 'backtest', 'importer']),
     warmup: warmupSchema,

@@ -21,8 +21,8 @@ export abstract class Plugin extends SequentialEventEmitter {
 
   constructor(pluginName: string) {
     super(pluginName);
-    const { pairs, warmup, mode } = config.getWatch();
-    const { symbol, timeframe } = pairs[0]; // TODO: support multiple pairs
+    const { pairs, timeframe, warmup, mode } = config.getWatch();
+    const { symbol } = pairs[0]; // TODO: support multiple pairs
     const [asset, currency] = symbol.split('/');
 
     this.strategySettings = config.getStrategy();

@@ -8,39 +8,30 @@ const ISO_START = '2023-01-01T00:00:00.000Z';
 const ISO_END = '2023-01-02T00:00:00.000Z';
 
 // Base pairs for v3 config format
-const basePairs = [{ symbol: 'BTC/USDT', timeframe: '1h' as const }];
+const basePairs = [{ symbol: 'BTC/USDT' }];
 
 describe('pairConfigSchema', () => {
   it('accepts valid pair config', () => {
-    const result = pairConfigSchema.safeParse({ symbol: 'BTC/USDT', timeframe: '1h' });
+    const result = pairConfigSchema.safeParse({ symbol: 'BTC/USDT' });
     expect(result.success).toBe(true);
   });
 
   it('rejects missing symbol', () => {
-    const result = pairConfigSchema.safeParse({ timeframe: '1h' });
+    const result = pairConfigSchema.safeParse({});
     expect(result.success).toBe(false);
     expect(result.error?.issues[0]).toMatchObject({ path: ['symbol'] });
   });
 
   it('rejects empty symbol', () => {
-    const result = pairConfigSchema.safeParse({ symbol: '', timeframe: '1h' });
+    const result = pairConfigSchema.safeParse({ symbol: '' });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0].message).toBe('Symbol must contain a slash');
-  });
-
-  it('rejects invalid timeframe', () => {
-    const result = pairConfigSchema.safeParse({ symbol: 'BTC/USDT', timeframe: 'invalid' });
-    expect(result.success).toBe(false);
-    expect(result.error?.issues[0]).toMatchObject({ path: ['timeframe'] });
   });
 });
 
 describe('pairsSchema', () => {
   it('accepts valid config with 2 pairs', () => {
-    const pairs = [
-      { symbol: 'BTC/USDT', timeframe: '1h' },
-      { symbol: 'ETH/USDT', timeframe: '4h' },
-    ];
+    const pairs = [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }];
     const result = pairsSchema.safeParse(pairs);
     expect(result.success).toBe(true);
     if (result.success) {
@@ -50,11 +41,11 @@ describe('pairsSchema', () => {
 
   it('accepts maximum of 5 pairs', () => {
     const pairs = [
-      { symbol: 'BTC/USDT', timeframe: '1h' },
-      { symbol: 'ETH/USDT', timeframe: '4h' },
-      { symbol: 'SOL/USDT', timeframe: '1h' },
-      { symbol: 'AVAX/USDT', timeframe: '15m' },
-      { symbol: 'LINK/USDT', timeframe: '1d' },
+      { symbol: 'BTC/USDT' },
+      { symbol: 'ETH/USDT' },
+      { symbol: 'SOL/USDT' },
+      { symbol: 'AVAX/USDT' },
+      { symbol: 'LINK/USDT' },
     ];
     const result = pairsSchema.safeParse(pairs);
     expect(result.success).toBe(true);
@@ -62,12 +53,12 @@ describe('pairsSchema', () => {
 
   it('rejects config with 6 pairs with specific error message', () => {
     const pairs = [
-      { symbol: 'BTC/USDT', timeframe: '1h' },
-      { symbol: 'ETH/USDT', timeframe: '4h' },
-      { symbol: 'SOL/USDT', timeframe: '1h' },
-      { symbol: 'AVAX/USDT', timeframe: '15m' },
-      { symbol: 'LINK/USDT', timeframe: '1d' },
-      { symbol: 'DOT/USDT', timeframe: '1h' },
+      { symbol: 'BTC/USDT' },
+      { symbol: 'ETH/USDT' },
+      { symbol: 'SOL/USDT' },
+      { symbol: 'AVAX/USDT' },
+      { symbol: 'LINK/USDT' },
+      { symbol: 'DOT/USDT' },
     ];
     const result = pairsSchema.safeParse(pairs);
     expect(result.success).toBe(false);
@@ -85,13 +76,7 @@ describe('pairsSchema', () => {
   });
 
   it('rejects pair with missing symbol', () => {
-    const pairs = [{ timeframe: '1h' }];
-    const result = pairsSchema.safeParse(pairs);
-    expect(result.success).toBe(false);
-  });
-
-  it('rejects pair with invalid timeframe', () => {
-    const pairs = [{ symbol: 'BTC/USDT', timeframe: 'invalid' }];
+    const pairs = [{ symbol: '' }];
     const result = pairsSchema.safeParse(pairs);
     expect(result.success).toBe(false);
   });
@@ -100,6 +85,7 @@ describe('pairsSchema', () => {
 describe('watchSchema', () => {
   const baseWatch = {
     pairs: basePairs,
+    timeframe: '1m' as const,
   };
 
   describe('importer mode', () => {
@@ -159,6 +145,7 @@ describe('watchSchema', () => {
       const candidate = {
         ...baseWatch,
         mode: 'realtime' as const,
+        timeframe: '1m' as const,
       };
 
       const result = watchSchema.parse(candidate);
@@ -176,6 +163,7 @@ describe('configurationSchema', () => {
     watch: {
       pairs: basePairs,
       mode: 'realtime' as const,
+      timeframe: '1m' as const,
     },
     plugins: [] as Array<{ name?: string }>,
     exchange: {

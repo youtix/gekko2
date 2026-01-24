@@ -33,5 +33,4 @@ To provide a high-quality, professional code review that identifies logic flaws,
 
 - **No Style Nitpicking**: Do not comment on indentation, trailing commas, or quotes (assume a linter handles this).
 - **Be Constructive**: Use "we" or "the code" instead of "you".
-- **Limit Feedback**: Provide a maximum of 5-7 most impactful points to avoid overwhelming the developer.
-- **Performance**: Analysis must be delivered in under 200ms.
+- **Ignore Tests Files**: Do not comment on test files.

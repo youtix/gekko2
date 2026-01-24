@@ -6,10 +6,15 @@ import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
 import { info } from '@services/logger';
 import { resetDateParts, toISOString } from '@utils/date/date.utils';
-import { formatDuration, intervalToDuration, isAfter, isBefore } from 'date-fns';
+import { formatDuration, Interval, intervalToDuration, isAfter, isBefore } from 'date-fns';
 import { bindAll, each, filter, last } from 'lodash-es';
 import { Readable } from 'stream';
-import { HistoricalCandleStreamInput } from './historicalCandle.types';
+
+export interface HistoricalCandleStreamParams {
+  daterange: Interval<EpochTimeStamp, EpochTimeStamp>;
+  tickrate: number;
+  symbol: TradingPair;
+}
 
 export class HistoricalCandleStream extends Readable {
   private startDate: EpochTimeStamp;
@@ -23,11 +28,11 @@ export class HistoricalCandleStream extends Readable {
   private lastProgressLog: number;
   private totalDuration: number;
 
-  constructor({ startDate, endDate, tickrate, symbol }: HistoricalCandleStreamInput) {
+  constructor({ daterange, tickrate, symbol }: HistoricalCandleStreamParams) {
     super({ objectMode: true });
 
-    this.startDate = resetDateParts(startDate, ['s', 'ms']);
-    this.endDate = resetDateParts(endDate, ['s', 'ms']);
+    this.startDate = resetDateParts(daterange.start, ['s', 'ms']);
+    this.endDate = resetDateParts(daterange.end, ['s', 'ms']);
 
     this.initialStartDate = this.startDate;
     this.totalDuration = this.endDate - this.startDate;
