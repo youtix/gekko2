@@ -6,8 +6,3 @@ db
 .sql-shm
 .sql-wal
 src/strategies/custom
-.agent
-.claude
-_bmad
-_bmad-output
-docs
