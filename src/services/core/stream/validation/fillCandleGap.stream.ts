@@ -8,7 +8,7 @@ import { toISOString } from '@utils/date/date.utils';
 import { Transform, TransformCallback } from 'node:stream';
 
 export class FillCandleGapStream extends Transform {
-  private lastCandle?: Record<TradingPair, Candle>;
+  private lastCandle: Record<TradingPair, Candle> = {};
 
   constructor() {
     super({ objectMode: true });
@@ -16,18 +16,27 @@ export class FillCandleGapStream extends Transform {
 
   async _transform({ symbol, candle }: CandleEvent, _: BufferEncoding, next: TransformCallback) {
     try {
-      const lastCandle = this.lastCandle?.[symbol];
-      if (!lastCandle) return next();
-      const hasMissingCandle = !!candle;
+      const lastCandle = this.lastCandle[symbol];
 
-      if (hasMissingCandle) {
-        warning('stream', `Gap detected: missing candle(s) @ ${toISOString(lastCandle.start + ONE_MINUTE)}`);
-        warning('stream', 'Filling gap using synthetic (empty) candles.');
+      if (!lastCandle) {
+        if (candle) {
+          this.lastCandle[symbol] = candle;
+          this.push({ symbol, candle });
+        }
+        return next();
       }
 
-      const filledCandle = candle ?? createEmptyCandle(lastCandle);
-      this.push({ symbol, candle: filledCandle });
-      this.lastCandle = { ...this.lastCandle, [symbol]: filledCandle };
+      if (!candle) {
+        warning('stream', `Gap detected: missing candle(s) @ ${toISOString(lastCandle.start + ONE_MINUTE)}`);
+        warning('stream', 'Filling gap using synthetic (empty) candles.');
+
+        const filledCandle = createEmptyCandle(lastCandle);
+        this.push({ symbol, candle: filledCandle });
+        this.lastCandle[symbol] = filledCandle;
+      } else {
+        this.push({ symbol, candle });
+        this.lastCandle[symbol] = candle;
+      }
 
       next();
     } catch (error) {

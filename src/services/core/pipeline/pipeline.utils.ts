@@ -14,7 +14,7 @@ import { PluginsStream } from '../stream/plugins.stream';
 import { RealtimeStream } from '../stream/realtime/realtime.stream';
 import { FillCandleGapStream } from '../stream/validation/fillCandleGap.stream';
 import { RejectDuplicateCandleStream } from '../stream/validation/rejectDuplicateCandle.stream';
-import { RejectFutureCandleStream } from '../stream/validation/rejectFuturCandle.stream';
+import { RejectFutureCandleStream } from '../stream/validation/rejectFutureCandle.stream';
 
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
   const { pairs, timeframe, warmup } = config.getWatch();

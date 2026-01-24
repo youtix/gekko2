@@ -7,31 +7,37 @@ import { differenceInMinutes } from 'date-fns';
 import { Transform, TransformCallback } from 'node:stream';
 
 export class RejectDuplicateCandleStream extends Transform {
-  private lastCandle?: Record<TradingPair, Candle>;
+  private lastCandle: Record<TradingPair, Candle> = {};
 
   constructor() {
     super({ objectMode: true });
   }
 
   async _transform({ symbol, candle }: CandleEvent, _: BufferEncoding, next: TransformCallback) {
-    const lastCandle = this.lastCandle?.[symbol];
-    if (!candle || !lastCandle) return next(null, { symbol, candle });
+    if (!candle) return next(null, { symbol, candle });
 
     try {
-      const isCandleAlreadyProceed = differenceInMinutes(candle.start, lastCandle.start) < 1;
-      if (isCandleAlreadyProceed) {
+      const lastCandle = this.lastCandle[symbol];
+
+      if (!lastCandle) {
+        this.lastCandle[symbol] = candle;
+        return next(null, { symbol, candle });
+      }
+
+      const isCandleAlreadyProcessed = differenceInMinutes(candle.start, lastCandle.start) < 1;
+      if (isCandleAlreadyProcessed) {
         warning(
           'stream',
           [
             'Duplicate candle detected ! Ignoring it !',
-            `Current candle being proceed: ${toISOString(candle.start)}`,
-            `Last candle proceed ${toISOString(lastCandle.start)}.`,
+            `Current candle being processed: ${toISOString(candle.start)}`,
+            `Last candle processed ${toISOString(lastCandle.start)}.`,
           ].join(' '),
         );
         return next();
       }
       this.push({ symbol, candle });
-      this.lastCandle = { ...lastCandle, [symbol]: candle };
+      this.lastCandle[symbol] = candle;
 
       next();
     } catch (error) {
