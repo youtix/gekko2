@@ -32,6 +32,7 @@ describe('PerformanceAnalyzer', () => {
   // Test Data
   const timestamp = toTimestamp('2025-01-01T00:00:00Z');
   const defaultCandle: Candle = {
+    id: undefined,
     close: 100,
     high: 110,
     low: 90,

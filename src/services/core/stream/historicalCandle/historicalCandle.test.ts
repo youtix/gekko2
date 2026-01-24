@@ -7,6 +7,7 @@ import { HistoricalCandleStream } from './historicalCandle.stream';
 import { HistoricalCandleStreamInput } from './historicalCandle.types';
 
 const candleFactory = (time: string, value: number) => ({
+  id: undefined,
   start: toTimestamp(time),
   open: value,
   high: value,

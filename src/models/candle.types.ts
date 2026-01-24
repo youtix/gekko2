@@ -1,5 +1,5 @@
 export type Candle = {
-  id: number | undefined;
+  id?: number;
   start: EpochTimeStamp;
   open: number;
   high: number;

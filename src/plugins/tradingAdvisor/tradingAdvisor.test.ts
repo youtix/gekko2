@@ -75,7 +75,7 @@ describe('TradingAdvisor', () => {
     side: 'SELL',
     amount: 1,
   };
-  const defaultCandle: Candle = { close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
+  const defaultCandle: Candle = { id: undefined, close: 100, high: 150, low: 90, open: 110, start: toTimestamp('2025'), volume: 10 };
   const defaultBuyTradeEvent: OrderCompletedEvent = {
     order: {
       id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',

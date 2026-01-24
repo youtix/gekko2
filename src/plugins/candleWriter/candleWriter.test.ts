@@ -39,6 +39,7 @@ describe('CandleWriter', () => {
   describe('processOneMinuteCandle', () => {
     it('should add a candle to the storage', () => {
       const candle = {
+        id: undefined,
         open: 100,
         close: 105,
         high: 110,

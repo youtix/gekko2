@@ -297,7 +297,7 @@ describe('CCXTExchange', () => {
       const heartInstance = (Heart as unknown as Mock).mock.instances.at(-1);
       await (heartInstance as any).on.mock.calls[0][1]();
 
-      expect(callback).toHaveBeenCalledWith(candle);
+      expect(callback).toHaveBeenCalledWith('BTC/USDT', candle);
       expect(instance.fetchOHLCV).toHaveBeenCalledWith('BTC/USDT', expect.anything(), expect.anything(), expect.anything());
     });
 

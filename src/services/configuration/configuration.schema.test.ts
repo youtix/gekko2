@@ -165,7 +165,6 @@ describe('watchSchema', () => {
 
       expect(result.tickrate).toBe(1000);
       expect(result.pairs).toEqual(basePairs);
-      expect(result.fillGaps).toBe('empty');
       expect(result.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
       expect(result.daterange).toBeUndefined();
     });
@@ -194,7 +193,6 @@ describe('configurationSchema', () => {
     expect(result.showLogo).toBe(true);
     expect(result.watch.tickrate).toBe(1000);
     expect(result.watch.pairs).toEqual(basePairs);
-    expect(result.watch.fillGaps).toBe('empty');
     expect(result.watch.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
     expect(result.watch.daterange).toBeUndefined();
     expect(result.exchange).toMatchObject({

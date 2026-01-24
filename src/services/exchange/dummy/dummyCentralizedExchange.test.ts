@@ -46,6 +46,7 @@ const createExchange = (overrides: Partial<DummyCentralizedExchangeConfig> = {})
   new DummyCentralizedExchange({ ...baseConfig, ...overrides });
 
 const sampleCandle = (start: number, overrides: Partial<Candle> = {}): Candle => ({
+  id: undefined,
   start,
   open: 100,
   high: 110,

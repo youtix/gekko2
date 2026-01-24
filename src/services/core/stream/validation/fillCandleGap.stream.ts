@@ -5,7 +5,6 @@ import { TradingPair } from '@models/utility.types';
 import { warning } from '@services/logger';
 import { createEmptyCandle } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
-import { bindAll } from 'lodash-es';
 import { Transform, TransformCallback } from 'node:stream';
 
 export class FillCandleGapStream extends Transform {
@@ -13,7 +12,6 @@ export class FillCandleGapStream extends Transform {
 
   constructor() {
     super({ objectMode: true });
-    bindAll(this, ['pushCandle']);
   }
 
   async _transform({ symbol, candle }: CandleEvent, _: BufferEncoding, next: TransformCallback) {

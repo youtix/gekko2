@@ -1,6 +1,5 @@
 import { Candle } from '@models/candle.types';
 import { TradingPair } from '@models/utility.types';
-import { config } from '@services/configuration/configuration';
 import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
 import { debug, warning } from '@services/logger';
@@ -12,11 +11,9 @@ export class RealtimeStream extends Readable {
   private readonly exchange: Exchange;
   private readonly unsubscribe: () => void;
 
-  constructor() {
+  constructor(symbol: TradingPair) {
     super({ objectMode: true });
-    const { pairs } = config.getWatch();
     this.exchange = inject.exchange();
-    const { symbol } = pairs[0]; // TODO: support multiple pairs
 
     bindAll(this, ['onNewCandle']);
 

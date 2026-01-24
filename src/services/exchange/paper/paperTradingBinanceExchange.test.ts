@@ -158,7 +158,7 @@ describe('PaperTradingBinanceExchange', () => {
     });
 
     it('processOneMinuteCandle delegates to simulated exchange', async () => {
-      const candle: Candle = { start: 1000, open: 100, high: 110, low: 90, close: 105, volume: 1000 };
+      const candle: Candle = { id: undefined, start: 1000, open: 100, high: 110, low: 90, close: 105, volume: 1000 };
       await exchange.processOneMinuteCandle('BTC/USDT', candle);
       expect(DummyCentralizedExchange.prototype.processOneMinuteCandle).toHaveBeenCalledWith('BTC/USDT', candle);
     });
