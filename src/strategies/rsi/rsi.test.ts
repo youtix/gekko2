@@ -1,4 +1,5 @@
 import type { AdviceOrder } from '@models/advice.types';
+import type { CandleBucket } from '@models/event.types';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RSI } from './rsi.strategy';
@@ -17,48 +18,57 @@ describe('RSI Strategy', () => {
   let strategy: RSI;
   let advices: AdviceOrder[];
   let tools: any;
+  let bucket: CandleBucket;
 
   beforeEach(() => {
     strategy = new RSI();
     advices = [];
+
     const createOrder = vi.fn((order: AdviceOrder) => {
       advices.push({ ...order, amount: order.amount ?? 1 });
       return '00000000-0000-0000-0000-000000000000' as UUID;
     });
+
     tools = {
-      candle: { close: 1 },
       strategyParams: { period: 14, src: 'close', thresholds: { high: 70, low: 30, persistence: 2 } },
       createOrder,
       cancelOrder: vi.fn(),
       log: vi.fn(),
     };
+
+    bucket = new Map();
+    bucket.set('BTC/USDT', { close: 1 } as any);
+
+    strategy.init({ candle: bucket, tools, addIndicator: vi.fn() } as any);
   });
 
   it('should not emit advice before persistence on high trend', () => {
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 75);
     expect(advices).toHaveLength(0);
   });
 
   it('should emit short advice after persistence on high trend', () => {
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
-    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', amount: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 75);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 75);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', amount: 1, symbol: 'BTC/USDT' }]);
   });
 
   it('should emit long advice after persistence on low trend', () => {
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 20);
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 20);
-    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 20);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 20);
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1, symbol: 'BTC/USDT' }]);
   });
 
   it('should reset trend when switching from high to low', () => {
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 75);
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 20);
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, 20);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 75);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 75);
+
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 20);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 20);
+
     expect(advices).toEqual([
-      { type: 'STICKY', side: 'SELL', amount: 1 },
-      { type: 'STICKY', side: 'BUY', amount: 1 },
+      { type: 'STICKY', side: 'SELL', amount: 1, symbol: 'BTC/USDT' },
+      { type: 'STICKY', side: 'BUY', amount: 1, symbol: 'BTC/USDT' },
     ]);
   });
 });

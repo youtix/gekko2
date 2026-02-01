@@ -36,8 +36,8 @@ describe('CandleWriter', () => {
     });
   });
 
-  describe('processOneMinuteCandle', () => {
-    it('should add a candle to the storage', () => {
+  describe('processOneMinuteBucket', () => {
+    it('should add candles from bucket to the storage', () => {
       const candle = {
         id: undefined,
         open: 100,
@@ -47,7 +47,8 @@ describe('CandleWriter', () => {
         volume: 1000,
         start: 1620000000000,
       };
-      writer['processOneMinuteCandle'](candle);
+      const bucket = new Map([['BTC/USDT', candle]]);
+      writer['processOneMinuteBucket'](bucket as any);
       expect(fakeStorage.addCandle).toHaveBeenCalledWith('BTC/USDT', candle);
     });
   });

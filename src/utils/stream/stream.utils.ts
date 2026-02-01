@@ -1,15 +1,19 @@
-import { CandleEvent } from '@models/event.types';
+import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
+import { TradingPair } from '@models/utility.types';
 import { Readable } from 'node:stream';
+
+type TradingPairCandle = { symbol: TradingPair; candle: Candle };
 
 /**
  * Synchronizes multiple streams of CandleEvents by timestamp.
- * It waits for data from all active streams and emits events in strict chronological order.
- * For a given timestamp T, it emits events for all streams that have data at T,
+ * It waits for data from all active streams and emits CandleBuckets in strict chronological order.
+ * For a given timestamp T, it aggregates all events at T into a single CandleBucket,
  * before moving to T+1.
  */
 export const synchronizeStreams = (streams: Readable[]): Readable => {
   const iteratorMap = new Map<Readable, AsyncIterator<unknown>>();
-  const bufferMap = new Map<Readable, CandleEvent | null>(); // null means stream ended
+  const bufferMap = new Map<Readable, TradingPairCandle | null>(); // null means stream ended
   const activeStreams = new Set(streams);
 
   // Initialize iterators
@@ -36,7 +40,7 @@ export const synchronizeStreams = (streams: Readable[]): Readable => {
               activeStreams.delete(stream);
               bufferMap.set(stream, null);
             } else {
-              bufferMap.set(stream, result.value as CandleEvent);
+              bufferMap.set(stream, result.value as TradingPairCandle);
             }
           });
           await Promise.all(promises);
@@ -54,48 +58,34 @@ export const synchronizeStreams = (streams: Readable[]): Readable => {
 
         for (const event of bufferMap.values()) {
           if (!event) continue;
-          // We assume event.candle is defined for synchronization source
-          // If undefined, we can't sync it. For now, let's treat it as "current" or skip logic?
-          // But Historical/Realtime streams should provide candle.
-          // If strictly valid:
           if (event.candle && event.candle.start < minTimestamp) {
             minTimestamp = event.candle.start;
           }
         }
 
-        // Edge case: if we have valid buffers but no timestamps (all candles undefined?),
-        // strictly speaking we can't sync. But let's assume valid candles.
         if (minTimestamp === Infinity) {
-          // This might happen if all buffered events have candle=undefined.
-          // In that case, we should probably output them and clear buffer?
-          // Or break to avoid infinite loop if design allows undefined candles without time.
-          // For safety, let's emit all remaining valid events if they have no time, then clear.
-          // But existing code implies time-based structure.
-
-          // Let's break to be safe if we can't find a timestamp to proceed.
-          // Actually if we just break, we lose data.
-          // Let's force emit everything? No, that breaks sync.
-          // Let's assume for this task: All synced events MUST have a candle.
           break;
         }
 
-        // 4. Yield all events with minTimestamp
+        // 4. Aggregate all events at minTimestamp into a CandleBucket
+        const bucket: CandleBucket = new Map();
         const streamsToClear: Readable[] = [];
+
         for (const [stream, event] of bufferMap) {
           if (event && event.candle && event.candle.start === minTimestamp) {
-            yield event;
+            bucket.set(event.symbol, event.candle);
             streamsToClear.push(stream);
           }
         }
 
-        // 5. Clear processed events from buffer so they get refilled
+        // 5. Yield the bucket and clear processed entries
+        yield bucket;
         for (const stream of streamsToClear) {
           bufferMap.delete(stream);
         }
 
-        // Safety check to prevent infinite loop if nothing was cleared (e.g. minTimestamp logic failed)
+        // Safety check to prevent infinite loop if nothing was cleared
         if (streamsToClear.length === 0 && hasValidBuffer) {
-          // Should not happen with correct logic
           break;
         }
       }

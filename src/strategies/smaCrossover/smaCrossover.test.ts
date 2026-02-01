@@ -1,4 +1,5 @@
 import type { AdviceOrder } from '@models/advice.types';
+import type { CandleBucket } from '@models/event.types';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SMACrossover } from './smaCrossover.strategy';
@@ -7,8 +8,13 @@ describe('SMACrossover Strategy', () => {
   let strategy: SMACrossover;
   let advices: AdviceOrder[];
   let tools: any;
+  let bucket: CandleBucket;
 
-  const createCandle = (close: number) => ({ close, open: close, high: close, low: close });
+  const createCandle = (close: number) => ({ close, open: close, high: close, low: close }) as any;
+  const setBucket = (price: number) => {
+    bucket = new Map();
+    bucket.set('BTC/USDT', createCandle(price));
+  };
 
   beforeEach(() => {
     strategy = new SMACrossover();
@@ -23,6 +29,10 @@ describe('SMACrossover Strategy', () => {
       cancelOrder: vi.fn(),
       log: vi.fn(),
     };
+
+    // Default bucket
+    setBucket(100);
+    strategy.init({ candle: bucket, tools, addIndicator: vi.fn() } as any);
   });
 
   describe('onTimeframeCandleAfterWarmup', () => {
@@ -31,14 +41,14 @@ describe('SMACrossover Strategy', () => {
       ${'do nothing when SMA result is undefined'} | ${undefined} | ${0}
       ${'do nothing when SMA result is null'}      | ${null}      | ${0}
     `('should $description', ({ sma, expectedAdvicesCount }) => {
-      const candle = createCandle(100);
-      strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, sma);
+      setBucket(100);
+      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, sma);
       expect(advices).toHaveLength(expectedAdvicesCount);
     });
 
     it('should record initial state without creating an order on first candle', () => {
-      const candle = createCandle(100);
-      strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, 95); // price above SMA
+      setBucket(100);
+      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 95); // price above SMA
       expect(advices).toHaveLength(0);
       expect(tools.log).toHaveBeenCalledWith('info', expect.stringContaining('Initial state'));
     });
@@ -48,13 +58,13 @@ describe('SMACrossover Strategy', () => {
       ${'emit BUY when price crosses above SMA (SMA crosses DOWN)'} | ${90}        | ${110}       | ${100} | ${'BUY'}
       ${'emit SELL when price crosses below SMA (SMA crosses UP)'}  | ${110}       | ${90}        | ${100} | ${'SELL'}
     `('should $description', ({ candle1Price, candle2Price, sma, expectedSide }) => {
-      const candle1 = createCandle(candle1Price);
-      const candle2 = createCandle(candle2Price);
+      setBucket(candle1Price);
+      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, sma);
 
-      strategy.onTimeframeCandleAfterWarmup({ candle: candle1, tools } as any, sma);
-      strategy.onTimeframeCandleAfterWarmup({ candle: candle2, tools } as any, sma);
+      setBucket(candle2Price);
+      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, sma);
 
-      expect(advices).toEqual([{ type: 'MARKET', side: expectedSide, amount: 1 }]);
+      expect(advices).toEqual([{ type: 'MARKET', side: expectedSide, amount: 1, symbol: 'BTC/USDT' }]);
     });
 
     it.each`
@@ -64,8 +74,8 @@ describe('SMACrossover Strategy', () => {
       ${'not create order when price equals SMA'}      | ${[100, 100, 100]} | ${100} | ${0}
     `('should $description', ({ prices, sma, expectedAdvicesCount }) => {
       for (const price of prices) {
-        const candle = createCandle(price);
-        strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, sma);
+        setBucket(price);
+        strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, sma);
       }
       expect(advices).toHaveLength(expectedAdvicesCount);
     });
@@ -76,22 +86,22 @@ describe('SMACrossover Strategy', () => {
       ${'handle alternating crossovers'} | ${[110, 90, 110, 90, 110]} | ${100} | ${['SELL', 'BUY', 'SELL', 'BUY']}
     `('should $description correctly', ({ prices, sma, expectedSides }) => {
       for (const price of prices) {
-        const candle = createCandle(price);
-        strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, sma);
+        setBucket(price);
+        strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, sma);
       }
 
       expect(advices).toHaveLength(expectedSides.length);
       for (let i = 0; i < expectedSides.length; i++) {
-        expect(advices[i]).toEqual({ type: 'MARKET', side: expectedSides[i], amount: 1 });
+        expect(advices[i]).toEqual({ type: 'MARKET', side: expectedSides[i], amount: 1, symbol: 'BTC/USDT' });
       }
     });
 
     it('should always use MARKET order type', () => {
-      const candle1 = createCandle(90);
-      const candle2 = createCandle(110);
+      setBucket(90);
+      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 100);
 
-      strategy.onTimeframeCandleAfterWarmup({ candle: candle1, tools } as any, 100);
-      strategy.onTimeframeCandleAfterWarmup({ candle: candle2, tools } as any, 100);
+      setBucket(110);
+      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, 100);
 
       expect(advices[0].type).toBe('MARKET');
     });
@@ -104,8 +114,8 @@ describe('SMACrossover Strategy', () => {
       ${'not log when SMA is undefined'} | ${undefined} | ${false}
       ${'not log when SMA is null'}      | ${null}      | ${false}
     `('should $description', ({ sma, shouldLog }) => {
-      const candle = createCandle(100.12345);
-      strategy.log({ candle, tools } as any, sma);
+      setBucket(100.12345);
+      strategy.log({ candle: bucket, tools } as any, sma);
 
       if (shouldLog) {
         expect(tools.log).toHaveBeenCalledWith('debug', expect.stringContaining('SMA:'));
@@ -120,10 +130,11 @@ describe('SMACrossover Strategy', () => {
     it('should add SMA indicator with period and src from strategyParams', () => {
       const addIndicator = vi.fn();
       tools.strategyParams = { period: 50, src: 'high' };
+      setBucket(100);
 
-      strategy.init({ tools, addIndicator } as any);
+      strategy.init({ tools, addIndicator, candle: bucket } as any);
 
-      expect(addIndicator).toHaveBeenCalledWith('SMA', { period: 50, src: 'high' });
+      expect(addIndicator).toHaveBeenCalledWith('SMA', 'BTC/USDT', { period: 50, src: 'high' });
     });
   });
 });

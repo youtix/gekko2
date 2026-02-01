@@ -1,4 +1,5 @@
-import { pairsSchema } from '@models/schema/pairConfig.schema';
+import { assetsSchema, currencySchema } from '@models/schema/pairConfig.schema';
+import { TradingPair } from '@models/utility.types';
 import { binanceExchangeSchema } from '@services/exchange/binance/binance.schema';
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
 import { hyperliquidExchangeSchema } from '@services/exchange/hyperliquid/hyperliquid.schema';
@@ -26,7 +27,8 @@ const warmupSchema = z
 
 export const watchSchema = z
   .object({
-    pairs: pairsSchema,
+    assets: assetsSchema,
+    currency: currencySchema,
     timeframe: z.enum(TIMEFRAMES),
     tickrate: z.number().default(1000),
     mode: z.enum(['realtime', 'backtest', 'importer']),
@@ -34,6 +36,12 @@ export const watchSchema = z
     daterange: daterangeSchema.optional(),
     batchSize: z.number().optional(),
   })
+  .transform(data => ({
+    ...data,
+    pairs: data.assets.map(asset => ({
+      symbol: `${asset}/${data.currency}` as TradingPair,
+    })),
+  }))
   .superRefine((data, ctx) => {
     const requiresDaterange = data.mode === 'importer' || data.mode === 'backtest';
     if (requiresDaterange && !data.daterange) {

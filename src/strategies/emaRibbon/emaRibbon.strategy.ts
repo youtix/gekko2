@@ -1,3 +1,4 @@
+import { TradingPair } from '@models/utility.types';
 import type {
   InitParams,
   OnCandleEventParams,
@@ -10,27 +11,30 @@ import type { EMARibbonStrategyParams } from './emaRibbon.types';
 
 export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
   private isLong?: boolean;
+  private pair?: TradingPair;
 
-  init({ tools, addIndicator }: InitParams<EMARibbonStrategyParams>): void {
+  init({ candle, tools, addIndicator }: InitParams<EMARibbonStrategyParams>): void {
+    const [pair] = candle.keys();
+    this.pair = pair;
     const { src, count, start, step } = tools.strategyParams;
-    addIndicator('EMARibbon', { src, count, start, step });
+    addIndicator('EMARibbon', this.pair, { src, count, start, step });
   }
 
   onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<EMARibbonStrategyParams>, ...indicators: unknown[]): void {
     const { createOrder } = tools;
     const [emaRibbon] = indicators as [{ results: number[]; spread: number }];
-    if (emaRibbon === undefined || emaRibbon === null) return;
+    if (!this.pair || emaRibbon === undefined || emaRibbon === null) return;
 
     // A bullish signal occurs when the EMA ribbon is ordered in DESC order (each faster EMA is above the slower one).
     const isBullish = emaRibbon.results.every((result, index, values) => !index || values[index - 1] > result);
 
     if (!this.isLong && isBullish) {
-      createOrder({ type: 'STICKY', side: 'BUY' });
+      createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
       this.isLong = true;
     }
 
     if (this.isLong && !isBullish) {
-      createOrder({ type: 'STICKY', side: 'SELL' });
+      createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
       this.isLong = false;
     }
   }

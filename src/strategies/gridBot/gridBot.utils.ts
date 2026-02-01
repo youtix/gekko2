@@ -1,15 +1,8 @@
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
-import { Tools } from '@strategies/strategy.types';
 import { round } from '@utils/math/round.utils';
 import { DEFAULT_AMOUNT_PRECISION, DEFAULT_PRICE_PRECISION, EMPTY_BALANCE } from './gridBot.const';
 import { GridBotStrategyParams, GridBounds, GridSpacingType, RebalancePlan } from './gridBot.types';
-
-export const getPair = (tools: Tools<GridBotStrategyParams>): { base: string; quote: string } => {
-  if (tools.pairs.length !== 1) tools.log('error', 'GridBot: Only one pair is supported for this strategy');
-  const [base, quote] = tools.pairs[0];
-  return { base, quote };
-};
 
 export const getPortfolioContent = (
   portfolio: Portfolio,

@@ -1,4 +1,5 @@
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
@@ -7,7 +8,7 @@ import { config } from '@services/configuration/configuration';
 import { LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback, Ticker } from '@services/exchange/exchange.types';
-import { clonePortfolio, createPortfolio } from '@utils/portfolio/portfolio.utils';
+import { initializePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
 import { AsyncMutex } from '../../../utils/async/asyncMutex';
@@ -32,7 +33,7 @@ export class DummyCentralizedExchange implements Exchange {
     const { marketData, simulationBalance, initialTicker } = exchangeConfig;
     const { pairs, daterange } = config.getWatch();
     this.marketData = marketData;
-    this.portfolio = createPortfolio(
+    this.portfolio = initializePortfolio(
       pairs.map(pair => pair.symbol),
       simulationBalance,
     );
@@ -51,15 +52,17 @@ export class DummyCentralizedExchange implements Exchange {
     return 'dummy-cex';
   }
 
-  /** Because dummy exchange is not a plugin, I need to call this function manualy in the plugins stream */
-  public async processOneMinuteCandle(symbol: TradingPair, candle: Candle): Promise<void> {
+  /** Because dummy exchange is not a plugin, I need to call this function manually in the plugins stream */
+  public async processOneMinuteBucket(bucket: CandleBucket): Promise<void> {
     return this.mutex.runExclusive(() => {
-      // I need the close time of the candle
-      this.currentTimestamp = addMinutes(candle.start, 1).getTime();
-      const oldCandles = this.candles.get(symbol) ?? [];
-      this.candles.set(symbol, [...oldCandles, candle]);
-      this.ticker.set(symbol, { bid: candle.close, ask: candle.close });
-      this.settleOrdersWithCandle(symbol, candle);
+      for (const [symbol, candle] of bucket) {
+        // I need the close time of the candle
+        this.currentTimestamp = addMinutes(candle.start, 1).getTime();
+        const oldCandles = this.candles.get(symbol) ?? [];
+        this.candles.set(symbol, [...oldCandles, candle]);
+        this.ticker.set(symbol, { bid: candle.close, ask: candle.close });
+        this.settleOrdersWithCandle(symbol, candle);
+      }
     });
   }
 
@@ -70,6 +73,19 @@ export class DummyCentralizedExchange implements Exchange {
 
   public async loadMarkets(): Promise<void> {
     // Nothing to do, already done in constructor
+  }
+
+  /**
+   * Warning: if you fetch tickers before the first candle is processed, it will return { bid: 0, ask: 0 }.
+   * Unless you set the initialTicker in configuration.
+   */
+  public async fetchTickers(symbols: TradingPair[]): Promise<Record<TradingPair, Ticker>> {
+    return this.mutex.runExclusive(() =>
+      symbols.reduce(
+        (acc, symbol) => ({ ...acc, [symbol]: this.ticker.get(symbol) ?? { bid: 0, ask: 0 } }),
+        {} as Record<TradingPair, Ticker>,
+      ),
+    );
   }
 
   /**
@@ -106,7 +122,7 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   public async fetchBalance(): Promise<Portfolio> {
-    return this.mutex.runExclusive(() => clonePortfolio(this.portfolio));
+    return this.mutex.runExclusive(() => structuredClone(this.portfolio));
   }
 
   public async createLimitOrder(

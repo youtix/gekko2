@@ -1,7 +1,10 @@
 import { UUID } from 'node:crypto';
 import { OrderSide, OrderType } from './order.types';
+import { TradingPair } from './utility.types';
 
 export type AdviceOrder = {
+  /** Trading Pair */
+  symbol: TradingPair;
   /** Gekko order id */
   id: UUID;
   /** Order creation date */

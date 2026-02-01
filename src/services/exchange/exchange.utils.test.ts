@@ -251,6 +251,7 @@ describe('Exchange Utils', () => {
         fetchOHLCV: true,
         fetchOrder: true,
         fetchTicker: true,
+        fetchTickers: true,
       },
     };
 
@@ -275,9 +276,9 @@ describe('Exchange Utils', () => {
   });
 
   describe('isDummyExchange', () => {
-    const dummy = { getExchangeName: () => 'dummy-ex', processOneMinuteCandle: () => {} };
-    const paper = { getExchangeName: () => 'paper-ex', processOneMinuteCandle: () => {} };
-    const real = { getExchangeName: () => 'real-ex', processOneMinuteCandle: () => {} };
+    const dummy = { getExchangeName: () => 'dummy-ex', processOneMinuteBucket: () => {} };
+    const paper = { getExchangeName: () => 'paper-ex', processOneMinuteBucket: () => {} };
+    const real = { getExchangeName: () => 'real-ex', processOneMinuteBucket: () => {} };
 
     it.each`
       exchange     | expected | desc
@@ -292,7 +293,7 @@ describe('Exchange Utils', () => {
       expect(utils.isDummyExchange(exchange)).toBe(expected);
     });
 
-    it('should return false if missing processOneMinuteCandle', () => {
+    it('should return false if missing processOneMinuteBucket', () => {
       expect(utils.isDummyExchange({ getExchangeName: () => 'dummy' })).toBe(false);
     });
   });

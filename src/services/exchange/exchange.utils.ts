@@ -66,8 +66,8 @@ export const isDummyExchange = (exchange: unknown): exchange is DummyExchange =>
     'getExchangeName' in exchange &&
     typeof exchange.getExchangeName === 'function' &&
     (exchange.getExchangeName().includes('dummy') || exchange.getExchangeName().includes('paper')) &&
-    'processOneMinuteCandle' in exchange &&
-    typeof exchange.processOneMinuteCandle === 'function'
+    'processOneMinuteBucket' in exchange &&
+    typeof exchange.processOneMinuteBucket === 'function'
   );
 
 /** Checks if the order price is within the market data */

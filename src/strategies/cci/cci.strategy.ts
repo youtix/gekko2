@@ -1,3 +1,4 @@
+import { TradingPair } from '@models/utility.types';
 import {
   InitParams,
   OnCandleEventParams,
@@ -11,19 +12,22 @@ import { CCIStrategyParams, CCITrend } from './cci.types';
 
 export class CCI implements Strategy<CCIStrategyParams> {
   private trend: CCITrend;
+  private pair?: TradingPair;
 
   constructor() {
     this.trend = { direction: 'nodirection', duration: 0, persisted: false, adviced: false };
   }
 
-  init({ tools, addIndicator }: InitParams<CCIStrategyParams>): void {
-    addIndicator('CCI', { period: tools.strategyParams.period });
+  init({ candle, tools, addIndicator }: InitParams<CCIStrategyParams>): void {
+    const [pair] = candle.keys();
+    this.pair = pair;
+    addIndicator('CCI', this.pair, { period: tools.strategyParams.period });
   }
 
   onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<CCIStrategyParams>, ...indicators: unknown[]): void {
     const { strategyParams, createOrder, log } = tools;
     const [cci] = indicators;
-    if (!isNumber(cci)) return;
+    if (!isNumber(cci) || !this.pair) return;
 
     const { up, down, persistence } = strategyParams.thresholds;
 
@@ -33,14 +37,14 @@ export class CCI implements Strategy<CCIStrategyParams> {
         this.trend = { direction: 'overbought', duration: 1, persisted: persistence === 0, adviced: false };
         if (persistence === 0) {
           this.trend.adviced = true;
-          createOrder({ type: 'STICKY', side: 'SELL' });
+          createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
         }
       } else {
         this.trend.duration++;
         if (this.trend.duration >= persistence) this.trend.persisted = true;
         if (this.trend.persisted && !this.trend.adviced) {
           this.trend.adviced = true;
-          createOrder({ type: 'STICKY', side: 'SELL' });
+          createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
         }
       }
     } else if (cci <= down) {
@@ -49,14 +53,14 @@ export class CCI implements Strategy<CCIStrategyParams> {
         this.trend = { direction: 'oversold', duration: 1, persisted: persistence === 0, adviced: false };
         if (persistence === 0) {
           this.trend.adviced = true;
-          createOrder({ type: 'STICKY', side: 'BUY' });
+          createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
         }
       } else {
         this.trend.duration++;
         if (this.trend.duration >= persistence) this.trend.persisted = true;
         if (this.trend.persisted && !this.trend.adviced) {
           this.trend.adviced = true;
-          createOrder({ type: 'STICKY', side: 'BUY' });
+          createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
         }
       }
     } else {

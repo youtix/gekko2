@@ -9,12 +9,11 @@ import * as indicators from '@indicators/index';
 import { Indicator } from '@indicators/indicator';
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
 import { AdviceOrder } from '@models/advice.types';
-import { Candle } from '@models/candle.types';
-import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
+import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
-import { Asset, Nullable, Pair } from '@models/utility.types';
+import { Asset, TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { MarketData } from '@services/exchange/exchange.types';
 import { debug, error, info, warning } from '@services/logger';
@@ -30,14 +29,13 @@ import { Strategy, Tools } from './strategy.types';
 export class StrategyManager extends EventEmitter {
   private age: number;
   private warmupPeriod: number;
-  private indicators: Indicator[];
+  private indicators: { indicator: Indicator; symbol: TradingPair }[];
   private strategyParams: object;
-  private pairs: Pair[];
-  private marketData: Nullable<MarketData>;
+  private marketData: Map<TradingPair, MarketData>;
   private portfolio: Portfolio;
   private strategy?: Strategy<object>;
   private indicatorsResults: unknown[] = [];
-  private oneMinuteCandle: Nullable<Candle>;
+  private currentTimestamp: EpochTimeStamp = 0;
 
   constructor(warmupPeriod: number) {
     super();
@@ -45,12 +43,8 @@ export class StrategyManager extends EventEmitter {
     this.age = 0;
     this.indicators = [];
     this.strategyParams = config.getStrategy() ?? {};
-    const { symbol } = config.getWatch().pairs[0]; // TODO: support multiple pairs
-    const [asset, currency] = symbol.split('/');
-    this.pairs = [[asset, currency]];
     this.portfolio = new Map<Asset, BalanceDetail>();
-    this.marketData = null;
-    this.oneMinuteCandle = null;
+    this.marketData = new Map();
 
     bindAll(this, [this.addIndicator.name, this.createOrder.name, this.cancelOrder.name, this.log.name]);
   }
@@ -72,27 +66,29 @@ export class StrategyManager extends EventEmitter {
   /*                            EVENT LISTENERS                                 */
   /* -------------------------------------------------------------------------- */
 
-  public onOneMinuteCandle(candle: Candle) {
-    this.oneMinuteCandle = candle;
-  }
+  public onTimeFrameCandle(bucket: CandleBucket) {
+    // Update current timestamp from the first candle in the bucket
+    const firstCandle = bucket.values().next().value;
+    if (firstCandle) this.currentTimestamp = firstCandle.start;
 
-  public onTimeFrameCandle(candle: Candle) {
     const tools = this.createTools();
-    const params = { candle, portfolio: this.portfolio, tools };
+    const params = { candle: bucket, portfolio: this.portfolio, tools };
 
     // Initialize strategy with time frame candle (do not use one minute candle)
     if (this.age === 0) this.strategy?.init({ ...params, addIndicator: this.addIndicator });
 
     // Update indicators
-    this.indicatorsResults = this.indicators.map(indicator => {
-      indicator.onNewCandle(candle);
+    this.indicatorsResults = this.indicators.map(({ indicator, symbol }) => {
+      const candle = bucket.get(symbol);
+      if (candle) indicator.onNewCandle(candle);
+      else warning('strategy', `Candle for ${symbol} not found in strategy manager`);
       return indicator.getResult();
     });
     // Call for each candle
     this.strategy?.onEachTimeframeCandle(params, ...this.indicatorsResults);
 
     // Fire the warm-up event only when the strategy has fully completed its warm-up phase.
-    if (this.warmupPeriod === this.age) this.emitWarmupCompletedEvent(candle);
+    if (this.warmupPeriod === this.age) this.emitWarmupCompletedEvent(bucket);
 
     // Call log and onCandleAfterWarmup only after warm up is done
     if (this.warmupPeriod <= this.age) {
@@ -128,21 +124,25 @@ export class StrategyManager extends EventEmitter {
     this.portfolio = portfolio;
   }
 
-  public setMarketData(marketData: Nullable<MarketData>) {
+  public setMarketData(marketData: Map<TradingPair, MarketData>) {
     this.marketData = marketData;
+  }
+
+  public setCurrentTimestamp(timestamp: EpochTimeStamp) {
+    this.currentTimestamp = timestamp;
   }
 
   /* -------------------------------------------------------------------------- */
   /*                  FUNCTIONS USED IN TRADER STRATEGIES                       */
   /* -------------------------------------------------------------------------- */
 
-  private addIndicator<T extends IndicatorNames>(name: T, parameters: IndicatorParamaters<T>) {
+  private addIndicator<T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>) {
     const Indicator = indicators[name];
     if (!Indicator) throw new GekkoError('strategy', `${name} indicator not found.`);
 
     // @ts-expect-error TODO fix complex typescript error
     const indicator = new Indicator(parameters);
-    this.indicators.push(indicator);
+    this.indicators.push({ indicator, symbol });
 
     return indicator;
   }
@@ -152,9 +152,9 @@ export class StrategyManager extends EventEmitter {
   }
 
   private createOrder(order: Omit<AdviceOrder, 'id' | 'orderCreationDate'>): UUID {
-    if (!this.oneMinuteCandle) throw new GekkoError('strategy', 'No candle when relaying advice');
+    if (!this.currentTimestamp) throw new GekkoError('strategy', 'No candle when relaying advice');
     const id = randomUUID();
-    const orderCreationDate = addMinutes(this.oneMinuteCandle.start, 1).getTime();
+    const orderCreationDate = addMinutes(this.currentTimestamp, 1).getTime();
     this.emit<AdviceOrder>(STRATEGY_CREATE_ORDER_EVENT, { ...order, id, orderCreationDate });
     return id;
   }
@@ -186,20 +186,20 @@ export class StrategyManager extends EventEmitter {
   /*                            UTILS FUNCTIONS                                 */
   /* -------------------------------------------------------------------------- */
 
-  private emitWarmupCompletedEvent(candle: Candle) {
-    info('strategy', `Strategy warmup done ! Sending first candle (${toISOString(candle.start)}) to strategy`);
-    this.emit(STRATEGY_WARMUP_COMPLETED_EVENT, candle);
+  private emitWarmupCompletedEvent(bucket: CandleBucket) {
+    // Use first available candle for logging timestamp
+    const firstCandle = bucket.values().next().value;
+    info('strategy', `Strategy warmup done ! Sending first candle bucket (${toISOString(firstCandle?.start)}) to strategy`);
+    this.emit<CandleBucket>(STRATEGY_WARMUP_COMPLETED_EVENT, bucket);
   }
 
   private createTools(): Tools<object> {
-    if (!this.marketData) throw new GekkoError('strategy', 'Market data are not defined building strategy tools');
     return {
       createOrder: this.createOrder,
       cancelOrder: this.cancelOrder,
       log: this.log,
       strategyParams: this.strategyParams,
       marketData: this.marketData,
-      pairs: this.pairs,
     };
   }
 }

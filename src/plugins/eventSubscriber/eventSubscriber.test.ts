@@ -50,19 +50,22 @@ describe('EventSubscriber', () => {
     close
     ${42}
     ${0}
-  `('updates price on processOneMinuteCandle', ({ close }) => {
-    plugin['processOneMinuteCandle']({ close } as any);
-    expect(plugin['price']).toBe(close);
+  `('updates price on processOneMinuteBucket', ({ close }) => {
+    const bucket = new Map([['BTC/USD', { close }]]);
+    plugin['processOneMinuteBucket'](bucket as any);
+    expect(plugin['prices'].get('BTC/USD')).toBe(close);
   });
 
   describe('event notifications', () => {
     const eventTimestamp = toTimestamp('2022-01-01T00:00:00Z');
+    const symbol = 'BTC/USD' as any;
     const baseOrder = {
       id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e' as UUID,
       side: 'BUY' as const,
       type: 'STICKY' as const,
       amount: 1,
       price: 123,
+      symbol,
     };
     const baseExchange = {
       price: 123,

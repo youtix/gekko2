@@ -1,26 +1,24 @@
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
 import { AdviceOrder } from '@models/advice.types';
-import { Candle } from '@models/candle.types';
-import { ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
+import { CandleBucket, ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { Portfolio } from '@models/portfolio.types';
-import { Pair } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { UUID } from 'node:crypto';
 
 export type Direction = 'short' | 'long';
-export type AddIndicatorFn = <T extends IndicatorNames>(name: T, parameters: IndicatorParamaters<T>) => void;
+export type AddIndicatorFn = <T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>) => void;
 export type LoggerFn = (level: LogLevel, msg: string) => void;
 export type Tools<T> = {
-  pairs: Pair[];
   strategyParams: T;
-  marketData: MarketData;
+  marketData: Map<TradingPair, MarketData>;
   log: LoggerFn;
   createOrder: (order: Omit<AdviceOrder, 'id' | 'orderCreationDate'>) => UUID;
   cancelOrder: (orderId: UUID) => void;
 };
-export type InitParams<T> = { candle: Candle; portfolio: Portfolio; tools: Tools<T>; addIndicator: AddIndicatorFn };
-export type OnCandleEventParams<T> = { candle: Candle; portfolio: Portfolio; tools: Tools<T> };
+export type InitParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T>; addIndicator: AddIndicatorFn };
+export type OnCandleEventParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T> };
 export type OnOrderCompletedEventParams<T> = {
   order: OrderCompletedEvent['order'];
   exchange: ExchangeEvent;

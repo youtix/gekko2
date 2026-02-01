@@ -11,18 +11,21 @@ import { DebugAdviceParams } from './debugAdvice.types';
 export class DebugAdvice implements Strategy<DebugAdviceParams> {
   private index = 0;
 
-  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {
     const { strategyParams, log, createOrder } = tools;
+    const [pair] = candle.keys();
+    if (!pair) return;
+
     if (strategyParams.wait > this.index) return;
 
     log('debug', `Iteration: ${this.index}`);
 
     if (this.index % strategyParams.each === 0) {
       log('debug', 'Trigger SHORT');
-      createOrder({ type: 'STICKY', side: 'SELL', amount: 1 });
+      createOrder({ type: 'STICKY', side: 'SELL', amount: 1, symbol: pair });
     } else if (this.index % strategyParams.each === strategyParams.each / 2) {
       log('debug', 'Trigger LONG');
-      createOrder({ type: 'STICKY', side: 'BUY', amount: 1 });
+      createOrder({ type: 'STICKY', side: 'BUY', amount: 1, symbol: pair });
     }
 
     // if(i % 2 === 0)

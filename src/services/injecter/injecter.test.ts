@@ -53,6 +53,8 @@ describe('Injecter', () => {
       getStorageMock.mockReturnValue({ type: 'sqlite', database: '' });
       getWatchMock.mockReturnValue({
         pairs: [{ symbol: 'BTC/USDT' }],
+        assets: ['BTC'],
+        currency: 'USDT',
         timeframe: '1h',
         mode: 'backtest',
         tickrate: 1000,
@@ -99,6 +101,8 @@ describe('Injecter', () => {
       getExchangeMock.mockReturnValue(cfg as any);
       getWatchMock.mockReturnValue({
         pairs: [{ symbol: 'BTC/USDT' }],
+        assets: ['BTC'],
+        currency: 'USDT',
         timeframe: '1h',
         mode: 'backtest',
         tickrate: 1000,

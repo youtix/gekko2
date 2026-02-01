@@ -1,4 +1,4 @@
-import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { Plugin } from '@plugins/plugin';
 import { candleWriterSchema } from './candleWriter.schema';
 import { CandleWriterConfig } from './candleWriter.types';
@@ -16,12 +16,14 @@ export class CandleWriter extends Plugin {
     /* noop */
   }
 
-  protected processOneMinuteCandle(candle: Candle): void {
-    this.getStorage().addCandle(`${this.asset}/${this.currency}`, candle);
+  protected processOneMinuteBucket(bucket: CandleBucket): void {
+    for (const [symbol, candle] of bucket) {
+      this.getStorage().addCandle(symbol, candle);
+    }
   }
 
   protected processFinalize(): void {
-    this.getStorage().insertCandles(`${this.asset}/${this.currency}`);
+    for (const pair of this.pairs) this.getStorage().insertCandles(pair);
     this.getStorage().close();
   }
 

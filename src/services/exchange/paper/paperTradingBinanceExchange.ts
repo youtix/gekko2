@@ -1,4 +1,5 @@
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
@@ -82,6 +83,10 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
     return this.realExchange.fetchOHLCV(symbol, params);
   }
 
+  public async fetchTickers(symbols: TradingPair[]) {
+    return this.realExchange.fetchTickers(symbols);
+  }
+
   public async fetchTicker(symbol: TradingPair) {
     return this.realExchange.fetchTicker(symbol);
   }
@@ -132,8 +137,8 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
   /*                          DUMMY EXCHANGE INTERFACE                          */
   /* -------------------------------------------------------------------------- */
 
-  public async processOneMinuteCandle(symbol: TradingPair, candle: Candle): Promise<void> {
-    return this.simulatedExchange.processOneMinuteCandle(symbol, candle);
+  public async processOneMinuteBucket(bucket: CandleBucket): Promise<void> {
+    return this.simulatedExchange.processOneMinuteBucket(bucket);
   }
 
   /* -------------------------------------------------------------------------- */

@@ -1,30 +1,10 @@
 import { UUID } from 'node:crypto';
 import { Candle } from './candle.types';
 import { OrderSide, OrderType } from './order.types';
-import { BalanceDetail, Portfolio } from './portfolio.types';
+import { Portfolio } from './portfolio.types';
 import { TradingPair } from './utility.types';
 
-export type CandleEvent = {
-  /** Trading pair symbol in CCXT format (e.g., "BTC/USDT") */
-  symbol: TradingPair;
-  /** The candle data for this symbol, can be undefined when no new candle is available (exchange maintenance) */
-  candle: Candle | undefined;
-};
-export type SecuredCandleEvent = CandleEvent & {
-  candle: Candle;
-};
-
-/**
- * Represents a synchronized batch of candles keyed by trading pair.
- * Used for multi-asset pipeline routing where all candles share the same timestamp.
- * Trading pair should be in CCXT format: "BTC/USDT", "ETH/USDT", etc.
- */
-export type CandleBucket = Record<TradingPair, Candle>;
-
-export interface BalanceSnapshot {
-  date: number;
-  balance: BalanceDetail;
-}
+export type CandleBucket = Map<TradingPair, Candle>;
 
 export type DeffferedEvent = {
   name: string;
@@ -34,6 +14,8 @@ export type DeffferedEvent = {
 type OrderEvent = {
   /** Order Id */
   id: UUID;
+  /** Trading Pair */
+  symbol: TradingPair;
   /** Order side (SELL | BUY)*/
   side: OrderSide;
   /** Order type ('MARKET' | 'STICKY' | 'LIMIT')*/
@@ -47,8 +29,6 @@ type OrderEvent = {
 export type ExchangeEvent = {
   /** Current portfolio value */
   portfolio: Portfolio;
-  /** Current balance value */
-  balance: BalanceDetail;
   /** Current price of the asset in currencey */
   price: number;
 };
@@ -92,3 +72,61 @@ export type OrderCompletedEvent = OrderInitiatedEvent & {
     feePercent?: number;
   };
 };
+
+export type RoundTrip = {
+  id: number;
+  entryAt: number;
+  entryPrice: number;
+  entryEquity: number;
+  exitAt: number;
+  exitPrice: number;
+  exitEquity: number;
+  duration: number;
+  maxAdverseExcursion: number;
+  profit: number;
+  pnl: number;
+};
+
+export type Report = {
+  /** Unique identifier for the report type */
+  id: 'TRADING REPORT' | 'PORTFOLIO PROFIT REPORT';
+  /** Performance relative to the benchmark market return (Excess Return) */
+  alpha: number;
+  /** Standard deviation of negative returns (Downside Deviation) used for Sortino Ratio */
+  downsideDeviation: number;
+  /** Timestamp indicating when the reporting period ended */
+  periodEndAt: EpochTimeStamp;
+  /** Timestamp indicating when the reporting period started */
+  periodStartAt: EpochTimeStamp;
+  /** Percentage of time the portfolio was exposed to market risk */
+  exposurePct: number;
+  /** Overall market performance during the same period (%) */
+  marketReturnPct: number;
+  /** Total net profit expressed in currency units */
+  netProfit: number;
+  /** Total return on investment for the entire period (%) */
+  totalReturnPct: number;
+  /** Annualized return on investment (%) */
+  annualizedReturnPct: number;
+  /** Sharpe Ratio: measure of risk-adjusted return using total volatility */
+  sharpeRatio: number;
+  /** Sortino Ratio: measure of risk-adjusted return focus on downside deviation */
+  sortinoRatio: number;
+  /** Standard deviation of round-trip profits (Volatility) */
+  volatility: number;
+  /** Asset price at the beginning of the period */
+  startPrice: number;
+  /** Asset price at the end of the period */
+  endPrice: number;
+  /** Human-readable string representing the elapsed time (e.g., "3 months, 2 days") */
+  formattedDuration: string;
+  /** Net profit normalized to a one-year timeframe (currency units) */
+  annualizedNetProfit: number;
+};
+
+export interface EquitySnapshot {
+  /** Timestamp of the snapshot */
+  date: EpochTimeStamp;
+  /** Total portfolio value in Numéraire (e.g., USDT) */
+  totalValue: number;
+}

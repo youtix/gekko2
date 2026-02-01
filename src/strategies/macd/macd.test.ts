@@ -1,4 +1,5 @@
 import type { AdviceOrder } from '@models/advice.types';
+import type { CandleBucket } from '@models/event.types';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MACD } from './macd.strategy';
@@ -19,16 +20,18 @@ describe('MACD Strategy', () => {
   let strategy: MACD;
   let advices: AdviceOrder[];
   let tools: any;
+  let bucket: CandleBucket;
 
   beforeEach(() => {
     strategy = new MACD();
     advices = [];
+
     const createOrder = vi.fn((order: AdviceOrder) => {
       advices.push({ ...order, amount: order.amount ?? 1 });
       return '00000000-0000-0000-0000-000000000000' as UUID;
     });
+
     tools = {
-      candle: { close: 1 },
       strategyParams: {
         short: 12,
         long: 26,
@@ -40,38 +43,47 @@ describe('MACD Strategy', () => {
       cancelOrder: vi.fn(),
       log: vi.fn(),
     };
+
+    bucket = new Map();
+    bucket.set('BTC/USDT', { close: 1 } as any);
+
+    strategy.init({ candle: bucket, tools, addIndicator: vi.fn() } as any);
   });
 
   it('should not emit advice before persistence on uptrend', () => {
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, { macd: 1, signal: 0, hist: 0 });
     expect(advices).toHaveLength(0);
   });
 
   it('should emit long advice after persistence on uptrend', () => {
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
-    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, { macd: 1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, { macd: 1, signal: 0, hist: 0 });
+    expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1, symbol: 'BTC/USDT' }]);
   });
 
   it('should emit short advice after persistence on downtrend', () => {
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: -1, signal: 0, hist: 0 });
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: -1, signal: 0, hist: 0 });
-    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', amount: 1 }]);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, { macd: -1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, { macd: -1, signal: 0, hist: 0 });
+    expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', amount: 1, symbol: 'BTC/USDT' }]);
   });
 
   it('should reset trend when switching from up to down', () => {
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: 1, signal: 0, hist: 0 });
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: -1, signal: 0, hist: 0 });
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, { macd: -1, signal: 0, hist: 0 });
+    // Uptrend persistence
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, { macd: 1, signal: 0, hist: 0 });
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, { macd: 1, signal: 0, hist: 0 });
+
+    // Switch to downtrend
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, { macd: -1, signal: 0, hist: 0 }); // Persistence 1
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, { macd: -1, signal: 0, hist: 0 }); // Persistence 2
+
     expect(advices).toEqual([
-      { type: 'STICKY', side: 'BUY', amount: 1 },
-      { type: 'STICKY', side: 'SELL', amount: 1 },
+      { type: 'STICKY', side: 'BUY', amount: 1, symbol: 'BTC/USDT' },
+      { type: 'STICKY', side: 'SELL', amount: 1, symbol: 'BTC/USDT' },
     ]);
   });
 
   it('should do nothing when MACD result is invalid', () => {
-    strategy.onTimeframeCandleAfterWarmup({ candle: tools.candle, tools } as any, null);
+    strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as any, null);
     expect(advices).toHaveLength(0);
   });
 });

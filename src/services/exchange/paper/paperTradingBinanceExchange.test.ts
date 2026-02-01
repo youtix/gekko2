@@ -34,7 +34,7 @@ vi.mock('../dummy/dummyCentralizedExchange', () => {
   MockDummy.prototype.cancelOrder = vi.fn().mockResolvedValue({ id: 'order-1', status: 'canceled' });
   MockDummy.prototype.fetchOrder = vi.fn().mockResolvedValue({ id: 'order-1', status: 'open' });
   MockDummy.prototype.fetchMyTrades = vi.fn().mockResolvedValue([]);
-  MockDummy.prototype.processOneMinuteCandle = vi.fn().mockResolvedValue(undefined);
+  MockDummy.prototype.processOneMinuteBucket = vi.fn().mockResolvedValue(undefined);
   return { DummyCentralizedExchange: MockDummy };
 });
 
@@ -157,10 +157,11 @@ describe('PaperTradingBinanceExchange', () => {
       expect(DummyCentralizedExchange.prototype.fetchMyTrades).toHaveBeenCalledWith('BTC/USDT', 1000);
     });
 
-    it('processOneMinuteCandle delegates to simulated exchange', async () => {
+    it('processOneMinuteBucket delegates to simulated exchange', async () => {
       const candle: Candle = { id: undefined, start: 1000, open: 100, high: 110, low: 90, close: 105, volume: 1000 };
-      await exchange.processOneMinuteCandle('BTC/USDT', candle);
-      expect(DummyCentralizedExchange.prototype.processOneMinuteCandle).toHaveBeenCalledWith('BTC/USDT', candle);
+      const bucket = new Map([['BTC/USDT', candle]]);
+      await exchange.processOneMinuteBucket(bucket as any);
+      expect(DummyCentralizedExchange.prototype.processOneMinuteBucket).toHaveBeenCalledWith(bucket);
     });
   });
 });

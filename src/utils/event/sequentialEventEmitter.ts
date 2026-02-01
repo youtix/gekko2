@@ -43,9 +43,9 @@ export class SequentialEventEmitter {
     debug('event', `[${this.emitterName}] Adding deferred event: ${name}`);
     const existing = this.deferredEvents.get(name);
     if (existing) {
-      existing.push(payload);
+      existing.push(structuredClone(payload));
     } else {
-      this.deferredEvents.set(name, [payload]);
+      this.deferredEvents.set(name, [structuredClone(payload)]);
     }
   }
 

@@ -53,7 +53,7 @@ describe('DummyCentralizedExchange Benchmarks', async () => {
     await exchange.createLimitOrder(SYMBOL, 'SELL', 1, 150);
   }
 
-  bench('processOneMinuteCandle with 10k orders (no fills)', async () => {
+  bench('processOneMinuteBucket with 10k orders (no fills)', async () => {
     const candle: Candle = {
       start: Date.now(),
       open: 100,
@@ -62,6 +62,7 @@ describe('DummyCentralizedExchange Benchmarks', async () => {
       close: 100,
       volume: 1000,
     };
-    await exchange.processOneMinuteCandle(SYMBOL, candle);
+    const bucket = new Map([[SYMBOL, candle]]);
+    await exchange.processOneMinuteBucket(bucket);
   });
 });

@@ -29,4 +29,5 @@ export const BROKER_MANDATORY_FEATURES = [
   'fetchOHLCV',
   'fetchOrder',
   'fetchTicker',
+  'fetchTickers',
 ];

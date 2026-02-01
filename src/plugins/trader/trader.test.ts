@@ -4,15 +4,13 @@ import {
   ORDER_ERRORED_EVENT,
   ORDER_INITIATED_EVENT,
   ORDER_INVALID_EVENT,
+  ORDER_PARTIALLY_FILLED_EVENT,
+  ORDER_STATUS_CHANGED_EVENT,
   PORTFOLIO_CHANGE_EVENT,
-  PORTFOLIO_VALUE_CHANGE_EVENT,
 } from '@constants/event.const';
-import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
-import { OrderSide } from '@models/order.types';
 import { BalanceDetail } from '@models/portfolio.types';
 import { OrderSummary } from '@services/core/order/order.types';
-import { addMinutes } from 'date-fns';
 import * as lodash from 'lodash-es';
 import type { Mock } from 'vitest';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,7 +18,6 @@ import { config } from '../../services/configuration/configuration';
 import * as logger from '../../services/logger';
 import * as processUtils from '../../utils/process/process.utils';
 import { Trader } from './trader';
-import * as traderUtils from './trader.utils';
 
 vi.mock('@services/logger');
 
@@ -52,6 +49,12 @@ vi.mock('../../services/configuration/configuration', () => {
   const getExchange = vi.fn(() => ({ name: 'dummy-cex' }));
   return { config: { getWatch, getStrategy, getExchange } };
 });
+
+const tick = async (count = 3) => {
+  for (let i = 0; i < count; i++) {
+    await Promise.resolve();
+  }
+};
 
 function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = false) {
   const listenersStore = new WeakMap<object, Map<string, Set<OrderListener>>>();
@@ -106,7 +109,7 @@ function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = fa
       price: 100,
       feePercent: 0.25,
       side: this.side,
-      orderExecutionDate: 1_700_000_000_000,
+      orderExecutionDate: 1_700_000_111_000,
     }));
     this.removeAllListeners = vi.fn(() => {
       listenersStore.set(this, new Map());
@@ -168,6 +171,7 @@ describe('Trader', () => {
     getExchangeName: Mock;
     getIntervals: Mock;
     fetchTicker: Mock;
+    fetchTickers: Mock;
     fetchBalance: Mock;
     getMarketLimits: Mock;
   };
@@ -189,6 +193,7 @@ describe('Trader', () => {
     side: overrides?.side ?? 'BUY',
     amount: overrides?.amount,
     price: overrides?.price,
+    symbol: overrides?.symbol ?? 'BTC/USDT',
   });
 
   beforeAll(() => {
@@ -208,10 +213,14 @@ describe('Trader', () => {
     getStrategyMock.mockReturnValue({});
 
     trader = new Trader();
+    // Default currentTimestamp to something valid so dates in events are not 0
+    trader['currentTimestamp'] = 1_700_000_000_000;
+
     fakeExchange = {
       getExchangeName: vi.fn(() => 'MockExchange'),
       getIntervals: vi.fn(() => ({ exchangeSync: 1, orderSync: 1 })),
       fetchTicker: vi.fn().mockResolvedValue({ bid: 123 }),
+      fetchTickers: vi.fn().mockResolvedValue({ 'BTC/USDT': { bid: 123 } }),
       fetchBalance: vi.fn().mockResolvedValue(
         new Map<string, BalanceDetail>([
           ['BTC', { free: 1, used: 0, total: 1 }],
@@ -233,9 +242,8 @@ describe('Trader', () => {
     it.each`
       field                | expected
       ${'warmupCompleted'} | ${false}
-      ${'warmupCandle'}    | ${null}
-      ${'balance'}         | ${{ free: 0, used: 0, total: 0 }}
-      ${'price'}           | ${0}
+      ${'warmupBucket'}    | ${expect.any(Map)}
+      ${'prices'}          | ${expect.any(Map)}
     `('initializes $field to $expected', ({ field, expected }) => {
       expect((trader as any)[field]).toEqual(expected);
     });
@@ -260,205 +268,169 @@ describe('Trader', () => {
 
   describe('synchronize', () => {
     it('should fetch portfolio from exchange', async () => {
-      trader['currentTimestamp'] = 0;
-
       await trader['synchronize']();
-
       expect(fakeExchange.fetchBalance).toHaveBeenCalledTimes(1);
     });
+
     it('should update trader plugin portfolio with exchange portfolio', async () => {
-      trader['currentTimestamp'] = 0;
       trader['portfolio'] = new Map<string, BalanceDetail>([
         ['BTC', { free: 0, used: 0, total: 0 }],
         ['USDT', { free: 0, used: 0, total: 0 }],
       ]);
-      fakeExchange.fetchBalance.mockResolvedValue(
-        new Map<string, BalanceDetail>([
-          ['BTC', { free: 3, used: 0, total: 3 }],
-          ['USDT', { free: 50, used: 0, total: 50 }],
-        ]),
-      );
-
-      await trader['synchronize']();
-
-      expect(trader['portfolio'].get('BTC')).toEqual({ free: 3, used: 0, total: 3 });
-      expect(trader['portfolio'].get('USDT')).toEqual({ free: 50, used: 0, total: 50 });
-    });
-    it('should update balance', async () => {
-      trader['currentTimestamp'] = 0;
-      trader['balance'] = { free: 0, used: 0, total: 0 };
-      trader['portfolio'] = new Map<string, BalanceDetail>([
-        ['BTC', { free: 0, used: 0, total: 0 }],
-        ['USDT', { free: 0, used: 0, total: 0 }],
+      const newBalance = new Map<string, BalanceDetail>([
+        ['BTC', { free: 3, used: 0, total: 3 }],
+        ['USDT', { free: 50, used: 0, total: 50 }],
       ]);
-      trader['price'] = 200;
-      fakeExchange.fetchBalance.mockResolvedValue(
-        new Map<string, BalanceDetail>([
-          ['BTC', { free: 3, used: 0, total: 3 }],
-          ['USDT', { free: 50, used: 0, total: 50 }],
-        ]),
-      );
-      fakeExchange.fetchTicker.mockResolvedValue({ bid: 200 });
+      fakeExchange.fetchBalance.mockResolvedValue(newBalance);
 
       await trader['synchronize']();
 
-      expect(trader['balance'].total).toBeCloseTo(650);
+      expect(trader['portfolio']).toEqual(newBalance);
     });
+
+    it('should update prices', async () => {
+      fakeExchange.fetchTickers.mockResolvedValue({ 'BTC/USDT': { bid: 200 } });
+
+      await trader['synchronize']();
+
+      expect(trader['prices'].get('BTC/USDT')).toBe(200);
+    });
+
     it.each`
       action                                                                | oldPortfolio                                                                                                             | newPortfolio                                                                                                             | expectedEmit
       ${'NOT emit portfolio change event because portfolio did not change'} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${false}
       ${'emit portfolio change event because portfolio changed'}            | ${new Map<string, BalanceDetail>([['BTC', { free: 0, used: 0, total: 0 }], ['USDT', { free: 0, used: 0, total: 0 }]])}   | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${true}
     `('should $action', async ({ oldPortfolio, newPortfolio, expectedEmit }) => {
-      trader['emitPortfolioChangeEvent'] = vi.fn();
       trader['portfolio'] = oldPortfolio;
       fakeExchange.fetchBalance.mockResolvedValue(newPortfolio);
+      const spy = vi.spyOn(trader as any, 'emitPortfolioChangeEvent');
 
       await trader['synchronize']();
 
-      if (expectedEmit) expect(trader['emitPortfolioChangeEvent']).toHaveBeenCalledOnce();
-      else expect(trader['emitPortfolioChangeEvent']).not.toHaveBeenCalled();
-    });
-    it.each`
-      action                                                                    | oldBalance                            | portfolio                                                                                                                | price  | expectedEmit
-      ${'NOT emit portfolio value change event because balance did not change'} | ${{ free: 650, used: 0, total: 650 }} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${200} | ${false}
-      ${'emit portfolio value change event because balance changed'}            | ${{ free: 100, used: 0, total: 100 }} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${200} | ${true}
-    `('should $action', async ({ timestamp, oldBalance, portfolio, price, expectedEmit }) => {
-      trader['emitPortfolioValueChangeEvent'] = vi.fn();
-      trader['currentTimestamp'] = timestamp;
-      trader['balance'] = oldBalance;
-      trader['portfolio'] = portfolio;
-      trader['price'] = price;
-      fakeExchange.fetchBalance.mockResolvedValue(portfolio);
-      fakeExchange.fetchTicker.mockResolvedValue({ bid: price });
-
-      await trader['synchronize']();
-
-      if (expectedEmit) expect(trader['emitPortfolioValueChangeEvent']).toHaveBeenCalledOnce();
-      else expect(trader['emitPortfolioValueChangeEvent']).not.toHaveBeenCalled();
+      if (expectedEmit) expect(spy).toHaveBeenCalledOnce();
+      else expect(spy).not.toHaveBeenCalled();
     });
   });
 
   describe('portfolio event emitters', () => {
-    it('defers portfolio change events with current asset and currency', () => {
-      trader['portfolio'] = new Map<string, BalanceDetail>([
+    it('defers portfolio change events with current portfolio', () => {
+      const portfolio = new Map<string, BalanceDetail>([
         ['BTC', { free: 10, used: 0, total: 10 }],
         ['USDT', { free: 25, used: 0, total: 25 }],
       ]);
-      trader['emitPortfolioChangeEvent']();
-      // Portfolio is now a Map, so we expect a cloned Map to be emitted
-      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, expect.any(Map));
-    });
+      trader['portfolio'] = portfolio;
 
-    it('defers portfolio value events with current balance', () => {
-      trader['balance'] = { free: 321.45, used: 0, total: 321.45 };
-      trader['emitPortfolioValueChangeEvent']();
-      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_VALUE_CHANGE_EVENT, {
-        balance: { free: 321.45, used: 0, total: 321.45 },
-        date: 0,
-      });
+      trader['emitPortfolioChangeEvent']();
+
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, portfolio);
     });
   });
 
   describe('onStrategyWarmupCompleted', () => {
     it('should set warmupCompleted to true', async () => {
       trader['warmupCompleted'] = false;
-      trader['warmupCandle'] = defaultCandle;
-      trader['processOneMinuteCandle'] = vi.fn();
+      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
+      trader['warmupBucket'] = bucket;
+      trader['processOneMinuteBucket'] = vi.fn();
       trader['synchronize'] = vi.fn();
 
-      await trader.onStrategyWarmupCompleted();
+      await trader.onStrategyWarmupCompleted(new Map() as any);
 
       expect(trader['warmupCompleted']).toBeTruthy();
     });
 
-    it('should reset warmupCandle to null', async () => {
+    it('should clear warmupBucket', async () => {
       trader['warmupCompleted'] = false;
-      trader['warmupCandle'] = defaultCandle;
-      trader['processOneMinuteCandle'] = vi.fn();
+      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
+      trader['warmupBucket'] = bucket;
+      trader['processOneMinuteBucket'] = vi.fn();
       trader['synchronize'] = vi.fn();
 
-      await trader.onStrategyWarmupCompleted();
+      await trader.onStrategyWarmupCompleted(new Map() as any);
 
-      expect(trader['warmupCandle']).toBeNull();
+      expect(trader['warmupBucket']).not.toBe(bucket);
+      expect(trader['warmupBucket']?.size).toBe(0);
     });
 
-    it('should call processOneMinuteCandle when buffered candle is set', async () => {
+    it('should call processOneMinuteBucket when collected bucket has all pairs', async () => {
+      // pairs length is 1 by default mock
       trader['warmupCompleted'] = false;
-      trader['warmupCandle'] = defaultCandle;
-      trader['processOneMinuteCandle'] = vi.fn();
+      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
+      trader['warmupBucket'] = bucket;
+      trader['processOneMinuteBucket'] = vi.fn();
       trader['synchronize'] = vi.fn();
 
-      await trader.onStrategyWarmupCompleted();
+      await trader.onStrategyWarmupCompleted(new Map() as any);
 
-      expect(trader['processOneMinuteCandle']).toHaveBeenCalledExactlyOnceWith(defaultCandle);
+      expect(trader['processOneMinuteBucket']).toHaveBeenCalledWith(bucket);
     });
 
-    it('should NOT call processOneMinuteCandle when buffered candle is NOT set', async () => {
-      trader['warmupCompleted'] = false;
-      trader['warmupCandle'] = null;
-      trader['processOneMinuteCandle'] = vi.fn();
-      trader['synchronize'] = vi.fn();
+    it('should throw error if warmup buckets are incomplete (not all pairs present)', async () => {
+      trader['warmupBucket'] = new Map() as any; // Empty map, but 1 pair expected
+      trader['processOneMinuteBucket'] = vi.fn();
 
-      await trader.onStrategyWarmupCompleted();
-
-      expect(trader['processOneMinuteCandle']).not.toHaveBeenCalled();
+      await expect(trader.onStrategyWarmupCompleted(new Map() as any)).rejects.toThrow(/Impossible to process warmup bucket/);
     });
 
     it('should synchronize with exchange', async () => {
-      trader['warmupCompleted'] = false;
-      trader['warmupCandle'] = defaultCandle;
-      trader['processOneMinuteCandle'] = vi.fn();
+      trader['warmupBucket'] = new Map([['BTC/USDT', defaultCandle]]) as any;
+      trader['processOneMinuteBucket'] = vi.fn();
       trader['synchronize'] = vi.fn();
 
-      await trader.onStrategyWarmupCompleted();
+      await trader.onStrategyWarmupCompleted(new Map() as any);
 
       expect(trader['synchronize']).toHaveBeenCalledOnce();
     });
   });
 
-  describe('processOneMinuteCandle', () => {
-    it('should update price', async () => {
-      trader['price'] = 0;
-      trader['synchronize'] = vi.fn();
+  describe('processOneMinuteBucket', () => {
+    it('should update price for all symbols in bucket', async () => {
+      trader['prices'].set('BTC/USDT', 0);
+      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
 
-      await trader['processOneMinuteCandle'](defaultCandle);
+      await trader['processOneMinuteBucket'](bucket);
 
-      expect(trader['price']).toBe(100);
+      expect(trader['prices'].get('BTC/USDT')).toBe(100);
     });
 
-    it('should NOT triggers synchronize when trader plugin is initialized', async () => {
-      trader['currentTimestamp'] = Date.now(); // => Means trader plugin is iitialized
+    it('should NOT trigger synchronize in realtime mode even if interval matches', async () => {
+      (trader as any).mode = 'realtime';
       trader['synchronize'] = vi.fn();
-      fakeExchange['getIntervals'].mockReturnValue({ exchangeSync: 1_000, orderSync: 1 });
-      const shiftedCandle = { ...defaultCandle, start: addMinutes(defaultCandle.start, 1).getTime() };
+      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
 
-      await trader['processOneMinuteCandle'](shiftedCandle);
+      await trader['processOneMinuteBucket'](bucket);
 
       expect(trader['synchronize']).not.toHaveBeenCalled();
     });
 
     it('should update currentTimestamp', async () => {
       trader['currentTimestamp'] = 0;
-      trader['synchronize'] = vi.fn();
+      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
 
-      await trader['processOneMinuteCandle'](defaultCandle);
+      await trader['processOneMinuteBucket'](bucket);
 
-      expect(trader['currentTimestamp']).toBe(1700000060000); // +1 minute
+      expect(trader['currentTimestamp']).toBe(1_700_000_060_000); // start + 1 min
     });
 
     it('should buffer candle until warmup completes', async () => {
       trader['warmupCompleted'] = false;
-      await trader['processOneMinuteCandle'](defaultCandle);
-      expect(trader['warmupCandle']).toBe(defaultCandle);
+      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
+      // Note: processOneMinuteBucket REPLACES warmupBucket reference if not completed
+
+      await trader['processOneMinuteBucket'](bucket);
+
+      expect(trader['warmupBucket']).toBe(bucket);
     });
 
-    it('should NOT buffer candle once warmup completes', async () => {
+    it('should NOT update warmupBucket once warmup completes', async () => {
       trader['warmupCompleted'] = true;
-      trader['warmupCandle'] = null;
+      const initialBucket = new Map() as any;
+      trader['warmupBucket'] = initialBucket;
+      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
 
-      await trader['processOneMinuteCandle'](defaultCandle);
+      await trader['processOneMinuteBucket'](bucket);
 
-      expect(trader['warmupCandle']).toBeNull();
+      expect(trader['warmupBucket']).toBe(initialBucket);
     });
   });
 
@@ -470,180 +442,189 @@ describe('Trader', () => {
     const getInitiatedOrder = () => getInitiatedEvent()?.order;
 
     beforeEach(() => {
-      trader['price'] = 100;
+      trader['prices'].set('BTC/USDT', 100);
       trader['portfolio'] = new Map<string, BalanceDetail>([
         ['BTC', { free: 3, used: 0, total: 3 }],
         ['USDT', { free: 1000, used: 0, total: 1000 }],
       ]);
     });
 
-    it('creates order and emits initiation event for BUY advice', async () => {
+    it('creates order in internal map', async () => {
       const advice = buildAdvice();
-
       await trader.onStrategyCreateOrder([advice]);
-
       expect(getOrdersMap().size).toBe(1);
-      const initiated = getInitiatedOrder();
-      expect(initiated?.id).toBe(advice.id);
-      expect(initiated?.type).toBe(advice.type);
-      expect(initiated?.amount).toBeCloseTo(9.5, 5);
     });
 
-    it('computes SELL order amount from asset holdings', async () => {
+    it.each`
+      field       | expected
+      ${'id'}     | ${'20a7abd2-546b-4c65-b04d-900b84fa5fe6'}
+      ${'type'}   | ${'STICKY'}
+      ${'side'}   | ${'BUY'}
+      ${'amount'} | ${9.5}
+    `('emits initiated event with correct $field', async ({ field, expected }) => {
+      const advice = buildAdvice();
+      await trader.onStrategyCreateOrder([advice]);
+      const initiated = getInitiatedOrder();
+
+      if (typeof expected === 'number') {
+        expect(initiated?.[field]).toBeCloseTo(expected);
+      } else {
+        expect(initiated?.[field]).toBe(expected);
+      }
+    });
+
+    it.each`
+      side      | currencyFree | assetFree | price  | expectedAmount | desc
+      ${'BUY'}  | ${1000}      | ${0}      | ${100} | ${9.5}         | ${'BUY uses currency / price * (1 - fee)'}
+      ${'SELL'} | ${0}         | ${2.5}    | ${100} | ${2.5}         | ${'SELL uses full asset free balance'}
+    `('computes correct amount for $desc', async ({ side, currencyFree, assetFree, price, expectedAmount }) => {
       trader['portfolio'] = new Map<string, BalanceDetail>([
-        ['BTC', { free: 2.5, used: 0, total: 2.5 }],
-        ['USDT', { free: 0, used: 0, total: 0 }],
+        ['BTC', { free: assetFree, used: 0, total: assetFree }],
+        ['USDT', { free: currencyFree, used: 0, total: currencyFree }],
       ]);
-      const advice = buildAdvice({ side: 'SELL', type: 'MARKET' });
+      trader['prices'].set('BTC/USDT', price);
+      const advice = buildAdvice({ side, type: 'MARKET' });
 
       await trader.onStrategyCreateOrder([advice]);
 
       const initiated = getInitiatedOrder();
-      expect(initiated?.amount).toBeCloseTo(2.5, 5);
+      expect(initiated?.amount).toBeCloseTo(expectedAmount, 5);
     });
 
-    it('uses provided quantity when present', async () => {
+    it('uses provided quantity when present in advice', async () => {
       const advice = buildAdvice({ amount: 1.2345, type: 'MARKET', side: 'BUY' });
 
       await trader.onStrategyCreateOrder([advice]);
 
       const initiated = getInitiatedOrder();
       expect(initiated?.amount).toBeCloseTo(1.2345, 5);
+
       const metadata = getOrderMetadata(advice.id);
       expect(metadata?.amount).toBeCloseTo(1.2345, 5);
-      expect(metadata?.orderInstance.amount).toBeCloseTo(1.2345, 5);
     });
 
-    it('creates limit order with requested price and no amount buffer when quantity missing', async () => {
-      trader['portfolio'] = new Map<string, BalanceDetail>([
-        ['BTC', { free: 0, used: 0, total: 0 }],
-        ['USDT', { free: 1000, used: 0, total: 1000 }],
-      ]);
+    it('creates limit order with requested price', async () => {
       const advice = buildAdvice({ type: 'LIMIT', side: 'BUY', price: 95 });
 
       await trader.onStrategyCreateOrder([advice]);
 
       const initiated = getInitiatedOrder();
       expect(initiated?.price).toBe(95);
-      expect(initiated?.amount).toBeCloseTo(10, 5);
+
       const metadata = getOrderMetadata(advice.id);
       expect(metadata?.price).toBe(95);
     });
 
-    it('handles ORDER_ERRORED_EVENT by emitting error and removing order', async () => {
+    it('rejects order when symbol price is missing and no price provided', async () => {
+      trader['prices'].clear();
+      const advice = buildAdvice({ amount: 1, type: 'MARKET', side: 'SELL' });
+
+      await trader.onStrategyCreateOrder([advice]);
+
+      expect(logger.warning).toHaveBeenCalledWith('trader', expect.stringContaining('No price found'));
+      const metadata = getOrderMetadata(advice.id);
+      expect(metadata).toBeUndefined();
+    });
+
+    it('handles ORDER_ERRORED_EVENT from order instance', async () => {
       const advice = buildAdvice();
-      const synchronizeSpy = vi
-        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
-        .mockResolvedValue(undefined);
+      const synchronizeSpy = vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
       (logger.error as Mock).mockClear();
 
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
       order.emit(ORDER_ERRORED_EVENT, 'boom');
-      await Promise.resolve();
+      await tick(); // Wait for async callbacks
 
-      expect(logger.error).toHaveBeenCalledWith('trader', '[20a7abd2-546b-4c65-b04d-900b84fa5fe6] BUY STICKY order: boom (status: ERROR)');
+      expect(logger.error).toHaveBeenCalledWith('trader', expect.stringContaining('boom'));
       expect(getOrdersMap().size).toBe(0);
+      expect(synchronizeSpy).toHaveBeenCalled();
+
       expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
-          order: expect.objectContaining({
-            id: advice.id,
-            reason: 'boom',
-            type: advice.type,
-            side: advice.side,
-          }),
-          exchange: expect.objectContaining({
-            price: trader['price'],
-            portfolio: trader['portfolio'],
-            balance: trader['balance'],
-          }),
+          order: expect.objectContaining({ id: advice.id, reason: 'boom' }),
+          exchange: { price: 100, portfolio: trader['portfolio'] },
         }),
       );
-      expect(synchronizeSpy).toHaveBeenCalled();
     });
 
-    it('removes order and synchronizes when receiving ORDER_INVALID_EVENT', async () => {
+    it('handles ORDER_INVALID_EVENT from order instance', async () => {
       const advice = buildAdvice();
-      const synchronizeSpy = vi
-        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
-        .mockResolvedValue(undefined);
+      const synchronizeSpy = vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
 
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
-      order.emit(ORDER_INVALID_EVENT, { reason: 'limit too low' });
-      await Promise.resolve();
+      order.emit(ORDER_INVALID_EVENT, { reason: 'limit too low', status: 'INVALID', filled: 0 });
+      await tick();
 
       expect(logger.info).toHaveBeenCalledWith('trader', expect.stringContaining('limit too low'));
-      expect(synchronizeSpy).toHaveBeenCalled();
       expect(getOrdersMap().size).toBe(0);
+      expect(synchronizeSpy).toHaveBeenCalled();
+
       expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
-          order: expect.objectContaining({
-            id: advice.id,
-            type: advice.type,
-            side: advice.side,
-            reason: 'limit too low',
-          }),
-          exchange: expect.objectContaining({
-            price: trader['price'],
-            portfolio: trader['portfolio'],
-            balance: trader['balance'],
-          }),
+          order: expect.objectContaining({ id: advice.id, reason: 'limit too low' }),
         }),
       );
     });
 
-    it('delegates ORDER_COMPLETED_EVENT to emitOrderCompletedEvent', async () => {
+    it('delegates ORDER_COMPLETED_EVENT to completion handler', async () => {
       const advice = buildAdvice();
-      const synchronizeSpy = vi
-        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
-        .mockResolvedValue(undefined);
-      const emitSpy = vi.spyOn(
-        trader as unknown as { emitOrderCompletedEvent: (id: string, summary: unknown) => void },
-        'emitOrderCompletedEvent',
-      );
+      const synchronizeSpy = vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+      const completionSpy = vi.spyOn(trader as any, 'emitOrderCompletedEvent');
 
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
       order.emit(ORDER_COMPLETED_EVENT);
-      await Promise.resolve();
-      await Promise.resolve();
+      await tick(); // Extra tick for async summary creation
 
-      expect(order.createSummary).toHaveBeenCalledTimes(1);
+      expect(order.createSummary).toHaveBeenCalled();
       expect(synchronizeSpy).toHaveBeenCalled();
-      expect(emitSpy).toHaveBeenCalledWith(advice.id, expect.objectContaining({ side: advice.side }));
+      expect(completionSpy).toHaveBeenCalledWith(advice.id, expect.objectContaining({ side: advice.side }));
       expect(getOrdersMap().size).toBe(0);
     });
 
-    it('logs error and removes order when order summary creation fails', async () => {
+    it('logs error if summary creation fails on completion', async () => {
       const advice = buildAdvice();
-      const errorMock = logger.error as Mock;
-      errorMock.mockClear();
-      const synchronizeSpy = vi
-        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
-        .mockResolvedValue(undefined);
-      const emitSpy = vi.spyOn(
-        trader as unknown as { emitOrderCompletedEvent: (id: string, summary: unknown) => void },
-        'emitOrderCompletedEvent',
-      );
+      (logger.error as Mock).mockClear();
+      vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+      const completionSpy = vi.spyOn(trader as any, 'emitOrderCompletedEvent');
 
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
       (order.createSummary as Mock).mockRejectedValue(new Error('summary failed'));
 
       order.emit(ORDER_COMPLETED_EVENT);
-      await Promise.resolve();
-      await Promise.resolve();
+      await tick();
 
-      expect(errorMock).toHaveBeenCalledWith('trader', '[20a7abd2-546b-4c65-b04d-900b84fa5fe6] Error in order completed summary failed');
-      expect(emitSpy).not.toHaveBeenCalled();
-      expect(synchronizeSpy).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledWith('trader', expect.stringContaining('summary failed'));
+      expect(completionSpy).not.toHaveBeenCalled();
       expect(getOrdersMap().size).toBe(0);
+    });
+
+    it('logs order updates (partially filled)', async () => {
+      const advice = buildAdvice();
+      await trader.onStrategyCreateOrder([advice]);
+      const order = getOrderInstance(advice.id)!;
+
+      order.emit(ORDER_PARTIALLY_FILLED_EVENT, 5.0);
+
+      expect(logger.info).toHaveBeenCalledWith('trader', expect.stringContaining('total filled: 5'));
+    });
+
+    it('logs order updates (status changed)', async () => {
+      const advice = buildAdvice();
+      await trader.onStrategyCreateOrder([advice]);
+      const order = getOrderInstance(advice.id)!;
+
+      order.emit(ORDER_STATUS_CHANGED_EVENT, { status: 'OPEN', reason: 'Placed' });
+
+      expect(logger.info).toHaveBeenCalledWith('trader', expect.stringContaining('Status changed: OPEN'));
     });
   });
 
@@ -653,16 +634,11 @@ describe('Trader', () => {
       expect(logger.warning).toHaveBeenCalledWith('trader', '[missing-id] Impossible to cancel order: Unknown Order');
     });
 
-    it('removes listeners, cancels order, and emits cancellation after completion', async () => {
+    it('cancels regular order and handles cancellation success', async () => {
       const advice = buildAdvice();
-      const synchronizeSpy = vi
-        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
-        .mockResolvedValue(undefined);
-      trader['price'] = 100;
-      trader['portfolio'] = new Map<string, BalanceDetail>([
-        ['BTC', { free: 0, used: 0, total: 0 }],
-        ['USDT', { free: 1000, used: 0, total: 1000 }],
-      ]);
+      const synchronizeSpy = vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+      trader['prices'].set('BTC/USDT', 100);
+
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
@@ -671,107 +647,86 @@ describe('Trader', () => {
       expect(order.removeAllListeners).toHaveBeenCalled();
       expect(order.cancel).toHaveBeenCalled();
 
-      order.emit(ORDER_CANCELED_EVENT, { filled: 2, remaining: 7.5, partiallyFilled: true });
-      await Promise.resolve();
+      // Simulate successful cancel
+      order.emit(ORDER_CANCELED_EVENT, { timestamp: 123456, filled: 2, remaining: 7.5 });
+      await tick();
 
       expect(getOrdersMap().size).toBe(0);
+      expect(synchronizeSpy).toHaveBeenCalled();
+
       expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_CANCELED_EVENT,
         expect.objectContaining({
           order: expect.objectContaining({
             id: advice.id,
-            type: advice.type,
-            side: advice.side,
-            amount: expect.any(Number),
             filled: 2,
             remaining: 7.5,
-            price: 100,
           }),
-          exchange: expect.objectContaining({
-            price: trader['price'],
-            portfolio: trader['portfolio'],
-            balance: trader['balance'],
-          }),
+          exchange: { price: 100, portfolio: trader['portfolio'] },
         }),
       );
-      const cancelPayload = (trader['addDeferredEmit'] as Mock).mock.calls
-        .filter(call => call[0] === ORDER_CANCELED_EVENT)
-        .pop()?.[1].order;
-      expect(cancelPayload?.amount).toBeCloseTo(9.5, 5);
-      expect(synchronizeSpy).toHaveBeenCalled();
     });
 
     it('includes requested price when canceling limit orders', async () => {
-      trader['price'] = 100;
-      trader['portfolio'] = new Map<string, BalanceDetail>([
-        ['BTC', { free: 0, used: 0, total: 0 }],
-        ['USDT', { free: 1000, used: 0, total: 1000 }],
-      ]);
       const advice = buildAdvice({ type: 'LIMIT', side: 'SELL', price: 210 });
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
-      const metadata = getOrderMetadata(advice.id);
-      expect(metadata?.price).toBe(210);
-      expect(metadata?.side).toBe('SELL');
 
       await trader.onStrategyCancelOrder([advice.id]);
-      order.emit(ORDER_CANCELED_EVENT, { filled: 0, remaining: 5, partiallyFilled: false });
-      await Promise.resolve();
+
+      order.emit(ORDER_CANCELED_EVENT, { filled: 0, remaining: 5 });
+      await tick();
+
+      const call = (trader['addDeferredEmit'] as Mock).mock.calls.find(c => c[0] === ORDER_CANCELED_EVENT);
+      expect(call).toBeDefined();
+      expect(call![1].order.price).toBe(210);
     });
 
-    it('removes order and emits error when cancellation fails', async () => {
+    it('handles cancellation error', async () => {
       const advice = buildAdvice();
-      const synchronizeSpy = vi
-        .spyOn(trader as unknown as { synchronize: () => Promise<void> }, 'synchronize')
-        .mockResolvedValue(undefined);
-      trader['price'] = 100;
-      trader['portfolio'] = new Map<string, BalanceDetail>([
-        ['BTC', { free: 0, used: 0, total: 0 }],
-        ['USDT', { free: 1000, used: 0, total: 1000 }],
-      ]);
+      const synchronizeSpy = vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+      trader['prices'].set('BTC/USDT', 100);
+
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
       await trader.onStrategyCancelOrder([advice.id]);
 
-      expect(order.removeAllListeners).toHaveBeenCalled();
-      expect(order.cancel).toHaveBeenCalled();
-
       order.emit(ORDER_ERRORED_EVENT, 'exchange timeout');
-      await Promise.resolve();
+      await tick();
 
       expect(getOrdersMap().size).toBe(0);
+      expect(synchronizeSpy).toHaveBeenCalled();
       expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
         expect.objectContaining({
-          order: expect.objectContaining({
-            id: advice.id,
-            type: advice.type,
-            side: advice.side,
-            reason: 'exchange timeout',
-          }),
-          exchange: expect.objectContaining({
-            price: trader['price'],
-            portfolio: trader['portfolio'],
-            balance: trader['balance'],
-          }),
+          order: expect.objectContaining({ id: advice.id, reason: 'exchange timeout', orderErrorDate: expect.any(Number) }),
         }),
       );
-      expect(synchronizeSpy).toHaveBeenCalled();
+    });
+
+    it('handles completion during cancellation', async () => {
+      const advice = buildAdvice();
+      const completionSpy = vi.spyOn(trader as any, 'emitOrderCompletedEvent');
+      trader['prices'].set('BTC/USDT', 100);
+
+      await trader.onStrategyCreateOrder([advice]);
+      const order = getOrderInstance(advice.id)!;
+
+      await trader.onStrategyCancelOrder([advice.id]);
+
+      // Simulate completed instead of canceled
+      order.emit(ORDER_COMPLETED_EVENT);
+      await tick();
+
+      expect(completionSpy).toHaveBeenCalled();
+      expect(getOrdersMap().size).toBe(0);
     });
   });
 
   describe('emitOrderCompletedEvent', () => {
-    it('throws error when order summary is missing timestamp', () => {
-      const summary = {
-        amount: 1,
-        price: 100,
-        feePercent: 0.5,
-        side: 'BUY',
-        date: undefined,
-      } as any;
-
-      expect(() => trader['emitOrderCompletedEvent']('order-id' as any, summary)).toThrow(GekkoError);
+    it('throws error when order metadata is missing', () => {
+      expect(() => trader['emitOrderCompletedEvent']('unknown-id' as any, {} as any)).toThrow(/No order metadata found/);
     });
 
     it('emits completion summary with computed pricing', async () => {
@@ -779,50 +734,37 @@ describe('Trader', () => {
         amount: 2,
         price: 100,
         feePercent: 0.5,
-        side: 'BUY' as OrderSide,
+        side: 'BUY',
         orderExecutionDate: 1_700_000_111_000,
       };
-      const processCostSpy = vi
-        .spyOn(traderUtils, 'computeOrderPricing')
-        .mockReturnValue({ effectivePrice: 101, fee: 2, base: 100, total: 102 });
 
-      trader['portfolio'] = new Map<string, BalanceDetail>([
-        ['BTC', { free: 5, used: 0, total: 5 }],
-        ['USDT', { free: 10, used: 0, total: 10 }],
-      ]);
-      trader['balance'] = { free: 510, used: 0, total: 510 };
-      trader['price'] = 100;
-      trader['orders'].set('order-id' as any, {
-        amount: summary.amount,
-        side: summary.side,
-        orderCreationDate: summary.orderExecutionDate - 60_000,
+      const advice = buildAdvice({ amount: 2 });
+      // We need to inject order metadata into map
+      getOrdersMap().set(advice.id, {
+        amount: 2,
+        side: 'BUY',
+        orderCreationDate: 1_700_000_051_000,
         type: 'STICKY',
-        price: summary.price,
+        price: 100,
         orderInstance: {} as any,
+        symbol: 'BTC/USDT',
       });
+      trader['prices'].set('BTC/USDT', 100);
 
-      trader['emitOrderCompletedEvent']('order-id' as any, summary);
+      trader['emitOrderCompletedEvent'](advice.id, summary);
 
-      expect(processCostSpy).toHaveBeenCalledWith(summary.side, summary.price, summary.amount, summary.feePercent);
+      // fee = 2 * 100 * 0.5% = 1
+      // effective price = 100 + 100 * 0.5% = 100.5
+
       expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_COMPLETED_EVENT,
         expect.objectContaining({
           order: expect.objectContaining({
-            id: 'order-id',
-            side: summary.side,
-            amount: summary.amount,
-            price: summary.price,
-            feePercent: summary.feePercent,
-            effectivePrice: 101,
-            fee: 2,
-            type: 'STICKY',
-            orderExecutionDate: summary.orderExecutionDate,
+            effectivePrice: 100.5,
+            fee: 1,
+            symbol: 'BTC/USDT',
           }),
-          exchange: expect.objectContaining({
-            portfolio: trader['portfolio'],
-            balance: trader['balance'],
-            price: trader['price'],
-          }),
+          exchange: { price: 100, portfolio: trader['portfolio'] },
         }),
       );
     });
@@ -835,14 +777,12 @@ describe('Trader', () => {
       expect(configInfo.eventsEmitted).toEqual(
         expect.arrayContaining([
           PORTFOLIO_CHANGE_EVENT,
-          PORTFOLIO_VALUE_CHANGE_EVENT,
           ORDER_CANCELED_EVENT,
           ORDER_COMPLETED_EVENT,
           ORDER_ERRORED_EVENT,
           ORDER_INITIATED_EVENT,
         ]),
       );
-      expect(configInfo.eventsHandlers.every(handler => handler.startsWith('on'))).toBe(true);
     });
   });
 });

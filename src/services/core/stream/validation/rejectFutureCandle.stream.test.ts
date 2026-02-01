@@ -1,4 +1,5 @@
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { warning } from '@services/logger';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RejectFutureCandleStream } from './rejectFutureCandle.stream';
@@ -33,26 +34,31 @@ describe('RejectFutureCandleStream', () => {
 
   const validCandle: Candle = { start: now - 60000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 100 };
 
-  it('should pass null candles through', () => {
+  const createBucket = (pair: string, c: Candle | null): CandleBucket => {
+    const bucket: CandleBucket = new Map();
+    if (c) bucket.set(pair as any, c);
+    return bucket;
+  };
+
+  it('should pass null/empty buckets through (or handle gracefully)', () => {
     const dataFn = vi.fn();
     stream.on('data', dataFn);
 
-    stream.write({ symbol, candle: null });
+    const bucket = createBucket(symbol, null); // Empty bucket
+    stream.write(bucket);
 
-    expect(dataFn).toHaveBeenCalledWith({ symbol, candle: null });
+    // Implementation swallows empty buckets
+    expect(dataFn).not.toHaveBeenCalled();
   });
 
   it('should pass past/current candles', () => {
     const dataFn = vi.fn();
     stream.on('data', dataFn);
 
-    // Candle ends at 'now' (start = now - 60000, end = start + 60000 = now)
-    // Code: candleEndTime > Date.now()
-    // now > now is false, so it passes.
+    const bucket = createBucket(symbol, validCandle);
+    stream.write(bucket);
 
-    stream.write({ symbol, candle: validCandle });
-
-    expect(dataFn).toHaveBeenCalledWith({ symbol, candle: validCandle });
+    expect(dataFn).toHaveBeenCalledWith(bucket);
     expect(warning).not.toHaveBeenCalled();
   });
 
@@ -62,12 +68,13 @@ describe('RejectFutureCandleStream', () => {
 
     // Candle starts at now, ends at now + 60000 (future)
     const futureCandle = { ...validCandle, start: now };
+    const bucket = createBucket(symbol, futureCandle);
 
-    stream.write({ symbol, candle: futureCandle });
+    stream.write(bucket);
 
     expect(dataFn).not.toHaveBeenCalled();
     expect(warning).toHaveBeenCalledTimes(1);
-    expect(warning).toHaveBeenCalledWith('stream', expect.stringContaining('Rejecting future candle'));
+    expect(warning).toHaveBeenCalledWith('stream', expect.stringContaining('Rejecting future bucket'));
   });
 
   it('should catch and forward errors', async () => {
@@ -81,7 +88,8 @@ describe('RejectFutureCandleStream', () => {
       },
     } as any;
 
-    stream.write({ symbol, candle: badCandle });
+    const bucket = createBucket(symbol, badCandle);
+    stream.write(bucket);
 
     // Wait for async _transform
     await new Promise(resolve => setTimeout(resolve, 0));

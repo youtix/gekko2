@@ -1,4 +1,5 @@
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
@@ -51,6 +52,7 @@ export type FetchOHLCVParams = {
 export type OrderSettledCallback = (orderState: OrderState) => void;
 
 export interface Exchange {
+  fetchTickers(symbols: TradingPair[]): Promise<Record<TradingPair, Ticker>>;
   fetchTicker(symbol: TradingPair): Promise<Ticker>;
   fetchOHLCV(symbol: TradingPair, params?: FetchOHLCVParams): Promise<Candle[]>;
   fetchMyTrades(symbol: TradingPair, from?: EpochTimeStamp): Promise<Trade[]>;
@@ -71,4 +73,4 @@ export interface Exchange {
   onNewCandle(symbol: TradingPair, onNewCandle: (symbol: TradingPair, candle: Candle | undefined) => void): () => void;
 }
 
-export type DummyExchange = Exchange & { processOneMinuteCandle: (symbol: TradingPair, candle: Candle) => void };
+export type DummyExchange = Exchange & { processOneMinuteBucket: (bucket: CandleBucket) => Promise<void> };

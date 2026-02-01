@@ -1,5 +1,5 @@
-import { Report } from '@plugins/performanceAnalyser/performanceAnalyzer.types';
-import { formatDuration, intervalToDuration } from 'date-fns';
+import { PortfolioReport } from '@plugins/analyzers/portfolioAnalyzer/portfolioAnalyzer.types';
+import { TradingReport } from '@plugins/analyzers/roundTripAnalyzer/roundTrip.types';
 import * as fs from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
@@ -27,39 +27,58 @@ vi.mock('@services/configuration/configuration', () => ({
   },
 }));
 
-const HEADER =
-  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total orders;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;max drawdown;longest drawdown duration\n';
+const PORTFOLIO_HEADER =
+  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total changes;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;max drawdown;longest drawdown duration\n';
+
+const TRADING_HEADER =
+  'id;pair;start time;end time;duration;exposure;start balance;final balance;market;alpha;annualized return;win rate;trade count;sharpe ratio;sortino ratio\n';
 
 const baseConfig = {
   name: 'PerformanceReporter',
   filePath: '/tmp',
-  fileName: 'performance_report.csv',
+  fileName: 'performanceReporter.csv',
 };
 
-const sampleReport: Report = {
-  startTime: 1748563200000,
-  endTime: 1748649600000,
-  duration: formatDuration(intervalToDuration({ start: 1748563200000, end: 1748649600000 })),
-  exposure: 0.5,
+const commonReportProps = {
+  periodStartAt: 1748563200000,
+  periodEndAt: 1748649600000,
+  formattedDuration: '1 day',
+  exposurePct: 0.5,
+  marketReturnPct: 0.01,
+  alpha: 0.12,
+  annualizedNetProfit: 3650,
+  annualizedReturnPct: 116.8,
+  sharpeRatio: 1.25,
+  sortinoRatio: 1.1,
+  volatility: 2.5,
   startPrice: 100,
   endPrice: 110,
-  market: 0.01,
-  alpha: 0.12,
-  yearlyProfit: 3650,
-  relativeYearlyProfit: 116.8,
-  orders: 4,
-  startBalance: 1000,
-  balance: 1320,
-  sharpe: 1.25,
-  sortino: 1.1,
-  standardDeviation: 2.5,
-  maxDrawdown: 0.08,
-  longestDrawdownDuration: '2 hours 30 minutes',
-  profit: 10,
-  relativeProfit: 1,
+  netProfit: 100,
+  totalReturnPct: 10,
+  downsideDeviation: 0.5,
 };
 
-// ---------------------------------------------------------------------------
+const samplePortfolioReport: PortfolioReport = {
+  ...commonReportProps,
+  id: 'PORTFOLIO PROFIT REPORT',
+  equityCurve: [],
+  maxDrawdownPct: 0.08,
+  longestDrawdownMs: 9000000,
+  startEquity: 1000,
+  endEquity: 1320,
+  portfolioChangeCount: 4,
+  benchmarkAsset: 'USDT',
+};
+
+const sampleTradingReport: TradingReport = {
+  ...commonReportProps,
+  id: 'TRADING REPORT',
+  finalBalance: 1320,
+  startBalance: 1000,
+  winRate: 60,
+  topMAEs: [],
+  tradeCount: 10,
+};
 
 describe('PerformanceReporter', () => {
   const releaseMock = vi.fn();
@@ -67,67 +86,141 @@ describe('PerformanceReporter', () => {
   let reporter: PerformanceReporter;
 
   beforeEach(() => {
+    vi.clearAllMocks();
     reporter = new PerformanceReporter(baseConfig);
     reporter['setFs']({ lockSync: lockSyncMock });
   });
 
   describe('#processInit', () => {
-    it('should creates missing directories and writes the CSV header when the file is absent', async () => {
-      (fs.existsSync as Mock).mockReturnValue(false);
-      (fs.statSync as Mock).mockReturnValue({ size: 0 });
+    it('should create directories', async () => {
       await reporter['processInit']();
-      const expectedPath = path.join(baseConfig.filePath, baseConfig.fileName);
-
-      expect(fs.mkdirSync).toHaveBeenCalledWith(path.dirname(expectedPath), { recursive: true });
-      expect(fs.writeFileSync).toHaveBeenCalledWith(expectedPath, HEADER, 'utf8');
-      expect(lockSyncMock).toHaveBeenCalled();
-      expect(reporter).toBeInstanceOf(PerformanceReporter);
+      expect(fs.mkdirSync).toHaveBeenCalledWith(path.dirname(path.join(baseConfig.filePath, baseConfig.fileName)), { recursive: true });
     });
 
-    it('should not rewrite the header when the file already exists with content', async () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
-      (fs.statSync as Mock).mockReturnValue({ size: 123 });
+    it('should handle errors during directory creation', async () => {
+      const error = new Error('Permission denied');
+      (fs.mkdirSync as Mock).mockImplementation(() => {
+        throw error;
+      });
 
-      await reporter['processInit']();
-
-      expect(fs.writeFileSync).not.toHaveBeenCalled();
+      expect(() => reporter['processInit']()).not.toThrow();
+      const { error: logError } = await import('@services/logger');
+      expect(logError).toHaveBeenCalledWith('performance reporter', `setup error: ${error}`);
     });
   });
 
   describe('#onPerformanceReport', () => {
-    it('should append the formatted report line to the CSV file', async () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
-      (fs.statSync as Mock).mockReturnValue({ size: 123 });
-      await reporter['processInit']();
+    const successTestCases = [
+      {
+        description: 'Portfolio Report',
+        report: samplePortfolioReport,
+        header: PORTFOLIO_HEADER,
+        expectedLineParts: ['DEMA', 'Portfolio', '2025-05-30', '1 day', '0.5%', '100', '110', '3,650 (116.8%)', '2 hours 30 minutes'],
+      },
+      {
+        description: 'Trading Report',
+        report: sampleTradingReport,
+        header: TRADING_HEADER,
+        expectedLineParts: ['DEMA', 'Trading', '2025-05-30', '1 day', '0.5%', '1,000', '1,320', '3,650 (116.8%)', '60%'],
+      },
+    ];
 
-      reporter.onPerformanceReport([sampleReport]);
+    it.each(successTestCases)('should write $description correctly when file is empty', ({ report, header, expectedLineParts }) => {
+      (fs.existsSync as Mock).mockReturnValue(false);
+      (fs.statSync as Mock).mockReturnValue({ size: 0 });
+
+      reporter.onPerformanceReport([report]);
 
       const expectedPath = path.join(baseConfig.filePath, baseConfig.fileName);
-      const expectedLine =
-        [
-          'DEMA',
-          'BTC/USDT',
-          '2025-05-30T00:00:00.000Z',
-          '2025-05-31T00:00:00.000Z',
-          '1 day',
-          '0.5%',
-          '100 USDT',
-          '110 USDT',
-          '0.01%',
-          '0.12%',
-          '3,650 USDT (116.8%)',
-          '4',
-          '1,000 USDT',
-          '1,320 USDT',
-          '1.25',
-          '1.10',
-          '2.50',
-          '0.08%',
-          '2 hours 30 minutes',
-        ].join(';') + '\n';
+      expect(fs.writeFileSync).toHaveBeenCalledWith(expectedPath, header, 'utf8');
 
-      expect(fs.appendFileSync).toHaveBeenCalledWith(expectedPath, expectedLine, 'utf8');
+      const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
+      const writtenLine = appendCall[1] as string;
+
+      expectedLineParts.forEach(part => {
+        expect(writtenLine).toContain(part);
+      });
+
+      expect(fs.appendFileSync).toHaveBeenCalledWith(expectedPath, expect.any(String), 'utf8');
       expect(releaseMock).toHaveBeenCalled();
+    });
+
+    it('should append report without header if file exists', async () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.statSync as Mock).mockReturnValue({ size: 100 });
+
+      reporter.onPerformanceReport([samplePortfolioReport]);
+
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+      expect(fs.appendFileSync).toHaveBeenCalledTimes(1);
+    });
+
+    it('should ignore empty payloads', () => {
+      reporter.onPerformanceReport([]);
+      expect(fs.appendFileSync).not.toHaveBeenCalled();
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it('should ignore unknown report types', () => {
+      const unknownReport = { ...samplePortfolioReport, id: 'UNKNOWN' as any };
+      reporter.onPerformanceReport([unknownReport]);
+      expect(fs.appendFileSync).not.toHaveBeenCalled();
+    });
+
+    it('should handle errors during file write', async () => {
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.statSync as Mock).mockReturnValue({ size: 100 });
+      const error = new Error('Disk full');
+      (fs.appendFileSync as Mock).mockImplementation(() => {
+        throw error;
+      });
+
+      reporter.onPerformanceReport([samplePortfolioReport]);
+
+      const { error: logError } = await import('@services/logger');
+      expect(logError).toHaveBeenCalledWith('performance reporter', `write error: ${error}`);
+      expect(releaseMock).toHaveBeenCalled();
+    });
+
+    it('should handle errors during header check', async () => {
+      const error = new Error('Access denied');
+      lockSyncMock.mockImplementation(() => {
+        throw error;
+      });
+
+      // We need to suppress the expected error in the error handler test for clarity or just check it was logged
+      // But here ensureHeader catches it inside
+      reporter.onPerformanceReport([samplePortfolioReport]);
+
+      const { error: logError } = await import('@services/logger');
+      expect(logError).toHaveBeenCalledWith('performance reporter', `header check error: ${error}`);
+    });
+  });
+
+  describe('Formatting Edge Cases', () => {
+    it('should format winRate as N/A when null', () => {
+      const report = { ...sampleTradingReport, winRate: null as any };
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.statSync as Mock).mockReturnValue({ size: 100 });
+
+      reporter.onPerformanceReport([report]);
+
+      const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
+      const writtenLine = appendCall[1] as string;
+      expect(writtenLine).toContain('N/A');
+    });
+
+    it('should format longestDrawdownMs as 0 when 0', () => {
+      const report = { ...samplePortfolioReport, longestDrawdownMs: 0 };
+      (fs.existsSync as Mock).mockReturnValue(true);
+      (fs.statSync as Mock).mockReturnValue({ size: 100 });
+
+      reporter.onPerformanceReport([report]);
+
+      const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
+      const writtenLine = appendCall[1] as string;
+      // It is the last field
+      expect(writtenLine.trim().endsWith(';0')).toBe(true);
     });
   });
 

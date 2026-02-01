@@ -105,10 +105,23 @@ export class CCXTExchange implements Exchange {
     await Promise.all([this.publicClient.loadMarkets(), this.privateClient.loadMarkets()]);
   }
 
+  public async fetchTickers(symbols: TradingPair[]): Promise<Record<TradingPair, Ticker>> {
+    return retry<Record<TradingPair, Ticker>>(async () => {
+      const tickers = await this.publicClient.fetchTickers(symbols);
+      return Object.entries(tickers).reduce(
+        (acc, [symbol, ticker]) => {
+          if (isNil(ticker.last)) throw new GekkoError('exchange', `Fetch ticker failed to return data for ${symbol}`);
+          return { ...acc, [symbol as TradingPair]: { ask: ticker.ask ?? ticker.last, bid: ticker.bid ?? ticker.last } };
+        },
+        {} as Record<TradingPair, Ticker>,
+      );
+    });
+  }
+
   public async fetchTicker(symbol: string) {
     return retry<Ticker>(async () => {
       const ticker = await this.publicClient.fetchTicker(symbol, PARAMS.fetchTicker[this.exchangeName]);
-      if (isNil(ticker.last)) throw new GekkoError('exchange', 'Fetch ticker failed to return data');
+      if (isNil(ticker.last)) throw new GekkoError('exchange', `Fetch ticker failed to return data for ${symbol}`);
       return { ask: ticker.ask ?? ticker.last, bid: ticker.bid ?? ticker.last };
     });
   }

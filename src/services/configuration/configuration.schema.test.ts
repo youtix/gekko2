@@ -84,7 +84,8 @@ describe('pairsSchema', () => {
 
 describe('watchSchema', () => {
   const baseWatch = {
-    pairs: basePairs,
+    assets: ['BTC'],
+    currency: 'USDT',
     timeframe: '1m' as const,
   };
 
@@ -152,6 +153,8 @@ describe('watchSchema', () => {
 
       expect(result.tickrate).toBe(1000);
       expect(result.pairs).toEqual(basePairs);
+      expect(result.assets).toEqual(['BTC']);
+      expect(result.currency).toBe('USDT');
       expect(result.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
       expect(result.daterange).toBeUndefined();
     });
@@ -161,7 +164,8 @@ describe('watchSchema', () => {
 describe('configurationSchema', () => {
   const createBaseConfig = () => ({
     watch: {
-      pairs: basePairs,
+      assets: ['BTC'],
+      currency: 'USDT',
       mode: 'realtime' as const,
       timeframe: '1m' as const,
     },
@@ -181,6 +185,8 @@ describe('configurationSchema', () => {
     expect(result.showLogo).toBe(true);
     expect(result.watch.tickrate).toBe(1000);
     expect(result.watch.pairs).toEqual(basePairs);
+    expect(result.watch.assets).toEqual(['BTC']);
+    expect(result.watch.currency).toBe('USDT');
     expect(result.watch.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
     expect(result.watch.daterange).toBeUndefined();
     expect(result.exchange).toMatchObject({

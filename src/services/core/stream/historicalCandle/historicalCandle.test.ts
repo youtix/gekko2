@@ -1,5 +1,4 @@
 import { describe, expect, it, Mock, vi } from 'vitest';
-import { CandleEvent } from '../../../../models/event.types';
 import { toTimestamp } from '../../../../utils/date/date.utils';
 import { inject } from '../../../injecter/injecter';
 import { HistoricalCandleError } from './historicalCandle.error';
@@ -32,7 +31,7 @@ vi.mock('@services/core/heart/heart', () => ({
 describe('HistoricalCandleStream', () => {
   const injectExchangeMock = inject.exchange as Mock;
   let stream: HistoricalCandleStream;
-  let results: CandleEvent[];
+  let results: { symbol: string; candle: ReturnType<typeof candleFactory> }[];
   let isStreamClosed: boolean;
 
   // Type used in existing tests
