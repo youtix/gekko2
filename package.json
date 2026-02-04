@@ -46,6 +46,7 @@
     "test": "vitest --run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
+    "test:e2e": "bun test test/e2e",
     "type:check": "bun tsc --noEmit"
   },
   "devDependencies": {
