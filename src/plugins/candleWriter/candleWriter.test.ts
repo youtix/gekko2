@@ -49,7 +49,7 @@ describe('CandleWriter', () => {
       };
       const bucket = new Map([['BTC/USDT', candle]]);
       writer['processOneMinuteBucket'](bucket as any);
-      expect(fakeStorage.addCandle).toHaveBeenCalledWith('BTC/USDT', candle);
+      expect(fakeStorage.addCandle).toHaveBeenCalledWith(bucket);
     });
   });
 

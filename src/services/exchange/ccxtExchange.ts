@@ -9,6 +9,7 @@ import { config } from '@services/configuration/configuration';
 import { Heart } from '@services/core/heart/heart';
 import { debug, error } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
+import { pluralize } from '@utils/string/string.utils';
 import { Exchange as CCXT, MarketInterface } from 'ccxt';
 import { formatDuration, intervalToDuration, startOfMinute, subMinutes } from 'date-fns';
 import { first, isNil, last } from 'lodash-es';
@@ -135,7 +136,7 @@ export class CCXTExchange implements Exchange {
       debug(
         'exchange',
         [
-          `Fetched candles from ${this.exchangeName}.`,
+          `Fetched ${symbol} ${pluralize('candle', candles.length)} from ${this.exchangeName}.`,
           `From ${toISOString(first(candles)?.start)}`,
           `to ${toISOString(last(candles)?.start)}`,
           `(${formatDuration(intervalToDuration({ start: first(candles)?.start ?? 0, end: last(candles)?.start ?? 0 }))})`,

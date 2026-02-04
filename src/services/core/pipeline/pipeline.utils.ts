@@ -32,7 +32,7 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
     ),
     new RejectFutureCandleStream(),
     new RejectDuplicateCandleStream(),
-    new FillCandleGapStream(),
+    new FillCandleGapStream(pairs.map(p => p.symbol)),
     new PluginsStream(plugins),
   );
 };
@@ -49,7 +49,7 @@ const buildImporterPipeline = async (plugins: Plugin[]) => {
   if (!daterange) throw new Error('daterange is not set');
 
   const stream = new MultiAssetHistoricalStream({ daterange, tickrate, pairs });
-  return pipeline(stream, new FillCandleGapStream(), new PluginsStream(plugins));
+  return pipeline(stream, new FillCandleGapStream(pairs.map(p => p.symbol)), new PluginsStream(plugins));
 };
 
 export const streamPipelines = {

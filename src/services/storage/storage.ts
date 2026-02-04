@@ -1,4 +1,5 @@
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { Nullable, TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Interval } from 'date-fns';
@@ -7,7 +8,7 @@ import { INSERT_THRESHOLD } from './storage.const';
 import { CandleDateranges, MissingCandleCount } from './storage.types';
 
 export abstract class Storage {
-  protected buffer: Candle[];
+  protected buffer: CandleBucket[];
   protected insertThreshold: number;
 
   constructor() {
@@ -19,10 +20,10 @@ export abstract class Storage {
     else this.insertThreshold = INSERT_THRESHOLD;
   }
 
-  public addCandle(symbol: TradingPair, candle: Candle) {
-    this.buffer.push(candle);
+  public addCandle(bucket: CandleBucket) {
+    this.buffer.push(bucket);
     if (this.buffer.length >= this.insertThreshold) {
-      this.insertCandles(symbol);
+      bucket.keys().forEach(symbol => this.insertCandles(symbol));
       this.buffer = [];
     }
   }

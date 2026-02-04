@@ -1,13 +1,14 @@
 watch:
   assets:
     - BTC
+    - ETH
   currency: USDT
   timeframe: 1h
   mode: importer # backtest | importer | realtime
   tickrate: 500
   daterange:
     start: '2017-10-01T00:00:00.000Z'
-    end: '2026-01-01T00:00:00.000Z'
+    end: '2026-02-01T00:00:00.000Z'
 
 exchange:
   name: binance

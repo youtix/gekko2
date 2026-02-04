@@ -1,4 +1,5 @@
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { debug } from '@services/logger';
@@ -24,12 +25,13 @@ export class SQLiteStorage extends Storage {
 
   public insertCandles(symbol: TradingPair): void {
     const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${this.getTable(symbol)} VALUES (?,?,?,?,?,?,?)`);
-    const insertCandles = this.db.transaction((candles: Candle[]) => {
+    const insertCandles = this.db.transaction((bucket: CandleBucket[]) => {
+      const candles = bucket.flatMap(b => b.get(symbol) ?? []);
       each(candles, ({ start, open, high, low, close, volume }) => stmt.run(null, start, open, high, low, close, volume));
       return candles.length;
     });
     const nbOfCandleInserted = insertCandles(this.buffer);
-    debug('storage', `${nbOfCandleInserted} ${pluralize('candle', nbOfCandleInserted)} inserted in database`);
+    debug('storage', `${nbOfCandleInserted} ${symbol} ${pluralize('candle', nbOfCandleInserted)} inserted in database`);
   }
 
   public upsertTable(symbol: TradingPair): void {
