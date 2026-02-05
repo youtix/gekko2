@@ -51,6 +51,14 @@ const SCENARIO_G_END = SCENARIO_G_START + 60 * ONE_MINUTE;
 const SCENARIO_H_START = SCENARIO_G_END + 60 * ONE_MINUTE;
 const SCENARIO_H_END = SCENARIO_H_START + 60 * ONE_MINUTE;
 
+// Start time for Scenario I (Leading Gap - gap at the start)
+const SCENARIO_I_START = SCENARIO_H_END + 60 * ONE_MINUTE;
+const SCENARIO_I_END = SCENARIO_I_START + 60 * ONE_MINUTE;
+
+// Start time for Scenario J (Trailing Gap - gap at the end)
+const SCENARIO_J_START = SCENARIO_I_END + 60 * ONE_MINUTE;
+const SCENARIO_J_END = SCENARIO_J_START + 60 * ONE_MINUTE;
+
 mock.module('@services/configuration/configuration', () => {
   return {
     config: {
@@ -397,6 +405,96 @@ describe('E2E: Importer (Synthetic)', () => {
     expect(gapCandleBTC.low).toBe(beforeGapBTC.close);
     expect(gapCandleBTC.close).toBe(beforeGapBTC.close);
     expect(gapCandleBTC.volume).toBe(0);
+
+    // Cleanup gaps
+    MockCCXTExchange.simulatedGaps = [];
+  }, 60000);
+
+  it('Scenario I: Leading Gap Resilience (gap at the start)', async () => {
+    mockDaterange = { start: SCENARIO_I_START, end: SCENARIO_I_END };
+    mockPairs = [{ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' }];
+
+    // Configure Gap: 10 minute gap at the START of the range
+    // Note: Gap is exclusive on the end, so candles from GAP_START to GAP_END-1 are missing
+    const GAP_START = SCENARIO_I_START;
+    const GAP_END = SCENARIO_I_START + 10 * ONE_MINUTE; // 10 candles missing
+
+    MockCCXTExchange.simulatedGaps = [{ start: GAP_START, end: GAP_END }];
+
+    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
+    const { inject } = await import('@services/injecter/injecter');
+    const storage = inject.storage() as SQLiteStorage;
+    const db = storage['db'];
+
+    await gekkoPipeline();
+
+    // The gap fill stream CANNOT fill leading gaps because there's no previous candle to reference.
+    // Expected: 61 total - 10 missing at start = 51 candles
+    const rowCountBTC = db
+      .query('SELECT count(*) as count FROM candles_BTC_USDT WHERE start >= ? AND start <= ?')
+      .get(SCENARIO_I_START, SCENARIO_I_END) as { count: number };
+    expect(rowCountBTC.count).toBe(51); // 10 candles at lead are NOT filled
+
+    // Verify first actual candle starts AFTER the gap
+    const rows = db
+      .query('SELECT * FROM candles_BTC_USDT WHERE start >= ? AND start <= ? ORDER BY start ASC')
+      .all(SCENARIO_I_START, SCENARIO_I_END) as any[];
+    const firstCandle = rows[0];
+
+    // First candle should be at GAP_END (first candle after the gap)
+    expect(firstCandle.start).toBe(GAP_END);
+
+    // Confirm no candles exist in the gap range
+    const gapCandles = db
+      .query('SELECT count(*) as count FROM candles_BTC_USDT WHERE start >= ? AND start < ?')
+      .get(GAP_START, GAP_END) as { count: number };
+    expect(gapCandles.count).toBe(0);
+
+    // Cleanup gaps
+    MockCCXTExchange.simulatedGaps = [];
+  }, 60000);
+
+  it('Scenario J: Trailing Gap Resilience (gap at the end)', async () => {
+    mockDaterange = { start: SCENARIO_J_START, end: SCENARIO_J_END };
+    mockPairs = [{ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' }];
+
+    // Configure Gap: 10 minute gap at the END of the range
+    // The mock gap filter uses exclusive end: c.start >= gap.start && c.start < gap.end
+    // So we need GAP_END to be AFTER the last gap candle
+    const GAP_START = SCENARIO_J_END - 9 * ONE_MINUTE; // First gap candle
+    const GAP_END = SCENARIO_J_END + ONE_MINUTE; // This makes SCENARIO_J_END the last gap candle (exclusive)
+
+    MockCCXTExchange.simulatedGaps = [{ start: GAP_START, end: GAP_END }];
+
+    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
+    const { inject } = await import('@services/injecter/injecter');
+    const storage = inject.storage() as SQLiteStorage;
+    const db = storage['db'];
+
+    await gekkoPipeline();
+
+    // The gap fill stream CANNOT fill trailing gaps because there's no subsequent candle
+    // to compare against and trigger the gap detection.
+    // Expected: 61 total - 10 missing at end = 51 candles
+    const rowCountBTC = db
+      .query('SELECT count(*) as count FROM candles_BTC_USDT WHERE start >= ? AND start <= ?')
+      .get(SCENARIO_J_START, SCENARIO_J_END) as { count: number };
+    expect(rowCountBTC.count).toBe(51); // 10 candles at trail are NOT filled
+
+    // Verify last actual candle is right before the gap starts
+    const rows = db
+      .query('SELECT * FROM candles_BTC_USDT WHERE start >= ? AND start <= ? ORDER BY start DESC')
+      .all(SCENARIO_J_START, SCENARIO_J_END) as any[];
+    const lastCandle = rows[0];
+
+    // Last candle should be at GAP_START - ONE_MINUTE (last candle before the gap)
+    expect(lastCandle.start).toBe(GAP_START - ONE_MINUTE);
+
+    // Confirm no candles exist in the gap range
+    const gapCandles = db
+      .query('SELECT count(*) as count FROM candles_BTC_USDT WHERE start >= ? AND start < ?')
+      .get(GAP_START, GAP_END) as { count: number };
+    expect(gapCandles.count).toBe(0);
 
     // Cleanup gaps
     MockCCXTExchange.simulatedGaps = [];
