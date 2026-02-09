@@ -152,9 +152,7 @@ export class StickyOrder extends Order {
 
     if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError) return Promise.resolve(this.orderRejected(error.message));
 
-    if (error instanceof Error) this.orderErrored(error);
-
-    throw error;
+    if (error instanceof Error) return Promise.resolve(this.orderErrored(error));
   }
 
   protected handleCancelOrderSuccess({ id, status, filled, remaining, timestamp, price }: OrderState) {

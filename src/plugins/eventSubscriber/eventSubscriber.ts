@@ -86,6 +86,7 @@ export class EventSubscriber extends Plugin {
           `Requested amount: ${amount ?? 'auto'}`,
           `At time: ${toISOString(orderCreationDate)}`,
           priceLine,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -109,6 +110,7 @@ export class EventSubscriber extends Plugin {
           `Current symbol portfolio: ${assetBalance.total} ${asset} / ${currencyBalance.total} ${currency}`,
           priceLine,
           `At time: ${toISOString(orderCreationDate)}`,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -129,6 +131,7 @@ export class EventSubscriber extends Plugin {
           `Filled amount: ${filled} / ${amount} ${asset}`,
           `Remaining amount: ${remaining} ${asset}`,
           priceLine,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -148,6 +151,7 @@ export class EventSubscriber extends Plugin {
           `At time: ${toISOString(orderErrorDate)}`,
           `Requested amount: ${amount}`,
           `Current price: ${currentPrice} ${currency}`,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -171,6 +175,7 @@ export class EventSubscriber extends Plugin {
           `Fee: ${fee} ${currency}`,
           `At time: ${toISOString(orderExecutionDate)}`,
           `Current portfolio: ${assetBalance.total} ${asset} / ${currencyBalance.total} ${currency}`,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),

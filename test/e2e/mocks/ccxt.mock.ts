@@ -4,6 +4,17 @@ import { generateSyntheticCandle, generateSyntheticHistory } from '../fixtures/s
 export class MockCCXTExchange {
   public static simulatedGaps: { start: number; end: number }[] | Record<string, { start: number; end: number }[]> = [];
   public static shouldThrowError: boolean = false;
+  public static shouldThrowOnCreateOrder: boolean = false;
+  /** When true, fetchOHLCV will emit each candle twice (simulating reconnection overlap) */
+  public static emitDuplicates: boolean = false;
+  /** When true, fetchOHLCV will include a candle with a future timestamp (> Date.now()) */
+  public static emitFutureCandles: boolean = false;
+  /** When true, fetchOHLCV will skip every 3rd candle to simulate missing candles/gaps */
+  public static emitWithGaps: boolean = false;
+  /** When true, createOrder will return 'open' status and not fill the order immediately */
+  public static simulateOpenOrders: boolean = false;
+  /** Polling interval for onNewCandle (ms). Set by tests for accelerated timing. */
+  public static pollingInterval: number = 60000;
 
   public id = 'binance';
   public name = 'binance';
@@ -147,18 +158,166 @@ export class MockCCXTExchange {
     });
 
     // Map objects back to array format [timestamp, open, high, low, close, volume]
-    return filteredCandles.map(c => [c.start, c.open, c.high, c.low, c.close, c.volume]);
+    const result = filteredCandles.map(c => [c.start, c.open, c.high, c.low, c.close, c.volume]);
+
+    // If emitDuplicates is true, duplicate each candle (simulating reconnection overlap)
+    if (MockCCXTExchange.emitDuplicates) {
+      return result.flatMap(candle => [candle, candle]);
+    }
+
+    // If emitFutureCandles is true, add a candle with a future timestamp
+    if (MockCCXTExchange.emitFutureCandles) {
+      const futureTimestamp = Date.now() + 5 * ONE_MINUTE; // 5 minutes in the future
+      const futureCandle = generateSyntheticCandle(symbol, futureTimestamp);
+      result.push([futureCandle.start, futureCandle.open, futureCandle.high, futureCandle.low, futureCandle.close, futureCandle.volume]);
+    }
+
+    // If emitWithGaps is true, skip every 3rd candle to simulate missing candles/gaps
+    if (MockCCXTExchange.emitWithGaps) {
+      return result.filter((_, index) => (index + 1) % 3 !== 0);
+    }
+
+    return result;
   }
+
+  /**
+   * Simulates realtime candle streaming via polling.
+   * Uses a small polling interval for accelerated E2E testing.
+   */
+  onNewCandle(symbol: string, callback: (symbol: string, candle: any) => void): () => void {
+    let candleIndex = 0;
+    // Start from current time, aligned to minute boundary (real 60s intervals for timestamps)
+    const startTime = Math.floor(Date.now() / 60000) * 60000;
+
+    // Use static pollingInterval for testable timing control
+    const POLLING_INTERVAL = MockCCXTExchange.pollingInterval;
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const emitCandle = () => {
+      // Calculate candle timestamp: real 60s minute intervals for timestamps
+      const candleTimestamp = startTime + candleIndex * 60000;
+      const candle = generateSyntheticCandle(symbol, candleTimestamp);
+      callback(symbol, candle);
+      candleIndex++;
+    };
+
+    // Emit first candle after a small delay, then at POLLING_INTERVAL intervals
+    const timeoutId = setTimeout(() => {
+      emitCandle();
+      intervalId = setInterval(emitCandle, POLLING_INTERVAL);
+    }, POLLING_INTERVAL);
+
+    // Return unsubscribe function
+    return () => {
+      clearTimeout(timeoutId);
+      if (intervalId) clearInterval(intervalId);
+    };
+  }
+
+  public static mockTrades: any[] = [];
 
   // Private API mocks
   async fetchMyTrades(_symbol: string) {
-    return [];
+    return MockCCXTExchange.mockTrades;
   }
   async fetchBalance() {
     return {
       USDT: { free: 10000, used: 0, total: 10000 },
       BTC: { free: 1, used: 0, total: 1 },
       ETH: { free: 10, used: 0, total: 10 },
+      LTC: { free: 10, used: 0, total: 10 },
     };
+  }
+
+  async createOrder(symbol: string, type: string, side: string, amount: number, price?: number) {
+    if (MockCCXTExchange.shouldThrowError || MockCCXTExchange.shouldThrowOnCreateOrder) {
+      throw new Error('Simulated Network Error');
+    }
+
+    const id = Math.random().toString(36).substring(7);
+    const timestamp = Date.now();
+    if (MockCCXTExchange.simulateOpenOrders) {
+      return {
+        id,
+        symbol,
+        type,
+        side,
+        amount,
+        price: price || 0,
+        cost: (price || 0) * amount,
+        status: 'open',
+        timestamp,
+        datetime: new Date(timestamp).toISOString(),
+        filled: 0,
+        remaining: amount,
+        fee: undefined, // Fee not charged yet
+        info: {},
+      };
+    }
+
+    const trade = {
+      id: Math.random().toString(36).substring(7),
+      order: id,
+      symbol,
+      side,
+      amount,
+      price: price || 100, // Default price if market order
+      cost: (price || 100) * amount,
+      fee: { currency: 'USDT', cost: 0.1, rate: 0.001 },
+      timestamp,
+      datetime: new Date(timestamp).toISOString(),
+    };
+    MockCCXTExchange.mockTrades.push(trade);
+
+    return {
+      id,
+      symbol,
+      type,
+      side,
+      amount,
+      price: price || 0,
+      cost: (price || 0) * amount,
+      status: 'closed',
+      timestamp,
+      datetime: new Date(timestamp).toISOString(),
+      filled: amount,
+      remaining: 0,
+      fee: { currency: 'USDT', cost: 0.1, rate: 0.001 },
+      info: {},
+    };
+  }
+
+  async cancelOrder(id: string, symbol: string) {
+    return {
+      id,
+      symbol,
+      status: 'canceled',
+      timestamp: Date.now(),
+      datetime: new Date().toISOString(),
+      info: {},
+    };
+  }
+
+  async fetchOrder(id: string, symbol: string) {
+    return {
+      id,
+      symbol,
+      status: 'closed',
+      timestamp: Date.now(),
+      datetime: new Date().toISOString(),
+      amount: 1,
+      filled: 1,
+      remaining: 0,
+      price: 100,
+      cost: 100,
+      type: 'limit',
+      side: 'buy',
+      info: {},
+    };
+  }
+
+  async fetchOpenOrders(_symbol: string) {
+    return [];
   }
 }

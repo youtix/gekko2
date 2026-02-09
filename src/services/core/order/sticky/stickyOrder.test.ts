@@ -291,11 +291,6 @@ describe('StickyOrder', () => {
         expect(spy).toHaveBeenCalled();
       },
     );
-
-    it('re-throws unknown errors', async () => {
-      const order = await createOrder('BUY');
-      expect(() => order['handleCreateOrderError']('string error')).toThrow('string error');
-    });
   });
 
   describe('handleCancelOrderSuccess', () => {

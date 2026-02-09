@@ -40,6 +40,12 @@ class Injecter {
     }
     return this.exchangeInstance;
   }
+
+  /** Reset all singleton instances. Use only in tests. */
+  public reset() {
+    this.storageInstance = undefined;
+    this.exchangeInstance = undefined;
+  }
 }
 
 export const inject = new Injecter();

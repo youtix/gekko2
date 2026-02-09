@@ -1,5 +1,0 @@
-- [ ] Candle Writer => Bulk Add of candles bucket
-- [ ] Trader => in synchronize function, we can optimize the portfolio and balance emit to avoid to call events if the change is very small
-- [ ] Performance reporter => implement more metrics from report
-- [ ] Portfolio analyzer => Implement TODOs
-- [ ] Is timeframe mandatory for importer?
