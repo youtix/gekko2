@@ -155,14 +155,31 @@ describe('EventSubscriber', () => {
       };
     };
     const onOrderCompleted = (p: EventSubscriber, overrides = {}) => p.onOrderCompleted([makeOrderCompletedEvent(overrides)]);
+    const onRoundtripCompleted = (p: EventSubscriber) =>
+      p.onRoundtripCompleted([
+        {
+          id: 1,
+          entryAt: 1000,
+          entryPrice: 100,
+          entryEquity: 1000,
+          exitAt: 2000,
+          exitPrice: 110,
+          exitEquity: 1100,
+          duration: 1000,
+          maxAdverseExcursion: 0,
+          profit: 10,
+          pnl: 100,
+        },
+      ]);
     it.each`
-      name                | handler
-      ${'strat_info'}     | ${onStrategyInfo}
-      ${'strat_create'}   | ${onStrategyCreateOrder}
-      ${'order_init'}     | ${onOrderInitiated}
-      ${'order_cancel'}   | ${onOrderCanceled}
-      ${'order_error'}    | ${onOrderErrored}
-      ${'order_complete'} | ${onOrderCompleted}
+      name                    | handler
+      ${'strat_info'}         | ${onStrategyInfo}
+      ${'strat_create'}       | ${onStrategyCreateOrder}
+      ${'order_init'}         | ${onOrderInitiated}
+      ${'order_cancel'}       | ${onOrderCanceled}
+      ${'order_error'}        | ${onOrderErrored}
+      ${'order_complete'}     | ${onOrderCompleted}
+      ${'roundtrip_complete'} | ${onRoundtripCompleted}
     `('sends message only when subscribed for $name', ({ name, handler }) => {
       fakeBot.sendMessage.mockReset();
       handler(plugin);
@@ -257,6 +274,7 @@ sub_order_init - Notify on order initiation
 sub_order_cancel - Notify on order cancellation
 sub_order_error - Notify on order error
 sub_order_complete - Notify on order completion
+sub_roundtrip_complete - Notify on roundtrip completion
 subscribe_all - Subscribe to all notifications
 unsubscribe_all - Unsubscribe from all notifications
 subscriptions - View current subscriptions

@@ -1,11 +1,20 @@
 import { AdviceOrder } from '@models/advice.types';
-import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
+import {
+  CandleBucket,
+  OrderCanceledEvent,
+  OrderCompletedEvent,
+  OrderErroredEvent,
+  OrderInitiatedEvent,
+  RoundTrip,
+} from '@models/event.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { TradingPair } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { toISOString } from '@utils/date/date.utils';
+import { round } from '@utils/math/round.utils';
 import { getAssetBalance } from '@utils/portfolio/portfolio.utils';
+import { formatDuration, intervalToDuration } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
@@ -33,6 +42,7 @@ export class EventSubscriber extends Plugin {
           'sub_order_cancel - Notify on order cancellation',
           'sub_order_error - Notify on order error',
           'sub_order_complete - Notify on order completion',
+          'sub_roundtrip_complete - Notify on roundtrip completion',
           'subscribe_all - Subscribe to all notifications',
           'unsubscribe_all - Unsubscribe from all notifications',
           'subscriptions - View current subscriptions',
@@ -187,6 +197,29 @@ export class EventSubscriber extends Plugin {
       payloads.map(id => {
         if (!this.subscriptions.has('strat_cancel')) return;
         const message = ['Strategy requested order cancellation', `Order Id: ${id}`, `At time: ${toISOString(Date.now())}`].join('\n');
+        this.bot.sendMessage(message);
+      }),
+    );
+  }
+
+  public async onRoundtripCompleted(payloads: RoundTrip[]) {
+    await Promise.all(
+      payloads.map(roundtrip => {
+        if (!this.subscriptions.has('roundtrip_complete')) return;
+        const { pnl, profit, duration, entryPrice, exitPrice, maxAdverseExcursion, exitAt } = roundtrip;
+
+        const durationStr = formatDuration(intervalToDuration({ start: 0, end: duration }));
+        const message = [
+          'Roundtrip completed',
+          `PnL: ${round(pnl, 2)}`,
+          `Profit: ${round(profit, 2)}%`,
+          `Duration: ${durationStr}`,
+          `Entry Price: ${entryPrice}`,
+          `Exit Price: ${exitPrice}`,
+          `Max Adverse Excursion: ${round(maxAdverseExcursion, 2)}%`,
+          `At time: ${toISOString(exitAt)}`,
+          '------',
+        ].join('\n');
         this.bot.sendMessage(message);
       }),
     );
