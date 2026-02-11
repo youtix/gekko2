@@ -9,12 +9,8 @@ export class MockCCXTExchange {
   public static emitDuplicates: boolean = false;
   /** When true, fetchOHLCV will include a candle with a future timestamp (> Date.now()) */
   public static emitFutureCandles: boolean = false;
-  /** When true, fetchOHLCV will skip every 3rd candle to simulate missing candles/gaps */
-  public static emitWithGaps: boolean = false;
   /** When true, createOrder will return 'open' status and not fill the order immediately */
   public static simulateOpenOrders: boolean = false;
-  /** Polling interval for onNewCandle (ms). Set by tests for accelerated timing. */
-  public static pollingInterval: number = 60000;
 
   public id = 'binance';
   public name = 'binance';
@@ -133,17 +129,8 @@ export class MockCCXTExchange {
   }
 
   async fetchOHLCV(symbol: string, timeframe: string, since: number, limit: number) {
-    // console.log(`[MockCCXT] fetchOHLCV ${symbol} since ${since} limit ${limit}`);
+    if (MockCCXTExchange.shouldThrowError) throw new Error('Simulated Network Error');
 
-    if (MockCCXTExchange.shouldThrowError) {
-      throw new Error('Simulated Network Error');
-    }
-
-    // Basic validation of mapped implementation
-    if (timeframe !== '1m') {
-      // E2E only strictly testing 1m candles for now based on spec
-      // But we can generate others if needed.
-    }
     const candles = generateSyntheticHistory(symbol, since || Date.now() - limit * ONE_MINUTE, limit || 100);
 
     // Filter out gaps logic
@@ -158,61 +145,22 @@ export class MockCCXTExchange {
     });
 
     // Map objects back to array format [timestamp, open, high, low, close, volume]
-    const result = filteredCandles.map(c => [c.start, c.open, c.high, c.low, c.close, c.volume]);
+    let result = filteredCandles.map(c => [c.start, c.open, c.high, c.low, c.close, c.volume]);
 
     // If emitDuplicates is true, duplicate each candle (simulating reconnection overlap)
-    if (MockCCXTExchange.emitDuplicates) {
-      return result.flatMap(candle => [candle, candle]);
-    }
+    // if (MockCCXTExchange.emitDuplicates) return result.flatMap(candle => [candle, candle]);
 
     // If emitFutureCandles is true, add a candle with a future timestamp
     if (MockCCXTExchange.emitFutureCandles) {
-      const futureTimestamp = Date.now() + 5 * ONE_MINUTE; // 5 minutes in the future
+      const futureTimestamp = Date.now() + 5 * ONE_MINUTE;
       const futureCandle = generateSyntheticCandle(symbol, futureTimestamp);
-      result.push([futureCandle.start, futureCandle.open, futureCandle.high, futureCandle.low, futureCandle.close, futureCandle.volume]);
-    }
-
-    // If emitWithGaps is true, skip every 3rd candle to simulate missing candles/gaps
-    if (MockCCXTExchange.emitWithGaps) {
-      return result.filter((_, index) => (index + 1) % 3 !== 0);
+      result = [
+        [futureCandle.start, futureCandle.open, futureCandle.high, futureCandle.low, futureCandle.close, futureCandle.volume],
+        ...result,
+      ];
     }
 
     return result;
-  }
-
-  /**
-   * Simulates realtime candle streaming via polling.
-   * Uses a small polling interval for accelerated E2E testing.
-   */
-  onNewCandle(symbol: string, callback: (symbol: string, candle: any) => void): () => void {
-    let candleIndex = 0;
-    // Start from current time, aligned to minute boundary (real 60s intervals for timestamps)
-    const startTime = Math.floor(Date.now() / 60000) * 60000;
-
-    // Use static pollingInterval for testable timing control
-    const POLLING_INTERVAL = MockCCXTExchange.pollingInterval;
-
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-
-    const emitCandle = () => {
-      // Calculate candle timestamp: real 60s minute intervals for timestamps
-      const candleTimestamp = startTime + candleIndex * 60000;
-      const candle = generateSyntheticCandle(symbol, candleTimestamp);
-      callback(symbol, candle);
-      candleIndex++;
-    };
-
-    // Emit first candle after a small delay, then at POLLING_INTERVAL intervals
-    const timeoutId = setTimeout(() => {
-      emitCandle();
-      intervalId = setInterval(emitCandle, POLLING_INTERVAL);
-    }, POLLING_INTERVAL);
-
-    // Return unsubscribe function
-    return () => {
-      clearTimeout(timeoutId);
-      if (intervalId) clearInterval(intervalId);
-    };
   }
 
   public static mockTrades: any[] = [];
@@ -221,6 +169,7 @@ export class MockCCXTExchange {
   async fetchMyTrades(_symbol: string) {
     return MockCCXTExchange.mockTrades;
   }
+
   async fetchBalance() {
     return {
       USDT: { free: 10000, used: 0, total: 10000 },

@@ -118,4 +118,12 @@ export class HistoricalCandleStream extends Readable {
   pushCandle(candle: Candle): void {
     this.push({ symbol: this.symbol, candle });
   }
+
+  _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+    try {
+      this.heart.stop();
+    } finally {
+      callback(error);
+    }
+  }
 }

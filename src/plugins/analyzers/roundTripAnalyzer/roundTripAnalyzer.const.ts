@@ -1,7 +1,7 @@
 import { TradingReport } from './roundTrip.types';
 
 /** Plugin name constant to avoid minification issues with class.name */
-export const PLUGIN_NAME = 'PerformanceAnalyzer';
+export const PLUGIN_NAME = 'RoundTripAnalyzer';
 
 /** Empty trading report for zero-trade scenarios */
 export const EMPTY_TRADING_REPORT: TradingReport = {

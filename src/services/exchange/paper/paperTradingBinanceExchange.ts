@@ -1,4 +1,3 @@
-import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
@@ -89,10 +88,6 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
 
   public async fetchTicker(symbol: TradingPair) {
     return this.realExchange.fetchTicker(symbol);
-  }
-
-  public onNewCandle(symbol: TradingPair, onNewCandle: (symbol: TradingPair, candle: Candle | undefined) => void) {
-    return this.realExchange.onNewCandle(symbol, onNewCandle);
   }
 
   public getMarketData(symbol: TradingPair): MarketData {

@@ -109,7 +109,7 @@ describe('PortfolioAnalyzer', () => {
       const bucket1 = new Map() as CandleBucket;
       bucket1.set('BTC/USDT', { start: 1000, open: 100, high: 100, low: 100, close: 100, volume: 1 });
       bucket1.set('ETH/USDT', { start: 1000, open: 10, high: 10, low: 10, close: 10, volume: 1 });
-      (analyzer as any).onStrategyWarmupCompleted(bucket1);
+      (analyzer as any).onStrategyWarmupCompleted([bucket1]);
       (analyzer as any).processOneMinuteBucket(bucket1);
 
       // 2. Initial Portfolio
@@ -179,10 +179,12 @@ describe('PortfolioAnalyzer', () => {
       updateAssetBalance(portfolio, 'USDT', { total: 1000, free: 1000, used: 0 });
 
       // Action
-      analyzer.onOrderCompleted({
-        order: { orderExecutionDate: 123456789 } as any,
-        exchange: { portfolio } as any,
-      });
+      analyzer.onOrderCompleted([
+        {
+          order: { orderExecutionDate: 123456789 } as any,
+          exchange: { portfolio } as any,
+        },
+      ]);
 
       expect(emitSpy).toHaveBeenCalledWith(EQUITY_SNAPSHOT_EVENT, {
         date: 123456789,
@@ -194,10 +196,12 @@ describe('PortfolioAnalyzer', () => {
       analyzer['warmupCompleted'] = false;
       const portfolio: Portfolio = createEmptyPortfolio();
 
-      analyzer.onOrderCompleted({
-        order: { orderExecutionDate: 123456789 } as any,
-        exchange: { portfolio } as any,
-      });
+      analyzer.onOrderCompleted([
+        {
+          order: { orderExecutionDate: 123456789 } as any,
+          exchange: { portfolio } as any,
+        },
+      ]);
 
       expect(emitSpy).not.toHaveBeenCalledWith(EQUITY_SNAPSHOT_EVENT, expect.anything());
     });
@@ -210,7 +214,7 @@ describe('PortfolioAnalyzer', () => {
 
       expect((analyzer as any).warmupCompleted).toBe(false);
 
-      analyzer.onStrategyWarmupCompleted(bucket);
+      analyzer.onStrategyWarmupCompleted([bucket]);
 
       expect((analyzer as any).warmupCompleted).toBe(true);
       expect((analyzer as any).startBenchmarkPrice).toBe(12345);
@@ -220,7 +224,7 @@ describe('PortfolioAnalyzer', () => {
     it('should warn if benchmark candle is missing', () => {
       const bucket = new Map() as CandleBucket;
 
-      analyzer.onStrategyWarmupCompleted(bucket);
+      analyzer.onStrategyWarmupCompleted([bucket]);
 
       expect(warning).toHaveBeenCalledWith('portfolio analyzer', expect.stringContaining('Missing benchmark candle'));
       expect((analyzer as any).startBenchmarkPrice).toBe(0);

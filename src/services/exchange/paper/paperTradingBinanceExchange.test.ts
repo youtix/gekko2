@@ -111,12 +111,6 @@ describe('PaperTradingBinanceExchange', () => {
       exchange.getMarketData('BTC/USDT');
       expect(CCXTExchange.prototype.getMarketData).toHaveBeenCalledWith('BTC/USDT');
     });
-
-    it('onNewCandle delegates to real exchange', () => {
-      const callback = vi.fn();
-      exchange.onNewCandle('BTC/USDT', callback);
-      expect(CCXTExchange.prototype.onNewCandle).toHaveBeenCalledWith('BTC/USDT', callback);
-    });
   });
 
   describe('Authenticated Operations (DummyCentralizedExchange)', () => {

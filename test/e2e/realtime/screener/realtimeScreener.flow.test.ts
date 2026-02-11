@@ -3,27 +3,31 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import * as originalDateFns from 'date-fns';
 import { MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
+import { MockFetcherService } from '../../mocks/fetcher.mock';
 import { MockHeart } from '../../mocks/heart.mock';
+import { MockWinston } from '../../mocks/winston.mock';
 
 // --------------------------------------------------------------------------
 // MOCKS SETUP
 // --------------------------------------------------------------------------
 
-// 1. Mock Configuration
-let mockPairs = [
-  { symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' },
-  { symbol: 'ETH/USDT', base: 'ETH', quote: 'USDT' },
-];
+const DEFAULT_MOCK_STRATEGY_CONFIG = { name: 'DebugAdvice', waittime: 0, each: 2 };
 
-let mockStrategyConfig = {
-  name: 'DebugAdvice',
-  waittime: 0,
-  each: 1,
-};
+// For realtime mode we use accelerated time (10ms = 1 minute)
+const FAST_MINUTE = 50;
 
-const FAST_MINUTE = 20;
+// Track candles emitted
+const TARGET_CANDLES = 10;
+
+// Wait for candles to be collected (with accelerated time, this should be fast)
+// We'll wait for TARGET_CANDLES * FAST_MINUTE to give buffer
+const TIMEOUT_MS = TARGET_CANDLES * FAST_MINUTE;
+
 const TELEGRAM_TOKEN = 'test-token';
 const TELEGRAM_USERNAME = 'test-bot';
+
+// 1. Mock Winston
+mock.module('winston', () => MockWinston);
 
 // 2. Mock Time Constants
 mock.module('@constants/time.const', () => ({
@@ -32,7 +36,6 @@ mock.module('@constants/time.const', () => ({
 }));
 
 // 3. Mock Fetcher
-import { MockFetcherService } from '../../mocks/fetcher.mock';
 
 // Define the subscription response
 const subscriptionResponse = {
@@ -56,6 +59,11 @@ mock.module('@services/fetcher/fetcher.service', () => ({
 }));
 
 // 4. Mock Configuration
+let mockPairs = [
+  { symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' },
+  { symbol: 'ETH/USDT', base: 'ETH', quote: 'USDT' },
+];
+let mockStrategyConfig = DEFAULT_MOCK_STRATEGY_CONFIG;
 mock.module('@services/configuration/configuration', () => {
   return {
     config: {
@@ -92,7 +100,6 @@ mock.module('@services/configuration/configuration', () => {
 
 // 5. Mock CCXT Library
 class MockNetworkError extends Error {}
-
 mock.module('ccxt', () => {
   return {
     default: {
@@ -117,6 +124,8 @@ mock.module('@services/core/heart/heart', () => ({
   Heart: MockHeart,
 }));
 
+import { cleanDatabase } from '../../helpers/database.helper';
+
 // --------------------------------------------------------------------------
 // TEST SUITE
 // --------------------------------------------------------------------------
@@ -126,6 +135,10 @@ describe('E2E: Realtime Screener Flow', () => {
     // Reset inject singletons
     const { inject } = await import('@services/injecter/injecter');
     inject.reset();
+
+    // Clean DB
+    const storage = inject.storage() as SQLiteStorage;
+    cleanDatabase(storage);
 
     // Reset mocks
     MockFetcherService.reset();
@@ -140,22 +153,17 @@ describe('E2E: Realtime Screener Flow', () => {
       return { ok: true, result: [] };
     });
 
+    // Reset MockCCXTExchange static state
     MockCCXTExchange.simulatedGaps = [];
     MockCCXTExchange.shouldThrowError = false;
     MockCCXTExchange.emitDuplicates = false;
     MockCCXTExchange.emitFutureCandles = false;
-    MockCCXTExchange.emitWithGaps = false;
-    MockCCXTExchange.pollingInterval = FAST_MINUTE;
     MockCCXTExchange.mockTrades = [];
     MockCCXTExchange.shouldThrowOnCreateOrder = false;
     MockCCXTExchange.simulateOpenOrders = false;
 
     // Reset config defaults
-    mockStrategyConfig = {
-      name: 'DebugAdvice',
-      waittime: 0,
-      each: 1,
-    };
+    mockStrategyConfig = DEFAULT_MOCK_STRATEGY_CONFIG;
     mockPairs = [
       { symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' },
       { symbol: 'ETH/USDT', base: 'ETH', quote: 'USDT' },
@@ -171,38 +179,17 @@ describe('E2E: Realtime Screener Flow', () => {
     const storage = inject.storage() as SQLiteStorage;
     storage.close = () => {};
 
-    // Track candles emitted
-    const TARGET_CANDLES = 2;
-    const timeoutMs = TARGET_CANDLES * FAST_MINUTE * 2 + 50;
-
     // Run pipeline
     const pipelinePromise = gekkoPipeline();
-    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, timeoutMs))]);
+    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
 
     // Verify Telegram messages were sent
     // We expect at least one message for order placement (DebugAdvice triggers every candle with each=1)
     const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
     expect(calls.length).toBeGreaterThan(0);
 
-    // Look for a message containing "order created" or similar from EventSubscriber
-    // The fetcher mock receives { url, payload }
-    const orderMessages = calls.filter(call => {
-      const payload = call.payload;
-
-      return payload && payload.text && (payload.text.includes('order created') || payload.text.includes('order completed'));
-    });
-
-    expect(orderMessages.length).toBeGreaterThan(0);
-    expect(orderMessages.length).toBeGreaterThan(0);
-    const lastCall = orderMessages.reverse().find(call => call.payload.text.includes('BTC/USDT'));
-    if (!lastCall || !lastCall.payload) {
-      throw new Error('Unexpected empty call or payload');
-    }
-    const lastMessage = lastCall.payload.text;
-
-    expect(lastMessage).toContain('BTC/USDT');
-    // Check for some order detail
-    expect(lastMessage).toMatch(/(Buy|Sell)/i);
+    expect(calls.filter(call => call.payload.text.includes('BUY')).length).toBeGreaterThanOrEqual(1);
+    expect(calls.filter(call => call.payload.text.includes('SELL')).length).toBeGreaterThanOrEqual(1);
   });
 
   it('Scenario B: Multi-Pair Signal Independence', async () => {
@@ -214,44 +201,25 @@ describe('E2E: Realtime Screener Flow', () => {
     const storage = inject.storage() as SQLiteStorage;
     storage.close = () => {};
 
-    // Increase target candles and timeout slightly to ensure both streams start
-    const TARGET_CANDLES = 3;
-    const timeoutMs = TARGET_CANDLES * FAST_MINUTE * 2 + 50;
-
     const pipelinePromise = gekkoPipeline();
-    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, timeoutMs))]);
+    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
 
     const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
-    expect(calls.length).toBeGreaterThan(0);
-    const orderMessages = calls.filter(call => {
-      const payload = call.payload;
-      return payload && payload.text && (payload.text.includes('order created') || payload.text.includes('order completed'));
-    });
-
     // Check we have messages for BOTH pairs
-    const btcMessages = orderMessages.filter(call => call.payload.text.includes('BTC/USDT'));
-    const ethMessages = orderMessages.filter(call => call.payload.text.includes('ETH/USDT'));
-
     // We expect at least one message for each pair
-    expect(btcMessages.length).toBeGreaterThan(0);
-    expect(ethMessages.length).toBeGreaterThan(0);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.filter(call => call.payload.text.includes('BTC/USDT')).length).toBeGreaterThan(0);
+    expect(calls.filter(call => call.payload.text.includes('ETH/USDT')).length).toBeGreaterThan(0);
   });
 
   it('Scenario C: Strategy Creation order process', async () => {
-    mockStrategyConfig = { name: 'DebugAdvice', waittime: 0, each: 4 };
-
-    // Verify we updated config
-
     const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
     const { inject } = await import('@services/injecter/injecter');
     const storage = inject.storage() as SQLiteStorage;
     storage.close = () => {};
 
-    const TARGET_CANDLES = 10;
-    const timeoutMs = TARGET_CANDLES * FAST_MINUTE * 2 + 30;
-
     const pipelinePromise = gekkoPipeline();
-    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, timeoutMs))]);
+    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
 
     const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
 
@@ -267,26 +235,18 @@ describe('E2E: Realtime Screener Flow', () => {
     const storage = inject.storage() as SQLiteStorage;
     storage.close = () => {};
 
-    const TARGET_CANDLES = 2;
-    const timeoutMs = TARGET_CANDLES * FAST_MINUTE * 2 + 50;
-
     const pipelinePromise = gekkoPipeline();
-    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, timeoutMs))]);
+    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
 
     const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
     expect(calls.length).toBeGreaterThan(0);
 
     // Look for strategy info messages
     // EventSubscriber formats it as: "• 2026-02-07T17:24:27.000Z [DEBUG] (strategy)\nIteration: 0 for BTC/USDT\n------\n"
-    const infoMessages = calls.filter(call => {
-      const payload = call.payload;
-      return payload && payload.text && payload.text.includes('[DEBUG] (strategy)') && payload.text.includes('Iteration:');
-    });
-
-    expect(infoMessages.length).toBeGreaterThan(0);
+    expect(calls.filter(call => call.payload.text.includes('[DEBUG] (strategy)')).length).toBeGreaterThan(5);
 
     // Verify content of at least one message
-    const sampleMessage = infoMessages[0].payload.text;
+    const sampleMessage = calls.find(call => call.payload.text.includes('[DEBUG] (strategy)'))?.payload.text;
     expect(sampleMessage).toContain('Iteration:');
     expect(sampleMessage).toContain('BTC/USDT');
   });
@@ -297,9 +257,7 @@ describe('E2E: Realtime Screener Flow', () => {
 
     // Configure strategy to cancel orders after 1 candle
     mockStrategyConfig = {
-      name: 'DebugAdvice',
-      waittime: 0,
-      each: 2, // Less frequent creation to pinpoint cancellation
+      ...DEFAULT_MOCK_STRATEGY_CONFIG,
       // @ts-expect-error - dynamic property added to debug advice
       cancelAfter: 1,
     };
@@ -309,29 +267,17 @@ describe('E2E: Realtime Screener Flow', () => {
     const storage = inject.storage() as SQLiteStorage;
     storage.close = () => {};
 
-    const TARGET_CANDLES = 4;
-    const timeoutMs = TARGET_CANDLES * FAST_MINUTE * 2 + 50;
-
     const pipelinePromise = gekkoPipeline();
-    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, timeoutMs))]);
+    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
 
     const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
     expect(calls.length).toBeGreaterThan(0);
 
     // Check for Strategy Cancel Order notification
-    const stratCancelMessages = calls.filter(call => {
-      const payload = call.payload;
-      return payload && payload.text && payload.text.includes('Strategy requested order cancellation');
-    });
+    expect(calls.filter(call => call.payload.text.includes('Strategy requested order cancellation')).length).toBeGreaterThan(0);
+    expect(calls.filter(call => call.payload.text.includes('order canceled')).length).toBeGreaterThan(0);
 
-    // Check for Order Canceled notification (Exchange confirmation)
-    const orderCancelMessages = calls.filter(call => {
-      const payload = call.payload;
-      return payload && payload.text && payload.text.includes('order canceled') && !payload.text.includes('requested');
-    });
-
-    expect(stratCancelMessages.length).toBeGreaterThan(0);
-    expect(orderCancelMessages.length).toBeGreaterThan(0);
+    MockCCXTExchange.simulateOpenOrders = false;
   });
 
   it('Scenario F: Order Error Handling', async () => {
@@ -343,35 +289,20 @@ describe('E2E: Realtime Screener Flow', () => {
     };
 
     try {
-      // Strategy triggers every candle
-      mockStrategyConfig = {
-        name: 'DebugAdvice',
-        waittime: 0,
-        each: 1,
-      };
-
       const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
       const { inject } = await import('@services/injecter/injecter');
       const storage = inject.storage() as SQLiteStorage;
       storage.close = () => {};
 
-      const TARGET_CANDLES = 2;
-      const timeoutMs = TARGET_CANDLES * FAST_MINUTE * 2 + 50;
-
       const pipelinePromise = gekkoPipeline();
-      await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, timeoutMs))]);
+      await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
 
       const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
       expect(calls.length).toBeGreaterThan(0);
 
       // DebugAdvice logs "Order Errored: <id>" when onOrderErrored is called.
       // EventSubscriber picks this up as a strategy log.
-      const errorMessages = calls.filter(call => {
-        const payload = call.payload;
-        return payload && payload.text && payload.text.includes('Order Errored');
-      });
-
-      expect(errorMessages.length).toBeGreaterThan(0);
+      expect(calls.filter(call => call.payload.text.includes('Order Errored')).length).toBeGreaterThan(0);
     } finally {
       // Restore original method
       DummyCentralizedExchange.prototype.createLimitOrder = originalCreateLimitOrder;

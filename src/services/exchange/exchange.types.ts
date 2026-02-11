@@ -70,7 +70,6 @@ export interface Exchange {
   cancelOrder(symbol: TradingPair, id: string): Promise<OrderState>;
   loadMarkets(): Promise<void>;
   fetchOrder(symbol: TradingPair, id: string): Promise<OrderState>;
-  onNewCandle(symbol: TradingPair, onNewCandle: (symbol: TradingPair, candle: Candle | undefined) => void): () => void;
 }
 
 export type DummyExchange = Exchange & { processOneMinuteBucket: (bucket: CandleBucket) => Promise<void> };

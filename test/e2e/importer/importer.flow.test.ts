@@ -1,13 +1,17 @@
 import { ONE_MINUTE } from '@constants/time.const';
 import type { SQLiteStorage } from '@services/storage/sqlite.storage';
-import { describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { first, last } from 'lodash-es';
 import { generateSyntheticCandle } from '../fixtures/syntheticData';
 import { MockCCXTExchange } from '../mocks/ccxt.mock';
+import { MockWinston } from '../mocks/winston.mock';
 
 // --------------------------------------------------------------------------
 // MOCKS SETUP
 // --------------------------------------------------------------------------
+
+// 0. Mock Winston
+mock.module('winston', () => MockWinston);
 
 // 1. Mock Configuration
 const START_TIME = 1700000000000 - (1700000000000 % ONE_MINUTE); // Minute-aligned start time
@@ -90,7 +94,6 @@ mock.module('@services/configuration/configuration', () => {
 
 // 2. Mock CCXT Library
 class MockNetworkError extends Error {}
-
 mock.module('ccxt', () => {
   return {
     // Default export required for some import styles
@@ -104,11 +107,33 @@ mock.module('ccxt', () => {
   };
 });
 
+import { cleanDatabase } from '../helpers/database.helper';
+
 // --------------------------------------------------------------------------
 // TEST SUITE
 // --------------------------------------------------------------------------
 
 describe('E2E: Importer (Synthetic)', () => {
+  beforeEach(async () => {
+    // Reset inject singletons to get fresh storage/exchange for each test
+    const { inject } = await import('@services/injecter/injecter');
+    inject.reset();
+
+    // Clean DB
+    const storage = inject.storage() as SQLiteStorage;
+    cleanDatabase(storage);
+    storage.close = () => {}; // Prevent closure so assertions can run
+
+    // Reset MockCCXTExchange static state
+    MockCCXTExchange.simulatedGaps = [];
+    MockCCXTExchange.shouldThrowError = false;
+    MockCCXTExchange.emitDuplicates = false;
+    MockCCXTExchange.emitFutureCandles = false;
+    MockCCXTExchange.mockTrades = [];
+    MockCCXTExchange.shouldThrowOnCreateOrder = false;
+    MockCCXTExchange.simulateOpenOrders = false;
+  });
+
   it('Scenario A: Multi-Asset Ingestion & Persistence', async () => {
     // Reset config for Scenario A (default)
     mockPairs = [
@@ -124,9 +149,7 @@ describe('E2E: Importer (Synthetic)', () => {
     // 1. Run the Pipeline
     // Monkey-patch storage.close to prevent closure before verification
     const storage = inject.storage() as SQLiteStorage;
-    storage.close = () => {
-      // Keep DB open for verification
-    };
+    storage.close = () => {};
 
     await gekkoPipeline();
 
@@ -329,7 +352,11 @@ describe('E2E: Importer (Synthetic)', () => {
 
     const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
     const { inject } = await import('@services/injecter/injecter');
+
+    // Re-initialize storage with new mockPairs
+    inject.reset();
     const storage = inject.storage() as SQLiteStorage;
+    storage.close = () => {};
     const db = storage['db'];
 
     await gekkoPipeline();
@@ -357,9 +384,6 @@ describe('E2E: Importer (Synthetic)', () => {
     expect(gapCandleETH.low).toBe(beforeGapETH.close);
     expect(gapCandleETH.close).toBe(beforeGapETH.close);
     expect(gapCandleETH.volume).toBe(0);
-
-    // Cleanup gaps
-    MockCCXTExchange.simulatedGaps = [];
   }, 60000);
 
   it('Scenario H: Total Gap Resilience', async () => {
@@ -379,7 +403,11 @@ describe('E2E: Importer (Synthetic)', () => {
 
     const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
     const { inject } = await import('@services/injecter/injecter');
+
+    // Re-initialize storage with new mockPairs
+    inject.reset();
     const storage = inject.storage() as SQLiteStorage;
+    storage.close = () => {};
     const db = storage['db'];
 
     await gekkoPipeline();
@@ -405,9 +433,6 @@ describe('E2E: Importer (Synthetic)', () => {
     expect(gapCandleBTC.low).toBe(beforeGapBTC.close);
     expect(gapCandleBTC.close).toBe(beforeGapBTC.close);
     expect(gapCandleBTC.volume).toBe(0);
-
-    // Cleanup gaps
-    MockCCXTExchange.simulatedGaps = [];
   }, 60000);
 
   it('Scenario I: Leading Gap Resilience (gap at the start)', async () => {
@@ -449,9 +474,6 @@ describe('E2E: Importer (Synthetic)', () => {
       .query('SELECT count(*) as count FROM candles_BTC_USDT WHERE start >= ? AND start < ?')
       .get(GAP_START, GAP_END) as { count: number };
     expect(gapCandles.count).toBe(0);
-
-    // Cleanup gaps
-    MockCCXTExchange.simulatedGaps = [];
   }, 60000);
 
   it('Scenario J: Trailing Gap Resilience (gap at the end)', async () => {
@@ -495,8 +517,5 @@ describe('E2E: Importer (Synthetic)', () => {
       .query('SELECT count(*) as count FROM candles_BTC_USDT WHERE start >= ? AND start < ?')
       .get(GAP_START, GAP_END) as { count: number };
     expect(gapCandles.count).toBe(0);
-
-    // Cleanup gaps
-    MockCCXTExchange.simulatedGaps = [];
   }, 60000);
 });

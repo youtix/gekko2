@@ -78,11 +78,6 @@ describe('DummyCentralizedExchange', () => {
       await expect(createExchange().loadMarkets()).resolves.toBeUndefined();
     });
 
-    it('onNewCandle returns a noop unsubscribe function', () => {
-      const unsubscribe = createExchange().onNewCandle(SYMBOL, vi.fn());
-      expect(typeof unsubscribe).toBe('function');
-    });
-
     it('getMarketData returns configured market data', () => {
       expect(createExchange().getMarketData(SYMBOL).fee).toEqual({ maker: 0.001, taker: 0.002 });
     });

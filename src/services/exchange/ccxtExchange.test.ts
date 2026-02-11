@@ -1,7 +1,5 @@
-import { ONE_MINUTE } from '@constants/time.const';
 import { GekkoError } from '@errors/gekko.error';
 import { config } from '@services/configuration/configuration';
-import { Heart } from '@services/core/heart/heart';
 import ccxt from 'ccxt';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { CCXTExchange } from './ccxtExchange';
@@ -271,53 +269,6 @@ describe('CCXTExchange', () => {
       (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1', status: 'canceled' });
       expect(await exchange.cancelOrder('BTC/USDT', '1')).toEqual({ id: '1', status: 'canceled' });
       expect(instance.cancelOrder).toHaveBeenCalledWith('1', 'BTC/USDT');
-    });
-  });
-
-  describe('onNewCandle', () => {
-    let exchange: CCXTExchange;
-
-    beforeEach(() => {
-      exchange = new CCXTExchange(binanceConfig);
-    });
-
-    it('sets up heartbeat polling', () => {
-      exchange.onNewCandle('BTC/USDT', vi.fn());
-      expect(Heart).toHaveBeenCalledWith(ONE_MINUTE);
-    });
-
-    it('calls callback when candle is fetched', async () => {
-      const callback = vi.fn();
-      const candle = { start: 1000 };
-      (mapOhlcvToCandles as Mock).mockReturnValue([candle]);
-      const instance = (ccxt as any).binance.mock.instances.at(-1);
-      instance.fetchOHLCV.mockResolvedValue([[1000, 1, 2, 1, 1.5, 100]]);
-
-      exchange.onNewCandle('BTC/USDT', callback);
-      const heartInstance = (Heart as unknown as Mock).mock.instances.at(-1);
-      await (heartInstance as any).on.mock.calls[0][1]();
-
-      expect(callback).toHaveBeenCalledWith('BTC/USDT', candle);
-      expect(instance.fetchOHLCV).toHaveBeenCalledWith('BTC/USDT', expect.anything(), expect.anything(), expect.anything());
-    });
-
-    it('logs error when fetch fails', async () => {
-      const { error } = await import('@services/logger');
-      const instance = (ccxt as any).binance.mock.instances.at(-1);
-      instance.fetchOHLCV.mockRejectedValue(new Error('Network error'));
-
-      exchange.onNewCandle('BTC/USDT', vi.fn());
-      const heartInstance = (Heart as unknown as Mock).mock.instances.at(-1);
-      await (heartInstance as any).on.mock.calls[0][1]();
-
-      expect(error).toHaveBeenCalledWith('exchange', expect.stringContaining('Failed to poll'));
-    });
-
-    it('returns stop function', () => {
-      const stop = exchange.onNewCandle('BTC/USDT', vi.fn());
-      stop();
-      const heartInstance = (Heart as unknown as Mock).mock.instances.at(-1);
-      expect((heartInstance as any).stop).toHaveBeenCalled();
     });
   });
 });

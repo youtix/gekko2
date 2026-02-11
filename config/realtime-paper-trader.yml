@@ -8,10 +8,12 @@ watch:
     candleCount: 365
 
 exchange:
-  name: binance
-  sandbox: true
-  apiKey: # Your key
-  secret: # Your secret
+  name: paper-binance
+  simulationBalance:
+    - assetName: BTC
+      balance: 100
+    - assetName: USDT
+      balance: 300000
 
 strategy:
   name: DEMA

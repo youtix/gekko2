@@ -66,11 +66,6 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public onNewCandle(_symbol: TradingPair, _onNewCandle: (symbol: TradingPair, candle: Candle | undefined) => void): () => void {
-    // Nothing to do because it is impossible to use this exchange in realtime
-    return () => {};
-  }
-
   public async loadMarkets(): Promise<void> {
     // Nothing to do, already done in constructor
   }

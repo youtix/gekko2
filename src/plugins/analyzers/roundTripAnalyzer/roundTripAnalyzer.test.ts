@@ -126,7 +126,7 @@ describe('RoundTripAnalyzer', () => {
   describe('onStrategyWarmupCompleted', () => {
     it('should log warning if candle is missing', () => {
       const bucket = new Map() as CandleBucket;
-      analyzer.onStrategyWarmupCompleted(bucket);
+      analyzer.onStrategyWarmupCompleted([bucket]);
       expect(warning).toHaveBeenCalledWith('roundtrip analyzer', expect.stringContaining('Missing candle'));
       expect(analyzer['warmupCompleted']).toBe(false);
     });
@@ -135,7 +135,7 @@ describe('RoundTripAnalyzer', () => {
       const candle = { start: 1000, close: 50000 } as any;
       const bucket = new Map([['BTC/USDT', candle]]) as CandleBucket;
 
-      analyzer.onStrategyWarmupCompleted(bucket);
+      analyzer.onStrategyWarmupCompleted([bucket]);
 
       expect(analyzer['warmupCompleted']).toBe(true);
       expect(analyzer['dates'].start).toBe(1000);
@@ -152,7 +152,7 @@ describe('RoundTripAnalyzer', () => {
       // Spy on processOneMinuteBucket
       const processSpy = vi.spyOn(analyzer as any, 'processOneMinuteBucket');
 
-      analyzer.onStrategyWarmupCompleted(bucket);
+      analyzer.onStrategyWarmupCompleted([bucket]);
 
       expect(processSpy).toHaveBeenCalledWith(warmupBucket);
     });
@@ -161,7 +161,7 @@ describe('RoundTripAnalyzer', () => {
   describe('onOrderCompleted', () => {
     it('should ignore first order if it is SELL', () => {
       const event = { order: { side: 'SELL' } } as any;
-      analyzer.onOrderCompleted(event);
+      analyzer.onOrderCompleted([event]);
       expect(analyzer['tradeCount']).toBe(0);
     });
 
@@ -173,7 +173,7 @@ describe('RoundTripAnalyzer', () => {
 
       const spy = vi.spyOn(analyzer as any, 'registerRoundtripPart');
 
-      analyzer.onOrderCompleted(event);
+      analyzer.onOrderCompleted([event]);
 
       expect(analyzer['tradeCount']).toBe(1);
       expect(spy).toHaveBeenCalledWith(event);

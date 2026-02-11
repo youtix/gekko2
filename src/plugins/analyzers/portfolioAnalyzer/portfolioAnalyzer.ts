@@ -20,6 +20,7 @@ import {
 import { stdev } from '@utils/math/math.utils';
 import { getAssetBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
+import { first } from 'lodash-es';
 import { Plugin } from '../../plugin';
 import { analyzerSchema } from '../analyzer.schema';
 import { AnalyzerConfig } from '../analyzer.types';
@@ -68,18 +69,26 @@ export class PortfolioAnalyzer extends Plugin {
     if (this.warmupCompleted) this.recordSnapshot(Date.now(), totalValue);
   }
 
-  public onOrderCompleted(event: OrderCompletedEvent): void {
-    // Re-calculate equity and emit snapshot for live dashboards
-    if (!this.warmupCompleted || !this.hasAllPrices()) return;
+  public onOrderCompleted(payloads: OrderCompletedEvent[]): void {
+    for (const { order, exchange } of payloads) {
+      // Re-calculate equity and emit snapshot for live dashboards
+      if (!this.warmupCompleted || !this.hasAllPrices()) return;
 
-    // Use the portfolio from the event which reflects the post-order state
-    const totalValue = this.calculatePortfolioValue(event.exchange.portfolio);
+      // Use the portfolio from the event which reflects the post-order state
+      const totalValue = this.calculatePortfolioValue(exchange.portfolio);
 
-    this.recordSnapshot(event.order.orderExecutionDate, totalValue);
-    this.addDeferredEmit<EquitySnapshot>(EQUITY_SNAPSHOT_EVENT, { date: event.order.orderExecutionDate, totalValue });
+      this.recordSnapshot(order.orderExecutionDate, totalValue);
+      this.addDeferredEmit<EquitySnapshot>(EQUITY_SNAPSHOT_EVENT, { date: order.orderExecutionDate, totalValue });
+    }
   }
 
-  public onStrategyWarmupCompleted(timeframeBucket: CandleBucket): void {
+  public onStrategyWarmupCompleted(timeframeBuckets: CandleBucket[]): void {
+    // Only one warmup event is expected
+    const timeframeBucket = first(timeframeBuckets);
+    if (!timeframeBucket) {
+      warning('portfolio analyzer', 'Missing timeframe bucket during warmup completion.');
+      return;
+    }
     this.warmupCompleted = true;
 
     // Initialize benchmark tracking BTC if available, otherwise use first asset

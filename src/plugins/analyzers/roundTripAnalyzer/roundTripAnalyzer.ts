@@ -20,6 +20,7 @@ import { stdev } from '@utils/math/math.utils';
 import { round } from '@utils/math/round.utils';
 import { calculatePairEquity, getAssetBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
+import { first } from 'lodash-es';
 import { Plugin } from '../../plugin';
 import { analyzerSchema } from '../analyzer.schema';
 import { AnalyzerConfig } from '../analyzer.types';
@@ -75,17 +76,19 @@ export class RoundTripAnalyzer extends Plugin {
 
   // --- BEGIN LISTENERS ---
 
-  public onPortfolioChange(payloads: Portfolio[]): void {
+  public onPortfolioChange(events: Portfolio[]): void {
     // Latest strategy: only process the most recent payload
-    const portfolio = payloads[payloads.length - 1];
+    const portfolio = events[events.length - 1];
     const { total } = calculatePairEquity(portfolio, this.symbol, this.lastPriceUpdate);
     if (!this.start.portfolio) this.start.portfolio = portfolio;
     if (!this.start.equity) this.start.equity = total;
     this.currentEquity = total;
   }
 
-  public onStrategyWarmupCompleted(timeframeBucket: CandleBucket): void {
-    const candle = timeframeBucket.get(this.symbol);
+  public onStrategyWarmupCompleted(timeframeBuckets: CandleBucket[]): void {
+    // Only one warmup event is expected
+    const timeframeBucket = first(timeframeBuckets);
+    const candle = timeframeBucket?.get(this.symbol);
     if (!candle) {
       warning('roundtrip analyzer', `Missing candle for ${this.symbol} during warmup completion.`);
       return;
@@ -96,11 +99,12 @@ export class RoundTripAnalyzer extends Plugin {
     if (this.warmupBucket) this.processOneMinuteBucket(this.warmupBucket);
   }
 
-  public onOrderCompleted(event: OrderCompletedEvent): void {
-    const { order } = event;
-    if (this.tradeCount === 0 && order.side === 'SELL') return;
-    this.tradeCount++;
-    this.registerRoundtripPart(event);
+  public onOrderCompleted(events: OrderCompletedEvent[]): void {
+    for (const event of events) {
+      if (this.tradeCount === 0 && event.order.side === 'SELL') return;
+      this.tradeCount++;
+      this.registerRoundtripPart(event);
+    }
   }
   // --- END LISTENERS ---
 

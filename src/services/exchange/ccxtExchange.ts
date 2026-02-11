@@ -1,4 +1,3 @@
-import { ONE_MINUTE } from '@constants/time.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { OrderSide, OrderState } from '@models/order.types';
@@ -6,12 +5,11 @@ import { Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
-import { Heart } from '@services/core/heart/heart';
-import { debug, error } from '@services/logger';
+import { debug } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { pluralize } from '@utils/string/string.utils';
 import { Exchange as CCXT, MarketInterface } from 'ccxt';
-import { formatDuration, intervalToDuration, startOfMinute, subMinutes } from 'date-fns';
+import { formatDuration, intervalToDuration } from 'date-fns';
 import { first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
 import { binanceExchangeSchema } from './binance/binance.schema';
@@ -35,7 +33,6 @@ type HyperliquidExchangeConfig = z.infer<typeof hyperliquidExchangeSchema>;
 export type CCXTExchangeConfig = BinanceExchangeConfig | HyperliquidExchangeConfig;
 
 export class CCXTExchange implements Exchange {
-  protected heart: Heart;
   protected publicClient: CCXT;
   protected privateClient: CCXT;
   protected exchangeName: string;
@@ -50,7 +47,6 @@ export class CCXTExchange implements Exchange {
     checkMandatoryFeatures(this.publicClient, sandbox);
 
     this.exchangeName = name;
-    this.heart = new Heart(ONE_MINUTE);
   }
 
   getMarketData(symbol: TradingPair): MarketData {
@@ -81,25 +77,6 @@ export class CCXTExchange implements Exchange {
 
   getExchangeName(): string {
     return this.exchangeName;
-  }
-
-  public onNewCandle(symbol: TradingPair, onNewCandle: (symbol: TradingPair, candle: Candle | undefined) => void) {
-    if (!this.heart.isHeartBeating()) {
-      this.heart.on('tick', async () => {
-        try {
-          // Calculate the start of the previous minute to ensure we fetch the last completed candle
-          const from = startOfMinute(subMinutes(Date.now(), 1)).getTime();
-          const candles = await this.fetchOHLCV(symbol, { from, limit: 1 });
-          onNewCandle(symbol, first(candles));
-        } catch (err) {
-          error('exchange', `Failed to poll for new candle: ${err}`);
-        }
-      });
-      // Delay the first tick to align with the next minute
-      const delay = ONE_MINUTE - (Date.now() % ONE_MINUTE);
-      setTimeout(() => this.heart.pump(), delay);
-    }
-    return () => this.heart.stop();
   }
 
   public async loadMarkets() {
