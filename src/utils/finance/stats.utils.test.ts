@@ -8,6 +8,7 @@ import {
   calculateLongestDrawdownDuration,
   calculateMarketReturnPct,
   calculateMaxDrawdown,
+  calculateReturns,
   calculateSharpeRatio,
   calculateSortinoRatio,
   calculateTotalReturnPct,
@@ -399,5 +400,47 @@ describe('calculateLongestDrawdownDuration', () => {
     const copy = JSON.parse(JSON.stringify(samples));
     calculateLongestDrawdownDuration(samples, 1000);
     expect(samples).toEqual(copy);
+  });
+});
+
+describe('calculateReturns', () => {
+  it('should return empty array for fewer than 2 snapshots', () => {
+    expect(calculateReturns([])).toEqual([]);
+    expect(calculateReturns([{ date: 1, totalValue: 100 }])).toEqual([]);
+  });
+
+  it('should calculate returns correctly', () => {
+    const snapshots = [
+      { date: 1, totalValue: 100 },
+      { date: 2, totalValue: 110 }, // +10%
+      { date: 3, totalValue: 99 }, // -10% from 110
+    ];
+    // 110/100 - 1 = 0.1 (10%)
+    // 99/110 - 1 = -0.1 (-10%)
+    const result = calculateReturns(snapshots);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toBeCloseTo(10);
+    expect(result[1]).toBeCloseTo(-10);
+  });
+
+  it('should handle zero previous value (skip invalid returns)', () => {
+    const snapshots = [
+      { date: 1, totalValue: 0 },
+      { date: 2, totalValue: 100 },
+    ];
+    // Should skip calculation where prev is 0
+    expect(calculateReturns(snapshots)).toEqual([]);
+  });
+
+  it('should handle multiple zero values', () => {
+    const snapshots = [
+      { date: 1, totalValue: 100 },
+      { date: 2, totalValue: 0 }, // -100%
+      { date: 3, totalValue: 50 }, // skipped because prev is 0
+    ];
+    // 0/100 - 1 = -1 (-100%)
+    const result = calculateReturns(snapshots);
+    expect(result).toHaveLength(1);
+    expect(result[0]).toBeCloseTo(-100);
   });
 });

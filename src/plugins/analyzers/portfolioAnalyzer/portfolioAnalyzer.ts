@@ -12,6 +12,7 @@ import {
   calculateLongestDrawdownDuration,
   calculateMarketReturnPct,
   calculateMaxDrawdown,
+  calculateReturns,
   calculateSharpeRatio,
   calculateSortinoRatio,
   calculateTotalReturnPct,
@@ -152,7 +153,7 @@ export class PortfolioAnalyzer extends Plugin {
     const annualizedReturnPct = calculateAnnualizedReturnPct(totalReturnPct, Math.max(elapsedYears, Number.EPSILON)); // Avoid div by zero
 
     // Risk Metrics
-    const returns = this.calculateReturns(this.equityCurve);
+    const returns = calculateReturns(this.equityCurve);
     const volatility = stdev(returns);
     const standardDeviation = Number.isNaN(volatility) ? 0 : volatility;
     const downsideDeviation = calculateDownsideDeviation(returns); // Note: this usually expects per-trade profits, but passing periodic returns is an approximation for portfolio view
@@ -201,17 +202,6 @@ export class PortfolioAnalyzer extends Plugin {
   private calculateBenchmarkReturn(): number {
     if (this.startBenchmarkPrice <= 0 || this.endBenchmarkPrice <= 0) return 0;
     return calculateMarketReturnPct(this.endBenchmarkPrice, this.startBenchmarkPrice);
-  }
-
-  // TODO: move to stats utils
-  private calculateReturns(snapshots: EquitySnapshot[]): number[] {
-    const returns: number[] = [];
-    for (let i = 1; i < snapshots.length; i++) {
-      const prev = snapshots[i - 1].totalValue;
-      const curr = snapshots[i].totalValue;
-      if (prev > 0) returns.push(((curr - prev) / prev) * 100);
-    }
-    return returns;
   }
 
   // --- END INTERNALS ---

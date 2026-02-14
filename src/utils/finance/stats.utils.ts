@@ -94,6 +94,22 @@ export const calculateAlpha = (totalReturnPct: number, marketReturnPct: number):
   return totalReturnPct - marketReturnPct;
 };
 
+/**
+ * Calculates the returns for each period based on equity snapshots.
+ *
+ * @param snapshots - Array of equity snapshots
+ * @returns Array of percentage returns
+ */
+export const calculateReturns = (snapshots: EquitySnapshot[]): number[] => {
+  const returns: number[] = [];
+  for (let i = 1; i < snapshots.length; i++) {
+    const prev = snapshots[i - 1].totalValue;
+    const curr = snapshots[i].totalValue;
+    if (prev > 0) returns.push(((curr - prev) / prev) * 100);
+  }
+  return returns;
+};
+
 // ============================================================================
 // EXPOSURE & WIN RATE
 // ============================================================================
