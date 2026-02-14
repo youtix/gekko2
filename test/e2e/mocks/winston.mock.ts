@@ -1,3 +1,12 @@
+import { LogLevel } from '@models/logLevel.types';
+import { Tag } from '@models/tag.types';
+
+export const logStore: any[] = [];
+
+export const clearLogs = () => {
+  logStore.length = 0;
+};
+
 export const MockWinstonLogger = {
   info: () => {},
   warn: () => {},
@@ -5,7 +14,9 @@ export const MockWinstonLogger = {
   debug: () => {},
   verbose: () => {},
   silly: () => {},
-  log: () => {},
+  log: (message: { level: LogLevel; message: string; tag: Tag }) => {
+    logStore.push(message);
+  },
   add: () => {},
   remove: () => {},
   clear: () => {},

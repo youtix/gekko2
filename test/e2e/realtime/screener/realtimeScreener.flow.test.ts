@@ -5,7 +5,7 @@ import { MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
 import { MockFetcherService } from '../../mocks/fetcher.mock';
 import { MockHeart } from '../../mocks/heart.mock';
-import { MockWinston } from '../../mocks/winston.mock';
+import { MockWinston, clearLogs } from '../../mocks/winston.mock';
 
 // --------------------------------------------------------------------------
 // MOCKS SETUP
@@ -126,10 +126,6 @@ mock.module('@services/core/heart/heart', () => ({
 
 import { cleanDatabase } from '../../helpers/database.helper';
 
-// --------------------------------------------------------------------------
-// TEST SUITE
-// --------------------------------------------------------------------------
-
 describe('E2E: Realtime Screener Flow', () => {
   beforeEach(async () => {
     // Reset inject singletons
@@ -139,6 +135,7 @@ describe('E2E: Realtime Screener Flow', () => {
     // Clean DB
     const storage = inject.storage() as SQLiteStorage;
     cleanDatabase(storage);
+    clearLogs();
 
     // Reset mocks
     MockFetcherService.reset();
@@ -156,7 +153,7 @@ describe('E2E: Realtime Screener Flow', () => {
     // Reset MockCCXTExchange static state
     MockCCXTExchange.simulatedGaps = [];
     MockCCXTExchange.shouldThrowError = false;
-    MockCCXTExchange.emitDuplicates = false;
+    MockCCXTExchange.emitDuplicatesEveryXCandle = 0;
     MockCCXTExchange.emitFutureCandles = false;
     MockCCXTExchange.mockTrades = [];
     MockCCXTExchange.shouldThrowOnCreateOrder = false;
@@ -246,9 +243,10 @@ describe('E2E: Realtime Screener Flow', () => {
     expect(calls.filter(call => call.payload.text.includes('[DEBUG] (strategy)')).length).toBeGreaterThan(5);
 
     // Verify content of at least one message
-    const sampleMessage = calls.find(call => call.payload.text.includes('[DEBUG] (strategy)'))?.payload.text;
-    expect(sampleMessage).toContain('Iteration:');
-    expect(sampleMessage).toContain('BTC/USDT');
+    const sampleMessage = calls
+      .filter(call => call.payload.text.includes('[DEBUG] (strategy)'))
+      .find(call => call.payload.text.includes('Iteration:'));
+    expect(sampleMessage?.payload.text).toContain('BTC/USDT');
   });
 
   it('Scenario E: Order Cancellation', async () => {

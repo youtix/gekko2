@@ -6,7 +6,7 @@ import { MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
 import { MockFetcherService } from '../../mocks/fetcher.mock';
 import { MockHeart } from '../../mocks/heart.mock';
-import { MockWinston } from '../../mocks/winston.mock';
+import { MockWinston, clearLogs } from '../../mocks/winston.mock';
 
 // --------------------------------------------------------------------------
 // MOCKS SETUP
@@ -14,7 +14,7 @@ import { MockWinston } from '../../mocks/winston.mock';
 const DEFAULT_MOCK_STRATEGY_CONFIG = { name: 'DebugAdvice', waittime: 0, each: 4 };
 
 const FAST_MINUTE = 50;
-const TARGET_CANDLES = 10; // Track candles emitted
+const TARGET_CANDLES = 30; // Track candles emitted
 
 // Wait for candles to be collected (with accelerated time, this should be fast)
 // We'll wait for TARGET_CANDLES * FAST_MINUTE to give buffer
@@ -132,6 +132,7 @@ describe('E2E: Realtime Paper Trader Flow', () => {
     // Clean DB
     const storage = inject.storage() as SQLiteStorage;
     cleanDatabase(storage);
+    clearLogs();
 
     // Reset mocks
     MockFetcherService.reset();
@@ -146,7 +147,7 @@ describe('E2E: Realtime Paper Trader Flow', () => {
     // Reset MockCCXTExchange static state
     MockCCXTExchange.simulatedGaps = [];
     MockCCXTExchange.shouldThrowError = false;
-    MockCCXTExchange.emitDuplicates = false;
+    MockCCXTExchange.emitDuplicatesEveryXCandle = 0;
     MockCCXTExchange.emitFutureCandles = false;
     MockCCXTExchange.mockTrades = [];
     MockCCXTExchange.shouldThrowOnCreateOrder = false;
@@ -176,5 +177,54 @@ describe('E2E: Realtime Paper Trader Flow', () => {
     expect(roundtripMessages?.payload.text).toContain('Profit:');
     expect(roundtripMessages?.payload.text).toContain('Entry Price:');
     expect(roundtripMessages?.payload.text).toContain('Exit Price:');
+  });
+
+  it('Scenario B: Precision PnL & Fee Verification', async () => {
+    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
+    const { inject } = await import('@services/injecter/injecter');
+    const { RoundTripAnalyzer } = await import('@plugins/analyzers/roundTripAnalyzer/roundTripAnalyzer');
+    const { ROUNDTRIP_COMPLETED_EVENT } = await import('@constants/event.const');
+
+    const storage = inject.storage() as SQLiteStorage;
+    storage.close = () => {};
+
+    // Spy on RoundTripAnalyzer.emit to capture the internal event
+    let roundtripData: any = null;
+    const originalEmit = RoundTripAnalyzer.prototype.emit;
+    const spy = mock(function (this: any, event: string, data: any) {
+      if (event === ROUNDTRIP_COMPLETED_EVENT) {
+        roundtripData = data;
+      }
+      return originalEmit.call(this, event, data);
+    });
+    RoundTripAnalyzer.prototype.emit = spy;
+
+    const pipelinePromise = gekkoPipeline();
+    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
+
+    // Restore original emit
+    RoundTripAnalyzer.prototype.emit = originalEmit;
+
+    expect(roundtripData).toBeDefined();
+
+    const roundtrip = Array.isArray(roundtripData) ? roundtripData[0] : roundtripData;
+    const { entryPrice, exitPrice, entryEquity, exitEquity, pnl, profit } = roundtrip;
+
+    expect(entryPrice).toBeGreaterThan(0);
+    expect(exitPrice).toBeGreaterThan(0);
+
+    // PnL = Exit Equity - Entry Equity
+    // Floating point precision check
+    expect(pnl).toBeCloseTo(exitEquity - entryEquity, 8);
+
+    // Profit % = ((Exit Equity / Entry Equity) - 1) * 100
+    const expectedProfit = (exitEquity / entryEquity - 1) * 100;
+    expect(profit).toBeCloseTo(expectedProfit, 8);
+
+    // Check structure
+    expect(roundtrip).toHaveProperty('id');
+    expect(roundtrip).toHaveProperty('entryAt');
+    expect(roundtrip).toHaveProperty('exitAt');
+    expect(roundtrip).toHaveProperty('duration');
   });
 });

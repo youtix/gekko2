@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { first, last } from 'lodash-es';
 import { generateSyntheticCandle } from '../fixtures/syntheticData';
 import { MockCCXTExchange } from '../mocks/ccxt.mock';
-import { MockWinston } from '../mocks/winston.mock';
+import { MockWinston, clearLogs } from '../mocks/winston.mock';
 
 // --------------------------------------------------------------------------
 // MOCKS SETUP
@@ -122,12 +122,13 @@ describe('E2E: Importer (Synthetic)', () => {
     // Clean DB
     const storage = inject.storage() as SQLiteStorage;
     cleanDatabase(storage);
+    clearLogs();
     storage.close = () => {}; // Prevent closure so assertions can run
 
     // Reset MockCCXTExchange static state
     MockCCXTExchange.simulatedGaps = [];
     MockCCXTExchange.shouldThrowError = false;
-    MockCCXTExchange.emitDuplicates = false;
+    MockCCXTExchange.emitDuplicatesEveryXCandle = 0;
     MockCCXTExchange.emitFutureCandles = false;
     MockCCXTExchange.mockTrades = [];
     MockCCXTExchange.shouldThrowOnCreateOrder = false;

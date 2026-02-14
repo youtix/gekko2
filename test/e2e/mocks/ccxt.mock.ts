@@ -1,12 +1,15 @@
 import { ONE_MINUTE } from '@constants/time.const';
+import { drop } from 'lodash-es';
 import { generateSyntheticCandle, generateSyntheticHistory } from '../fixtures/syntheticData';
 
 export class MockCCXTExchange {
+  private age = new Map<string, number>();
+  private lastCandleTimestamp = new Map<string, number>();
   public static simulatedGaps: { start: number; end: number }[] | Record<string, { start: number; end: number }[]> = [];
   public static shouldThrowError: boolean = false;
   public static shouldThrowOnCreateOrder: boolean = false;
   /** When true, fetchOHLCV will emit each candle twice (simulating reconnection overlap) */
-  public static emitDuplicates: boolean = false;
+  public static emitDuplicatesEveryXCandle: number = 0;
   /** When true, fetchOHLCV will include a candle with a future timestamp (> Date.now()) */
   public static emitFutureCandles: boolean = false;
   /** When true, createOrder will return 'open' status and not fill the order immediately */
@@ -148,7 +151,13 @@ export class MockCCXTExchange {
     let result = filteredCandles.map(c => [c.start, c.open, c.high, c.low, c.close, c.volume]);
 
     // If emitDuplicates is true, duplicate each candle (simulating reconnection overlap)
-    // if (MockCCXTExchange.emitDuplicates) return result.flatMap(candle => [candle, candle]);
+    if (MockCCXTExchange.emitDuplicatesEveryXCandle !== 0) {
+      if ((this.age.get(symbol) ?? 0) % MockCCXTExchange.emitDuplicatesEveryXCandle === 0) {
+        const timestamp = this.lastCandleTimestamp.get(symbol);
+        if (timestamp) result = result.map(c => [timestamp, ...drop(c, 1)]);
+        this.lastCandleTimestamp.set(symbol, result?.[0]?.[0]);
+      }
+    }
 
     // If emitFutureCandles is true, add a candle with a future timestamp
     if (MockCCXTExchange.emitFutureCandles) {
@@ -160,6 +169,7 @@ export class MockCCXTExchange {
       ];
     }
 
+    this.age.set(symbol, (this.age.get(symbol) ?? 0) + 1);
     return result;
   }
 
