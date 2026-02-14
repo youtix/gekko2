@@ -27,6 +27,7 @@ import { analyzerSchema } from '../analyzer.schema';
 import { AnalyzerConfig } from '../analyzer.types';
 import { DEFAULT_BENCHMARK_ASSET, EMPTY_PORTFOLIO_REPORT, PLUGIN_NAME } from './portfolioAnalyzer.const';
 import { PortfolioReport } from './portfolioAnalyzer.types';
+import { logPortfolioReport } from './portfolioAnalyzer.utils';
 
 export class PortfolioAnalyzer extends Plugin {
   // Configuration
@@ -240,15 +241,7 @@ export class PortfolioAnalyzer extends Plugin {
     this.addDeferredEmit<PortfolioReport>(PERFORMANCE_REPORT_EVENT, report);
 
     // Log using logger if console table is enabled
-    if (this.enableConsoleTable) {
-      // TODO: Implement console table or reuse existing
-      // console.table({
-      //     'Net Profit': report.netProfit.toFixed(2),
-      //     'Total Return %': report.totalReturnPct.toFixed(2) + '%',
-      //     'Max Drawdown %': report.maxDrawdownPct.toFixed(2) + '%',
-      //     'Sharpe Ratio': report.sharpeRatio.toFixed(2),
-      // });
-    }
+    if (this.enableConsoleTable) logPortfolioReport(report, this.currency);
   }
 
   public static getStaticConfiguration() {
