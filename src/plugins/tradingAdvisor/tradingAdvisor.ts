@@ -32,7 +32,7 @@ export class TradingAdvisor extends Plugin {
     this.strategyName = strategyName;
     this.strategyPath = strategyPath;
 
-    const timeframeInMinutes = TIMEFRAME_TO_MINUTES[this.timeframe];
+    const timeframeInMinutes = TIMEFRAME_TO_MINUTES[this.timeframe!]; // Timeframe will always defined in thanks to zod super refine
     this.bucketBatcher = new CandleBucketBatcher(this.pairs, timeframeInMinutes);
 
     const relayers = filter(Object.getOwnPropertyNames(TradingAdvisor.prototype), p => p.startsWith('relay'));

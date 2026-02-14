@@ -113,6 +113,16 @@ describe('watchSchema', () => {
         expect(result.error?.issues[0]).toMatchObject({ path: ['daterange'] });
       }
     });
+
+    it('allows missing timeframe', () => {
+      const candidate = {
+        ...importerBase,
+        timeframe: undefined,
+        daterange: { start: ISO_START, end: ISO_END },
+      };
+      const result = watchSchema.safeParse(candidate);
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('backtest mode', () => {
@@ -136,8 +146,23 @@ describe('watchSchema', () => {
         expect(result.success).toBe(true);
       } else {
         expect(result.success).toBe(false);
+        // We expect daterange error here as per existing tests
         expect(result.error?.issues[0]).toMatchObject({ path: ['daterange'] });
       }
+    });
+
+    it('requires timeframe', () => {
+      const candidate = {
+        ...backtestBase,
+        daterange: { start: ISO_START, end: ISO_END },
+        timeframe: undefined,
+      };
+      const result = watchSchema.safeParse(candidate);
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]).toMatchObject({
+        path: ['timeframe'],
+        message: 'timeframe is required for backtest and realtime modes',
+      });
     });
   });
 
@@ -157,6 +182,21 @@ describe('watchSchema', () => {
       expect(result.currency).toBe('USDT');
       expect(result.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
       expect(result.daterange).toBeUndefined();
+    });
+
+    it('requires timeframe', () => {
+      const candidate = {
+        ...baseWatch,
+        mode: 'realtime' as const,
+        timeframe: undefined,
+      };
+
+      const result = watchSchema.safeParse(candidate);
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]).toMatchObject({
+        path: ['timeframe'],
+        message: 'timeframe is required for backtest and realtime modes',
+      });
     });
   });
 });

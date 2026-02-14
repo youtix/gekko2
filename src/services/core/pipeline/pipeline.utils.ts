@@ -21,9 +21,9 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
   // End time of the last candle to download (now)
   const end = resetDateParts(processStartTime(), ['s', 'ms']);
   // Offset to align candles to the start of the timeframe
-  const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe], end);
+  const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe!], end); // Timeframe will always defined in thanks to zod super refine
   // Start time of the first candle to download
-  const start = subMinutes(end, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe] + offset).getTime();
+  const start = subMinutes(end, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe!] + offset).getTime(); // Timeframe will always defined in thanks to zod super refine
 
   await pipeline(
     mergeSequentialStreams(

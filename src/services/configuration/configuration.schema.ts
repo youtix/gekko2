@@ -29,7 +29,7 @@ export const watchSchema = z
   .object({
     assets: assetsSchema,
     currency: currencySchema,
-    timeframe: z.enum(TIMEFRAMES),
+    timeframe: z.enum(TIMEFRAMES).optional(),
     tickrate: z.number().default(1000),
     mode: z.enum(['realtime', 'backtest', 'importer']),
     warmup: warmupSchema,
@@ -49,6 +49,15 @@ export const watchSchema = z
         code: 'custom',
         path: ['daterange'],
         message: 'daterange is required for importer and backtest modes',
+      });
+    }
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode !== 'importer' && !data.timeframe) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['timeframe'],
+        message: 'timeframe is required for backtest and realtime modes',
       });
     }
   });
