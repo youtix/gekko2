@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
-import { getAssetBalance, initializePortfolio, isPortfolioEmpty, updateAssetBalance, ZERO_BALANCE } from './portfolio.utils';
+import { Asset, TradingPair } from '@models/utility.types';
+import {
+  calculatePortfolioTotalValue,
+  getAssetBalance,
+  initializePortfolio,
+  isPortfolioEmpty,
+  updateAssetBalance,
+  ZERO_BALANCE,
+} from './portfolio.utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Test Data Factories
@@ -172,5 +180,87 @@ describe('isPortfolioEmpty', () => {
   ])('returns $expected for $description', ({ entries, expected }) => {
     const portfolio: Portfolio = new Map(entries as any);
     expect(isPortfolioEmpty(portfolio)).toBe(expected);
+  });
+});
+
+describe('calculatePortfolioTotalValue', () => {
+  it.each([
+    {
+      description: 'empty portfolio',
+      portfolioEntries: [],
+      prices: [],
+      currency: 'USDT',
+      assets: ['BTC', 'ETH'],
+      expected: 0,
+    },
+    {
+      description: 'portfolio with only currency',
+      portfolioEntries: [['USDT', createBalanceDetail(100, 0, 100)]],
+      prices: [],
+      currency: 'USDT',
+      assets: ['BTC', 'ETH'],
+      expected: 100,
+    },
+    {
+      description: 'portfolio with single asset and price',
+      portfolioEntries: [
+        ['USDT', createBalanceDetail(100, 0, 100)],
+        ['BTC', createBalanceDetail(1, 0, 1)],
+      ],
+      prices: [['BTC/USDT', 50000]],
+      currency: 'USDT',
+      assets: ['BTC'],
+      expected: 50100, // 100 + 1 * 50000
+    },
+    {
+      description: 'portfolio with multiple assets and prices',
+      portfolioEntries: [
+        ['USDT', createBalanceDetail(100, 0, 100)],
+        ['BTC', createBalanceDetail(0.5, 0, 0.5)],
+        ['ETH', createBalanceDetail(10, 0, 10)],
+      ],
+      prices: [
+        ['BTC/USDT', 50000],
+        ['ETH/USDT', 3000],
+      ],
+      currency: 'USDT',
+      assets: ['BTC', 'ETH'],
+      expected: 55100, // 100 + 0.5 * 50000 + 10 * 3000 = 100 + 25000 + 30000
+    },
+    {
+      description: 'ignores assets without price',
+      portfolioEntries: [
+        ['USDT', createBalanceDetail(100, 0, 100)],
+        ['BTC', createBalanceDetail(1, 0, 1)],
+        ['XRP', createBalanceDetail(1000, 0, 1000)],
+      ],
+      prices: [['BTC/USDT', 50000]],
+      currency: 'USDT',
+      assets: ['BTC', 'XRP'],
+      expected: 50100, // XRP ignored as no price
+    },
+    {
+      description: 'ignores currency in assets list to avoid double counting',
+      portfolioEntries: [['USDT', createBalanceDetail(100, 0, 100)]],
+      prices: [],
+      currency: 'USDT',
+      assets: ['USDT'], // Should be ignored in loop
+      expected: 100, // 100 + 0 (loop skipped)
+    },
+    {
+      description: 'handles missing asset balance by defaulting to zero (via getAssetBalance)',
+      portfolioEntries: [['USDT', createBalanceDetail(100, 0, 100)]],
+      prices: [['BTC/USDT', 50000]],
+      currency: 'USDT',
+      assets: ['BTC'], // BTC in assets but not in portfolio
+      expected: 100, // 100 + 0 * 50000
+    },
+  ])('$description', ({ portfolioEntries, prices, currency, assets, expected }) => {
+    const portfolio = new Map(portfolioEntries as any) as Portfolio;
+    const priceMap = new Map(prices as any) as Map<TradingPair, number>;
+
+    const total = calculatePortfolioTotalValue(portfolio, priceMap, currency as Asset, assets as Asset[]);
+
+    expect(total).toBe(expected);
   });
 });

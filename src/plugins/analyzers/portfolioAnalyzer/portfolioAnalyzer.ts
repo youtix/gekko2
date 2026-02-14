@@ -18,7 +18,7 @@ import {
   RatioParams,
 } from '@utils/finance/stats.utils';
 import { stdev } from '@utils/math/math.utils';
-import { getAssetBalance } from '@utils/portfolio/portfolio.utils';
+import { calculatePortfolioTotalValue } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { first } from 'lodash-es';
 import { Plugin } from '../../plugin';
@@ -60,7 +60,7 @@ export class PortfolioAnalyzer extends Plugin {
     if (!this.hasAllPrices()) return;
 
     this.portfolioChangeCount++;
-    const totalValue = this.calculatePortfolioValue(portfolio);
+    const totalValue = calculatePortfolioTotalValue(portfolio, this.latestPrices, this.currency, this.assets);
 
     // Record start equity on first valid portfolio change if not set
     if (this.startEquity === 0) this.startEquity = totalValue;
@@ -75,7 +75,7 @@ export class PortfolioAnalyzer extends Plugin {
       if (!this.warmupCompleted || !this.hasAllPrices()) return;
 
       // Use the portfolio from the event which reflects the post-order state
-      const totalValue = this.calculatePortfolioValue(exchange.portfolio);
+      const totalValue = calculatePortfolioTotalValue(exchange.portfolio, this.latestPrices, this.currency, this.assets);
 
       this.recordSnapshot(order.orderExecutionDate, totalValue);
       this.addDeferredEmit<EquitySnapshot>(EQUITY_SNAPSHOT_EVENT, { date: order.orderExecutionDate, totalValue });
@@ -114,26 +114,6 @@ export class PortfolioAnalyzer extends Plugin {
       if (!this.latestPrices.has(pair)) return false;
     }
     return true;
-  }
-
-  // TODO: move to portfolio utils
-  private calculatePortfolioValue(portfolio: Portfolio): number {
-    let totalValue = 0;
-
-    // 1. Currency Balance (already in Numéraire)
-    const currencyBalance = getAssetBalance(portfolio, this.currency);
-    totalValue += currencyBalance.total;
-
-    // 2. Asset Balances (converted to Numéraire)
-    for (const asset of this.assets) {
-      const assetBalance = getAssetBalance(portfolio, asset);
-      const pair = `${asset}/${this.currency}` as const;
-      const price = this.latestPrices.get(pair);
-
-      if (price !== undefined) totalValue += assetBalance.total * price;
-    }
-
-    return totalValue;
   }
 
   private recordSnapshot(date: number, totalValue: number): void {

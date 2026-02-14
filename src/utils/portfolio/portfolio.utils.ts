@@ -1,6 +1,6 @@
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { Asset, TradingPair } from '@models/utility.types';
-import { uniq } from 'lodash-es';
+import { isNil, uniq } from 'lodash-es';
 
 export const ZERO_BALANCE: BalanceDetail = { free: 0, used: 0, total: 0 };
 
@@ -49,4 +49,35 @@ export const calculatePairEquity = (portfolio: Portfolio, pair: TradingPair, pri
     used: assetBalance.used * price + currencyBalance.used,
     total: assetBalance.total * price + currencyBalance.total,
   };
+};
+
+/**
+ * Calculate the total value of a portfolio in the quote currency.
+ * Total Value = Currency Balance + sum(Asset Balance * Price)
+ */
+export const calculatePortfolioTotalValue = (
+  portfolio: Portfolio,
+  prices: Map<TradingPair, number>,
+  currency: Asset,
+  assets: Asset[],
+): number => {
+  let totalValue = 0;
+
+  // 1. Currency Balance (already in Numéraire)
+  const currencyBalance = getAssetBalance(portfolio, currency);
+  totalValue += currencyBalance.total;
+
+  // 2. Asset Balances (converted to Numéraire)
+  for (const asset of assets) {
+    // Skip currency if it's in the assets list to avoid double counting, though usually assets list shouldn't contain currency
+    if (asset === currency) continue;
+
+    const assetBalance = getAssetBalance(portfolio, asset);
+    const pair = `${asset}/${currency}` as const;
+    const price = prices.get(pair);
+
+    if (!isNil(price)) totalValue += assetBalance.total * price;
+  }
+
+  return totalValue;
 };
