@@ -1,12 +1,12 @@
-import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { info } from '@services/logger';
 import { CCXTExchange } from '../ccxtExchange';
 import { DummyCentralizedExchange } from '../dummy/dummyCentralizedExchange';
-import { DummyCentralizedExchangeConfig } from '../dummy/dummyCentralizedExchange.types';
 import { DummyExchange, Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from '../exchange.types';
 import { PaperTradingBinanceExchangeConfig } from './paperTradingBinanceExchange.types';
 
@@ -42,57 +42,56 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
   /* -------------------------------------------------------------------------- */
 
   public async loadMarkets(): Promise<void> {
+    const { pairs } = config.getWatch();
+
     // Load real market data from Binance via CCXTExchange
     await this.realExchange.loadMarkets();
 
     // Build market data from real exchange, with optional fee overrides
-    const marketData = this.buildMarketData();
+    const marketData = new Map(pairs.map(({ symbol }) => [symbol, this.buildMarketData(symbol)]));
 
-    // Get current ticker for initial price
-    const ticker = await this.realExchange.fetchTicker();
+    // Get all tickers for initial price
+    const tickers = await Promise.all(pairs.map(async ({ symbol }) => [symbol, await this.realExchange.fetchTicker(symbol)] as const));
 
     // Initialize simulated exchange with real market constraints
     this.simulatedExchange = new DummyCentralizedExchange({
       name: 'dummy-cex',
       marketData,
       simulationBalance: this.exchangeConfig.simulationBalance,
-      initialTicker: ticker,
+      initialTicker: new Map(tickers),
       exchangeSynchInterval: this.exchangeConfig.exchangeSynchInterval,
       orderSynchInterval: this.exchangeConfig.orderSynchInterval,
     });
 
     info('exchange', '🔶 PAPER TRADING MODE - Using simulated orders with real market data');
-    info(
-      'exchange',
-      `Initial balance: ${this.exchangeConfig.simulationBalance.asset} ${config.getWatch().asset} / ${this.exchangeConfig.simulationBalance.currency} ${config.getWatch().currency}`,
-    );
+    info('exchange', `Initial portfolio: ${JSON.stringify(this.exchangeConfig.simulationBalance)}`);
   }
 
-  private buildMarketData(): DummyCentralizedExchangeConfig['marketData'] {
+  private buildMarketData(symbol: TradingPair): MarketData {
     return {
-      ...this.realExchange.getMarketData(),
+      ...this.realExchange.getMarketData(symbol),
       ...(this.exchangeConfig.feeOverride && { fee: this.exchangeConfig.feeOverride }),
-    } as DummyCentralizedExchangeConfig['marketData'];
+    };
   }
 
   /* -------------------------------------------------------------------------- */
   /*                    UNAUTHENTICATED OPERATIONS (via CCXTExchange)           */
   /* -------------------------------------------------------------------------- */
 
-  public async fetchOHLCV(params?: FetchOHLCVParams) {
-    return this.realExchange.fetchOHLCV(params ?? {});
+  public async fetchOHLCV(symbol: TradingPair, params?: FetchOHLCVParams) {
+    return this.realExchange.fetchOHLCV(symbol, params);
   }
 
-  public async fetchTicker() {
-    return this.realExchange.fetchTicker();
+  public async fetchTickers(symbols: TradingPair[]) {
+    return this.realExchange.fetchTickers(symbols);
   }
 
-  public onNewCandle(onNewCandle: (candle: Candle) => void) {
-    return this.realExchange.onNewCandle(onNewCandle);
+  public async fetchTicker(symbol: TradingPair) {
+    return this.realExchange.fetchTicker(symbol);
   }
 
-  public getMarketData(): MarketData {
-    return this.realExchange.getMarketData();
+  public getMarketData(symbol: TradingPair): MarketData {
+    return this.realExchange.getMarketData(symbol);
   }
 
   /* -------------------------------------------------------------------------- */
@@ -104,36 +103,37 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
   }
 
   public async createLimitOrder(
+    symbol: TradingPair,
     side: OrderSide,
     amount: number,
     price: number,
     onSettled?: OrderSettledCallback,
   ): Promise<OrderState> {
-    return this.simulatedExchange.createLimitOrder(side, amount, price, onSettled);
+    return this.simulatedExchange.createLimitOrder(symbol, side, amount, price, onSettled);
   }
 
-  public async createMarketOrder(side: OrderSide, amount: number): Promise<OrderState> {
-    return this.simulatedExchange.createMarketOrder(side, amount);
+  public async createMarketOrder(symbol: TradingPair, side: OrderSide, amount: number): Promise<OrderState> {
+    return this.simulatedExchange.createMarketOrder(symbol, side, amount);
   }
 
-  public async cancelOrder(id: string): Promise<OrderState> {
-    return this.simulatedExchange.cancelOrder(id);
+  public async cancelOrder(symbol: TradingPair, id: string): Promise<OrderState> {
+    return this.simulatedExchange.cancelOrder(symbol, id);
   }
 
-  public async fetchOrder(id: string): Promise<OrderState> {
-    return this.simulatedExchange.fetchOrder(id);
+  public async fetchOrder(symbol: TradingPair, id: string): Promise<OrderState> {
+    return this.simulatedExchange.fetchOrder(symbol, id);
   }
 
-  public async fetchMyTrades(from?: EpochTimeStamp): Promise<Trade[]> {
-    return this.simulatedExchange.fetchMyTrades(from);
+  public async fetchMyTrades(symbol: TradingPair, from?: EpochTimeStamp): Promise<Trade[]> {
+    return this.simulatedExchange.fetchMyTrades(symbol, from);
   }
 
   /* -------------------------------------------------------------------------- */
   /*                          DUMMY EXCHANGE INTERFACE                          */
   /* -------------------------------------------------------------------------- */
 
-  public async processOneMinuteCandle(candle: Candle): Promise<void> {
-    return this.simulatedExchange.processOneMinuteCandle(candle);
+  public async processOneMinuteBucket(bucket: CandleBucket): Promise<void> {
+    return this.simulatedExchange.processOneMinuteBucket(bucket);
   }
 
   /* -------------------------------------------------------------------------- */

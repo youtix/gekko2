@@ -7,57 +7,49 @@ import {
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
   PORTFOLIO_CHANGE_EVENT,
-  PORTFOLIO_VALUE_CHANGE_EVENT,
 } from '@constants/event.const';
 import { DEFAULT_FEE_BUFFER } from '@constants/order.const';
 import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
-import { Candle } from '@models/candle.types';
-import {
-  BalanceSnapshot,
-  OrderCanceledEvent,
-  OrderCompletedEvent,
-  OrderErroredEvent,
-  OrderInitiatedEvent,
-} from '@models/event.types';
-import { BalanceDetail, Portfolio } from '@models/portfolio.types';
-import { Nullable } from '@models/utility.types';
+import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
+import { Portfolio } from '@models/portfolio.types';
+import { TradingPair } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
 import { OrderSummary } from '@services/core/order/order.types';
-import { debug, error, info, warning } from '@services/logger';
+import { error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
+import { createEmptyPortfolio, getAssetBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
-import { bindAll, filter, isEqual } from 'lodash-es';
+import { bindAll, cloneDeep, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { BACKTEST_SYNC_INTERVAL, ORDER_FACTORY } from './trader.const';
 import { traderSchema } from './trader.schema';
 import { TraderOrderMetadata } from './trader.types';
-import { computeOrderPricing } from './trader.utils';
+import { computeOrderPricing, PortfolioUpdatesConfig, shouldEmitPortfolio, ShouldEmitPortfolioParams } from './trader.utils';
 
 export class Trader extends Plugin {
   private readonly orders: Map<UUID, TraderOrderMetadata>;
   private warmupCompleted: boolean;
-  private warmupCandle: Nullable<Candle>;
+  private warmupBucket: CandleBucket;
   private portfolio: Portfolio;
-  private balance: BalanceDetail;
-  private price: number;
+  private prices: Map<TradingPair, number>;
   private currentTimestamp: EpochTimeStamp;
   private syncInterval: NodeJS.Timeout | null;
+  private lastEmittedPortfolio: Portfolio | null;
+  private readonly portfolioUpdatesConfig: PortfolioUpdatesConfig | null;
 
-  constructor() {
+  constructor(parameters?: { portfolioUpdates?: PortfolioUpdatesConfig }) {
     super(Trader.name);
     this.orders = new Map();
     this.warmupCompleted = false;
-    this.warmupCandle = null;
-    this.portfolio = {
-      asset: { free: 0, used: 0, total: 0 },
-      currency: { free: 0, used: 0, total: 0 },
-    };
-    this.balance = { free: 0, used: 0, total: 0 };
-    this.price = 0;
+    this.warmupBucket = new Map();
+    this.portfolio = createEmptyPortfolio();
+    this.prices = new Map();
     this.currentTimestamp = 0;
     this.syncInterval = null;
+    this.lastEmittedPortfolio = null;
+    this.portfolioUpdatesConfig = parameters?.portfolioUpdates ?? null;
 
     bindAll(this, [this.synchronize.name]);
   }
@@ -66,28 +58,31 @@ export class Trader extends Plugin {
     const exchange = this.getExchange();
     info('trader', `Synchronizing data with ${exchange.getExchangeName()}`);
 
-    // Save old porfolio and balance
-    const oldPortfolio = this.portfolio;
-    const oldBalance = this.balance;
-
-    // Update portfolio, balance and price
-    const { bid } = await exchange.fetchTicker();
+    // Update portfolio, balance and prices
     this.portfolio = await exchange.fetchBalance();
-    this.price = bid;
-    this.balance = {
-      free: this.price * this.portfolio.asset.free + this.portfolio.currency.free,
-      used: this.price * this.portfolio.asset.used + this.portfolio.currency.used,
-      total: this.price * this.portfolio.asset.total + this.portfolio.currency.total,
-    };
-
-    debug(
-      'trader',
-      `Current portfolio: ${this.portfolio.asset.total} ${this.asset} / ${this.portfolio.currency.total} ${this.currency}`,
-    );
+    const tickers = await exchange.fetchTickers(this.pairs);
+    for (const symbol of this.pairs) {
+      const price = tickers[symbol].bid;
+      this.prices.set(symbol, price);
+    }
 
     // Emit portfolio events if changes are detected
-    if (!isEqual(oldPortfolio, this.portfolio)) this.emitPortfolioChangeEvent();
-    if (!isEqual(oldBalance, this.balance)) this.emitPortfolioValueChangeEvent();
+    if (this.portfolioUpdatesConfig) {
+      const params: ShouldEmitPortfolioParams = {
+        current: this.portfolio,
+        lastEmitted: this.lastEmittedPortfolio,
+        prices: this.prices,
+        pairs: this.pairs,
+        portfolioConfig: this.portfolioUpdatesConfig,
+      };
+
+      if (shouldEmitPortfolio(params)) {
+        this.emitPortfolioChangeEvent();
+        this.lastEmittedPortfolio = cloneDeep(this.portfolio);
+      }
+    } else {
+      this.emitPortfolioChangeEvent();
+    }
   }
 
   /* -------------------------------------------------------------------------- */
@@ -95,17 +90,7 @@ export class Trader extends Plugin {
   /* -------------------------------------------------------------------------- */
 
   private emitPortfolioChangeEvent() {
-    this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, {
-      asset: { ...this.portfolio.asset },
-      currency: { ...this.portfolio.currency },
-    });
-  }
-
-  private emitPortfolioValueChangeEvent() {
-    this.addDeferredEmit<BalanceSnapshot>(PORTFOLIO_VALUE_CHANGE_EVENT, {
-      balance: { ...this.balance },
-      date: this.currentTimestamp,
-    });
+    this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, this.portfolio);
   }
 
   private emitOrderCompletedEvent(id: UUID, summary: OrderSummary) {
@@ -114,12 +99,12 @@ export class Trader extends Plugin {
 
     const { amount, price, feePercent, side, orderExecutionDate } = summary;
     const { effectivePrice, fee } = computeOrderPricing(side, price, amount, feePercent);
-    const { orderCreationDate, type } = orderMetadata;
+    const { orderCreationDate, type, symbol } = orderMetadata;
 
     info(
       'trader',
       [
-        `[${id}] ${side} ${type} order summary:`,
+        `[${id}] ${side} ${type} order summary for ${symbol}:`,
         `Completed at: ${toISOString(orderExecutionDate)}`,
         `Order amount: ${amount},`,
         `Effective price: ${effectivePrice},`,
@@ -128,8 +113,9 @@ export class Trader extends Plugin {
       ].join(' '),
     );
 
-    const order = { ...summary, id, orderCreationDate, type, fee, effectivePrice };
-    const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+    const currentPrice = this.prices.get(symbol) ?? 0;
+    const order = { ...summary, id, orderCreationDate, type, fee, effectivePrice, symbol };
+    const exchange = { price: currentPrice, portfolio: this.portfolio };
     this.addDeferredEmit<OrderCompletedEvent>(ORDER_COMPLETED_EVENT, { order, exchange });
   }
 
@@ -137,12 +123,15 @@ export class Trader extends Plugin {
   /*                             EVENT LISTENERS                                */
   /* -------------------------------------------------------------------------- */
 
-  public async onStrategyWarmupCompleted() {
+  public async onStrategyWarmupCompleted(_bucket: CandleBucket) {
     // There is only one warmup event during the execution
     this.warmupCompleted = true;
-    const candle = this.warmupCandle;
-    this.warmupCandle = null;
-    if (candle) await this.processOneMinuteCandle(candle);
+    const oneMinuteCandleBucket = this.warmupBucket;
+    this.warmupBucket = new Map();
+
+    if (oneMinuteCandleBucket.size === this.pairs.length) await this.processOneMinuteBucket(oneMinuteCandleBucket);
+    else throw new GekkoError('trader', 'Impossible to process warmup bucket: Not all pairs are present');
+
     await this.synchronize();
   }
 
@@ -152,7 +141,7 @@ export class Trader extends Plugin {
       payloads.map(async id => {
         const orderMetadata = this.orders.get(id);
         if (!orderMetadata) return warning('trader', `[${id}] Impossible to cancel order: Unknown Order`);
-        const { orderInstance, side, amount, type, orderCreationDate, price } = orderMetadata;
+        const { orderInstance, side, amount, type, orderCreationDate, price, symbol } = orderMetadata;
 
         orderInstance.removeAllListeners();
 
@@ -160,8 +149,8 @@ export class Trader extends Plugin {
         orderInstance.once(ORDER_CANCELED_EVENT, async ({ timestamp: orderCancelationDate, filled, remaining }) => {
           this.orders.delete(id);
           await this.synchronize();
-          const order = { id, orderCreationDate, orderCancelationDate, amount, side, type, price, filled, remaining };
-          const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+          const order = { id, orderCreationDate, orderCancelationDate, amount, side, type, price, filled, remaining, symbol };
+          const exchange = { price: this.prices.get(symbol) ?? 0, portfolio: this.portfolio };
           this.addDeferredEmit<OrderCanceledEvent>(ORDER_CANCELED_EVENT, { order, exchange });
         });
 
@@ -174,9 +163,7 @@ export class Trader extends Plugin {
           } catch (err) {
             error(
               'trader',
-              err instanceof Error
-                ? `[${id}] Error in order completed ${err.message}`
-                : `[${id}] Unknown error on order completed`,
+              err instanceof Error ? `[${id}] Error in order completed ${err.message}` : `[${id}] Unknown error on order completed`,
             );
           } finally {
             this.orders.delete(id);
@@ -196,8 +183,9 @@ export class Trader extends Plugin {
             price,
             reason,
             orderErrorDate: this.currentTimestamp,
+            symbol,
           };
-          const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+          const exchange = { price: this.prices.get(symbol) || 0, portfolio: this.portfolio };
           this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
         });
 
@@ -211,22 +199,30 @@ export class Trader extends Plugin {
     // Parallel strategy: process all payloads concurrently
     await Promise.all(
       payloads.map(async advice => {
-        const { id, side, orderCreationDate, type, price = this.price } = advice;
-        const { asset, currency } = this.portfolio;
+        const { id, side, orderCreationDate, type, symbol } = advice;
+        const price = advice.price ?? this.prices.get(symbol);
+        if (!price || price <= 0) {
+          warning('trader', `[${id}] No price found for symbol: ${symbol}`);
+          return; // Reject order
+        }
 
-        // Price cannot be zero here because we call processOneMinuteCandle before events (plugins stream)
+        const [assetName, currencyName] = symbol.split('/');
+        const asset = getAssetBalance(this.portfolio, assetName);
+        const currency = getAssetBalance(this.portfolio, currencyName);
+
+        // Price cannot be zero here because we call processOneMinuteBucket before events (plugins stream)
         // We delegate the order validation (notional, lot, amount) to the exchange
         const computedAmount = side === 'BUY' ? (currency.free / price) * (1 - DEFAULT_FEE_BUFFER) : asset.free;
         const amount = advice.amount ?? computedAmount;
 
         // Emit order initiated event
-        const orderInitiated = { ...advice, amount };
-        const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+        const orderInitiated = { ...advice, amount, symbol };
+        const exchange = { price: this.prices.get(symbol) || 0, portfolio: this.portfolio };
         this.addDeferredEmit<OrderInitiatedEvent>(ORDER_INITIATED_EVENT, { order: orderInitiated, exchange });
 
         // Create order
-        const orderInstance = new ORDER_FACTORY[type](id, side, amount, price);
-        this.orders.set(id, { amount, side, orderCreationDate, type, price, orderInstance });
+        const orderInstance = new ORDER_FACTORY[type](symbol, id, side, amount, price);
+        this.orders.set(id, { amount, side, orderCreationDate, type, price, orderInstance, symbol });
 
         // UPDATE EVENTS
         orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
@@ -244,7 +240,7 @@ export class Trader extends Plugin {
           this.orders.delete(id);
           await this.synchronize();
           const order = { ...orderInitiated, reason, orderErrorDate: this.currentTimestamp };
-          const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+          const exchange = { price: this.prices.get(symbol) || 0, portfolio: this.portfolio };
           this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
         });
 
@@ -253,7 +249,7 @@ export class Trader extends Plugin {
           this.orders.delete(id);
           await this.synchronize();
           const order = { ...orderInitiated, reason, orderErrorDate: this.currentTimestamp };
-          const exchange = { price: this.price, portfolio: this.portfolio, balance: this.balance };
+          const exchange = { price: this.prices.get(symbol) || 0, portfolio: this.portfolio };
           this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
         });
 
@@ -266,9 +262,7 @@ export class Trader extends Plugin {
           } catch (err) {
             error(
               'trader',
-              err instanceof Error
-                ? `[${id}] Error in order completed ${err.message}`
-                : `[${id}] Unknown error on order completed`,
+              err instanceof Error ? `[${id}] Error in order completed ${err.message}` : `[${id}] Unknown error on order completed`,
             );
           } finally {
             this.orders.delete(id);
@@ -293,21 +287,25 @@ export class Trader extends Plugin {
     this.synchronize();
   }
 
-  protected async processOneMinuteCandle(candle: Candle) {
-    // Update price
-    this.price = candle.close;
+  protected async processOneMinuteBucket(bucket: CandleBucket) {
+    // Get first candle for timestamp
+    const firstEntry = bucket.values().next().value;
+    if (!firstEntry) throw new GekkoError('trader', 'Impossible to process one minute bucket: Empty candle bucket');
 
-    // Update warmup candle until warmup is completed
-    if (!this.warmupCompleted) this.warmupCandle = candle;
+    // Update warmup candle bucket until warmup is completed
+    if (!this.warmupCompleted) this.warmupBucket = bucket;
+
+    // Update all candle bucket prices
+    for (const [symbol, candle] of bucket) this.prices.set(symbol, candle.close);
 
     // Synchronize periodically in backtest mode (order fills are handled by exchange callbacks)
     if (this.mode === 'backtest') {
-      const minutes = differenceInMinutes(candle.start, 0);
+      const minutes = differenceInMinutes(firstEntry.start, 0);
       if (this.currentTimestamp && minutes % BACKTEST_SYNC_INTERVAL === 0) await this.synchronize();
     }
 
     // Then update current timestamp
-    this.currentTimestamp = addMinutes(candle.start, 1).getTime();
+    this.currentTimestamp = addMinutes(firstEntry.start, 1).getTime();
   }
 
   protected processFinalize(): void {
@@ -326,14 +324,7 @@ export class Trader extends Plugin {
       dependencies: [],
       inject: ['exchange'],
       eventsHandlers: filter(Object.getOwnPropertyNames(Trader.prototype), p => p.startsWith('on')),
-      eventsEmitted: [
-        PORTFOLIO_CHANGE_EVENT,
-        PORTFOLIO_VALUE_CHANGE_EVENT,
-        ORDER_CANCELED_EVENT,
-        ORDER_COMPLETED_EVENT,
-        ORDER_ERRORED_EVENT,
-        ORDER_INITIATED_EVENT,
-      ],
+      eventsEmitted: [PORTFOLIO_CHANGE_EVENT, ORDER_CANCELED_EVENT, ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT, ORDER_INITIATED_EVENT],
     } as const;
   }
 }

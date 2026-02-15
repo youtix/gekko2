@@ -1,8 +1,9 @@
 watch:
-  asset: BTC
+  assets:
+    - BTC
   currency: USDT
-  mode: realtime
   timeframe: 5m
+  mode: realtime
 
 exchange:
   name: paper-binance

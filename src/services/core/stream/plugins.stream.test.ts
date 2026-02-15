@@ -108,7 +108,7 @@ describe('PluginsStream', () => {
       it('forwards candle to dummy exchange before plugins', async () => {
         const callOrder: string[] = [];
         const dummyExchange = {
-          processOneMinuteCandle: vi.fn(() => callOrder.push('exchange')),
+          processOneMinuteBucket: vi.fn(() => callOrder.push('exchange')),
           getExchangeName: () => 'dummy-cex',
         };
         injectMock.exchange.mockReturnValue(dummyExchange);

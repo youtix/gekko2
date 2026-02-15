@@ -1,4 +1,3 @@
-import { Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { bench, describe } from 'vitest';
 import {
@@ -18,10 +17,9 @@ import {
   validateConfig,
 } from './gridBot.utils';
 
-const portfolio: Portfolio = {
-  asset: { free: 10, used: 0, total: 10 },
-  currency: { free: 1000, used: 0, total: 1000 },
-};
+// Test values matching the old portfolio: assetFree=10, assetTotal=10, currencyFree=1000, currencyTotal=1000
+const assetFree = 10;
+const currencyFree = 1000;
 
 const marketData: MarketData = {
   precision: { price: 0.01, amount: 0.001 },
@@ -149,7 +147,7 @@ describe('gridBot.utils Performance', () => {
   describe('computeRebalancePlan', () => {
     bench('1000 rebalance plan calculations', () => {
       for (let i = 0; i < 1000; i++) {
-        computeRebalancePlan(100, portfolio, 5, 5, marketData);
+        computeRebalancePlan(100, assetFree, currencyFree, 5, 5, marketData);
       }
     });
   });
@@ -157,7 +155,7 @@ describe('gridBot.utils Performance', () => {
   describe('deriveLevelQuantity', () => {
     bench('100 quantity derivations', () => {
       for (let i = 0; i < 100; i++) {
-        deriveLevelQuantity(100, portfolio, 5, 5, 2, 'fixed', 5, marketData);
+        deriveLevelQuantity(100, assetFree, currencyFree, 5, 5, 2, 'fixed', 5, marketData);
       }
     });
   });

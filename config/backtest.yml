@@ -1,8 +1,9 @@
 watch:
-  asset: BTC
+  assets:
+    - BTC
   currency: USDT
-  mode: backtest
   timeframe: 1h
+  mode: backtest
   warmup:
     candleCount: 365
   daterange:

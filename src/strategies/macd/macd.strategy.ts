@@ -1,21 +1,18 @@
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { TradingPair } from '@models/utility.types';
+import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
 
-export class MACD implements Strategy<MACDStrategyParams> {
+export class MACD extends Strategy<MACDStrategyParams> {
   private trend?: MACDTrend;
+  private pair?: TradingPair;
 
-  init({ tools, addIndicator }: InitParams<MACDStrategyParams>): void {
+  init({ candle, tools, addIndicator }: InitParams<MACDStrategyParams>): void {
     const { strategyParams } = tools;
-    addIndicator('MACD', { short: strategyParams.short, long: strategyParams.long, signal: strategyParams.signal });
+    const [pair] = candle.keys();
+    this.pair = pair;
+    addIndicator('MACD', this.pair, { short: strategyParams.short, long: strategyParams.long, signal: strategyParams.signal });
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };
   }
 
@@ -24,7 +21,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
     const { macdSrc } = strategyParams;
     const [macd] = indicators;
 
-    if (!this.isMacd(macd)) return;
+    if (!this.isMacd(macd) || !this.pair) return;
 
     if (macd[macdSrc] > strategyParams.thresholds.up) {
       if (this.trend?.direction !== 'up') {
@@ -38,7 +35,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
 
       if (this.trend.persisted && !this.trend.adviced) {
         this.trend.adviced = true;
-        createOrder({ type: 'STICKY', side: 'BUY' });
+        createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
       }
     } else if (macd[macdSrc] < strategyParams.thresholds.down) {
       if (this.trend?.direction !== 'down') {
@@ -52,7 +49,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
 
       if (this.trend.persisted && !this.trend.adviced) {
         this.trend.adviced = true;
-        createOrder({ type: 'STICKY', side: 'SELL' });
+        createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
       }
     } else {
       log('debug', 'MACD: no trend detected');
@@ -80,11 +77,4 @@ export class MACD implements Strategy<MACDStrategyParams> {
       isNumber(data.hist)
     );
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

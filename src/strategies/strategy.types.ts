@@ -1,24 +1,25 @@
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
 import { AdviceOrder } from '@models/advice.types';
-import { Candle } from '@models/candle.types';
-import { ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
+import { CandleBucket, ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { Portfolio } from '@models/portfolio.types';
+import { TradingPair } from '@models/utility.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { UUID } from 'node:crypto';
+import { TrailingStopState } from './trailingStopManager.types';
 
 export type Direction = 'short' | 'long';
-export type AddIndicatorFn = <T extends IndicatorNames>(name: T, parameters: IndicatorParamaters<T>) => void;
+export type AddIndicatorFn = <T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>) => void;
 export type LoggerFn = (level: LogLevel, msg: string) => void;
 export type Tools<T> = {
   strategyParams: T;
-  marketData: MarketData;
+  marketData: Map<TradingPair, MarketData>;
   log: LoggerFn;
   createOrder: (order: Omit<AdviceOrder, 'id' | 'orderCreationDate'>) => UUID;
   cancelOrder: (orderId: UUID) => void;
 };
-export type InitParams<T> = { candle: Candle; portfolio: Portfolio; tools: Tools<T>; addIndicator: AddIndicatorFn };
-export type OnCandleEventParams<T> = { candle: Candle; portfolio: Portfolio; tools: Tools<T> };
+export type InitParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T>; addIndicator: AddIndicatorFn };
+export type OnCandleEventParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T> };
 export type OnOrderCompletedEventParams<T> = {
   order: OrderCompletedEvent['order'];
   exchange: ExchangeEvent;
@@ -34,7 +35,7 @@ export type OnOrderErroredEventParams<T> = {
   exchange: ExchangeEvent;
   tools: Tools<T>;
 };
-export interface Strategy<T> {
+interface IStrategy<T> {
   /** Executed once at the beginning of the strategy */
   init(params: InitParams<T>): void;
   /** On each timeframe candle from the beginning */
@@ -49,6 +50,23 @@ export interface Strategy<T> {
   onOrderCanceled(params: OnOrderCanceledEventParams<T>, ...indicators: unknown[]): void;
   /** On each order errored/rejected by exchange */
   onOrderErrored(params: OnOrderErroredEventParams<T>, ...indicators: unknown[]): void;
+  /** On each trailing stop activated (when activation threshold price is reached) */
+  onTrailingStopActivated(state: TrailingStopState): void;
+  /** On each trailing stop triggered (when trailing stop price is reached) */
+  onTrailingStopTriggered(orderId: UUID, state: TrailingStopState): void;
   /** Executed at the end of the strategy */
   end(): void;
+}
+
+export abstract class Strategy<T> implements IStrategy<T> {
+  public init(_params: InitParams<T>): void {}
+  public onEachTimeframeCandle(_params: OnCandleEventParams<T>, ..._indicators: unknown[]): void {}
+  public onTimeframeCandleAfterWarmup(_params: OnCandleEventParams<T>, ..._indicators: unknown[]): void {}
+  public log(_params: OnCandleEventParams<T>, ..._indicators: unknown[]): void {}
+  public onOrderCompleted(_params: OnOrderCompletedEventParams<T>, ..._indicators: unknown[]): void {}
+  public onOrderCanceled(_params: OnOrderCanceledEventParams<T>, ..._indicators: unknown[]): void {}
+  public onOrderErrored(_params: OnOrderErroredEventParams<T>, ..._indicators: unknown[]): void {}
+  public onTrailingStopActivated(_state: TrailingStopState): void {}
+  public onTrailingStopTriggered(_orderId: UUID, _state: TrailingStopState): void {}
+  public end(): void {}
 }

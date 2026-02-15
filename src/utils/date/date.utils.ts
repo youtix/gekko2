@@ -12,26 +12,17 @@ import { Time } from './date.types';
  * @returns The modified date as an EpochTimeStamp with specified parts reset to zero.
  */
 export const resetDateParts = (date?: EpochTimeStamp, parts?: Time[]): EpochTimeStamp =>
-  date
-    ? reduce(
-        parts,
-        (modifiedDate, part) => dateFnsMapper[part](modifiedDate, 0),
-        new TZDateMini(date, '+00:00'),
-      ).getTime()
-    : 0;
+  date ? reduce(parts, (modifiedDate, part) => dateFnsMapper[part](modifiedDate, 0), new TZDateMini(date, '+00:00')).getTime() : 0;
 
-export const toISOString = (timestamp?: EpochTimeStamp): string =>
-  !isNil(timestamp) ? new Date(timestamp).toISOString() : 'Unknown Date';
+export const toISOString = (timestamp?: EpochTimeStamp): string => (!isNil(timestamp) ? new Date(timestamp).toISOString() : 'Unknown Date');
 
 export const toTimestamp = (iso8601String?: string): EpochTimeStamp => new Date(iso8601String ?? 0).getTime();
 
-export const isDaterangeValid = (startDate: string, endDate: string) => {
-  const start = toTimestamp(startDate);
-  const end = toTimestamp(endDate);
+export const isDaterangeValid = (start: EpochTimeStamp, end: EpochTimeStamp) => {
   return isValid(start) && isValid(end) && isBefore(start, end);
 };
 
-export const splitIntervals = (startDate: number, endDate: number, batchSize = 1440) => {
+export const splitIntervals = (startDate: EpochTimeStamp, endDate: EpochTimeStamp, batchSize = 1440) => {
   const alignedStart = startOfMinute(new Date(startDate));
   const alignedEnd = subMilliseconds(addMinutes(startOfMinute(new Date(endDate)), 1), 1);
   const totalMinutes = differenceInMinutes(alignedEnd, alignedStart) + 1;

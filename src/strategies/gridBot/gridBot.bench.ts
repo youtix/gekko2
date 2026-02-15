@@ -1,5 +1,5 @@
 import type { Candle } from '@models/candle.types';
-import type { Portfolio } from '@models/portfolio.types';
+import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import type { MarketData } from '@services/exchange/exchange.types';
 import type { UUID } from 'node:crypto';
 import { bench, describe } from 'vitest';
@@ -11,10 +11,10 @@ const marketData: MarketData = {
   amount: { min: 0.001, max: 1000 },
 };
 
-const balancedPortfolio: Portfolio = {
-  asset: { free: 50, used: 0, total: 50 },
-  currency: { free: 5000, used: 0, total: 5000 },
-};
+const balancedPortfolio: Portfolio = new Map<string, BalanceDetail>([
+  ['asset', { free: 50, used: 0, total: 50 }],
+  ['currency', { free: 5000, used: 0, total: 5000 }],
+]);
 
 const makeCandle = (close: number): Candle =>
   ({
@@ -163,7 +163,7 @@ describe('GridBot Strategy Performance', () => {
       for (let i = 0; i < 100; i++) {
         strategy.onOrderCompleted({
           order: { id: `unknown-${i}` as UUID, side: 'BUY' } as any,
-          exchange: { price: 100, balance: { free: 0, used: 0, total: 0 }, portfolio: balancedPortfolio },
+          exchange: { price: 100, portfolio: balancedPortfolio },
           tools,
         } as any);
       }

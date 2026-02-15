@@ -43,12 +43,24 @@ describe('Injecter', () => {
     // Reset singleton state (accessing private property for testing)
     (inject as any).storageInstance = undefined;
     (inject as any).exchangeInstance = undefined;
-    vi.clearAllMocks();
+    getStorageMock.mockClear();
+    getExchangeMock.mockClear();
+    getWatchMock.mockClear();
   });
 
   describe('storage', () => {
     it('returns cached storage instance on subsequent calls', () => {
       getStorageMock.mockReturnValue({ type: 'sqlite', database: '' });
+      getWatchMock.mockReturnValue({
+        pairs: [{ symbol: 'BTC/USDT' }],
+        assets: ['BTC'],
+        currency: 'USDT',
+        timeframe: '1h',
+        mode: 'backtest',
+        tickrate: 1000,
+        fillGaps: 'no',
+        warmup: { candleCount: 100, tickrate: 1000 },
+      } as Watch);
       const first = inject.storage();
       const second = inject.storage();
       expect(second).toBe(first);
@@ -87,7 +99,16 @@ describe('Injecter', () => {
 
     it.each(testCases)('instantiates and caches $name exchange', ({ config: cfg, mock }) => {
       getExchangeMock.mockReturnValue(cfg as any);
-      getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT' } as Watch);
+      getWatchMock.mockReturnValue({
+        pairs: [{ symbol: 'BTC/USDT' }],
+        assets: ['BTC'],
+        currency: 'USDT',
+        timeframe: '1h',
+        mode: 'backtest',
+        tickrate: 1000,
+        fillGaps: 'no',
+        warmup: { candleCount: 100, tickrate: 1000 },
+      } as Watch);
 
       const first = inject.exchange();
       const second = inject.exchange();
