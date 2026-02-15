@@ -267,53 +267,82 @@ describe('Trader', () => {
   });
 
   describe('synchronize', () => {
-    it('should fetch portfolio from exchange', async () => {
-      await trader['synchronize']();
-      expect(fakeExchange.fetchBalance).toHaveBeenCalledTimes(1);
+    describe('Default Mode (No Portfolio Updates Config)', () => {
+      it('should fetch portfolio and tickers from exchange', async () => {
+        await trader['synchronize']();
+        expect(fakeExchange.fetchBalance).toHaveBeenCalledTimes(1);
+        expect(fakeExchange.fetchTickers).toHaveBeenCalledTimes(1);
+      });
+
+      it('should update trader plugin portfolio and prices', async () => {
+        const newBalance = new Map<string, BalanceDetail>([
+          ['BTC', { free: 3, used: 0, total: 3 }],
+          ['USDT', { free: 50, used: 0, total: 50 }],
+        ]);
+        fakeExchange.fetchBalance.mockResolvedValue(newBalance);
+        fakeExchange.fetchTickers.mockResolvedValue({ 'BTC/USDT': { bid: 200 } });
+
+        await trader['synchronize']();
+
+        expect(trader['portfolio']).toEqual(newBalance);
+        expect(trader['prices'].get('BTC/USDT')).toBe(200);
+      });
+
+      it('should always emit portfolio change event', async () => {
+        // Even if portfolio is empty or unchanged
+        const spy = vi.spyOn(trader as any, 'emitPortfolioChangeEvent');
+        await trader['synchronize']();
+        expect(spy).toHaveBeenCalledOnce();
+      });
     });
 
-    it('should update trader plugin portfolio with exchange portfolio', async () => {
-      trader['portfolio'] = new Map<string, BalanceDetail>([
-        ['BTC', { free: 0, used: 0, total: 0 }],
-        ['USDT', { free: 0, used: 0, total: 0 }],
-      ]);
-      const newBalance = new Map<string, BalanceDetail>([
-        ['BTC', { free: 3, used: 0, total: 3 }],
-        ['USDT', { free: 50, used: 0, total: 50 }],
-      ]);
-      fakeExchange.fetchBalance.mockResolvedValue(newBalance);
+    describe('With Portfolio Updates Config', () => {
+      let filteredTrader: Trader;
 
-      await trader['synchronize']();
+      beforeEach(() => {
+        getWatchMock.mockReturnValue(cloneWatch());
+        // threshold 1%, dust 1
+        filteredTrader = new Trader({ portfolioUpdates: { threshold: 1, dust: 1 } });
+        filteredTrader['currentTimestamp'] = 1_700_000_000_000;
+        filteredTrader['getExchange'] = vi.fn().mockReturnValue(fakeExchange);
+        filteredTrader['addDeferredEmit'] = vi.fn();
+        filteredTrader['prices'].set('BTC/USDT', 100);
+      });
 
-      expect(trader['portfolio']).toEqual(newBalance);
-    });
+      it.each`
+        description                                                   | oldPortfolio                                                                                                                 | newPortfolio                                                                                                                         | expectedEmit
+        ${'should emit when first sync (lastEmitted is null)'}        | ${null}                                                                                                                      | ${new Map([['BTC', { total: 2 }]])}                                                                                                  | ${true}
+        ${'should NOT emit when change is below threshold'}           | ${new Map<string, BalanceDetail>([['BTC', { free: 1, used: 0, total: 1 }], ['USDT', { free: 1000, used: 0, total: 1000 }]])} | ${new Map<string, BalanceDetail>([['BTC', { free: 1.005, used: 0, total: 1.005 }], ['USDT', { free: 1000, used: 0, total: 1000 }]])} | ${false}
+        ${'should emit when change is above threshold'}               | ${new Map<string, BalanceDetail>([['BTC', { free: 1, used: 0, total: 1 }], ['USDT', { free: 1000, used: 0, total: 1000 }]])} | ${new Map<string, BalanceDetail>([['BTC', { free: 1.05, used: 0, total: 1.05 }], ['USDT', { free: 1000, used: 0, total: 1000 }]])}   | ${true}
+        ${'should emit when portfolio structure changes (new asset)'} | ${new Map<string, BalanceDetail>([['USDT', { free: 1000, used: 0, total: 1000 }]])}                                          | ${new Map<string, BalanceDetail>([['BTC', { free: 0.1, used: 0, total: 0.1 }], ['USDT', { free: 1000, used: 0, total: 1000 }]])}     | ${true}
+      `('$description', async ({ oldPortfolio, newPortfolio, expectedEmit }) => {
+        // Setup initial state
+        filteredTrader['lastEmittedPortfolio'] = oldPortfolio;
+        filteredTrader['portfolio'] = oldPortfolio || new Map(); // just to have something before sync overrides it
 
-    it('should update prices', async () => {
-      fakeExchange.fetchTickers.mockResolvedValue({ 'BTC/USDT': { bid: 200 } });
+        // Mock exchange to return new portfolio
+        fakeExchange.fetchBalance.mockResolvedValue(newPortfolio);
 
-      await trader['synchronize']();
+        // Mock Emit
+        const emitSpy = vi.spyOn(filteredTrader as any, 'emitPortfolioChangeEvent');
 
-      expect(trader['prices'].get('BTC/USDT')).toBe(200);
-    });
+        await filteredTrader['synchronize']();
 
-    it.each`
-      action                                                                | oldPortfolio                                                                                                             | newPortfolio                                                                                                             | expectedEmit
-      ${'NOT emit portfolio change event because portfolio did not change'} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${false}
-      ${'emit portfolio change event because portfolio changed'}            | ${new Map<string, BalanceDetail>([['BTC', { free: 0, used: 0, total: 0 }], ['USDT', { free: 0, used: 0, total: 0 }]])}   | ${new Map<string, BalanceDetail>([['BTC', { free: 3, used: 0, total: 3 }], ['USDT', { free: 50, used: 0, total: 50 }]])} | ${true}
-    `('should $action', async ({ oldPortfolio, newPortfolio, expectedEmit }) => {
-      trader['portfolio'] = oldPortfolio;
-      fakeExchange.fetchBalance.mockResolvedValue(newPortfolio);
-      const spy = vi.spyOn(trader as any, 'emitPortfolioChangeEvent');
-
-      await trader['synchronize']();
-
-      if (expectedEmit) expect(spy).toHaveBeenCalledOnce();
-      else expect(spy).not.toHaveBeenCalled();
+        if (expectedEmit) {
+          expect(emitSpy).toHaveBeenCalledOnce();
+          // Also verify lastEmittedPortfolio is updated to newPortfolio
+          expect(filteredTrader['lastEmittedPortfolio']).toEqual(newPortfolio);
+        } else {
+          expect(emitSpy).not.toHaveBeenCalled();
+          // Verify lastEmittedPortfolio remains unchanged
+          expect(filteredTrader['lastEmittedPortfolio']).toEqual(oldPortfolio);
+        }
+      });
     });
   });
 
-  describe('portfolio event emitters', () => {
-    it('defers portfolio change events with current portfolio', () => {
+  describe('emitPortfolioChangeEvent', () => {
+    it('defers portfolio change event with current portfolio', () => {
       const portfolio = new Map<string, BalanceDetail>([
         ['BTC', { free: 10, used: 0, total: 10 }],
         ['USDT', { free: 25, used: 0, total: 25 }],

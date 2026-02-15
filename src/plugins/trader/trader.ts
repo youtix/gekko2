@@ -21,12 +21,12 @@ import { error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { createEmptyPortfolio, getAssetBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
-import { bindAll, filter, isEqual } from 'lodash-es';
+import { bindAll, cloneDeep, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { BACKTEST_SYNC_INTERVAL, ORDER_FACTORY } from './trader.const';
 import { traderSchema } from './trader.schema';
 import { TraderOrderMetadata } from './trader.types';
-import { computeOrderPricing } from './trader.utils';
+import { computeOrderPricing, PortfolioUpdatesConfig, shouldEmitPortfolio, ShouldEmitPortfolioParams } from './trader.utils';
 
 export class Trader extends Plugin {
   private readonly orders: Map<UUID, TraderOrderMetadata>;
@@ -36,8 +36,10 @@ export class Trader extends Plugin {
   private prices: Map<TradingPair, number>;
   private currentTimestamp: EpochTimeStamp;
   private syncInterval: NodeJS.Timeout | null;
+  private lastEmittedPortfolio: Portfolio | null;
+  private readonly portfolioUpdatesConfig: PortfolioUpdatesConfig | null;
 
-  constructor() {
+  constructor(parameters?: { portfolioUpdates?: PortfolioUpdatesConfig }) {
     super(Trader.name);
     this.orders = new Map();
     this.warmupCompleted = false;
@@ -46,6 +48,8 @@ export class Trader extends Plugin {
     this.prices = new Map();
     this.currentTimestamp = 0;
     this.syncInterval = null;
+    this.lastEmittedPortfolio = null;
+    this.portfolioUpdatesConfig = parameters?.portfolioUpdates ?? null;
 
     bindAll(this, [this.synchronize.name]);
   }
@@ -53,9 +57,6 @@ export class Trader extends Plugin {
   private async synchronize() {
     const exchange = this.getExchange();
     info('trader', `Synchronizing data with ${exchange.getExchangeName()}`);
-
-    // Save old porfolio
-    const oldPortfolio = this.portfolio;
 
     // Update portfolio, balance and prices
     this.portfolio = await exchange.fetchBalance();
@@ -66,7 +67,22 @@ export class Trader extends Plugin {
     }
 
     // Emit portfolio events if changes are detected
-    if (!isEqual(oldPortfolio, this.portfolio)) this.emitPortfolioChangeEvent();
+    if (this.portfolioUpdatesConfig) {
+      const params: ShouldEmitPortfolioParams = {
+        current: this.portfolio,
+        lastEmitted: this.lastEmittedPortfolio,
+        prices: this.prices,
+        pairs: this.pairs,
+        portfolioConfig: this.portfolioUpdatesConfig,
+      };
+
+      if (shouldEmitPortfolio(params)) {
+        this.emitPortfolioChangeEvent();
+        this.lastEmittedPortfolio = cloneDeep(this.portfolio);
+      }
+    } else {
+      this.emitPortfolioChangeEvent();
+    }
   }
 
   /* -------------------------------------------------------------------------- */
