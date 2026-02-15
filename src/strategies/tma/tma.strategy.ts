@@ -1,16 +1,9 @@
 import { TradingPair } from '@models/utility.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { TMAStrategyParams } from './tma.types';
 
-export class TMA implements Strategy<TMAStrategyParams> {
+export class TMA extends Strategy<TMAStrategyParams> {
   private pair?: TradingPair;
 
   init({ candle, tools, addIndicator }: InitParams<TMAStrategyParams>): void {
@@ -40,12 +33,4 @@ export class TMA implements Strategy<TMAStrategyParams> {
       log('debug', `No clear trend detected: ${short}/${medium}/${long}`);
     }
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
-  log(_params: OnCandleEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<TMAStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

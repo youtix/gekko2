@@ -1,5 +1,4 @@
 import {
-  InitParams,
   OnCandleEventParams,
   OnOrderCanceledEventParams,
   OnOrderCompletedEventParams,
@@ -10,7 +9,7 @@ import { isNil } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { DebugAdviceParams } from './debugAdvice.types';
 /** This strategy is used for debugging purposes. It is used in e2e tests to verify the pipeline too, so be careful when modifying it. */
-export class DebugAdvice implements Strategy<DebugAdviceParams> {
+export class DebugAdvice extends Strategy<DebugAdviceParams> {
   private index = 0;
   private activeOrders: Map<string, { orderId: UUID; cancelAt: number }> = new Map();
 
@@ -48,9 +47,6 @@ export class DebugAdvice implements Strategy<DebugAdviceParams> {
 
     this.index++;
   }
-  init(_params: InitParams<DebugAdviceParams>): void {}
-  onEachTimeframeCandle(_params: OnCandleEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {}
-  log(_params: OnCandleEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {}
 
   onOrderCompleted(params: OnOrderCompletedEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {
     const { order, tools } = params;
@@ -69,5 +65,4 @@ export class DebugAdvice implements Strategy<DebugAdviceParams> {
     tools.log('debug', `Order Errored: ${order.id}`);
     this.activeOrders.delete(order.id);
   }
-  end(): void {}
 }

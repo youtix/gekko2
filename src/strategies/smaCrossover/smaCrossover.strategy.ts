@@ -1,12 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { SMACrossoverStrategyParams } from './smaCrossover.types';
 
@@ -19,7 +12,7 @@ import { SMACrossoverStrategyParams } from './smaCrossover.types';
  * A crossover is detected by comparing the previous relative position
  * of the price vs the SMA to the current one.
  */
-export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
+export class SMACrossover extends Strategy<SMACrossoverStrategyParams> {
   /** Tracks whether price was above SMA in the previous candle */
   private wasPriceAboveSMA: boolean | null = null;
   private pair?: TradingPair;
@@ -77,11 +70,4 @@ export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
 
     log('debug', `SMA: ${sma.toFixed(5)} | Price: ${currentCandle.close.toFixed(5)}`);
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<SMACrossoverStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<SMACrossoverStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<SMACrossoverStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<SMACrossoverStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

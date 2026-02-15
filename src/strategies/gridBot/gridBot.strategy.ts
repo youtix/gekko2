@@ -1,7 +1,7 @@
 import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
-import type {
+import {
   InitParams,
   OnCandleEventParams,
   OnOrderCanceledEventParams,
@@ -38,7 +38,7 @@ import {
  * - On exchange errors, orders are retried up to the configured limit
  * - When price exits the grid range, a warning is logged but trading continues
  */
-export class GridBot implements Strategy<GridBotStrategyParams> {
+export class GridBot extends Strategy<GridBotStrategyParams> {
   /** Base asset */
   private base: string = '';
   /** Quote asset */
@@ -101,10 +101,6 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     if (isOutOfRange(close, this.gridBounds)) {
       tools.log('warn', `GridBot: Price ${close} is out of grid range [${this.gridBounds.min}, ${this.gridBounds.max}]`);
     }
-  }
-
-  onTimeframeCandleAfterWarmup(_params: OnCandleEventParams<GridBotStrategyParams>): void {
-    // Range checks happen in onEachTimeframeCandle
   }
 
   onOrderCompleted({ order, exchange, tools }: OnOrderCompletedEventParams<GridBotStrategyParams>): void {
@@ -195,14 +191,6 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
     this.retryCount.set(levelIndex, attempts);
     this.placeOrder(levelIndex, level.side, tools);
-  }
-
-  log(_params: OnCandleEventParams<GridBotStrategyParams>): void {
-    // No logging implementation needed
-  }
-
-  end(): void {
-    // No cleanup needed
   }
 
   /** Reset all internal state */

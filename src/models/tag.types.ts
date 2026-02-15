@@ -18,4 +18,5 @@ export type Tag =
   | 'event subscriber'
   | 'supervision'
   | 'trader'
-  | 'trading advisor';
+  | 'trading advisor'
+  | 'trailing stop';

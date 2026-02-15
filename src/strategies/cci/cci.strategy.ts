@@ -1,20 +1,14 @@
 import { TradingPair } from '@models/utility.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { CCIStrategyParams, CCITrend } from './cci.types';
 
-export class CCI implements Strategy<CCIStrategyParams> {
+export class CCI extends Strategy<CCIStrategyParams> {
   private trend: CCITrend;
   private pair?: TradingPair;
 
   constructor() {
+    super();
     this.trend = { direction: 'nodirection', duration: 0, persisted: false, adviced: false };
   }
 
@@ -79,10 +73,4 @@ export class CCI implements Strategy<CCIStrategyParams> {
     if (!isNumber(cci)) return;
     tools.log('debug', `CCI: ${cci.toFixed(2)}`);
   }
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<CCIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<CCIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<CCIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<CCIStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

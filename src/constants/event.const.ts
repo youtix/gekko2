@@ -17,3 +17,6 @@ export const TIMEFRAME_CANDLE_EVENT = 'timeframeCandle';
 export const PERFORMANCE_REPORT_EVENT = 'performanceReport';
 export const ROUNDTRIP_COMPLETED_EVENT = 'roundtripCompleted';
 export const EQUITY_SNAPSHOT_EVENT = 'equitySnapshot';
+
+export const TRAILING_STOP_ACTIVATED = 'trailingStopActivated';
+export const TRAILING_STOP_TRIGGERED = 'trailingStopTriggered';

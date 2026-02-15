@@ -57,6 +57,7 @@ vi.mock('@strategies/strategyManager', () => {
   return {
     StrategyManager: class {
       constructor() {}
+      onOneMinuteBucket() {}
       createStrategy() {}
       setMarketData() {}
       setPortfolio() {}

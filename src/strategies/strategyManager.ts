@@ -3,12 +3,14 @@ import {
   STRATEGY_CREATE_ORDER_EVENT,
   STRATEGY_INFO_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
+  TRAILING_STOP_ACTIVATED,
+  TRAILING_STOP_TRIGGERED,
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import * as indicators from '@indicators/index';
 import { Indicator } from '@indicators/indicator';
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
-import { AdviceOrder } from '@models/advice.types';
+import { AdviceOrder, StrategyOrder, TrailingConfig } from '@models/advice.types';
 import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
@@ -20,11 +22,13 @@ import { debug, error, info, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { toISOString } from '@utils/date/date.utils';
 import { addMinutes } from 'date-fns';
-import { bindAll } from 'lodash-es';
+import { bindAll, omit } from 'lodash-es';
 import { randomUUID, UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { isAbsolute, resolve } from 'node:path';
 import { Strategy, Tools } from './strategy.types';
+import { TrailingStopManager } from './trailingStopManager';
+import { TrailingStopState } from './trailingStopManager.types';
 
 export class StrategyManager extends EventEmitter {
   private age: number;
@@ -36,6 +40,8 @@ export class StrategyManager extends EventEmitter {
   private strategy?: Strategy<object>;
   private indicatorsResults: unknown[] = [];
   private currentTimestamp: EpochTimeStamp = 0;
+  private trailingStopManager: TrailingStopManager;
+  private pendingTrailingStops: Map<UUID, TrailingConfig>;
 
   constructor(warmupPeriod: number) {
     super();
@@ -45,8 +51,20 @@ export class StrategyManager extends EventEmitter {
     this.strategyParams = config.getStrategy() ?? {};
     this.portfolio = new Map<Asset, BalanceDetail>();
     this.marketData = new Map();
+    this.pendingTrailingStops = new Map();
+    this.trailingStopManager = new TrailingStopManager();
 
-    bindAll(this, [this.addIndicator.name, this.createOrder.name, this.cancelOrder.name, this.log.name]);
+    bindAll(this, [
+      this.addIndicator.name,
+      this.createOrder.name,
+      this.cancelOrder.name,
+      this.log.name,
+      this.onTrailingStopActivated.name,
+      this.onTrailingStopTriggered.name,
+    ]);
+
+    this.trailingStopManager.on(TRAILING_STOP_TRIGGERED, this.onTrailingStopTriggered);
+    this.trailingStopManager.on(TRAILING_STOP_ACTIVATED, this.onTrailingStopActivated);
   }
 
   public async createStrategy(strategyName: string, strategyPath?: string) {
@@ -66,11 +84,15 @@ export class StrategyManager extends EventEmitter {
   /*                            EVENT LISTENERS                                 */
   /* -------------------------------------------------------------------------- */
 
-  public onTimeFrameCandle(bucket: CandleBucket) {
-    // Update current timestamp from the first candle in the bucket
+  public onOneMinuteBucket(bucket: CandleBucket) {
+    // Update current timestamp with the latest candle data
     const firstCandle = bucket.values().next().value;
     if (firstCandle) this.currentTimestamp = firstCandle.start;
+    // Update trailing stop orders each minute with the latest candle data
+    this.trailingStopManager.update(bucket);
+  }
 
+  public onTimeFrameCandle(bucket: CandleBucket) {
     const tools = this.createTools();
     const params = { candle: bucket, portfolio: this.portfolio, tools };
 
@@ -102,18 +124,47 @@ export class StrategyManager extends EventEmitter {
 
   public onOrderCompleted({ order, exchange }: OrderCompletedEvent) {
     this.strategy?.onOrderCompleted({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
+
+    if (this.pendingTrailingStops.has(order.id)) {
+      this.trailingStopManager.addOrder({
+        id: order.id,
+        symbol: order.symbol,
+        side: order.side === 'BUY' ? 'SELL' : 'BUY',
+        amount: order.amount,
+        trailing: this.pendingTrailingStops.get(order.id),
+        createdAt: order.orderCreationDate,
+      });
+      this.pendingTrailingStops.delete(order.id);
+    }
   }
 
   public onOrderCanceled({ order, exchange }: OrderCanceledEvent) {
     this.strategy?.onOrderCanceled({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
+    this.pendingTrailingStops.delete(order.id);
+    this.trailingStopManager.removeOrder(order.id);
   }
 
   public onOrderErrored({ order, exchange }: OrderErroredEvent) {
     this.strategy?.onOrderErrored({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
+    this.pendingTrailingStops.delete(order.id);
+    this.trailingStopManager.removeOrder(order.id);
   }
 
   public onStrategyEnd() {
+    const pendingOrders = this.trailingStopManager.getOrders();
+    if (pendingOrders.size > 0)
+      warning('strategy', `Strategy ended with ${pendingOrders.size} active trailing stop(s) that never triggered.`);
+    this.trailingStopManager.removeAllListeners();
     this.strategy?.end();
+  }
+
+  private onTrailingStopActivated(state: TrailingStopState) {
+    this.strategy?.onTrailingStopActivated(state);
+  }
+
+  private onTrailingStopTriggered(state: TrailingStopState) {
+    const orderId = this.createOrder({ symbol: state.symbol, side: state.side, type: 'MARKET', amount: state.amount });
+    this.strategy?.onTrailingStopTriggered(orderId, state);
   }
 
   /* -------------------------------------------------------------------------- */
@@ -126,10 +177,6 @@ export class StrategyManager extends EventEmitter {
 
   public setMarketData(marketData: Map<TradingPair, MarketData>) {
     this.marketData = marketData;
-  }
-
-  public setCurrentTimestamp(timestamp: EpochTimeStamp) {
-    this.currentTimestamp = timestamp;
   }
 
   /* -------------------------------------------------------------------------- */
@@ -151,11 +198,15 @@ export class StrategyManager extends EventEmitter {
     this.emit<UUID>(STRATEGY_CANCEL_ORDER_EVENT, orderId);
   }
 
-  private createOrder(order: Omit<AdviceOrder, 'id' | 'orderCreationDate'>): UUID {
+  private createOrder(order: StrategyOrder): UUID {
     if (!this.currentTimestamp) throw new GekkoError('strategy', 'No candle when relaying advice');
     const id = randomUUID();
     const orderCreationDate = addMinutes(this.currentTimestamp, 1).getTime();
-    this.emit<AdviceOrder>(STRATEGY_CREATE_ORDER_EVENT, { ...order, id, orderCreationDate });
+
+    // If it is a trailing stop order, add it to the waiting list, it will be created after order completion
+    if (order.trailing) this.pendingTrailingStops.set(id, order.trailing);
+
+    this.emit<AdviceOrder>(STRATEGY_CREATE_ORDER_EVENT, { ...omit(order, 'trailing'), id, orderCreationDate });
     return id;
   }
 
@@ -174,12 +225,7 @@ export class StrategyManager extends EventEmitter {
         error('strategy', message);
         throw new GekkoError('strategy', message);
     }
-    this.emit<StrategyInfo>(STRATEGY_INFO_EVENT, {
-      timestamp: Date.now(),
-      level,
-      tag: 'strategy',
-      message,
-    });
+    this.emit<StrategyInfo>(STRATEGY_INFO_EVENT, { timestamp: this.currentTimestamp, level, tag: 'strategy', message });
   }
 
   /* -------------------------------------------------------------------------- */

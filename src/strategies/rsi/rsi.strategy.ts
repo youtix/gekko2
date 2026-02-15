@@ -1,21 +1,15 @@
 import { TradingPair } from '@models/utility.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber } from 'lodash-es';
 import { RSICurrentTrend, RSIStrategyParams } from './rsi.types';
 
-export class RSI implements Strategy<RSIStrategyParams> {
+export class RSI extends Strategy<RSIStrategyParams> {
   private trend: RSICurrentTrend;
   private pair?: TradingPair;
 
   constructor() {
+    super();
     this.trend = { direction: 'none', duration: 0, adviced: false };
   }
 
@@ -58,12 +52,4 @@ export class RSI implements Strategy<RSIStrategyParams> {
       }
     }
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  log(_params: OnCandleEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

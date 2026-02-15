@@ -1,16 +1,9 @@
 import { TradingPair } from '@models/utility.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { DEMAStrategyParams } from './dema.types';
 
-export class DEMA implements Strategy<DEMAStrategyParams> {
+export class DEMA extends Strategy<DEMAStrategyParams> {
   private currentTrend?: 'down' | 'up';
   private pair?: TradingPair;
 
@@ -62,11 +55,4 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
 
     log('debug', ['Calculated DEMA and SMA properties for candle:', `DEMA: ${dema.toFixed(5)}`, `SMA: ${sma.toFixed(5)}`].join(' '));
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

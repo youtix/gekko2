@@ -1,15 +1,8 @@
 import { TradingPair } from '@models/utility.types';
-import type {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import type { EMARibbonStrategyParams } from './emaRibbon.types';
 
-export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
+export class EMARibbon extends Strategy<EMARibbonStrategyParams> {
   private isLong?: boolean;
   private pair?: TradingPair;
 
@@ -46,11 +39,4 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
     log('debug', `Ribbon results: [${emaRibbon.results.join(' / ')}]`);
     log('debug', `Ribbon Spread: ${emaRibbon.spread}`);
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<EMARibbonStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

@@ -126,8 +126,7 @@ export class TradingAdvisor extends Plugin {
   }
 
   protected processOneMinuteBucket(bucket: CandleBucket) {
-    const firstCandle = bucket.values().next().value;
-    if (firstCandle) this.strategyManager?.setCurrentTimestamp(firstCandle.start);
+    this.strategyManager?.onOneMinuteBucket(bucket);
 
     const timeframeBucket = this.bucketBatcher.addBucket(bucket);
     if (timeframeBucket) {

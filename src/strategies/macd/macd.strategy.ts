@@ -1,17 +1,10 @@
 import { TradingPair } from '@models/utility.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
 
-export class MACD implements Strategy<MACDStrategyParams> {
+export class MACD extends Strategy<MACDStrategyParams> {
   private trend?: MACDTrend;
   private pair?: TradingPair;
 
@@ -84,11 +77,4 @@ export class MACD implements Strategy<MACDStrategyParams> {
       isNumber(data.hist)
     );
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<MACDStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }
