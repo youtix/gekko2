@@ -2,6 +2,7 @@ import { TRAILING_STOP_ACTIVATED, TRAILING_STOP_TRIGGERED } from '@constants/eve
 import { StrategyOrder } from '@models/advice.types';
 import { CandleBucket } from '@models/event.types';
 import { warning } from '@services/logger';
+import { isNil } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { TrailingStopState } from './trailingStopManager.types';
@@ -16,7 +17,7 @@ export class TrailingStopManager extends EventEmitter {
 
   public addOrder({ id, symbol, side, amount, trailing, createdAt }: AddOrderParams): void {
     if (!trailing) return;
-    if (!amount || amount <= 0) {
+    if (!isNil(amount) && amount <= 0) {
       warning('trailing stop', `Cannot create trailing stop without a valid amount, current order amount: ${amount}`);
       return;
     }

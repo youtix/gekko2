@@ -7,7 +7,7 @@ export type TrailingStopState = {
   id: UUID;
   symbol: TradingPair;
   side: OrderSide;
-  amount: number;
+  amount: number | undefined;
   config: TrailingConfig;
   status: 'dormant' | 'active';
   highestPeak: number;

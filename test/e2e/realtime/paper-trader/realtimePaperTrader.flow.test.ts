@@ -6,15 +6,16 @@ import { MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
 import { MockFetcherService } from '../../mocks/fetcher.mock';
 import { MockHeart } from '../../mocks/heart.mock';
-import { MockWinston, clearLogs } from '../../mocks/winston.mock';
+import { MockWinston, clearLogs, logStore } from '../../mocks/winston.mock';
 
 // --------------------------------------------------------------------------
 // MOCKS SETUP
 // --------------------------------------------------------------------------
 const DEFAULT_MOCK_STRATEGY_CONFIG = { name: 'DebugAdvice', waittime: 0, each: 4 };
+const DEFAULT_MOCK_STRATEGY_NAME = 'DebugAdvice';
 
 const FAST_MINUTE = 50;
-const TARGET_CANDLES = 30; // Track candles emitted
+const TARGET_CANDLES = 20; // Track candles emitted
 
 // Wait for candles to be collected (with accelerated time, this should be fast)
 // We'll wait for TARGET_CANDLES * FAST_MINUTE to give buffer
@@ -55,7 +56,8 @@ mock.module('@services/fetcher/fetcher.service', () => ({
 
 // 4. Mock Configuration
 let mockPairs = [{ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' }];
-let mockStrategyConfig = DEFAULT_MOCK_STRATEGY_CONFIG;
+let mockStrategyConfig: any = DEFAULT_MOCK_STRATEGY_CONFIG;
+let mockStrategyName = DEFAULT_MOCK_STRATEGY_NAME;
 mock.module('@services/configuration/configuration', () => {
   return {
     config: {
@@ -76,13 +78,14 @@ mock.module('@services/configuration/configuration', () => {
           ['BTC', 100],
           ['USDT', 300000],
         ]),
+        exchangeSynchInterval: 10 * 60 * 1000,
       }),
       getStorage: () => ({
         type: 'sqlite',
         path: ':memory:', // Isolated DB
       }),
       getPlugins: () => [
-        { name: 'TradingAdvisor', strategyName: 'DebugAdvice' },
+        { name: 'TradingAdvisor', strategyName: mockStrategyName },
         { name: 'Trader' },
         { name: 'RoundTripAnalyzer', enableConsoleTable: false },
         { name: 'EventSubscriber', token: TELEGRAM_TOKEN, botUsername: TELEGRAM_USERNAME },
@@ -155,6 +158,7 @@ describe('E2E: Realtime Paper Trader Flow', () => {
 
     // Reset config defaults
     mockStrategyConfig = DEFAULT_MOCK_STRATEGY_CONFIG;
+    mockStrategyName = DEFAULT_MOCK_STRATEGY_NAME;
     mockPairs = [{ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' }];
   });
 
@@ -226,5 +230,36 @@ describe('E2E: Realtime Paper Trader Flow', () => {
     expect(roundtrip).toHaveProperty('entryAt');
     expect(roundtrip).toHaveProperty('exitAt');
     expect(roundtrip).toHaveProperty('duration');
+  });
+
+  it('Scenario C: Trailing Stop Lifecycle', async () => {
+    // Override strategy to use DebugTrailingStop with trailing stop config
+    mockStrategyName = 'DebugTrailingStop';
+    mockStrategyConfig = { name: 'DebugTrailingStop', wait: 0, trigger: 9930, percentage: 0.1 };
+
+    MockCCXTExchange.setPredefinedCandles('BTC/USDT', [
+      { close: 9500 }, // Places BUY order
+      { close: 9500 }, // TS dormant
+      { close: 10000, high: 10000, low: 9995 }, // TS active, stopPrice == 9990
+      { close: 9800, high: 9995, low: 9800 }, // TS triggers SELL
+      { close: 9800 }, // SELL completes
+      { close: 9800 },
+    ]);
+
+    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
+    const { inject } = await import('@services/injecter/injecter');
+    const storage = inject.storage() as SQLiteStorage;
+    storage.close = () => {};
+
+    const pipelinePromise = gekkoPipeline();
+    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
+
+    // Verify trailing stop BUY order was created by the strategy
+    const createdLog = logStore.find(log => typeof log.message === 'string' && log.message.includes('Trailing stop BUY order created'));
+    expect(createdLog).toBeDefined();
+
+    // Verify the orders were completed (BUY order completed and then SELL order completed after trigger)
+    const completedLogs = logStore.filter(log => typeof log.message === 'string' && log.message.includes('Trailing stop order completed'));
+    expect(completedLogs.length).toBeGreaterThanOrEqual(2);
   });
 });

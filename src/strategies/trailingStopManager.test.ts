@@ -60,9 +60,9 @@ describe('TrailingStopManager', () => {
       expect(manager.getOrders().size).toBe(0);
     });
 
-    it('does not add order if amount is undefined', () => {
+    it('adds order if amount is undefined', () => {
       manager.addOrder({ ...defaultOrder, amount: undefined });
-      expect(manager.getOrders().size).toBe(0);
+      expect(manager.getOrders().size).toBe(1);
     });
   });
 

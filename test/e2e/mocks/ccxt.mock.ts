@@ -2,6 +2,14 @@ import { ONE_MINUTE } from '@constants/time.const';
 import { drop } from 'lodash-es';
 import { generateSyntheticCandle, generateSyntheticHistory } from '../fixtures/syntheticData';
 
+export type PartialCandle = {
+  close: number;
+  open?: number;
+  high?: number;
+  low?: number;
+  volume?: number;
+};
+
 export class MockCCXTExchange {
   private age = new Map<string, number>();
   private lastCandleTimestamp = new Map<string, number>();
@@ -14,6 +22,19 @@ export class MockCCXTExchange {
   public static emitFutureCandles: boolean = false;
   /** When true, createOrder will return 'open' status and not fill the order immediately */
   public static simulateOpenOrders: boolean = false;
+
+  public static predefinedCandles: Record<string, PartialCandle[]> = {};
+  public static predefinedCandlesIndex: Record<string, number> = {};
+
+  public static setPredefinedCandles(symbol: string, candles: PartialCandle[]) {
+    this.predefinedCandles[symbol] = candles;
+    this.predefinedCandlesIndex[symbol] = 0;
+  }
+
+  public static resetPredefinedCandles() {
+    this.predefinedCandles = {};
+    this.predefinedCandlesIndex = {};
+  }
 
   public id = 'binance';
   public name = 'binance';
@@ -133,6 +154,27 @@ export class MockCCXTExchange {
 
   async fetchOHLCV(symbol: string, timeframe: string, since: number, limit: number) {
     if (MockCCXTExchange.shouldThrowError) throw new Error('Simulated Network Error');
+
+    // PREDEFINED CANDLES OVERRIDE
+    if (MockCCXTExchange.predefinedCandles[symbol] && MockCCXTExchange.predefinedCandles[symbol].length > 0) {
+      const idx = MockCCXTExchange.predefinedCandlesIndex[symbol] || 0;
+      if (idx < MockCCXTExchange.predefinedCandles[symbol].length) {
+        const pc = MockCCXTExchange.predefinedCandles[symbol][idx];
+        MockCCXTExchange.predefinedCandlesIndex[symbol] = idx + 1;
+
+        const timestamp = since || Date.now();
+        const open = pc.open ?? pc.close;
+        const high = pc.high ?? Math.max(open, pc.close);
+        const low = pc.low ?? Math.min(open, pc.close);
+        const close = pc.close;
+        const volume = pc.volume ?? 50;
+
+        const result = [[timestamp, open, high, low, close, volume]];
+        this.age.set(symbol, (this.age.get(symbol) ?? 0) + 1);
+        return result;
+      }
+      // If exhausted, we gracefully fall through to synthetic generation below
+    }
 
     const candles = generateSyntheticHistory(symbol, since || Date.now() - limit * ONE_MINUTE, limit || 100);
 

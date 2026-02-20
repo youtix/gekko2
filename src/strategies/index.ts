@@ -1,6 +1,7 @@
 export * from './cci/cci.strategy';
 export * from './custom/index';
 export * from './debug/debugAdvice.startegy';
+export * from './debug/debugTrailingStop.strategy';
 export * from './dema/dema.strategy';
 export * from './emaRibbon/emaRibbon.strategy';
 export * from './gridBot/gridBot.strategy';
