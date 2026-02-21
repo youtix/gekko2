@@ -1,0 +1,36 @@
+watch:
+  assets:
+    - BTC
+  currency: USDT
+  timeframe: 5m
+  mode: realtime # backtest | importer | realtime
+  warmup:
+    candleCount: 365
+
+exchange:
+  name: paper-binance
+  simulationBalance:
+    - assetName: BTC
+      balance: 100
+    - assetName: USDT
+      balance: 300000
+
+strategy:
+  name: DEMA
+  period: 12
+  thresholds:
+    up: 100
+    down: -150
+
+plugins:
+  - name: 'TradingAdvisor'
+    strategyName: 'DEMA'
+
+  - name: 'Trader'
+
+  - name: 'RoundtripAnalyzer'
+    enableConsoleTable: true
+
+  - name: EventSubscriber
+    token: # Your telgram token
+    botUsername: # Your telegram bot username

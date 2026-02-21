@@ -1,8 +1,9 @@
 watch:
-  asset: BTC
+  assets:
+    - BTC
   currency: USDT
-  mode: realtime # backtest | importer | realtime
   timeframe: 5m
+  mode: realtime # backtest | importer | realtime
   warmup:
     candleCount: 365
 
@@ -25,7 +26,7 @@ plugins:
 
   - name: 'Trader'
 
-  - name: 'PerformanceAnalyzer'
+  - name: 'RoundtripAnalyzer'
     enableConsoleTable: true
 
   - name: EventSubscriber

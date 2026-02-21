@@ -44,13 +44,10 @@ describe('Stochastic', () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${44.98823032579595}  | ${30.43589823222894}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${59.44440654999041}  | ${39.40815614160244}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${59.605122886428084} | ${54.67925325407148}
-  `(
-    'should return { k: $expectedK, d: $expectedD } when candle close to $candle.close',
-    ({ candle, expectedK, expectedD }) => {
-      stoch.onNewCandle(candle);
-      const { k, d } = stoch.getResult();
-      expect(k).toBeCloseTo(expectedK, 13);
-      expect(d).toBeCloseTo(expectedD, 13);
-    },
-  );
+  `('should return { k: $expectedK, d: $expectedD } when candle close to $candle.close', ({ candle, expectedK, expectedD }) => {
+    stoch.onNewCandle(candle);
+    const { k, d } = stoch.getResult();
+    expect(k).toBeCloseTo(expectedK, 13);
+    expect(d).toBeCloseTo(expectedD, 13);
+  });
 });

@@ -1,4 +1,6 @@
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
+import { TradingPair } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { debug, getBufferedLogs } from '@services/logger';
@@ -20,7 +22,7 @@ export class Supervision extends Plugin {
   private logMonitorInterval?: Timer;
   private lastCpuUsage = process.cpuUsage();
   private lastCpuCheck = Date.now();
-  private lastTimeframeCandle?: Candle;
+  private lastTimeframeCandleBucket?: CandleBucket;
   private logMonitorIntervalTime: number;
   private lastSentTimestamp = 0;
 
@@ -176,14 +178,10 @@ export class Supervision extends Plugin {
     debug('supervision', 'Starting Log monitoring');
     this.lastSentTimestamp = getBufferedLogs().at(-1)?.timestamp ?? 0;
     this.logMonitorInterval = setInterval(() => {
-      const logs = getBufferedLogs().filter(
-        l => l.timestamp > this.lastSentTimestamp && ['warn', 'error'].includes(l.level),
-      );
+      const logs = getBufferedLogs().filter(l => l.timestamp > this.lastSentTimestamp && ['warn', 'error'].includes(l.level));
       if (logs.length) {
         this.lastSentTimestamp = logs[logs.length - 1].timestamp;
-        const message = logs
-          .map(l => `• ${toISOString(l.timestamp)} [${l.level.toUpperCase()}] (${l.tag})\n${l.message}`)
-          .join('---\n');
+        const message = logs.map(l => `• ${toISOString(l.timestamp)} [${l.level.toUpperCase()}] (${l.tag})\n${l.message}`).join('---\n');
         this.bot.sendMessage(message);
       }
     }, this.logMonitorIntervalTime);
@@ -196,17 +194,18 @@ export class Supervision extends Plugin {
     debug('supervision', 'Stopped Log monitoring');
   }
 
-  private async checkTimeframeCandle() {
-    if (!this.lastTimeframeCandle) return;
-    const candles = await this.getExchange().fetchOHLCV({ timeframe: this.timeframe, limit: 100 });
-    const exchangeCandle = candles.filter(candle => this.lastTimeframeCandle?.start === candle.start)[0];
+  private async checkTimeframeCandle(symbol: TradingPair) {
+    const lastTimeframeCandle = this.lastTimeframeCandleBucket?.get(symbol);
+    if (!lastTimeframeCandle) return;
+    const candles = await this.getExchange().fetchOHLCV(symbol, { timeframe: this.timeframe, limit: 10 });
+    const exchangeCandle = candles.filter(candle => lastTimeframeCandle.start === candle.start)[0];
     if (!exchangeCandle) return;
-    const diff = shallowObjectDiff(exchangeCandle, this.lastTimeframeCandle);
+    const diff = shallowObjectDiff(exchangeCandle, lastTimeframeCandle);
     if (!isEmpty(diff)) {
       const diffMsg = Object.keys(diff)
         .map(key => {
           const k = key as keyof Candle;
-          return `${key}: ${exchangeCandle[k]} | ${this.lastTimeframeCandle![k]}`;
+          return `${key}: ${exchangeCandle[k]} | ${lastTimeframeCandle[k]}`;
         })
         .join('\n');
       this.bot.sendMessage(`⚠️ Timeframe candle mismatch detected:\n${diffMsg}`);
@@ -228,12 +227,12 @@ export class Supervision extends Plugin {
     return bytes / (1024 * 1024);
   }
 
-  public async onTimeframeCandle(payloads: Candle[]) {
+  public async onTimeframeCandle(payloads: CandleBucket[]) {
     // Sequential strategy: process each payload in order
-    for (const candle of payloads) {
-      this.lastTimeframeCandle = candle;
+    for (const bucket of payloads) {
+      this.lastTimeframeCandleBucket = bucket;
       if (!this.subscriptions.has('candle_check')) continue;
-      await this.checkTimeframeCandle();
+      for (const [pair] of bucket) this.checkTimeframeCandle(pair);
     }
   }
 
@@ -242,7 +241,7 @@ export class Supervision extends Plugin {
     this.bot.listen();
   }
 
-  protected processOneMinuteCandle(): void {
+  protected processOneMinuteBucket(): void {
     /** Nothing to do */
   }
 
