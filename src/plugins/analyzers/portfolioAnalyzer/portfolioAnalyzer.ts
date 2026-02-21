@@ -2,7 +2,7 @@ import { EQUITY_SNAPSHOT_EVENT, PERFORMANCE_REPORT_EVENT } from '@constants/even
 import { CandleBucket, EquitySnapshot, OrderCompletedEvent } from '@models/event.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Asset, TradingPair } from '@models/utility.types';
-import { warning } from '@services/logger';
+import { info, warning } from '@services/logger';
 import {
   calculateAlpha,
   calculateAnnualizedReturnPct,
@@ -240,8 +240,12 @@ export class PortfolioAnalyzer extends Plugin {
     const report = this.calculateReportStatistics();
     this.addDeferredEmit<PortfolioReport>(PERFORMANCE_REPORT_EVENT, report);
 
-    // Log using logger if console table is enabled
-    if (this.enableConsoleTable) logPortfolioReport(report, this.currency);
+    // Log using logger
+    if (this.enableConsoleTable) {
+      logPortfolioReport(report, this.currency);
+    } else {
+      info('portfolio analyzer', report);
+    }
   }
 
   public static getStaticConfiguration() {
