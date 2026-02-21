@@ -142,7 +142,7 @@ export class PortfolioAnalyzer extends Plugin {
 
     // Time calculations
     const elapsedYears = calculateElapsedYears(this.dates.start, this.dates.end);
-    const totalMs = differenceInMilliseconds(this.dates.end, this.dates.start);
+    const totalMs = Math.max(differenceInMilliseconds(this.dates.end, this.dates.start), 1);
     const timespan = intervalToDuration({ start: this.dates.start, end: this.dates.end });
 
     // Core Metrics

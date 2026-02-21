@@ -2,6 +2,8 @@ import { bindAll, defer } from 'lodash-es';
 import EventEmitter from 'node:events';
 
 export class MockHeart extends EventEmitter {
+  private static instances: Set<MockHeart> = new Set();
+
   private tickRate: number;
   private timeout?: Timer;
 
@@ -9,6 +11,7 @@ export class MockHeart extends EventEmitter {
     super();
     this.tickRate = tickRate;
     bindAll(this, ['tick']);
+    MockHeart.instances.add(this);
   }
 
   public tick() {
@@ -27,5 +30,14 @@ export class MockHeart extends EventEmitter {
 
   public isHeartBeating() {
     return !!this.timeout;
+  }
+
+  /** Stop all active MockHeart instances. Use in beforeEach to prevent timer leakage across tests. */
+  public static stopAll() {
+    for (const instance of MockHeart.instances) {
+      instance.stop();
+      instance.removeAllListeners();
+    }
+    MockHeart.instances.clear();
   }
 }

@@ -128,6 +128,9 @@ import { cleanDatabase } from '../../helpers/database.helper';
 
 describe('E2E: Realtime Screener Flow', () => {
   beforeEach(async () => {
+    // Stop all stale hearts from previous tests to prevent timer leakage
+    MockHeart.stopAll();
+
     // Reset inject singletons
     const { inject } = await import('@services/injecter/injecter');
     inject.reset();

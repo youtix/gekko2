@@ -101,6 +101,9 @@ describe('E2E: Realtime Writer (Synthetic)', () => {
   // Reset MockCCXTExchange static state and inject singletons before each test
   // This is especially important when running all E2E tests together
   beforeEach(async () => {
+    // Stop all stale hearts from previous tests to prevent timer leakage
+    MockHeart.stopAll();
+
     // Reset inject singletons to get fresh storage/exchange for each test
     const { inject } = await import('@services/injecter/injecter');
     inject.reset();

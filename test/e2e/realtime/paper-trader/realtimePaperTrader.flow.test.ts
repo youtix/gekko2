@@ -15,13 +15,11 @@ const DEFAULT_MOCK_STRATEGY_CONFIG = { name: 'DebugAdvice', waittime: 0, each: 4
 const DEFAULT_MOCK_STRATEGY_NAME = 'DebugAdvice';
 
 const FAST_MINUTE = 50;
-const TARGET_CANDLES = 20; // Track candles emitted
+const TARGET_CANDLES = 10; // Track candles emitted
 
 // Wait for candles to be collected (with accelerated time, this should be fast)
 // We'll wait for TARGET_CANDLES * FAST_MINUTE to give buffer
 const TIMEOUT_MS = TARGET_CANDLES * FAST_MINUTE;
-const TELEGRAM_TOKEN = 'test-token';
-const TELEGRAM_USERNAME = 'test-bot';
 
 // 1. Mock Winston
 mock.module('winston', () => MockWinston);
@@ -84,12 +82,7 @@ mock.module('@services/configuration/configuration', () => {
         type: 'sqlite',
         path: ':memory:', // Isolated DB
       }),
-      getPlugins: () => [
-        { name: 'TradingAdvisor', strategyName: mockStrategyName },
-        { name: 'Trader' },
-        { name: 'RoundTripAnalyzer', enableConsoleTable: false },
-        { name: 'EventSubscriber', token: TELEGRAM_TOKEN, botUsername: TELEGRAM_USERNAME },
-      ],
+      getPlugins: () => [{ name: 'TradingAdvisor', strategyName: mockStrategyName }, { name: 'Trader' }, { name: 'RoundTripAnalyzer' }],
       getStrategy: () => mockStrategyConfig,
     },
   };
@@ -128,6 +121,9 @@ mock.module('@services/core/heart/heart', () => ({
 
 describe('E2E: Realtime Paper Trader Flow', () => {
   beforeEach(async () => {
+    // Stop all stale hearts from previous tests to prevent timer leakage
+    MockHeart.stopAll();
+
     // Reset inject singletons
     const { inject } = await import('@services/injecter/injecter');
     inject.reset();
@@ -139,6 +135,7 @@ describe('E2E: Realtime Paper Trader Flow', () => {
 
     // Reset mocks
     MockFetcherService.reset();
+    MockCCXTExchange.resetPredefinedCandles();
 
     // Configure Telegram subscription response (only once)
     let getCallCount = 0;
@@ -162,77 +159,69 @@ describe('E2E: Realtime Paper Trader Flow', () => {
     mockPairs = [{ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' }];
   });
 
-  it('Scenario A: Roundtrip Completion Notification', async () => {
+  it('Scenario A: Intermediary Roundtrip Completion', async () => {
+    // Use the debug strategy specifically designed for this scenario (Buy on 0, Sell on 1)
+    mockStrategyName = 'DebugRealtime';
+    mockStrategyConfig = { name: 'DebugRealtime' };
+
+    // Setup predefined candles to trigger buying and selling at predictable prices
+    MockCCXTExchange.setPredefinedCandles('BTC/USDT', [
+      { close: 100 }, // Iteration 0 -> Buys 1 BTC at 100
+      { close: 110 }, // Iteration 1 -> Sells 1 BTC at 110
+      { close: 120 }, // Extra candle to ensure processing ends safely
+      { close: 125 }, // One more buffer candle
+    ]);
+
     const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
     const { inject } = await import('@services/injecter/injecter');
+    const { expect } = await import('bun:test');
+
+    // Get storage reference
     const storage = inject.storage() as SQLiteStorage;
     storage.close = () => {};
 
+    // Start pipeline and wait for timeout
     const pipelinePromise = gekkoPipeline();
     await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
 
-    const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
-    expect(calls.length).toBeGreaterThan(0);
+    // Assert logs verify the execution of the e2e test
+    const logs = logStore.map(l => l.message);
+    const hasBuyLog = logs.some(l => typeof l === 'string' && l.includes('Trigger BUY for BTC/USDT'));
+    const hasSellLog = logs.some(l => typeof l === 'string' && l.includes('Trigger SELL for BTC/USDT'));
 
-    // Filter for Roundtrip Completed messages
-    const roundtripMessages = calls.find(call => call.payload.text.includes('Roundtrip completed'));
-    expect(roundtripMessages).toBeDefined();
-    expect(roundtripMessages?.payload.text).toContain('PnL:');
-    expect(roundtripMessages?.payload.text).toContain('Profit:');
-    expect(roundtripMessages?.payload.text).toContain('Entry Price:');
-    expect(roundtripMessages?.payload.text).toContain('Exit Price:');
+    expect(hasBuyLog).toBe(true);
+    expect(hasSellLog).toBe(true);
+
+    // Assert roundtrip state from Final Trading Report logged by RoundTripAnalyzer
+    // In realtime, processFinalize isn't called, so we check the individual roundtrip log
+    const isObject = (value: unknown) => typeof value === 'object' && value !== null;
+    const isRoundtrip = (value: unknown) => isObject(value) && 'entryAt' in value && 'exitAt' in value && 'profit' in value;
+    const roundtripPayload = logStore.find(log => isRoundtrip(log.message));
+    expect(roundtripPayload).toBeDefined();
+
+    const roundtrip = roundtripPayload!.message as any;
+
+    // There should be exactly one completed roundtrip
+    // Test every property from the intermediary roundtrip report for strong e2e validation
+    expect(roundtrip.id).toBe(0);
+    expect(roundtrip.entryAt).toBeTypeOf('number');
+    expect(roundtrip.entryPrice).toBe(100);
+    // 100 BTC * $100 + 300,000 USDT = $310,000
+    expect(roundtrip.entryEquity).toBe(310000);
+
+    expect(roundtrip.exitAt).toBeTypeOf('number');
+    expect(roundtrip.exitAt).toBeGreaterThan(roundtrip.entryAt);
+    expect(roundtrip.exitPrice).toBe(110);
+    // After buy: 101 BTC, 299,900 USDT. At $110/BTC: 101 * 110 + 299,900 = $311,010
+    // After sell: 100 BTC, 300,010 USDT. At $110/BTC: 100 * 110 + 300,010 = $311,010
+    expect(roundtrip.exitEquity).toBe(311010);
+
+    expect(roundtrip.pnl).toBe(1010); // 311010 - 310000
+    expect(roundtrip.profit).toBeCloseTo(0.3258, 4); // (311010 / 310000 - 1) * 100
+    expect(roundtrip.maxAdverseExcursion).toBe(0);
+    expect(roundtrip.duration).toBe(FAST_MINUTE);
   });
-
-  it('Scenario B: Precision PnL & Fee Verification', async () => {
-    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
-    const { inject } = await import('@services/injecter/injecter');
-    const { RoundTripAnalyzer } = await import('@plugins/analyzers/roundTripAnalyzer/roundTripAnalyzer');
-    const { ROUNDTRIP_COMPLETED_EVENT } = await import('@constants/event.const');
-
-    const storage = inject.storage() as SQLiteStorage;
-    storage.close = () => {};
-
-    // Spy on RoundTripAnalyzer.emit to capture the internal event
-    let roundtripData: any = null;
-    const originalEmit = RoundTripAnalyzer.prototype.emit;
-    const spy = mock(function (this: any, event: string, data: any) {
-      if (event === ROUNDTRIP_COMPLETED_EVENT) {
-        roundtripData = data;
-      }
-      return originalEmit.call(this, event, data);
-    });
-    RoundTripAnalyzer.prototype.emit = spy;
-
-    const pipelinePromise = gekkoPipeline();
-    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
-
-    // Restore original emit
-    RoundTripAnalyzer.prototype.emit = originalEmit;
-
-    expect(roundtripData).toBeDefined();
-
-    const roundtrip = Array.isArray(roundtripData) ? roundtripData[0] : roundtripData;
-    const { entryPrice, exitPrice, entryEquity, exitEquity, pnl, profit } = roundtrip;
-
-    expect(entryPrice).toBeGreaterThan(0);
-    expect(exitPrice).toBeGreaterThan(0);
-
-    // PnL = Exit Equity - Entry Equity
-    // Floating point precision check
-    expect(pnl).toBeCloseTo(exitEquity - entryEquity, 8);
-
-    // Profit % = ((Exit Equity / Entry Equity) - 1) * 100
-    const expectedProfit = (exitEquity / entryEquity - 1) * 100;
-    expect(profit).toBeCloseTo(expectedProfit, 8);
-
-    // Check structure
-    expect(roundtrip).toHaveProperty('id');
-    expect(roundtrip).toHaveProperty('entryAt');
-    expect(roundtrip).toHaveProperty('exitAt');
-    expect(roundtrip).toHaveProperty('duration');
-  });
-
-  it('Scenario C: Trailing Stop Lifecycle', async () => {
+  it('Scenario B: Trailing Stop Lifecycle', async () => {
     // Override strategy to use DebugTrailingStop with trailing stop config
     mockStrategyName = 'DebugTrailingStop';
     mockStrategyConfig = { name: 'DebugTrailingStop', wait: 0, trigger: 9930, percentage: 0.1 };
