@@ -21,10 +21,10 @@ export class PerformanceReporter extends Plugin {
   private fs: Fs = { lockSync: defaultLockSync };
 
   private readonly portfolioHeader =
-    'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total changes;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;max drawdown;longest drawdown duration\n';
+    'id;pair;net profit;total return;yearly profit;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;start time;end time;duration;exposure;original balance;current balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset\n';
 
   private readonly tradingHeader =
-    'id;pair;start time;end time;duration;exposure;start balance;final balance;market;alpha;annualized return;win rate;trade count;sharpe ratio;sortino ratio\n';
+    'id;pair;net profit;total return;annualized return;win rate;market;alpha;sharpe ratio;sortino ratio;trade count;start time;end time;duration;exposure;start balance;final balance;start price;end price;standard deviation;downside deviation;top maes\n';
 
   constructor({ name, filePath, fileName }: PerformanceReporterConfig) {
     super(name);
@@ -105,24 +105,28 @@ export class PerformanceReporter extends Plugin {
     return (
       [
         generateStrategyId(this.strategySettings),
-        'Portfolio', // Generic label for multi-asset
+        'Portfolio',
+        `${this.formater.format(report.netProfit)}`,
+        `${round(report.totalReturnPct, 2, 'down')}%`,
+        `${this.formater.format(report.annualizedNetProfit)} (${round(report.annualizedReturnPct, 2, 'down')}%)`,
+        `${round(report.marketReturnPct, 2, 'down')}%`,
+        `${round(report.alpha, 2, 'down')}%`,
+        formatRatio(report.sharpeRatio),
+        formatRatio(report.sortinoRatio),
+        `${round(report.maxDrawdownPct, 2, 'down')}%`,
+        report.portfolioChangeCount,
         toISOString(report.periodStartAt),
         toISOString(report.periodEndAt),
         report.formattedDuration,
         `${round(report.exposurePct, 2, 'halfEven')}%`,
-        `${this.formater.format(report.startPrice)}`,
-        `${this.formater.format(report.endPrice)}`,
-        `${round(report.marketReturnPct, 2, 'down')}%`,
-        `${round(report.alpha, 2, 'down')}%`,
-        `${this.formater.format(report.annualizedNetProfit)} (${round(report.annualizedReturnPct, 2, 'down')}%)`,
-        report.portfolioChangeCount,
         `${this.formater.format(report.startEquity)}`,
         `${this.formater.format(report.endEquity)}`,
-        formatRatio(report.sharpeRatio),
-        formatRatio(report.sortinoRatio),
+        `${this.formater.format(report.startPrice)}`,
+        `${this.formater.format(report.endPrice)}`,
         formatRatio(report.volatility),
-        `${round(report.maxDrawdownPct, 2, 'down')}%`,
+        formatRatio(report.downsideDeviation),
         formattedDrawdownDuration,
+        report.benchmarkAsset,
       ].join(';') + '\n'
     );
   }
@@ -132,19 +136,26 @@ export class PerformanceReporter extends Plugin {
       [
         generateStrategyId(this.strategySettings),
         'Trading',
+        `${this.formater.format(report.netProfit)}`,
+        `${round(report.totalReturnPct, 2, 'down')}%`,
+        `${this.formater.format(report.annualizedNetProfit)} (${round(report.annualizedReturnPct, 2, 'down')}%)`,
+        report.winRate !== null ? `${round(report.winRate, 2, 'halfEven')}%` : 'N/A',
+        `${round(report.marketReturnPct, 2, 'down')}%`,
+        `${round(report.alpha, 2, 'down')}%`,
+        formatRatio(report.sharpeRatio),
+        formatRatio(report.sortinoRatio),
+        report.tradeCount,
         toISOString(report.periodStartAt),
         toISOString(report.periodEndAt),
         report.formattedDuration,
         `${round(report.exposurePct, 2, 'halfEven')}%`,
         `${this.formater.format(report.startBalance)}`,
         `${this.formater.format(report.finalBalance)}`,
-        `${round(report.marketReturnPct, 2, 'down')}%`,
-        `${round(report.alpha, 2, 'down')}%`,
-        `${this.formater.format(report.annualizedNetProfit)} (${round(report.annualizedReturnPct, 2, 'down')}%)`,
-        report.winRate !== null ? `${round(report.winRate, 2, 'halfEven')}%` : 'N/A',
-        report.tradeCount,
-        formatRatio(report.sharpeRatio),
-        formatRatio(report.sortinoRatio),
+        `${this.formater.format(report.startPrice)}`,
+        `${this.formater.format(report.endPrice)}`,
+        formatRatio(report.volatility),
+        formatRatio(report.downsideDeviation),
+        JSON.stringify(report.topMAEs),
       ].join(';') + '\n'
     );
   }

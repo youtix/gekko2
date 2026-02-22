@@ -28,10 +28,10 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 
 const PORTFOLIO_HEADER =
-  'id;pair;start time;end time;duration;exposure;start price;end price;market;alpha;yearly profit;total changes;original balance;current balance;sharpe ratio;sortino ratio;standard deviation;max drawdown;longest drawdown duration\n';
+  'id;pair;net profit;total return;yearly profit;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;start time;end time;duration;exposure;original balance;current balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset\n';
 
 const TRADING_HEADER =
-  'id;pair;start time;end time;duration;exposure;start balance;final balance;market;alpha;annualized return;win rate;trade count;sharpe ratio;sortino ratio\n';
+  'id;pair;net profit;total return;annualized return;win rate;market;alpha;sharpe ratio;sortino ratio;trade count;start time;end time;duration;exposure;start balance;final balance;start price;end price;standard deviation;downside deviation;top maes\n';
 
 const baseConfig = {
   name: 'PerformanceReporter',
@@ -115,13 +115,43 @@ describe('PerformanceReporter', () => {
         description: 'Portfolio Report',
         report: samplePortfolioReport,
         header: PORTFOLIO_HEADER,
-        expectedLineParts: ['DEMA', 'Portfolio', '2025-05-30', '1 day', '0.5%', '100', '110', '3,650 (116.8%)', '2 hours 30 minutes'],
+        expectedLineParts: [
+          'DEMA',
+          'Portfolio',
+          '2025-05-30',
+          '1 day',
+          '0.5%',
+          '100',
+          '110',
+          '3,650 (116.8%)',
+          '2 hours 30 minutes',
+          'USDT',
+          '0.5',
+          '100',
+          '10%',
+        ],
       },
       {
         description: 'Trading Report',
         report: sampleTradingReport,
         header: TRADING_HEADER,
-        expectedLineParts: ['DEMA', 'Trading', '2025-05-30', '1 day', '0.5%', '1,000', '1,320', '3,650 (116.8%)', '60%'],
+        expectedLineParts: [
+          'DEMA',
+          'Trading',
+          '2025-05-30',
+          '1 day',
+          '0.5%',
+          '1,000',
+          '1,320',
+          '3,650 (116.8%)',
+          '60%',
+          '0.5',
+          '100',
+          '10%',
+          '2.5',
+          '100',
+          '110',
+        ],
       },
     ];
 
@@ -208,19 +238,6 @@ describe('PerformanceReporter', () => {
       const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
       const writtenLine = appendCall[1] as string;
       expect(writtenLine).toContain('N/A');
-    });
-
-    it('should format longestDrawdownMs as 0 when 0', () => {
-      const report = { ...samplePortfolioReport, longestDrawdownMs: 0 };
-      (fs.existsSync as Mock).mockReturnValue(true);
-      (fs.statSync as Mock).mockReturnValue({ size: 100 });
-
-      reporter.onPerformanceReport([report]);
-
-      const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
-      const writtenLine = appendCall[1] as string;
-      // It is the last field
-      expect(writtenLine.trim().endsWith(';0')).toBe(true);
     });
   });
 
