@@ -23,8 +23,18 @@ To enhance the readability and maintainability of unit tests while ensuring 100%
 - **Performance**:
   - Keep logic execution extremely lean to ensure the turnaround is faster than 100ms.
 
-## Constraints
+## DOs
 
-- Do not use vi.clearAllMocks(). The environment is pre-configured with clearMocks: true in the Vitest config.
-- Do not leave any TypeScript errors; always validate with type:check.
-- Do not use multiple assertions in a single test if they can be split via it.each for better granularity.
+- Use `it.each` with tagged templates for repetitive test cases.
+- Isolate failures by using exactly one `expect()` per `it()` block.
+- Reach 100% coverage for all statements, functions, branches, and lines.
+- Validate types using `bun run type:check` for every change.
+- Target tests using `bun run test <path_to_file>` for speed.
+- Ensure performance by keeping execution turnaround under 100ms.
+
+## DONTs
+
+- Avoid `vi.clearAllMocks();` it is pre-configured in the Vitest config.
+- Leave no TypeScript errors; the test suite must always be clean.
+- Stop at multiple assertions if they can be split for better granularity.
+- Ignore edge cases; never finish without verifying every code branch.
