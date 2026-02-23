@@ -1,5 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
+import { IndicatorResults, InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { CCIStrategyParams, CCITrend } from './cci.types';
 
@@ -17,14 +17,14 @@ export class CCI implements Strategy<CCIStrategyParams> {
     addIndicator('CCI', this.pair, { period: tools.strategyParams.period });
   }
 
-  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<CCIStrategyParams>, ...indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<CCIStrategyParams>, ...indicators: IndicatorResults[]): void {
     const { strategyParams, createOrder, log } = tools;
     const [cci] = indicators;
-    if (!isNumber(cci) || !this.pair) return;
+    if (!isNumber(cci.results) || !this.pair) return;
 
     const { up, down, persistence } = strategyParams.thresholds;
 
-    if (cci >= up) {
+    if (cci.results >= up) {
       if (this.trend.direction !== 'overbought') {
         log('info', 'CCI: overbought trend detected');
         this.trend = { direction: 'overbought', duration: 1, persisted: persistence === 0, adviced: false };
@@ -40,7 +40,7 @@ export class CCI implements Strategy<CCIStrategyParams> {
           createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
         }
       }
-    } else if (cci <= down) {
+    } else if (cci.results <= down) {
       if (this.trend.direction !== 'oversold') {
         log('info', 'CCI: oversold trend detected');
         this.trend = { direction: 'oversold', duration: 1, persisted: persistence === 0, adviced: false };
@@ -67,9 +67,9 @@ export class CCI implements Strategy<CCIStrategyParams> {
     log('debug', `Trend: ${this.trend.direction} for ${this.trend.duration}`);
   }
 
-  log({ tools }: OnCandleEventParams<CCIStrategyParams>, ...indicators: unknown[]): void {
+  log({ tools }: OnCandleEventParams<CCIStrategyParams>, ...indicators: IndicatorResults[]): void {
     const [cci] = indicators;
-    if (!isNumber(cci)) return;
-    tools.log('debug', `CCI: ${cci.toFixed(2)}`);
+    if (!isNumber(cci.results)) return;
+    tools.log('debug', `CCI: ${cci.results.toFixed(2)}`);
   }
 }

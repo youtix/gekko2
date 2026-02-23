@@ -26,7 +26,7 @@ import { bindAll, omit } from 'lodash-es';
 import { randomUUID, UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { isAbsolute, resolve } from 'node:path';
-import { Strategy, Tools } from './strategy.types';
+import { IndicatorResults, Strategy, Tools } from './strategy.types';
 import { TrailingStopManager } from './trailingStopManager';
 import { TrailingStopState } from './trailingStopManager.types';
 
@@ -38,7 +38,7 @@ export class StrategyManager extends EventEmitter {
   private marketData: Map<TradingPair, MarketData>;
   private portfolio: Portfolio;
   private strategy?: Strategy<object>;
-  private indicatorsResults: unknown[] = [];
+  private indicatorsResults: IndicatorResults[] = [];
   private currentTimestamp: EpochTimeStamp = 0;
   private trailingStopManager: TrailingStopManager;
   private pendingTrailingStops: Map<UUID, TrailingConfig>;
@@ -100,11 +100,11 @@ export class StrategyManager extends EventEmitter {
     if (this.age === 0) this.strategy?.init?.({ ...params, addIndicator: this.addIndicator });
 
     // Update indicators
-    this.indicatorsResults = this.indicators.map(({ indicator, symbol }) => {
+    this.indicatorsResults = this.indicators.map<IndicatorResults>(({ indicator, symbol }) => {
       const candle = bucket.get(symbol);
       if (candle) indicator.onNewCandle(candle);
       else warning('strategy', `Candle for ${symbol} not found in strategy manager`);
-      return indicator.getResult();
+      return { results: indicator.getResult(), symbol };
     });
     // Call for each candle
     this.strategy?.onEachTimeframeCandle?.(params, ...this.indicatorsResults);

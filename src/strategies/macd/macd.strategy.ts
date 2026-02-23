@@ -1,5 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
+import { IndicatorResults, InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
@@ -16,14 +16,17 @@ export class MACD implements Strategy<MACDStrategyParams> {
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };
   }
 
-  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<MACDStrategyParams>, ...indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup(
+    { tools }: OnCandleEventParams<MACDStrategyParams>,
+    ...indicators: IndicatorResults<{ macd: number; signal: number; hist: number } | null>[]
+  ): void {
     const { strategyParams, log, createOrder } = tools;
     const { macdSrc } = strategyParams;
     const [macd] = indicators;
 
-    if (!this.isMacd(macd) || !this.pair) return;
+    if (!this.isMacd(macd.results) || !this.pair) return;
 
-    if (macd[macdSrc] > strategyParams.thresholds.up) {
+    if (macd.results[macdSrc] > strategyParams.thresholds.up) {
       if (this.trend?.direction !== 'up') {
         log('info', 'MACD: up trend detected');
         this.trend = { duration: 0, persisted: false, direction: 'up', adviced: false };
@@ -37,7 +40,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
         this.trend.adviced = true;
         createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
       }
-    } else if (macd[macdSrc] < strategyParams.thresholds.down) {
+    } else if (macd.results[macdSrc] < strategyParams.thresholds.down) {
       if (this.trend?.direction !== 'down') {
         log('info', 'MACD: down trend detected');
         this.trend = { duration: 0, persisted: false, direction: 'down', adviced: false };
@@ -56,14 +59,17 @@ export class MACD implements Strategy<MACDStrategyParams> {
     }
   }
 
-  log({ tools }: OnCandleEventParams<MACDStrategyParams>, ...indicators: unknown[]): void {
+  log(
+    { tools }: OnCandleEventParams<MACDStrategyParams>,
+    ...indicators: IndicatorResults<{ macd: number; signal: number; hist: number } | null>[]
+  ): void {
     const { log } = tools;
     const [macd] = indicators;
-    if (!this.isMacd(macd)) return;
+    if (!this.isMacd(macd.results)) return;
 
-    log('debug', `macd: ${macd.macd.toFixed(8)}`);
-    log('debug', `signal: ${macd.signal.toFixed(8)}`);
-    log('debug', `hist: ${macd.hist.toFixed(8)}`);
+    log('debug', `macd: ${macd.results.macd.toFixed(8)}`);
+    log('debug', `signal: ${macd.results.signal.toFixed(8)}`);
+    log('debug', `hist: ${macd.results.hist.toFixed(8)}`);
   }
 
   private isMacd(data: unknown): data is { macd: number; signal: number; hist: number } {

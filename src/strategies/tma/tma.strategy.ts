@@ -1,5 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
+import { IndicatorResults, InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { TMAStrategyParams } from './tma.types';
 
@@ -15,22 +15,22 @@ export class TMA implements Strategy<TMAStrategyParams> {
     addIndicator('SMA', this.pair, { period: long, src });
   }
 
-  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<TMAStrategyParams>, ...indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<TMAStrategyParams>, ...indicators: IndicatorResults<number | null>[]): void {
     const { log, createOrder } = tools;
     const [short, medium, long] = indicators;
-    if (!this.pair || !isNumber(short) || !isNumber(medium) || !isNumber(long)) return;
+    if (!this.pair || !isNumber(short.results) || !isNumber(medium.results) || !isNumber(long.results)) return;
 
-    if (short > medium && medium > long) {
-      log('info', `Executing long advice due to detected uptrend: ${short}/${medium}/${long}`);
+    if (short.results > medium.results && medium.results > long.results) {
+      log('info', `Executing long advice due to detected uptrend: ${short.results}/${medium.results}/${long.results}`);
       createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
-    } else if (short < medium && medium > long) {
-      log('info', `Executing short advice due to detected downtrend: ${short}/${medium}/${long}`);
+    } else if (short.results < medium.results && medium.results > long.results) {
+      log('info', `Executing short advice due to detected downtrend: ${short.results}/${medium.results}/${long.results}`);
       createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
-    } else if (short > medium && medium < long) {
-      log('info', `Executing short advice due to detected downtrend: ${short}/${medium}/${long}`);
+    } else if (short.results > medium.results && medium.results < long.results) {
+      log('info', `Executing short advice due to detected downtrend: ${short.results}/${medium.results}/${long.results}`);
       createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
     } else {
-      log('debug', `No clear trend detected: ${short}/${medium}/${long}`);
+      log('debug', `No clear trend detected: ${short.results}/${medium.results}/${long.results}`);
     }
   }
 }

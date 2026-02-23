@@ -1,5 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
+import { IndicatorResults, InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { SMACrossoverStrategyParams } from './smaCrossover.types';
 
@@ -24,7 +24,10 @@ export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
     addIndicator('SMA', this.pair, { period, src });
   }
 
-  onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<SMACrossoverStrategyParams>, ...indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup(
+    { candle, tools }: OnCandleEventParams<SMACrossoverStrategyParams>,
+    ...indicators: IndicatorResults<number | null>[]
+  ): void {
     const { log, createOrder } = tools;
     const [sma] = indicators;
 
@@ -33,9 +36,9 @@ export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
     if (!currentCandle) return;
     const price = currentCandle.close;
 
-    if (!isNumber(sma)) return;
+    if (!isNumber(sma.results)) return;
 
-    const isPriceAboveSMA = price > sma;
+    const isPriceAboveSMA = price > sma.results;
 
     // First candle after warmup - just record the position
     if (this.wasPriceAboveSMA === null) {
@@ -47,18 +50,18 @@ export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
     // Detect crossovers
     if (this.wasPriceAboveSMA && !isPriceAboveSMA) {
       // Price crossed below SMA => SMA crossed UP the price => SELL
-      log('info', `SMA crossed UP price (${sma.toFixed(5)} > ${price.toFixed(5)}) => SELL`);
+      log('info', `SMA crossed UP price (${sma.results.toFixed(5)} > ${price.toFixed(5)}) => SELL`);
       createOrder({ type: 'MARKET', side: 'SELL', symbol: this.pair });
     } else if (!this.wasPriceAboveSMA && isPriceAboveSMA) {
       // Price crossed above SMA => SMA crossed DOWN the price => BUY
-      log('info', `SMA crossed DOWN price (${sma.toFixed(5)} < ${price.toFixed(5)}) => BUY`);
+      log('info', `SMA crossed DOWN price (${sma.results.toFixed(5)} < ${price.toFixed(5)}) => BUY`);
       createOrder({ type: 'MARKET', side: 'BUY', symbol: this.pair });
     }
 
     this.wasPriceAboveSMA = isPriceAboveSMA;
   }
 
-  log({ candle, tools }: OnCandleEventParams<SMACrossoverStrategyParams>, ...indicators: unknown[]): void {
+  log({ candle, tools }: OnCandleEventParams<SMACrossoverStrategyParams>, ...indicators: IndicatorResults<number | null>[]): void {
     const { log } = tools;
     const [sma] = indicators;
 
@@ -66,8 +69,8 @@ export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
     const currentCandle = candle.get(this.pair);
     if (!currentCandle) return;
 
-    if (!isNumber(sma)) return;
+    if (!isNumber(sma.results)) return;
 
-    log('debug', `SMA: ${sma.toFixed(5)} | Price: ${currentCandle.close.toFixed(5)}`);
+    log('debug', `SMA: ${sma.results.toFixed(5)} | Price: ${currentCandle.close.toFixed(5)}`);
   }
 }

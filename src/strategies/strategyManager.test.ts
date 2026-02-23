@@ -170,9 +170,9 @@ describe('StrategyManager', () => {
         expect(indicator.getResult).toHaveBeenCalled();
         expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(1);
 
-        const [params, indicatorResult] = strategy.onEachTimeframeCandle.mock.calls[0] as [any, number];
+        const [params, indicatorResult] = strategy.onEachTimeframeCandle.mock.calls[0] as [any, any];
         expect(params.candle).toBe(bucket);
-        expect(indicatorResult).toBe(42);
+        expect(indicatorResult).toEqual({ results: 42, symbol: 'BTC/USDT' });
 
         // Log/AfterWarmup NOT called yet, as age was 0 during execution, now incremented to 1
         expect(strategy.log).not.toHaveBeenCalled();
@@ -231,7 +231,7 @@ describe('StrategyManager', () => {
         manager['strategy'] = strategy as any;
         const order = { id: '1' } as any;
         const exchange = { price: 10 };
-        manager['indicatorsResults'] = ['indicator'];
+        manager['indicatorsResults'] = [{ results: 'indicator', symbol: 'BTC/USDT' }];
 
         manager.onOrderCompleted({ order, exchange } as any);
 
@@ -241,7 +241,7 @@ describe('StrategyManager', () => {
             exchange,
             tools: expect.objectContaining({ strategyParams: { each: 1, wait: 0 } }),
           },
-          'indicator',
+          { results: 'indicator', symbol: 'BTC/USDT' },
         );
       });
     });
@@ -252,7 +252,7 @@ describe('StrategyManager', () => {
         manager['strategy'] = strategy as any;
         const order = { id: '2' } as any;
         const exchange = { price: 11 };
-        manager['indicatorsResults'] = ['indicator'];
+        manager['indicatorsResults'] = [{ results: 'indicator', symbol: 'BTC/USDT' }];
 
         manager.onOrderCanceled({ order, exchange } as any);
 
@@ -262,7 +262,7 @@ describe('StrategyManager', () => {
             exchange,
             tools: expect.objectContaining({ strategyParams: { each: 1, wait: 0 } }),
           },
-          'indicator',
+          { results: 'indicator', symbol: 'BTC/USDT' },
         );
       });
     });
@@ -273,7 +273,7 @@ describe('StrategyManager', () => {
         manager['strategy'] = strategy as any;
         const order = { id: '3' } as any;
         const exchange = { price: 12 };
-        manager['indicatorsResults'] = ['indicator'];
+        manager['indicatorsResults'] = [{ results: 'indicator', symbol: 'BTC/USDT' }];
 
         manager.onOrderErrored({ order, exchange } as any);
 
@@ -283,7 +283,7 @@ describe('StrategyManager', () => {
             exchange,
             tools: expect.objectContaining({ strategyParams: { each: 1, wait: 0 } }),
           },
-          'indicator',
+          { results: 'indicator', symbol: 'BTC/USDT' },
         );
       });
     });
