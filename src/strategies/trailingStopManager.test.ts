@@ -22,7 +22,6 @@ const defaultId = 'aaaa-bbbb-cccc-dddd' as UUID;
 const defaultOrder = {
   id: defaultId,
   symbol: 'BTC/USDT' as TradingPair,
-  side: 'SELL' as const,
   amount: 0.5,
   trailing: { percentage: 2, trigger: 50000 },
   createdAt: Date.now(),

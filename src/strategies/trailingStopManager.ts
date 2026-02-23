@@ -7,7 +7,7 @@ import { UUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { TrailingStopState } from './trailingStopManager.types';
 
-type AddOrderParams = Pick<StrategyOrder, 'symbol' | 'side' | 'amount' | 'trailing'> & {
+type AddOrderParams = Pick<StrategyOrder, 'symbol' | 'amount' | 'trailing'> & {
   id: UUID;
   createdAt: number;
 };
@@ -15,7 +15,7 @@ type AddOrderParams = Pick<StrategyOrder, 'symbol' | 'side' | 'amount' | 'traili
 export class TrailingStopManager extends EventEmitter {
   private orders = new Map<UUID, TrailingStopState>();
 
-  public addOrder({ id, symbol, side, amount, trailing, createdAt }: AddOrderParams): void {
+  public addOrder({ id, symbol, amount, trailing, createdAt }: AddOrderParams): void {
     if (!trailing) return;
     if (!isNil(amount) && amount <= 0) {
       warning('trailing stop', `Cannot create trailing stop without a valid amount, current order amount: ${amount}`);
@@ -36,7 +36,6 @@ export class TrailingStopManager extends EventEmitter {
     this.orders.set(id, {
       id,
       symbol,
-      side,
       amount,
       config: trailing,
       status: isDirectlyActive ? 'active' : 'dormant',

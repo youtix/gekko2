@@ -129,7 +129,6 @@ export class StrategyManager extends EventEmitter {
       this.trailingStopManager.addOrder({
         id: order.id,
         symbol: order.symbol,
-        side: order.side === 'BUY' ? 'SELL' : 'BUY',
         amount: order.amount,
         trailing: this.pendingTrailingStops.get(order.id),
         createdAt: order.orderCreationDate,
@@ -163,7 +162,7 @@ export class StrategyManager extends EventEmitter {
   }
 
   private onTrailingStopTriggered(state: TrailingStopState) {
-    const orderId = this.createOrder({ symbol: state.symbol, side: state.side, type: 'MARKET', amount: state.amount });
+    const orderId = this.createOrder({ symbol: state.symbol, side: 'SELL', type: 'MARKET', amount: state.amount });
     this.strategy?.onTrailingStopTriggered?.(orderId, state);
   }
 
@@ -204,7 +203,7 @@ export class StrategyManager extends EventEmitter {
     const orderCreationDate = addMinutes(this.currentTimestamp, 1).getTime();
 
     // If it is a trailing stop order, add it to the waiting list, it will be created after order completion
-    if (order.trailing) this.pendingTrailingStops.set(id, order.trailing);
+    if (order.trailing && order.side === 'BUY') this.pendingTrailingStops.set(id, order.trailing); // Trailing stop order cannot be SELL order
 
     this.emit<AdviceOrder>(STRATEGY_CREATE_ORDER_EVENT, { ...omit(order, 'trailing'), id, orderCreationDate });
     return id;
