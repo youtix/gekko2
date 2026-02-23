@@ -64,6 +64,11 @@ describe('TrailingStopManager', () => {
       manager.addOrder({ ...defaultOrder, amount: undefined });
       expect(manager.getOrders().size).toBe(1);
     });
+
+    it('activates order directly if trigger is undefined', () => {
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2 } });
+      expect(manager.getOrders().get(defaultId)?.status).toBe('active');
+    });
   });
 
   /* -------------------------------------------------------------------------- */
@@ -167,6 +172,35 @@ describe('TrailingStopManager', () => {
         expect(listener).not.toHaveBeenCalled();
         expect(manager.getOrders().has(defaultId)).toBe(true);
       }
+    });
+  });
+
+  /* -------------------------------------------------------------------------- */
+  /*                 update – directly active (undefined trigger)               */
+  /* -------------------------------------------------------------------------- */
+
+  describe('update (directly active via undefined trigger)', () => {
+    beforeEach(() => {
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2 } });
+    });
+
+    it('updates highestPeak and stopPrice on first candle', () => {
+      // Use low > 49000 so it doesn't trigger immediately
+      manager.update(makeBucket('BTC/USDT', 50000, 49500, 49500));
+      const order = manager.getOrders().get(defaultId);
+      expect(order?.highestPeak).toBe(50000);
+      expect(order?.stopPrice).toBe(49000); // 50000 * 0.98
+    });
+
+    it('triggers immediately if first candle low is low enough', () => {
+      const listener = vi.fn();
+      manager.on(TRAILING_STOP_TRIGGERED, listener);
+
+      // high = 50000 -> stop = 49000. low = 48000 -> triggers!
+      manager.update(makeBucket('BTC/USDT', 50000, 48000, 49500));
+
+      expect(listener).toHaveBeenCalledOnce();
+      expect(manager.getOrders().has(defaultId)).toBe(false);
     });
   });
 

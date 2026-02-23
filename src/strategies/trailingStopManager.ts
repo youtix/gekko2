@@ -25,10 +25,13 @@ export class TrailingStopManager extends EventEmitter {
       warning('trailing stop', `Invalid trailing percentage: ${trailing.percentage}%. Must be between 0 and 100 exclusive.`);
       return;
     }
-    if (trailing.trigger <= 0) {
+    if (trailing.trigger && trailing.trigger <= 0) {
       warning('trailing stop', `Invalid trigger price: ${trailing.trigger}. Must be positive.`);
       return;
     }
+
+    const activationPrice = trailing.trigger;
+    const isDirectlyActive = isNil(activationPrice);
 
     this.orders.set(id, {
       id,
@@ -36,10 +39,10 @@ export class TrailingStopManager extends EventEmitter {
       side,
       amount,
       config: trailing,
-      status: 'dormant',
+      status: isDirectlyActive ? 'active' : 'dormant',
       highestPeak: 0,
       stopPrice: 0,
-      activationPrice: trailing.trigger,
+      activationPrice,
       createdAt,
     });
   }
@@ -63,7 +66,7 @@ export class TrailingStopManager extends EventEmitter {
   }
 
   private processDormant(order: TrailingStopState, high: number): void {
-    if (high < order.activationPrice) return;
+    if (!isNil(order.activationPrice) && high < order.activationPrice) return;
 
     order.status = 'active';
     order.highestPeak = high;

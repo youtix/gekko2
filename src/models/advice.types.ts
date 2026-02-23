@@ -6,7 +6,7 @@ export type TrailingConfig = {
   /** The percent to trail away from the highest peak (e.g., 2.5 for 2.5%) */
   percentage: number;
   /** The price to activate the trailing monitoring */
-  trigger: number;
+  trigger?: number;
 };
 
 export type AdviceOrder = {

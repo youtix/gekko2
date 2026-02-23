@@ -12,6 +12,6 @@ export type TrailingStopState = {
   status: 'dormant' | 'active';
   highestPeak: number;
   stopPrice: number;
-  activationPrice: number;
+  activationPrice?: number;
   createdAt: number;
 };
