@@ -3,7 +3,7 @@ import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.
 import { isNumber } from 'lodash-es';
 import { DEMAStrategyParams } from './dema.types';
 
-export class DEMA extends Strategy<DEMAStrategyParams> {
+export class DEMA implements Strategy<DEMAStrategyParams> {
   private currentTrend?: 'down' | 'up';
   private pair?: TradingPair;
 

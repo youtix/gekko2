@@ -16,7 +16,7 @@ interface DebugTrailingStopParams {
  * Places a single BUY order with a trailing stop config, then logs each lifecycle event
  * so that tests can assert on logStore entries.
  */
-export class DebugTrailingStop extends Strategy<DebugTrailingStopParams> {
+export class DebugTrailingStop implements Strategy<DebugTrailingStopParams> {
   private index = 0;
   private orderPlaced = false;
 

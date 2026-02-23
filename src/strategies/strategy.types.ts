@@ -35,38 +35,25 @@ export type OnOrderErroredEventParams<T> = {
   exchange: ExchangeEvent;
   tools: Tools<T>;
 };
-interface IStrategy<T> {
+export interface Strategy<T> {
   /** Executed once at the beginning of the strategy */
-  init(params: InitParams<T>): void;
+  init?(params: InitParams<T>): void;
   /** On each timeframe candle from the beginning */
-  onEachTimeframeCandle(params: OnCandleEventParams<T>, ...indicators: unknown[]): void;
+  onEachTimeframeCandle?(params: OnCandleEventParams<T>, ...indicators: unknown[]): void;
   /** On each timeframe candle from the warmup event */
-  onTimeframeCandleAfterWarmup(params: OnCandleEventParams<T>, ...indicators: unknown[]): void;
+  onTimeframeCandleAfterWarmup?(params: OnCandleEventParams<T>, ...indicators: unknown[]): void;
   /** Let you log everything you need, called every timeframe candle after warmup */
-  log(params: OnCandleEventParams<T>, ...indicators: unknown[]): void;
+  log?(params: OnCandleEventParams<T>, ...indicators: unknown[]): void;
   /** On each order completed successfuly by exchange */
-  onOrderCompleted(params: OnOrderCompletedEventParams<T>, ...indicators: unknown[]): void;
+  onOrderCompleted?(params: OnOrderCompletedEventParams<T>, ...indicators: unknown[]): void;
   /** On each order canceled successfuly by exchange */
-  onOrderCanceled(params: OnOrderCanceledEventParams<T>, ...indicators: unknown[]): void;
+  onOrderCanceled?(params: OnOrderCanceledEventParams<T>, ...indicators: unknown[]): void;
   /** On each order errored/rejected by exchange */
-  onOrderErrored(params: OnOrderErroredEventParams<T>, ...indicators: unknown[]): void;
+  onOrderErrored?(params: OnOrderErroredEventParams<T>, ...indicators: unknown[]): void;
   /** On each trailing stop activated (when activation threshold price is reached) */
-  onTrailingStopActivated(state: TrailingStopState): void;
+  onTrailingStopActivated?(state: TrailingStopState): void;
   /** On each trailing stop triggered (when trailing stop price is reached) */
-  onTrailingStopTriggered(orderId: UUID, state: TrailingStopState): void;
+  onTrailingStopTriggered?(orderId: UUID, state: TrailingStopState): void;
   /** Executed at the end of the strategy */
-  end(): void;
-}
-
-export abstract class Strategy<T> implements IStrategy<T> {
-  public init(_params: InitParams<T>): void {}
-  public onEachTimeframeCandle(_params: OnCandleEventParams<T>, ..._indicators: unknown[]): void {}
-  public onTimeframeCandleAfterWarmup(_params: OnCandleEventParams<T>, ..._indicators: unknown[]): void {}
-  public log(_params: OnCandleEventParams<T>, ..._indicators: unknown[]): void {}
-  public onOrderCompleted(_params: OnOrderCompletedEventParams<T>, ..._indicators: unknown[]): void {}
-  public onOrderCanceled(_params: OnOrderCanceledEventParams<T>, ..._indicators: unknown[]): void {}
-  public onOrderErrored(_params: OnOrderErroredEventParams<T>, ..._indicators: unknown[]): void {}
-  public onTrailingStopActivated(_state: TrailingStopState): void {}
-  public onTrailingStopTriggered(_orderId: UUID, _state: TrailingStopState): void {}
-  public end(): void {}
+  end?(): void;
 }

@@ -3,7 +3,7 @@ import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.
 import { isNumber } from 'lodash-es';
 import { TMAStrategyParams } from './tma.types';
 
-export class TMA extends Strategy<TMAStrategyParams> {
+export class TMA implements Strategy<TMAStrategyParams> {
   private pair?: TradingPair;
 
   init({ candle, tools, addIndicator }: InitParams<TMAStrategyParams>): void {

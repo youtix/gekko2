@@ -97,7 +97,7 @@ export class StrategyManager extends EventEmitter {
     const params = { candle: bucket, portfolio: this.portfolio, tools };
 
     // Initialize strategy with time frame candle (do not use one minute candle)
-    if (this.age === 0) this.strategy?.init({ ...params, addIndicator: this.addIndicator });
+    if (this.age === 0) this.strategy?.init?.({ ...params, addIndicator: this.addIndicator });
 
     // Update indicators
     this.indicatorsResults = this.indicators.map(({ indicator, symbol }) => {
@@ -107,15 +107,15 @@ export class StrategyManager extends EventEmitter {
       return indicator.getResult();
     });
     // Call for each candle
-    this.strategy?.onEachTimeframeCandle(params, ...this.indicatorsResults);
+    this.strategy?.onEachTimeframeCandle?.(params, ...this.indicatorsResults);
 
     // Fire the warm-up event only when the strategy has fully completed its warm-up phase.
     if (this.warmupPeriod === this.age) this.emitWarmupCompletedEvent(bucket);
 
     // Call log and onCandleAfterWarmup only after warm up is done
     if (this.warmupPeriod <= this.age) {
-      this.strategy?.log(params, ...this.indicatorsResults);
-      this.strategy?.onTimeframeCandleAfterWarmup(params, ...this.indicatorsResults);
+      this.strategy?.log?.(params, ...this.indicatorsResults);
+      this.strategy?.onTimeframeCandleAfterWarmup?.(params, ...this.indicatorsResults);
     }
 
     // Increment age only if init function is not called or if warmup phase is not done.
@@ -123,7 +123,7 @@ export class StrategyManager extends EventEmitter {
   }
 
   public onOrderCompleted({ order, exchange }: OrderCompletedEvent) {
-    this.strategy?.onOrderCompleted({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
+    this.strategy?.onOrderCompleted?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
 
     if (this.pendingTrailingStops.has(order.id)) {
       this.trailingStopManager.addOrder({
@@ -139,13 +139,13 @@ export class StrategyManager extends EventEmitter {
   }
 
   public onOrderCanceled({ order, exchange }: OrderCanceledEvent) {
-    this.strategy?.onOrderCanceled({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
+    this.strategy?.onOrderCanceled?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
     this.pendingTrailingStops.delete(order.id);
     this.trailingStopManager.removeOrder(order.id);
   }
 
   public onOrderErrored({ order, exchange }: OrderErroredEvent) {
-    this.strategy?.onOrderErrored({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
+    this.strategy?.onOrderErrored?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
     this.pendingTrailingStops.delete(order.id);
     this.trailingStopManager.removeOrder(order.id);
   }
@@ -155,16 +155,16 @@ export class StrategyManager extends EventEmitter {
     if (pendingOrders.size > 0)
       warning('strategy', `Strategy ended with ${pendingOrders.size} active trailing stop(s) that never triggered.`);
     this.trailingStopManager.removeAllListeners();
-    this.strategy?.end();
+    this.strategy?.end?.();
   }
 
   private onTrailingStopActivated(state: TrailingStopState) {
-    this.strategy?.onTrailingStopActivated(state);
+    this.strategy?.onTrailingStopActivated?.(state);
   }
 
   private onTrailingStopTriggered(state: TrailingStopState) {
     const orderId = this.createOrder({ symbol: state.symbol, side: state.side, type: 'MARKET', amount: state.amount });
-    this.strategy?.onTrailingStopTriggered(orderId, state);
+    this.strategy?.onTrailingStopTriggered?.(orderId, state);
   }
 
   /* -------------------------------------------------------------------------- */

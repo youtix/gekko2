@@ -4,12 +4,11 @@ import { pluralize } from '@utils/string/string.utils';
 import { isNumber } from 'lodash-es';
 import { RSICurrentTrend, RSIStrategyParams } from './rsi.types';
 
-export class RSI extends Strategy<RSIStrategyParams> {
+export class RSI implements Strategy<RSIStrategyParams> {
   private trend: RSICurrentTrend;
   private pair?: TradingPair;
 
   constructor() {
-    super();
     this.trend = { direction: 'none', duration: 0, adviced: false };
   }
 

@@ -3,12 +3,11 @@ import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.
 import { isNumber } from 'lodash-es';
 import { CCIStrategyParams, CCITrend } from './cci.types';
 
-export class CCI extends Strategy<CCIStrategyParams> {
+export class CCI implements Strategy<CCIStrategyParams> {
   private trend: CCITrend;
   private pair?: TradingPair;
 
   constructor() {
-    super();
     this.trend = { direction: 'nodirection', duration: 0, persisted: false, adviced: false };
   }
 

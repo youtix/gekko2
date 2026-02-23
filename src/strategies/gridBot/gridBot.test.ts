@@ -465,36 +465,4 @@ describe('GridBot', () => {
       expect(sellOrders[0]?.price).toBe(expectedSellPrice);
     });
   });
-
-  describe('lifecycle methods', () => {
-    it('onTimeframeCandleAfterWarmup does not throw', () => {
-      initStrategy(100);
-
-      expect(() =>
-        strategy.onTimeframeCandleAfterWarmup({
-          candle: makeCandle(100),
-          portfolio: balancedPortfolio,
-          tools,
-        }),
-      ).not.toThrow();
-    });
-
-    it('log method does not throw', () => {
-      initStrategy(100);
-
-      expect(() =>
-        strategy.log({
-          candle: makeCandle(100),
-          portfolio: balancedPortfolio,
-          tools,
-        }),
-      ).not.toThrow();
-    });
-
-    it('end method does not throw', () => {
-      initStrategy(100);
-
-      expect(() => strategy.end()).not.toThrow();
-    });
-  });
 });

@@ -38,7 +38,7 @@ import {
  * - On exchange errors, orders are retried up to the configured limit
  * - When price exits the grid range, a warning is logged but trading continues
  */
-export class GridBot extends Strategy<GridBotStrategyParams> {
+export class GridBot implements Strategy<GridBotStrategyParams> {
   /** Base asset */
   private base: string = '';
   /** Quote asset */

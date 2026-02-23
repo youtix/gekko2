@@ -5,7 +5,7 @@ interface DebugBacktestParams {
   sellCandleIndex: number | number[];
 }
 
-export class DebugBacktestStrategy extends Strategy<DebugBacktestParams> {
+export class DebugBacktestStrategy implements Strategy<DebugBacktestParams> {
   private currentIndex = 1;
 
   onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<DebugBacktestParams>, ..._indicators: unknown[]): void {

@@ -83,12 +83,4 @@ describe('EMARibbon', () => {
     expect(tools.log).toHaveBeenNthCalledWith(1, 'debug', 'Ribbon results: [5 / 4 / 3]');
     expect(tools.log).toHaveBeenNthCalledWith(2, 'debug', 'Ribbon Spread: 0.42');
   });
-
-  it('end(), onEachCandle(), onOrderCompleted() are no-ops', () => {
-    expect(() => {
-      strategy.onEachTimeframeCandle({ candle: bucket, tools } as any);
-      strategy.onOrderCompleted({ tools } as any);
-      strategy.end();
-    }).not.toThrow();
-  });
 });

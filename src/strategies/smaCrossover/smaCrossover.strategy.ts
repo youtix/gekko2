@@ -12,7 +12,7 @@ import { SMACrossoverStrategyParams } from './smaCrossover.types';
  * A crossover is detected by comparing the previous relative position
  * of the price vs the SMA to the current one.
  */
-export class SMACrossover extends Strategy<SMACrossoverStrategyParams> {
+export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
   /** Tracks whether price was above SMA in the previous candle */
   private wasPriceAboveSMA: boolean | null = null;
   private pair?: TradingPair;

@@ -4,7 +4,7 @@ import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
 
-export class MACD extends Strategy<MACDStrategyParams> {
+export class MACD implements Strategy<MACDStrategyParams> {
   private trend?: MACDTrend;
   private pair?: TradingPair;
 

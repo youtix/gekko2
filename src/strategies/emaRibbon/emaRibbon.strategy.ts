@@ -2,7 +2,7 @@ import { TradingPair } from '@models/utility.types';
 import { InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import type { EMARibbonStrategyParams } from './emaRibbon.types';
 
-export class EMARibbon extends Strategy<EMARibbonStrategyParams> {
+export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
   private isLong?: boolean;
   private pair?: TradingPair;
 

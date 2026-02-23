@@ -1,6 +1,6 @@
 import { OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 
-export class DebugRealtime extends Strategy<object> {
+export class DebugRealtime implements Strategy<object> {
   private index = 0;
 
   onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<object>, ..._indicators: unknown[]): void {
