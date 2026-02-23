@@ -1,5 +1,5 @@
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
-import { AdviceOrder } from '@models/advice.types';
+import { StrategyOrder } from '@models/advice.types';
 import { CandleBucket, ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { Portfolio } from '@models/portfolio.types';
@@ -16,7 +16,7 @@ export type Tools<T> = {
   strategyParams: T;
   marketData: Map<TradingPair, MarketData>;
   log: LoggerFn;
-  createOrder: (order: Omit<AdviceOrder, 'id' | 'orderCreationDate'>) => UUID;
+  createOrder: (order: StrategyOrder) => UUID;
   cancelOrder: (orderId: UUID) => void;
 };
 export type InitParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T>; addIndicator: AddIndicatorFn };
