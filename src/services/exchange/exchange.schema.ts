@@ -10,7 +10,7 @@ export const simulationBalanceSchema = z
   .array(
     z.object({
       assetName: z.string(),
-      balance: z.number().positive(),
+      balance: z.number().nonnegative(),
     }),
   )
   .min(1)

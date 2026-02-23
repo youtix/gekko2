@@ -81,3 +81,19 @@ export const calculatePortfolioTotalValue = (
 
   return totalValue;
 };
+
+/**
+ * Clones a portfolio Map by manually copying the nested BalanceDetail properties.
+ * This is significantly faster than using native structuredClone for Maps.
+ */
+export const clonePortfolio = (portfolio: Portfolio): Portfolio => {
+  const cloned: Portfolio = new Map();
+  for (const [asset, balance] of portfolio.entries()) {
+    cloned.set(asset, {
+      free: balance.free,
+      used: balance.used,
+      total: balance.total,
+    });
+  }
+  return cloned;
+};

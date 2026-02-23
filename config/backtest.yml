@@ -1,3 +1,4 @@
+showLogo: false
 watch:
   assets:
     - BTC
@@ -5,17 +6,40 @@ watch:
   timeframe: 1h
   mode: backtest
   warmup:
-    candleCount: 365
+    candleCount: 10000
   daterange:
     start: '2017-10-01T00:00:00.000Z'
     end: '2026-01-01T00:00:00.000Z'
 
 exchange:
   name: dummy-cex
+  marketData:
+    - symbol: BTC/USDT
+      marketData:
+        price:
+          min: 0.01
+          max: 1000000
+        amount:
+          min: 0.00001
+          max: 9000
+        cost:
+          min: 5
+          max: 9000000
+        precision:
+          price: 8
+          amount: 8
+        fee:
+          maker: 0.0004
+          taker: 0.0007
+  simulationBalance:
+    - assetName: BTC
+      balance: 0
+    - assetName: USDT
+      balance: 1000
 
 storage:
   type: sqlite
-  database: ./db/binance-BTC_USDT.sql
+  database: ./db/binance-BTC_ETH_USDT.sql
 
 strategy:
   name: RSI
@@ -31,6 +55,9 @@ plugins:
     strategyName: RSI
 
   - name: Trader
+    portfolioUpdates:
+      threshold: 1 # in percentage
+      dust: 10 # in currency
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     enableConsoleTable: true

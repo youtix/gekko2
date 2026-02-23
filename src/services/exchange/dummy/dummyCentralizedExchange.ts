@@ -8,7 +8,7 @@ import { config } from '@services/configuration/configuration';
 import { LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback, Ticker } from '@services/exchange/exchange.types';
-import { initializePortfolio } from '@utils/portfolio/portfolio.utils';
+import { clonePortfolio, initializePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
 import { AsyncMutex } from '../../../utils/async/asyncMutex';
@@ -58,8 +58,9 @@ export class DummyCentralizedExchange implements Exchange {
       for (const [symbol, candle] of bucket) {
         // I need the close time of the candle
         this.currentTimestamp = addMinutes(candle.start, 1).getTime();
-        const oldCandles = this.candles.get(symbol) ?? [];
-        this.candles.set(symbol, [...oldCandles, candle]);
+        const oldCandles = this.candles.get(symbol);
+        if (oldCandles) oldCandles.push(candle);
+        else this.candles.set(symbol, [candle]);
         this.ticker.set(symbol, { bid: candle.close, ask: candle.close });
         this.settleOrdersWithCandle(symbol, candle);
       }
@@ -117,7 +118,7 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   public async fetchBalance(): Promise<Portfolio> {
-    return this.mutex.runExclusive(() => structuredClone(this.portfolio));
+    return this.mutex.runExclusive(() => clonePortfolio(this.portfolio));
   }
 
   public async createLimitOrder(

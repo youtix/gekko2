@@ -9,6 +9,7 @@ import {
   PORTFOLIO_CHANGE_EVENT,
 } from '@constants/event.const';
 import { DEFAULT_FEE_BUFFER } from '@constants/order.const';
+import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
 import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
@@ -23,7 +24,7 @@ import { createEmptyPortfolio, getAssetBalance } from '@utils/portfolio/portfoli
 import { addMinutes, differenceInMinutes } from 'date-fns';
 import { bindAll, cloneDeep, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
-import { BACKTEST_SYNC_INTERVAL, ORDER_FACTORY } from './trader.const';
+import { ORDER_FACTORY } from './trader.const';
 import { traderSchema } from './trader.schema';
 import { TraderOrderMetadata } from './trader.types';
 import { computeOrderPricing, PortfolioUpdatesConfig, shouldEmitPortfolio, ShouldEmitPortfolioParams } from './trader.utils';
@@ -75,7 +76,6 @@ export class Trader extends Plugin {
         pairs: this.pairs,
         portfolioConfig: this.portfolioUpdatesConfig,
       };
-
       if (shouldEmitPortfolio(params)) {
         this.emitPortfolioChangeEvent();
         this.lastEmittedPortfolio = cloneDeep(this.portfolio);
@@ -123,7 +123,7 @@ export class Trader extends Plugin {
   /*                             EVENT LISTENERS                                */
   /* -------------------------------------------------------------------------- */
 
-  public async onStrategyWarmupCompleted(_bucket: CandleBucket) {
+  public async onStrategyWarmupCompleted(_bucket: CandleBucket[]) {
     // There is only one warmup event during the execution
     this.warmupCompleted = true;
     const oneMinuteCandleBucket = this.warmupBucket;
@@ -301,7 +301,7 @@ export class Trader extends Plugin {
     // Synchronize periodically in backtest mode (order fills are handled by exchange callbacks)
     if (this.mode === 'backtest') {
       const minutes = differenceInMinutes(firstEntry.start, 0);
-      if (this.currentTimestamp && minutes % BACKTEST_SYNC_INTERVAL === 0) await this.synchronize();
+      if (this.currentTimestamp && minutes % TIMEFRAME_TO_MINUTES[this.timeframe ?? '1m'] === 0) await this.synchronize();
     }
 
     // Then update current timestamp
