@@ -12,7 +12,7 @@ export class Heart extends EventEmitter {
     super();
     this.tickRate = tickRate;
     this.lastTick = 0;
-    bindAll(this, ['tick']);
+    bindAll(this, [this.tick.name]);
   }
 
   public tick() {

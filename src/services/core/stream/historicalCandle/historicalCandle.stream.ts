@@ -44,7 +44,7 @@ export class HistoricalCandleStream extends Readable {
     this.isLocked = false;
     this.symbol = symbol;
 
-    bindAll(this, ['pushCandles', 'pushCandle', 'onTick']);
+    bindAll(this, [this.pushCandles.name, this.pushCandle.name, this.onTick.name]);
 
     this.heart.on('tick', this.onTick);
 

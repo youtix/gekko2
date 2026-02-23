@@ -10,7 +10,7 @@ export class MockHeart extends EventEmitter {
   constructor(tickRate: number) {
     super();
     this.tickRate = tickRate;
-    bindAll(this, ['tick']);
+    bindAll(this, [this.tick.name]);
     MockHeart.instances.add(this);
   }
 

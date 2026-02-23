@@ -27,7 +27,7 @@ export class EventSubscriber extends Plugin {
 
   constructor({ name, token, botUsername }: EventSubscriberConfig) {
     super(name);
-    bindAll(this, ['handleCommand']);
+    bindAll(this, [this.handleCommand.name]);
     this.bot = new TelegramBot(token, botUsername, this.handleCommand);
   }
 
