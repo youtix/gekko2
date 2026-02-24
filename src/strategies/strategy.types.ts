@@ -18,6 +18,7 @@ export type Tools<T> = {
   log: LoggerFn;
   createOrder: (order: StrategyOrder) => UUID;
   cancelOrder: (orderId: UUID) => void;
+  cancelTrailingOrder: (orderId: UUID) => void;
 };
 export type InitParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T>; addIndicator: AddIndicatorFn };
 export type OnCandleEventParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T> };

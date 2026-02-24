@@ -10,6 +10,7 @@ import { LogLevel } from '@models/logLevel.types';
 import { BalanceDetail } from '@models/portfolio.types';
 import { debug, error, info, warning } from '@services/logger';
 import { addMinutes } from 'date-fns';
+import { UUID } from 'node:crypto';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Tools } from './strategy.types';
@@ -164,6 +165,7 @@ describe('StrategyManager', () => {
           marketData: defaultMarketData,
           createOrder: manager['createOrder'],
           cancelOrder: manager['cancelOrder'],
+          cancelTrailingOrder: manager['cancelTrailingOrder'],
           log: manager['log'],
         });
         expect(indicator.onNewCandle).toHaveBeenCalledWith(candle);
@@ -386,6 +388,29 @@ describe('StrategyManager', () => {
       });
     });
 
+    describe('cancelTrailingOrder', () => {
+      it('cancelTrailingOrder removes from pending orders and trailing stop manager', () => {
+        const orderId = 'db2254e3-c749-448c-b7b6-aa28831bbae7' as UUID;
+
+        manager['pendingTrailingStops'].set(orderId, { percentage: 2 });
+        manager['trailingStopManager'].addOrder({
+          id: orderId,
+          symbol: 'BTC/USDT',
+          amount: 1,
+          trailing: { percentage: 2 },
+          createdAt: 123456789,
+        });
+
+        expect(manager['pendingTrailingStops'].has(orderId)).toBe(true);
+        expect(manager['trailingStopManager'].getOrders().has(orderId)).toBe(true);
+
+        manager['cancelTrailingOrder'](orderId);
+
+        expect(manager['pendingTrailingStops'].has(orderId)).toBe(false);
+        expect(manager['trailingStopManager'].getOrders().has(orderId)).toBe(false);
+      });
+    });
+
     describe('log', () => {
       it.each([
         { level: 'debug' as LogLevel, logger: debug },
@@ -427,6 +452,7 @@ describe('StrategyManager', () => {
           marketData: defaultMarketData,
           createOrder: manager['createOrder'],
           cancelOrder: manager['cancelOrder'],
+          cancelTrailingOrder: manager['cancelTrailingOrder'],
           log: manager['log'],
         } as Tools<object>);
       });

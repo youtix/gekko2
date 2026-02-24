@@ -59,6 +59,7 @@ export class StrategyManager extends EventEmitter {
       this.addIndicator.name,
       this.createOrder.name,
       this.cancelOrder.name,
+      this.cancelTrailingOrder.name,
       this.log.name,
       this.onTrailingStopActivated.name,
       this.onTrailingStopTriggered.name,
@@ -140,14 +141,12 @@ export class StrategyManager extends EventEmitter {
 
   public onOrderCanceled({ order, exchange }: OrderCanceledEvent) {
     this.strategy?.onOrderCanceled?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
-    this.pendingTrailingStops.delete(order.id);
-    this.trailingStopManager.removeOrder(order.id);
+    this.cancelTrailingOrder(order.id);
   }
 
   public onOrderErrored({ order, exchange }: OrderErroredEvent) {
     this.strategy?.onOrderErrored?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
-    this.pendingTrailingStops.delete(order.id);
-    this.trailingStopManager.removeOrder(order.id);
+    this.cancelTrailingOrder(order.id);
   }
 
   public onStrategyEnd() {
@@ -198,6 +197,11 @@ export class StrategyManager extends EventEmitter {
     this.emit<UUID>(STRATEGY_CANCEL_ORDER_EVENT, orderId);
   }
 
+  private cancelTrailingOrder(orderId: UUID): void {
+    this.pendingTrailingStops.delete(orderId);
+    this.trailingStopManager.removeOrder(orderId);
+  }
+
   private createOrder(order: StrategyOrder): UUID {
     if (!this.currentTimestamp) throw new GekkoError('strategy', 'No candle when relaying advice');
     const id = randomUUID();
@@ -246,6 +250,7 @@ export class StrategyManager extends EventEmitter {
       log: this.log,
       strategyParams: this.strategyParams,
       marketData: this.marketData,
+      cancelTrailingOrder: this.cancelTrailingOrder,
     };
   }
 }
