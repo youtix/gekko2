@@ -38,33 +38,31 @@ export class PerformanceReporter extends Plugin {
     this.fs = fs;
   }
 
-  public onPerformanceReport(payloads: (PortfolioReport | TradingReport)[]) {
-    if (payloads.length === 0) return;
-
+  // Here the payload is not an array because onPerformanceReport use emit function directly.
+  // It is not using the sequentialEmitter because it is emitted in processFinalize() of plugin lifecycle hooks
+  public onPerformanceReport(report: PortfolioReport | TradingReport) {
     // Check if we need to write a header (lazy initialization)
-    this.ensureHeader(payloads[0]);
+    this.ensureHeader(report);
 
-    for (const report of payloads) {
-      let csvLine = '';
+    let csvLine = '';
 
-      if (report.id === 'PORTFOLIO PROFIT REPORT') {
-        csvLine = this.handlePortfolioReport(report);
-      } else if (report.id === 'TRADING REPORT') {
-        csvLine = this.handleTradingReport(report);
-      }
+    if (report.id === 'PORTFOLIO PROFIT REPORT') {
+      csvLine = this.handlePortfolioReport(report);
+    } else if (report.id === 'TRADING REPORT') {
+      csvLine = this.handleTradingReport(report);
+    }
 
-      if (csvLine) {
+    if (csvLine) {
+      try {
+        // Acquire an exclusive lock, append, then release.
+        const release = this.fs.lockSync(this.filePath, { retries: 5 });
         try {
-          // Acquire an exclusive lock, append, then release.
-          const release = this.fs.lockSync(this.filePath, { retries: 5 });
-          try {
-            appendFileSync(this.filePath, csvLine, 'utf8');
-          } finally {
-            release();
-          }
-        } catch (err) {
-          error('performance reporter', `write error: ${err}`);
+          appendFileSync(this.filePath, csvLine, 'utf8');
+        } finally {
+          release();
         }
+      } catch (err) {
+        error('performance reporter', `write error: ${err}`);
       }
     }
   }

@@ -2,7 +2,7 @@ import { PERFORMANCE_REPORT_EVENT, ROUNDTRIP_COMPLETED_EVENT } from '@constants/
 import { CandleBucket, OrderCompletedEvent, RoundTrip } from '@models/event.types';
 import { Portfolio } from '@models/portfolio.types';
 import { Asset, TradingPair } from '@models/utility.types';
-import { warning } from '@services/logger';
+import { info, warning } from '@services/logger';
 import {
   calculateAlpha,
   calculateAnnualizedReturnPct,
@@ -41,7 +41,7 @@ export class RoundTripAnalyzer extends Plugin {
   private roundTrips: RoundTrip[];
   private maxAdverseExcursion: number;
   private start: Start;
-  private startPrice: number;
+  private startPrice: number | null;
   private tradeCount: number;
   private warmupBucket?: CandleBucket;
   private warmupCompleted: boolean;
@@ -68,7 +68,7 @@ export class RoundTripAnalyzer extends Plugin {
     this.roundTrips = [];
     this.maxAdverseExcursion = 0;
     this.start = { equity: 0, portfolio: null };
-    this.startPrice = 0;
+    this.startPrice = null;
     this.tradeCount = 0;
     this.warmupCompleted = false;
     this.enableConsoleTable = enableConsoleTable;
@@ -183,7 +183,7 @@ export class RoundTripAnalyzer extends Plugin {
   }
 
   private calculateReportStatistics(): TradingReport {
-    if (!this.start.equity || !this.start.portfolio) {
+    if (!this.start.equity || !this.start.portfolio || !this.startPrice) {
       warning('roundtrip analyzer', 'No portfolio data received. Emitting empty report.');
       return EMPTY_TRADING_REPORT;
     }
@@ -282,8 +282,11 @@ export class RoundTripAnalyzer extends Plugin {
 
   protected processFinalize(): void {
     const report = this.calculateReportStatistics();
-    logFinalize(report, this.currency, this.enableConsoleTable);
-    this.emit(PERFORMANCE_REPORT_EVENT, report);
+    if (this.enableConsoleTable) logFinalize(report, this.currency);
+    else info('roundtrip analyzer', report);
+
+    // Emit directly: processFinalize is the final lifecycle hook.
+    this.emit<TradingReport>(PERFORMANCE_REPORT_EVENT, report);
   }
 
   public static getStaticConfiguration() {

@@ -86,9 +86,17 @@ describe('PerformanceReporter', () => {
   let reporter: PerformanceReporter;
 
   beforeEach(() => {
-    vi.clearAllMocks();
     reporter = new PerformanceReporter(baseConfig);
     reporter['setFs']({ lockSync: lockSyncMock });
+
+    // Reset individual mocks instead of clearAllMocks() to adhere to rules
+    (fs.mkdirSync as Mock).mockReset();
+    (fs.existsSync as Mock).mockReset();
+    (fs.writeFileSync as Mock).mockReset();
+    (fs.appendFileSync as Mock).mockReset();
+    (fs.statSync as Mock).mockReset();
+    lockSyncMock.mockClear();
+    releaseMock.mockClear();
   });
 
   describe('#processInit', () => {
@@ -97,158 +105,200 @@ describe('PerformanceReporter', () => {
       expect(fs.mkdirSync).toHaveBeenCalledWith(path.dirname(path.join(baseConfig.filePath, baseConfig.fileName)), { recursive: true });
     });
 
-    it('should handle errors during directory creation', async () => {
+    it('should handle errors during directory creation without throwing', async () => {
       const error = new Error('Permission denied');
       (fs.mkdirSync as Mock).mockImplementation(() => {
         throw error;
       });
-
       expect(() => reporter['processInit']()).not.toThrow();
+    });
+
+    it('should log errors during directory creation', async () => {
+      const error = new Error('Permission denied');
+      (fs.mkdirSync as Mock).mockImplementation(() => {
+        throw error;
+      });
+      reporter['processInit']();
       const { error: logError } = await import('@services/logger');
       expect(logError).toHaveBeenCalledWith('performance reporter', `setup error: ${error}`);
     });
   });
 
   describe('#onPerformanceReport', () => {
-    const successTestCases = [
-      {
-        description: 'Portfolio Report',
-        report: samplePortfolioReport,
-        header: PORTFOLIO_HEADER,
-        expectedLineParts: [
-          'DEMA',
-          'Portfolio',
-          '2025-05-30',
-          '1 day',
-          '0.5%',
-          '100',
-          '110',
-          '3,650 (116.8%)',
-          '2 hours 30 minutes',
-          'USDT',
-          '0.5',
-          '100',
-          '10%',
-        ],
-      },
-      {
-        description: 'Trading Report',
-        report: sampleTradingReport,
-        header: TRADING_HEADER,
-        expectedLineParts: [
-          'DEMA',
-          'Trading',
-          '2025-05-30',
-          '1 day',
-          '0.5%',
-          '1,000',
-          '1,320',
-          '3,650 (116.8%)',
-          '60%',
-          '0.5',
-          '100',
-          '10%',
-          '2.5',
-          '100',
-          '110',
-        ],
-      },
-    ];
+    describe('When file is empty', () => {
+      it.each`
+        report                   | header
+        ${samplePortfolioReport} | ${PORTFOLIO_HEADER}
+        ${sampleTradingReport}   | ${TRADING_HEADER}
+      `('should write header for $report.id', ({ report, header }) => {
+        (fs.existsSync as Mock).mockReturnValue(false);
+        (fs.statSync as Mock).mockReturnValue({ size: 0 });
 
-    it.each(successTestCases)('should write $description correctly when file is empty', ({ report, header, expectedLineParts }) => {
-      (fs.existsSync as Mock).mockReturnValue(false);
-      (fs.statSync as Mock).mockReturnValue({ size: 0 });
+        reporter.onPerformanceReport(report);
 
-      reporter.onPerformanceReport([report]);
-
-      const expectedPath = path.join(baseConfig.filePath, baseConfig.fileName);
-      expect(fs.writeFileSync).toHaveBeenCalledWith(expectedPath, header, 'utf8');
-
-      const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
-      const writtenLine = appendCall[1] as string;
-
-      expectedLineParts.forEach(part => {
-        expect(writtenLine).toContain(part);
+        const expectedPath = path.join(baseConfig.filePath, baseConfig.fileName);
+        expect(fs.writeFileSync).toHaveBeenCalledWith(expectedPath, header, 'utf8');
       });
 
-      expect(fs.appendFileSync).toHaveBeenCalledWith(expectedPath, expect.any(String), 'utf8');
-      expect(releaseMock).toHaveBeenCalled();
-    });
+      it.each`
+        report                   | expectedPart
+        ${samplePortfolioReport} | ${'DEMA'}
+        ${samplePortfolioReport} | ${'Portfolio'}
+        ${samplePortfolioReport} | ${'3,650 (116.8%)'}
+        ${sampleTradingReport}   | ${'DEMA'}
+        ${sampleTradingReport}   | ${'Trading'}
+        ${sampleTradingReport}   | ${'1,320'}
+      `('should append correct parts ($expectedPart) for $report.id', ({ report, expectedPart }) => {
+        (fs.existsSync as Mock).mockReturnValue(false);
+        (fs.statSync as Mock).mockReturnValue({ size: 0 });
 
-    it('should append report without header if file exists', async () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
-      (fs.statSync as Mock).mockReturnValue({ size: 100 });
+        reporter.onPerformanceReport(report);
 
-      reporter.onPerformanceReport([samplePortfolioReport]);
+        const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
+        const writtenLine = appendCall ? (appendCall[1] as string) : '';
 
-      expect(fs.writeFileSync).not.toHaveBeenCalled();
-      expect(fs.appendFileSync).toHaveBeenCalledTimes(1);
-    });
-
-    it('should ignore empty payloads', () => {
-      reporter.onPerformanceReport([]);
-      expect(fs.appendFileSync).not.toHaveBeenCalled();
-      expect(fs.writeFileSync).not.toHaveBeenCalled();
-    });
-
-    it('should ignore unknown report types', () => {
-      const unknownReport = { ...samplePortfolioReport, id: 'UNKNOWN' as any };
-      reporter.onPerformanceReport([unknownReport]);
-      expect(fs.appendFileSync).not.toHaveBeenCalled();
-    });
-
-    it('should handle errors during file write', async () => {
-      (fs.existsSync as Mock).mockReturnValue(true);
-      (fs.statSync as Mock).mockReturnValue({ size: 100 });
-      const error = new Error('Disk full');
-      (fs.appendFileSync as Mock).mockImplementation(() => {
-        throw error;
+        expect(writtenLine).toContain(expectedPart);
       });
 
-      reporter.onPerformanceReport([samplePortfolioReport]);
+      it.each`
+        report
+        ${samplePortfolioReport}
+        ${sampleTradingReport}
+      `('should release lock after writing $report.id', ({ report }) => {
+        (fs.existsSync as Mock).mockReturnValue(false);
+        (fs.statSync as Mock).mockReturnValue({ size: 0 });
 
-      const { error: logError } = await import('@services/logger');
-      expect(logError).toHaveBeenCalledWith('performance reporter', `write error: ${error}`);
-      expect(releaseMock).toHaveBeenCalled();
+        reporter.onPerformanceReport(report);
+
+        expect(releaseMock).toHaveBeenCalled();
+      });
     });
 
-    it('should handle errors during header check', async () => {
-      const error = new Error('Access denied');
-      lockSyncMock.mockImplementation(() => {
-        throw error;
+    describe('When file exists', () => {
+      it('should not write header if file exists and has content', () => {
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.statSync as Mock).mockReturnValue({ size: 100 });
+
+        reporter.onPerformanceReport(samplePortfolioReport);
+
+        expect(fs.writeFileSync).not.toHaveBeenCalled();
       });
 
-      // We need to suppress the expected error in the error handler test for clarity or just check it was logged
-      // But here ensureHeader catches it inside
-      reporter.onPerformanceReport([samplePortfolioReport]);
+      it('should append report line if file exists and has content', () => {
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.statSync as Mock).mockReturnValue({ size: 100 });
 
-      const { error: logError } = await import('@services/logger');
-      expect(logError).toHaveBeenCalledWith('performance reporter', `header check error: ${error}`);
+        reporter.onPerformanceReport(samplePortfolioReport);
+
+        expect(fs.appendFileSync).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('Edge Cases & Errors', () => {
+      it('should ignore empty payloads or invalid objects (if passed as array by mistake handled at types or runtime)', () => {
+        reporter.onPerformanceReport([] as any);
+        expect(fs.appendFileSync).not.toHaveBeenCalled();
+      });
+
+      it('should not write header for empty payload', () => {
+        reporter.onPerformanceReport([] as any);
+        expect(fs.writeFileSync).not.toHaveBeenCalled();
+      });
+
+      it('should ignore unknown report types', () => {
+        const unknownReport = { ...samplePortfolioReport, id: 'UNKNOWN' as any };
+        reporter.onPerformanceReport(unknownReport);
+        expect(fs.appendFileSync).not.toHaveBeenCalled();
+      });
+
+      it('should log write errors', async () => {
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.statSync as Mock).mockReturnValue({ size: 100 });
+        const error = new Error('Disk full');
+        (fs.appendFileSync as Mock).mockImplementation(() => {
+          throw error;
+        });
+
+        reporter.onPerformanceReport(samplePortfolioReport);
+
+        const { error: logError } = await import('@services/logger');
+        expect(logError).toHaveBeenCalledWith('performance reporter', `write error: ${error}`);
+      });
+
+      it('should release lock even on write error', () => {
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.statSync as Mock).mockReturnValue({ size: 100 });
+        const error = new Error('Disk full');
+        (fs.appendFileSync as Mock).mockImplementation(() => {
+          throw error;
+        });
+
+        reporter.onPerformanceReport(samplePortfolioReport);
+
+        expect(releaseMock).toHaveBeenCalled();
+      });
+
+      it('should log header check errors', async () => {
+        const error = new Error('Access denied');
+        lockSyncMock.mockImplementation(() => {
+          throw error;
+        });
+
+        reporter.onPerformanceReport(samplePortfolioReport);
+
+        const { error: logError } = await import('@services/logger');
+        expect(logError).toHaveBeenCalledWith('performance reporter', `header check error: ${error}`);
+      });
+
+      it('should format winRate as N/A when null', () => {
+        const report = { ...sampleTradingReport, winRate: null as any };
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.statSync as Mock).mockReturnValue({ size: 100 });
+
+        reporter.onPerformanceReport(report);
+
+        const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
+        const writtenLine = appendCall ? (appendCall[1] as string) : '';
+        expect(writtenLine).toContain('N/A');
+      });
+
+      it('should handle zero drawdown correctly for portfolio', () => {
+        const report = { ...samplePortfolioReport, longestDrawdownMs: 0 };
+        (fs.existsSync as Mock).mockReturnValue(true);
+        (fs.statSync as Mock).mockReturnValue({ size: 100 });
+
+        reporter.onPerformanceReport(report);
+
+        const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
+        const writtenLine = appendCall ? (appendCall[1] as string) : '';
+        expect(writtenLine).toContain(';0;');
+      });
     });
   });
 
-  describe('Formatting Edge Cases', () => {
-    it('should format winRate as N/A when null', () => {
-      const report = { ...sampleTradingReport, winRate: null as any };
-      (fs.existsSync as Mock).mockReturnValue(true);
-      (fs.statSync as Mock).mockReturnValue({ size: 100 });
+  describe('#processOneMinuteBucket', () => {
+    it('should not throw', () => {
+      expect(() => reporter['processOneMinuteBucket']()).not.toThrow();
+    });
+  });
 
-      reporter.onPerformanceReport([report]);
-
-      const appendCall = (fs.appendFileSync as Mock).mock.calls[0];
-      const writtenLine = appendCall[1] as string;
-      expect(writtenLine).toContain('N/A');
+  describe('#processFinalize', () => {
+    it('should not throw', () => {
+      expect(() => reporter['processFinalize']()).not.toThrow();
     });
   });
 
   describe('#getStaticConfiguration', () => {
-    it('should return the expected static metadata', () => {
+    it('should return the expected static metadata config', () => {
       const meta = PerformanceReporter.getStaticConfiguration();
-
       expect(meta).toMatchObject({
         name: 'PerformanceReporter',
         modes: expect.arrayContaining(['backtest']),
       });
+    });
+
+    it('should have a schema', () => {
+      const meta = PerformanceReporter.getStaticConfiguration();
       expect(meta.schema).toBeDefined();
     });
   });

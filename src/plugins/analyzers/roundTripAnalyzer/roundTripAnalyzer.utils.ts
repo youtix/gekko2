@@ -22,32 +22,29 @@ export const logRoundtrip = (roundTrip: RoundTrip, currency: string, enableConso
   info('roundtrip analyzer', roundTrip);
 };
 
-export const logFinalize = (report: TradingReport, currency: string, enableConsoleTable: boolean) => {
+export const logFinalize = (report: TradingReport, currency: string) => {
   const formater = new Intl.NumberFormat();
 
-  if (enableConsoleTable) {
-    // eslint-disable-next-line no-console
-    console.table({
-      label: 'PROFIT REPORT',
-      periodStartAt: toISOString(report.periodStartAt),
-      periodEndAt: toISOString(report.periodEndAt),
-      duration: report.formattedDuration,
-      exposurePct: `${round(report.exposurePct, 2, 'halfEven')}% of time exposed`,
-      startPrice: `${formater.format(report.startPrice)} ${currency}`,
-      endPrice: `${formater.format(report.endPrice)} ${currency}`,
-      marketReturnPct: `${round(report.marketReturnPct, 2, 'down')}%`,
-      alpha: `${round(report.alpha, 2, 'down')}%`,
-      annualizedNetProfit: `${formater.format(report.annualizedNetProfit)} ${currency} (${round(report.annualizedReturnPct, 2, 'down')}%)`,
-      tradeCount: report.tradeCount,
-      startBalance: `${formater.format(report.startBalance)} ${currency}`,
-      finalBalance: `${formater.format(report.finalBalance)} ${currency}`,
-      sharpeRatio: formatRatio(report.sharpeRatio),
-      sortinoRatio: formatRatio(report.sortinoRatio),
-      volatility: formatRatio(report.volatility),
-      downsideDeviation: `${round(report.downsideDeviation, 2, 'down')}%`,
-      winRate: report.winRate === null ? 'N/A' : `${round(report.winRate, 2)}%`,
-      topMAEs: report.topMAEs.map(mae => `${round(mae, 2, 'down')}%`).join(', '),
-    });
-  }
-  info('roundtrip analyzer', report);
+  // eslint-disable-next-line no-console
+  console.table({
+    label: 'PROFIT REPORT',
+    periodStartAt: toISOString(report.periodStartAt),
+    periodEndAt: toISOString(report.periodEndAt),
+    duration: report.formattedDuration,
+    exposurePct: `${round(report.exposurePct, 2, 'halfEven')}% of time exposed`,
+    startPrice: `${formater.format(report.startPrice)} ${currency}`,
+    endPrice: `${formater.format(report.endPrice)} ${currency}`,
+    marketReturnPct: `${round(report.marketReturnPct, 2, 'down')}%`,
+    alpha: `${round(report.alpha, 2, 'down')}%`,
+    annualizedNetProfit: `${formater.format(report.annualizedNetProfit)} ${currency} (${round(report.annualizedReturnPct, 2, 'down')}%)`,
+    tradeCount: report.tradeCount,
+    startBalance: `${formater.format(report.startBalance)} ${currency}`,
+    finalBalance: `${formater.format(report.finalBalance)} ${currency}`,
+    sharpeRatio: formatRatio(report.sharpeRatio),
+    sortinoRatio: formatRatio(report.sortinoRatio),
+    volatility: formatRatio(report.volatility),
+    downsideDeviation: `${round(report.downsideDeviation, 2, 'down')}%`,
+    winRate: report.winRate === null ? 'N/A' : `${round(report.winRate, 2)}%`,
+    topMAEs: report.topMAEs.map(mae => `${round(mae, 2, 'down')}%`).join(', '),
+  });
 };

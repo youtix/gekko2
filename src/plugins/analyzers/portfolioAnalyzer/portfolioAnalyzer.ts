@@ -22,7 +22,7 @@ import {
 import { stdev } from '@utils/math/math.utils';
 import { calculatePortfolioTotalValue } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
-import { first } from 'lodash-es';
+import { first, isNil } from 'lodash-es';
 import { Plugin } from '../../plugin';
 import { analyzerSchema } from '../analyzer.schema';
 import { AnalyzerConfig } from '../analyzer.types';
@@ -39,7 +39,7 @@ export class PortfolioAnalyzer extends Plugin {
   // State
   private equityCurve: EquitySnapshot[] = [];
   private latestPrices: Map<TradingPair, number> = new Map();
-  private startEquity: number = 0;
+  private startEquity: number | null = null;
   private startBenchmarkPrice: number = 0;
   private endBenchmarkPrice: number = 0;
   private dates: { start: number; end: number } = { start: 0, end: 0 };
@@ -67,7 +67,7 @@ export class PortfolioAnalyzer extends Plugin {
     const totalValue = calculatePortfolioTotalValue(portfolio, this.latestPrices, this.currency, this.assets);
 
     // Record start equity on first valid portfolio change if not set
-    if (this.startEquity === 0) this.startEquity = totalValue;
+    if (isNil(this.startEquity)) this.startEquity = totalValue;
 
     // Only record snapshots after warmup
     if (this.warmupCompleted) this.recordSnapshot(this.currentTimestamp, totalValue);
@@ -126,7 +126,7 @@ export class PortfolioAnalyzer extends Plugin {
   }
 
   private calculateReportStatistics(): PortfolioReport {
-    if (this.startEquity === 0 || this.equityCurve.length === 0) {
+    if (isNil(this.startEquity) || this.equityCurve.length === 0) {
       warning('portfolio analyzer', 'Insufficient data for report generation.');
       return EMPTY_PORTFOLIO_REPORT;
     }
@@ -243,14 +243,12 @@ export class PortfolioAnalyzer extends Plugin {
 
   protected processFinalize(): void {
     const report = this.calculateReportStatistics();
-    this.addDeferredEmit<PortfolioReport>(PERFORMANCE_REPORT_EVENT, report);
 
-    // Log using logger
-    if (this.enableConsoleTable) {
-      logPortfolioReport(report, this.currency);
-    } else {
-      info('portfolio analyzer', report);
-    }
+    if (this.enableConsoleTable) logPortfolioReport(report, this.currency);
+    else info('portfolio analyzer', report);
+
+    // Emit directly: processFinalize is the final lifecycle hook.
+    this.emit<PortfolioReport>(PERFORMANCE_REPORT_EVENT, report);
   }
 
   public static getStaticConfiguration() {
