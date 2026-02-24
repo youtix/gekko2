@@ -3,6 +3,7 @@ import { CandleBucket, EquitySnapshot, OrderCompletedEvent } from '@models/event
 import { Portfolio } from '@models/portfolio.types';
 import { Asset, TradingPair } from '@models/utility.types';
 import { info, warning } from '@services/logger';
+import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import {
   calculateAlpha,
   calculateAnnualizedReturnPct,
@@ -44,6 +45,7 @@ export class PortfolioAnalyzer extends Plugin {
   private dates: { start: number; end: number } = { start: 0, end: 0 };
   private warmupCompleted: boolean = false;
   private portfolioChangeCount: number = 0;
+  private currentTimestamp: EpochTimeStamp = 0;
 
   constructor({ riskFreeReturn, enableConsoleTable }: AnalyzerConfig) {
     super(PLUGIN_NAME);
@@ -68,7 +70,7 @@ export class PortfolioAnalyzer extends Plugin {
     if (this.startEquity === 0) this.startEquity = totalValue;
 
     // Only record snapshots after warmup
-    if (this.warmupCompleted) this.recordSnapshot(Date.now(), totalValue);
+    if (this.warmupCompleted) this.recordSnapshot(this.currentTimestamp, totalValue);
   }
 
   public onOrderCompleted(payloads: OrderCompletedEvent[]): void {
@@ -129,6 +131,8 @@ export class PortfolioAnalyzer extends Plugin {
       return EMPTY_PORTFOLIO_REPORT;
     }
 
+    // Sort snapshots by date to ensure correct order
+    this.equityCurve.sort((a, b) => a.date - b.date);
     const lastSnapshot = this.equityCurve[this.equityCurve.length - 1];
     const firstSnapshot = this.equityCurve[0];
 
@@ -216,6 +220,10 @@ export class PortfolioAnalyzer extends Plugin {
   }
 
   protected processOneMinuteBucket(bucket: CandleBucket): void {
+    // Throw error if bucket is empty
+    const firstCandle = getFirstCandleFromBucket(bucket);
+    this.currentTimestamp = addMinutes(firstCandle.start, 1).getTime();
+
     // Update prices for all assets
     for (const asset of this.assets) {
       const pair = `${asset}/${this.currency}` as TradingPair;
@@ -228,12 +236,9 @@ export class PortfolioAnalyzer extends Plugin {
       }
     }
 
-    if (this.warmupCompleted) {
-      // Use the start time of the first candle in the bucket to update progress/time
-      // Taking the first available candle's start time
-      const firstCandle = bucket.values().next().value;
-      if (firstCandle) this.dates.end = addMinutes(firstCandle.start, 1).getTime();
-    }
+    // Use the start time of the first candle in the bucket to update progress/time
+    // Taking the first available candle's start time
+    if (this.warmupCompleted) this.dates.end = this.currentTimestamp;
   }
 
   protected processFinalize(): void {

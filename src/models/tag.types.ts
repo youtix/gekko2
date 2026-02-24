@@ -19,4 +19,5 @@ export type Tag =
   | 'supervision'
   | 'trader'
   | 'trading advisor'
-  | 'trailing stop';
+  | 'trailing stop'
+  | 'utils';

@@ -20,6 +20,7 @@ import { config } from '@services/configuration/configuration';
 import { MarketData } from '@services/exchange/exchange.types';
 import { debug, error, info, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
+import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, omit } from 'lodash-es';
@@ -86,8 +87,8 @@ export class StrategyManager extends EventEmitter {
 
   public onOneMinuteBucket(bucket: CandleBucket) {
     // Update current timestamp with the latest candle data
-    const firstCandle = bucket.values().next().value;
-    if (firstCandle) this.currentTimestamp = firstCandle.start;
+    const firstCandle = getFirstCandleFromBucket(bucket);
+    this.currentTimestamp = addMinutes(firstCandle.start, 1).getTime();
     // Update trailing stop orders each minute with the latest candle data
     this.trailingStopManager.update(bucket);
   }

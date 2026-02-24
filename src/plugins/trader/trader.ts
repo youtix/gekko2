@@ -9,7 +9,6 @@ import {
   PORTFOLIO_CHANGE_EVENT,
 } from '@constants/event.const';
 import { DEFAULT_FEE_BUFFER } from '@constants/order.const';
-import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
 import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
@@ -19,6 +18,7 @@ import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
 import { OrderSummary } from '@services/core/order/order.types';
 import { error, info, warning } from '@services/logger';
+import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
 import { createEmptyPortfolio, getAssetBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
@@ -27,7 +27,13 @@ import { UUID } from 'node:crypto';
 import { ORDER_FACTORY } from './trader.const';
 import { traderSchema } from './trader.schema';
 import { TraderOrderMetadata } from './trader.types';
-import { computeOrderPricing, PortfolioUpdatesConfig, shouldEmitPortfolio, ShouldEmitPortfolioParams } from './trader.utils';
+import {
+  computeOrderPricing,
+  getBacktestModeIntervalSyncTime,
+  PortfolioUpdatesConfig,
+  shouldEmitPortfolio,
+  ShouldEmitPortfolioParams,
+} from './trader.utils';
 
 export class Trader extends Plugin {
   private readonly orders: Map<UUID, TraderOrderMetadata>;
@@ -288,9 +294,8 @@ export class Trader extends Plugin {
   }
 
   protected async processOneMinuteBucket(bucket: CandleBucket) {
-    // Get first candle for timestamp
-    const firstEntry = bucket.values().next().value;
-    if (!firstEntry) throw new GekkoError('trader', 'Impossible to process one minute bucket: Empty candle bucket');
+    // Throw error if bucket is empty
+    const firstEntry = getFirstCandleFromBucket(bucket);
 
     // Update warmup candle bucket until warmup is completed
     if (!this.warmupCompleted) this.warmupBucket = bucket;
@@ -301,10 +306,10 @@ export class Trader extends Plugin {
     // Synchronize periodically in backtest mode (order fills are handled by exchange callbacks)
     if (this.mode === 'backtest') {
       const minutes = differenceInMinutes(firstEntry.start, 0);
-      if (this.currentTimestamp && minutes % TIMEFRAME_TO_MINUTES[this.timeframe ?? '1m'] === 0) await this.synchronize();
+      if (this.currentTimestamp && minutes % getBacktestModeIntervalSyncTime(this.timeframe) === 0) await this.synchronize();
     }
 
-    // Then update current timestamp
+    // Update timestamp last to detect the first execution for backtest mode sync above
     this.currentTimestamp = addMinutes(firstEntry.start, 1).getTime();
   }
 

@@ -1,4 +1,6 @@
+import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { GekkoError } from '@errors/gekko.error';
+import { Timeframe } from '@models/configuration.types';
 import { OrderSide } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
@@ -48,6 +50,11 @@ export const isEmptyPortfolio = (portfolio: Portfolio): boolean => {
     if (balance.total > 0) return false;
   }
   return true;
+};
+
+export const getBacktestModeIntervalSyncTime = (timeframe: Timeframe): number => {
+  // Minimum 10 minutes to avoid excessive synchronization
+  return Math.max(TIMEFRAME_TO_MINUTES[timeframe ?? '1m'], 10);
 };
 
 /* -------------------------------------------------------------------------- */

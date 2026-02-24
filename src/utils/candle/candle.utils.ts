@@ -1,5 +1,7 @@
 import { ONE_MINUTE } from '@constants/time.const';
+import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 
 export const hl2 = (candle: Candle): number => (candle.high + candle.low) / 2;
 export const hlc3 = (candle: Candle): number => (candle.high + candle.low + candle.close) / 3;
@@ -53,4 +55,10 @@ export const getCandleTimeOffset = (candleSize: number, start: EpochTimeStamp) =
   }
 
   return 0;
+};
+
+export const getFirstCandleFromBucket = (bucket: CandleBucket) => {
+  const firstCandle = bucket.values().next().value;
+  if (!firstCandle) throw new GekkoError('utils', 'Impossible to get first candle from bucket: Empty candle bucket');
+  return firstCandle;
 };

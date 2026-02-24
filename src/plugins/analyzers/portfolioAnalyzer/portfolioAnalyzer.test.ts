@@ -47,21 +47,27 @@ describe('PortfolioAnalyzer', () => {
   });
 
   describe('Configuration', () => {
-    it('should use default config values and fallback benchmark if defaults not provided', () => {
-      vi.mocked(config.getWatch).mockReturnValue({
-        assets: ['SOL', 'ETH'],
-        currency: 'USDT',
-        timeframe: '1m',
-        mode: 'backtest',
-        warmup: { candleCount: 0 },
-        pairs: [{ symbol: 'SOL/USDT' }, { symbol: 'ETH/USDT' }],
-      } as any);
+    it.each`
+      property                | expected
+      ${'riskFreeReturn'}     | ${5}
+      ${'enableConsoleTable'} | ${false}
+      ${'benchmarkAsset'}     | ${'SOL'}
+    `(
+      'should use default config values and fallback benchmark if defaults not provided - $property = $expected',
+      ({ property, expected }) => {
+        vi.mocked(config.getWatch).mockReturnValue({
+          assets: ['SOL', 'ETH'],
+          currency: 'USDT',
+          timeframe: '1m',
+          mode: 'backtest',
+          warmup: { candleCount: 0 },
+          pairs: [{ symbol: 'SOL/USDT' }, { symbol: 'ETH/USDT' }],
+        } as any);
 
-      const analyzerObj = new PortfolioAnalyzer({ name: 'PortfolioAnalyzer' } as any);
-      expect((analyzerObj as any).riskFreeReturn).toBe(5);
-      expect((analyzerObj as any).enableConsoleTable).toBe(false);
-      expect((analyzerObj as any).benchmarkAsset).toBe('SOL');
-    });
+        const analyzerObj = new PortfolioAnalyzer({ name: 'PortfolioAnalyzer' } as any);
+        expect((analyzerObj as any)[property]).toBe(expected);
+      },
+    );
   });
 
   describe('MTM Valuation', () => {
@@ -164,8 +170,10 @@ describe('PortfolioAnalyzer', () => {
 
       const report = (analyzer as any).calculateReportStatistics();
 
-      expect(report.volatility).toBe(0);
-      expect(report.annualizedNetProfit).toBe(0);
+      expect(report).toMatchObject({
+        volatility: 0,
+        annualizedNetProfit: 0,
+      });
     });
 
     it('should handle zero elapsed years and zero volatility', () => {
@@ -176,8 +184,10 @@ describe('PortfolioAnalyzer', () => {
 
       const report = (analyzer as any).calculateReportStatistics();
 
-      expect(report.volatility).toBe(0);
-      expect(report.annualizedNetProfit).toBe(0);
+      expect(report).toMatchObject({
+        volatility: 0,
+        annualizedNetProfit: 0,
+      });
     });
 
     it('should generate report with correct metrics', () => {
@@ -302,13 +312,17 @@ describe('PortfolioAnalyzer', () => {
       const bucket = new Map() as CandleBucket;
       bucket.set('BTC/USDT', { start: 5000, open: 100, high: 100, low: 100, close: 12345, volume: 1 });
 
-      expect((analyzer as any).warmupCompleted).toBe(false);
-
       analyzer.onStrategyWarmupCompleted([bucket]);
 
-      expect((analyzer as any).warmupCompleted).toBe(true);
-      expect((analyzer as any).startBenchmarkPrice).toBe(12345);
-      expect((analyzer as any).dates.start).toBe(5000);
+      expect({
+        warmupCompleted: (analyzer as any).warmupCompleted,
+        startBenchmarkPrice: (analyzer as any).startBenchmarkPrice,
+        start: (analyzer as any).dates.start,
+      }).toEqual({
+        warmupCompleted: true,
+        startBenchmarkPrice: 12345,
+        start: 5000,
+      });
     });
 
     it('should warn if benchmark candle is missing', () => {
@@ -335,18 +349,27 @@ describe('PortfolioAnalyzer', () => {
   });
 
   describe('Process Bucket', () => {
-    it('should ignore missing candle in bucket during processOneMinuteBucket', () => {
+    it('should throw error if missing candle in bucket during processOneMinuteBucket', () => {
       const bucket = new Map() as CandleBucket;
+      expect(() => {
+        (analyzer as any).processOneMinuteBucket(bucket);
+      }).toThrowError('Impossible to get first candle from bucket');
+    });
+
+    it('should ignore asset with missing candle in bucket during processOneMinuteBucket', () => {
+      const bucket = new Map() as CandleBucket;
+      bucket.set('DOGE/USDT' as any, { start: 1000, open: 100, high: 100, low: 100, close: 100, volume: 1 });
       (analyzer as any).processOneMinuteBucket(bucket);
       expect((analyzer as any).latestPrices.size).toBe(0);
     });
 
-    it('should not update end date if bucket is empty and warmup completed', () => {
+    it('should not update end date if warmup is not completed', () => {
       const bucket = new Map() as CandleBucket;
-      (analyzer as any).warmupCompleted = true;
-      (analyzer as any).dates.end = 1000;
+      bucket.set('BTC/USDT' as any, { start: 1000, open: 100, high: 100, low: 100, close: 100, volume: 1 });
+      (analyzer as any).warmupCompleted = false;
+      (analyzer as any).dates.end = 0;
       (analyzer as any).processOneMinuteBucket(bucket);
-      expect((analyzer as any).dates.end).toBe(1000);
+      expect((analyzer as any).dates.end).toBe(0);
     });
   });
 
@@ -361,10 +384,12 @@ describe('PortfolioAnalyzer', () => {
     it('should return correct static configuration', () => {
       const config = PortfolioAnalyzer.getStaticConfiguration();
 
-      expect(config.name).toBe('PortfolioAnalyzer');
-      expect(config.modes).toEqual(['realtime', 'backtest']);
-      expect(config.eventsHandlers).toContain('onPortfolioChange');
-      expect(config.eventsEmitted).toContain(PERFORMANCE_REPORT_EVENT);
+      expect(config).toMatchObject({
+        name: 'PortfolioAnalyzer',
+        modes: ['realtime', 'backtest'],
+        eventsHandlers: expect.arrayContaining(['onPortfolioChange']),
+        eventsEmitted: expect.arrayContaining([PERFORMANCE_REPORT_EVENT]),
+      });
     });
   });
 });
