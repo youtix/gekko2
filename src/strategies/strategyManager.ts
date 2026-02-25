@@ -6,6 +6,7 @@ import {
   TRAILING_STOP_ACTIVATED,
   TRAILING_STOP_TRIGGERED,
 } from '@constants/event.const';
+import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
 import * as indicators from '@indicators/index';
 import { Indicator } from '@indicators/indicator';
@@ -32,27 +33,26 @@ import { TrailingStopManager } from './trailingStopManager';
 import { TrailingStopState } from './trailingStopManager.types';
 
 export class StrategyManager extends EventEmitter {
-  private age: number;
-  private warmupPeriod: number;
-  private indicators: { indicator: Indicator; symbol: TradingPair }[];
-  private strategyParams: object;
-  private marketData: Map<TradingPair, MarketData>;
-  private portfolio: Portfolio;
-  private strategy?: Strategy<object>;
+  private readonly warmupPeriod: number;
+  private readonly maxConsecutiveErrors: number;
+  private readonly strategyParams: object;
+  private readonly trailingStopManager: TrailingStopManager;
+
+  private age = 0;
+  private indicators: { indicator: Indicator; symbol: TradingPair }[] = [];
+  private marketData = new Map<TradingPair, MarketData>();
+  private portfolio = new Map<Asset, BalanceDetail>();
   private indicatorsResults: IndicatorResults[] = [];
   private currentTimestamp: EpochTimeStamp = 0;
-  private trailingStopManager: TrailingStopManager;
-  private pendingTrailingStops: Map<UUID, TrailingConfig>;
+  private pendingTrailingStops = new Map<UUID, TrailingConfig>();
+  private consecutiveErrors = 0;
+  private strategy?: Strategy<object>;
 
-  constructor(warmupPeriod: number) {
+  constructor(warmupPeriod: number, maxConsecutiveErrors: number = 5) {
     super();
     this.warmupPeriod = warmupPeriod;
-    this.age = 0;
-    this.indicators = [];
+    this.maxConsecutiveErrors = maxConsecutiveErrors;
     this.strategyParams = config.getStrategy() ?? {};
-    this.portfolio = new Map<Asset, BalanceDetail>();
-    this.marketData = new Map();
-    this.pendingTrailingStops = new Map();
     this.trailingStopManager = new TrailingStopManager();
 
     bindAll(this, [
@@ -125,6 +125,7 @@ export class StrategyManager extends EventEmitter {
   }
 
   public onOrderCompleted({ order, exchange }: OrderCompletedEvent) {
+    this.consecutiveErrors = 0;
     this.strategy?.onOrderCompleted?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
 
     if (this.pendingTrailingStops.has(order.id)) {
@@ -140,11 +141,15 @@ export class StrategyManager extends EventEmitter {
   }
 
   public onOrderCanceled({ order, exchange }: OrderCanceledEvent) {
+    this.consecutiveErrors = 0;
     this.strategy?.onOrderCanceled?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
     this.cancelTrailingOrder(order.id);
   }
 
   public onOrderErrored({ order, exchange }: OrderErroredEvent) {
+    this.consecutiveErrors++;
+    const isConsecutiveErrorsReached = this.maxConsecutiveErrors !== -1 && this.consecutiveErrors >= this.maxConsecutiveErrors;
+    if (isConsecutiveErrorsReached) throw new ApplicationStopError(`Max consecutive order errors reached (${this.maxConsecutiveErrors})`);
     this.strategy?.onOrderErrored?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
     this.cancelTrailingOrder(order.id);
   }
@@ -155,6 +160,10 @@ export class StrategyManager extends EventEmitter {
       warning('strategy', `Strategy ended with ${pendingOrders.size} active trailing stop(s) that never triggered.`);
     this.trailingStopManager.removeAllListeners();
     this.strategy?.end?.();
+  }
+
+  public onPortfolioChange(portfolio: Portfolio) {
+    this.portfolio = portfolio;
   }
 
   private onTrailingStopActivated(state: TrailingStopState) {
@@ -169,10 +178,6 @@ export class StrategyManager extends EventEmitter {
   /* -------------------------------------------------------------------------- */
   /*                                  SETTERS                                   */
   /* -------------------------------------------------------------------------- */
-
-  public setPortfolio(portfolio: Portfolio) {
-    this.portfolio = portfolio;
-  }
 
   public setMarketData(marketData: Map<TradingPair, MarketData>) {
     this.marketData = marketData;

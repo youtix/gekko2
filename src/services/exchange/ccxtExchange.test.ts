@@ -1,12 +1,11 @@
 import { GekkoError } from '@errors/gekko.error';
 import { config } from '@services/configuration/configuration';
+import { checkOrderAmount, checkOrderCost, checkOrderPrice } from '@utils/market/market.utils';
 import ccxt from 'ccxt';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { CCXTExchange } from './ccxtExchange';
 import {
   checkMandatoryFeatures,
-  checkOrderAmount,
-  checkOrderPrice,
   createExchange,
   mapCcxtOrderToOrder,
   mapCcxtTradeToTrade,
@@ -18,12 +17,15 @@ vi.mock('@services/configuration/configuration', () => ({
   config: { getWatch: vi.fn(), getExchange: vi.fn() },
 }));
 vi.mock('@services/core/heart/heart');
-vi.mock('./exchange.utils', () => ({
-  createExchange: vi.fn(),
-  retry: vi.fn(),
+vi.mock('@utils/market/market.utils', () => ({
   checkOrderAmount: vi.fn(),
   checkOrderPrice: vi.fn(),
   checkOrderCost: vi.fn(),
+}));
+
+vi.mock('./exchange.utils', () => ({
+  createExchange: vi.fn(),
+  retry: vi.fn(),
   checkMandatoryFeatures: vi.fn(),
   mapCcxtOrderToOrder: vi.fn(),
   mapCcxtTradeToTrade: vi.fn(),
@@ -86,8 +88,9 @@ describe('CCXTExchange', () => {
   beforeEach(() => {
     (config.getWatch as Mock).mockReturnValue(mockWatchConfig);
     (retry as Mock).mockImplementation(async fn => fn());
-    (checkOrderAmount as Mock).mockReturnValue(1);
-    (checkOrderPrice as Mock).mockReturnValue(100);
+    (checkOrderAmount as Mock).mockReturnValue({ isValid: true, value: 1 });
+    (checkOrderPrice as Mock).mockReturnValue({ isValid: true, value: 100 });
+    (checkOrderCost as Mock).mockReturnValue({ isValid: true, value: 100 });
 
     // Mock createExchange to return both publicClient and privateClient
     (createExchange as Mock).mockImplementation(config => {

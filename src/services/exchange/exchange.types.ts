@@ -9,6 +9,8 @@ import { exchangeSchema } from './exchange.schema';
 
 export type ExchangeConfig = z.infer<typeof exchangeSchema>;
 
+export type MarketValidationResult<T> = { isValid: true; value: T } | { isValid: false; reason: string; min?: number; max?: number };
+
 export interface Ticker {
   bid: number;
   ask: number;

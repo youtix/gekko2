@@ -4,10 +4,11 @@ import {
   STRATEGY_INFO_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
 } from '@constants/event.const';
+import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
 import { CandleBucket } from '@models/event.types';
-import { LogLevel } from '@models/logLevel.types';
 import { BalanceDetail } from '@models/portfolio.types';
+import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
 import { addMinutes } from 'date-fns';
 import { UUID } from 'node:crypto';
@@ -112,6 +113,14 @@ describe('StrategyManager', () => {
     manager.setMarketData(defaultMarketData);
   });
 
+  describe('Constructor', () => {
+    it('initializes with default empty config if no strategy config exists', () => {
+      vi.mocked(config.getStrategy).mockReturnValueOnce(undefined as any);
+      const m = new StrategyManager(1);
+      expect(m['strategyParams']).toEqual({});
+    });
+  });
+
   describe('createStrategy', () => {
     it('instantiates a built-in strategy', async () => {
       await manager.createStrategy('DummyStrategy');
@@ -126,6 +135,12 @@ describe('StrategyManager', () => {
       expect(strategy.constructor.name).toBe('DebugAdvice');
     });
 
+    it('loads a strategy from an absolute custom path directly', async () => {
+      const absolutePath = path.resolve(__dirname, './debug/debugAdvice.startegy.ts');
+      await manager.createStrategy('DebugAdvice', absolutePath);
+      expect(manager['strategy']).toBeDefined();
+    });
+
     it('throws when built-in strategy is missing', async () => {
       await expect(manager.createStrategy('UnknownStrategy')).rejects.toThrow(GekkoError);
     });
@@ -137,6 +152,19 @@ describe('StrategyManager', () => {
   });
 
   describe('strategy events', () => {
+    describe('onOneMinuteBucket', () => {
+      it('updates time and trailing stop manager', () => {
+        const updateSpy = vi.spyOn(manager['trailingStopManager'], 'update');
+        // Add second candle to avoid reference identity check issues if needed
+        const secondCandle = { ...candle, start: 1000 };
+        const minBucket = new Map([['BTC/USDT', secondCandle]]) as any;
+        manager.onOneMinuteBucket(minBucket);
+
+        expect(manager['currentTimestamp']).toBe(new Date(1000 + 60000).getTime());
+        expect(updateSpy).toHaveBeenCalledWith(minBucket);
+      });
+    });
+
     describe('onTimeFrameCandle', () => {
       it('initializes strategy once, processes indicators, and emits warmup completion', () => {
         const indicator = { onNewCandle: vi.fn(), getResult: vi.fn().mockReturnValue(42) };
@@ -214,6 +242,14 @@ describe('StrategyManager', () => {
         // Check 3: 1 >= 1 (true) -> age becomes 2.
       });
 
+      it('does not increment age if warmup phase is not reached', () => {
+        const customManager = new StrategyManager(5);
+        customManager.onTimeFrameCandle(bucket);
+        // Age starts at 0, warmup is 5.
+        // So 5 > 0, age is bumped to 1.
+        expect(customManager['age']).toBe(1);
+      });
+
       it('should handle indicators for symbols missing in bucket (e.g. multi-timeframe)', () => {
         const indicator = { onNewCandle: vi.fn(), getResult: vi.fn() };
         manager['indicators'].push({ indicator, symbol: 'ETH/USDT' } as any); // ETH not in bucket
@@ -245,6 +281,24 @@ describe('StrategyManager', () => {
           },
           { results: 'indicator', symbol: 'BTC/USDT' },
         );
+      });
+
+      it('adds pending trailing stop to trailing stop manager', () => {
+        const order = { id: '1', symbol: 'BTC/USDT', amount: 1, orderCreationDate: 123 } as any;
+        const trailing = { percentage: 2 };
+        manager['pendingTrailingStops'].set(order.id, trailing);
+        const addOrderSpy = vi.spyOn(manager['trailingStopManager'], 'addOrder');
+
+        manager.onOrderCompleted({ order, exchange: {} } as any);
+
+        expect(addOrderSpy).toHaveBeenCalledWith({
+          id: order.id,
+          symbol: order.symbol,
+          amount: order.amount,
+          trailing: trailing,
+          createdAt: order.orderCreationDate,
+        });
+        expect(manager['pendingTrailingStops'].has(order.id)).toBe(false);
       });
     });
 
@@ -299,11 +353,92 @@ describe('StrategyManager', () => {
 
         expect(strategy.end).toHaveBeenCalled();
       });
+
+      it('logs warning if pending orders present', () => {
+        vi.spyOn(manager['trailingStopManager'], 'getOrders').mockReturnValue(
+          new Map([['db2254e3-c749-448c-b7b6-aa28831bbae7', {} as any]]),
+        );
+        manager.onStrategyEnd();
+        expect(warning).toHaveBeenCalledWith('strategy', 'Strategy ended with 1 active trailing stop(s) that never triggered.');
+      });
+    });
+
+    describe('Circuit Breaker (consecutiveErrors)', () => {
+      const order = { id: '3' } as any;
+      const exchange = { price: 12 } as any;
+
+      it('should increment consecutive errors on order errored and throw ApplicationStopError when limit reached', () => {
+        // First 4 errors should not throw
+        for (let i = 0; i < 4; i++) {
+          expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        }
+        // 5th error should throw ApplicationStopError
+        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError(ApplicationStopError);
+        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError('Max consecutive order errors reached (5)');
+      });
+
+      it('should reset consecutive errors on order completed', () => {
+        expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        manager.onOrderCompleted({ order, exchange });
+
+        // Next 4 errors should not throw
+        for (let i = 0; i < 4; i++) {
+          expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        }
+        // 5th throws
+        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError(ApplicationStopError);
+      });
+
+      it('should reset consecutive errors on order canceled', () => {
+        expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        manager.onOrderCanceled({ order, exchange });
+
+        // Next 4 errors should not throw
+        for (let i = 0; i < 4; i++) {
+          expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        }
+        // 5th throws
+        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError(ApplicationStopError);
+      });
+
+      it('should not throw if maxConsecutiveErrors is -1', () => {
+        const customManager = new StrategyManager(1, -1);
+
+        for (let i = 0; i < 10; i++) {
+          expect(() => customManager.onOrderErrored({ order, exchange })).not.toThrow();
+        }
+      });
+    });
+
+    describe('TrailingStopManager Events', () => {
+      it('forwards activation back to strategy', () => {
+        const strategy = { onTrailingStopActivated: vi.fn(), onTrailingStopTriggered: vi.fn() };
+        manager['strategy'] = strategy as any;
+        const state = { symbol: 'BTC/USDT', amount: 2 };
+
+        manager['onTrailingStopActivated'](state as any);
+
+        expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith(state);
+      });
+
+      it('creates market order and forwards trigger back to strategy', () => {
+        const strategy = { onTrailingStopTriggered: vi.fn() };
+        manager['strategy'] = strategy as any;
+        manager['currentTimestamp'] = 5000; // Requires timestamp to create orders
+        const state = { symbol: 'BTC/USDT', amount: 2 };
+
+        const createOrderSpy = vi.spyOn(manager as any, 'createOrder');
+        manager['onTrailingStopTriggered'](state as any);
+
+        expect(createOrderSpy).toHaveBeenCalledWith({ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', amount: 2 });
+        // The id comes from randomUUID mock 'db2254e3-c749-448c-b7b6-aa28831bbae7'
+        expect(strategy.onTrailingStopTriggered).toHaveBeenCalledWith(expect.any(String), state);
+      });
     });
   });
 
   describe('setters function', () => {
-    describe('setPortfolio', () => {
+    describe('onPortfolioChange', () => {
       it('updates the portfolio reference used by tools', () => {
         const portfolio = new Map<any, BalanceDetail>();
         portfolio.set('BTC', { free: 2, used: 0, total: 2 });
@@ -316,7 +451,7 @@ describe('StrategyManager', () => {
         };
         manager['strategy'] = strategy as any;
 
-        manager.setPortfolio(portfolio);
+        manager.onPortfolioChange(portfolio);
 
         manager.onTimeFrameCandle(bucket);
 
@@ -370,6 +505,15 @@ describe('StrategyManager', () => {
         });
       });
 
+      it('ignores trailing logic if order is SELL (buy only logic)', () => {
+        manager['currentTimestamp'] = 1000;
+        const sellOrder = { side: 'SELL', type: 'MARKET', amount: 1, symbol: 'BTC/USDT', trailing: { percentage: 2 } } as any;
+
+        manager['createOrder'](sellOrder);
+
+        expect(manager['pendingTrailingStops'].size).toBe(0);
+      });
+
       it('throws if no timestamp available', () => {
         manager['currentTimestamp'] = 0;
         const order = { side: 'BUY', type: 'STICKY', quantity: 1, symbol: 'BTC/USDT' } as const;
@@ -412,11 +556,12 @@ describe('StrategyManager', () => {
     });
 
     describe('log', () => {
-      it.each([
-        { level: 'debug' as LogLevel, logger: debug },
-        { level: 'info' as LogLevel, logger: info },
-        { level: 'warn' as LogLevel, logger: warning },
-      ])('calls $level logger', ({ level, logger }) => {
+      it.each`
+        level      | logger
+        ${'debug'} | ${debug}
+        ${'info'}  | ${info}
+        ${'warn'}  | ${warning}
+      `('calls $level logger', ({ level, logger }) => {
         manager['log'](level, 'message');
         expect(logger).toHaveBeenCalledWith('strategy', 'message');
       });

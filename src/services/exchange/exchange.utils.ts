@@ -1,5 +1,4 @@
 import { GekkoError } from '@errors/gekko.error';
-import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Candle } from '@models/candle.types';
 import { OrderState } from '@models/order.types';
 import { Trade } from '@models/trade.types';
@@ -8,11 +7,10 @@ import { getRetryDelay } from '@utils/fetch/fetch.utils';
 import { wait } from '@utils/process/process.utils';
 import ccxt, { Order as CCXTOrder, Trade as CCXTTrade, ConstructorArgs, Exchange, NetworkError, OHLCV } from 'ccxt';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { isNil } from 'lodash-es';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { CCXTExchangeConfig } from './ccxtExchange';
 import { BROKER_MANDATORY_FEATURES, BROKER_MAX_RETRIES_ON_FAILURE } from './exchange.const';
-import { DummyExchange, MarketData } from './exchange.types';
+import { DummyExchange } from './exchange.types';
 
 const selectAgent = (proxy: string) => {
   if (proxy.startsWith('socks')) {
@@ -69,50 +67,6 @@ export const isDummyExchange = (exchange: unknown): exchange is DummyExchange =>
     'processOneMinuteBucket' in exchange &&
     typeof exchange.processOneMinuteBucket === 'function'
   );
-
-/** Checks if the order price is within the market data */
-export const checkOrderPrice = (price: number, marketData: MarketData) => {
-  const priceLimits = marketData?.price;
-  const minimalPrice = priceLimits?.min;
-  const maximalPrice = priceLimits?.max;
-
-  if (isNil(minimalPrice) && isNil(maximalPrice)) return price;
-
-  if (!isNil(minimalPrice) && price < minimalPrice) throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
-
-  if (!isNil(maximalPrice) && price > maximalPrice) throw new OrderOutOfRangeError('exchange', 'price', price, minimalPrice, maximalPrice);
-
-  return price;
-};
-
-/** Checks if the order amount is within the market data */
-export const checkOrderAmount = (amount: number, marketData: MarketData) => {
-  const amountLimits = marketData?.amount;
-  const minimalAmount = amountLimits?.min;
-  const maximalAmount = amountLimits?.max;
-
-  if (isNil(minimalAmount) && isNil(maximalAmount)) return amount;
-  if (!isNil(minimalAmount) && amount < minimalAmount)
-    throw new OrderOutOfRangeError('exchange', 'amount', amount, minimalAmount, maximalAmount);
-
-  if (!isNil(maximalAmount) && amount > maximalAmount)
-    throw new OrderOutOfRangeError('exchange', 'amount', amount, minimalAmount, maximalAmount);
-
-  return amount;
-};
-
-/** Checks if the order cost is within the market data */
-export const checkOrderCost = (amount: number, price: number, marketData: MarketData) => {
-  const costLimits = marketData?.cost;
-  const minimalCost = costLimits?.min;
-  const maximalCost = costLimits?.max;
-
-  if (isNil(minimalCost) && isNil(maximalCost)) return;
-
-  const cost = amount * price;
-  if (!isNil(minimalCost) && cost < minimalCost) throw new OrderOutOfRangeError('exchange', 'cost', cost, minimalCost, maximalCost);
-  if (!isNil(maximalCost) && cost > maximalCost) throw new OrderOutOfRangeError('exchange', 'cost', cost, minimalCost, maximalCost);
-};
 
 export const retry = async <T>(fn: () => Promise<T>, currRetry = 1, maxRetries = BROKER_MAX_RETRIES_ON_FAILURE): Promise<T> => {
   try {

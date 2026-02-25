@@ -1,10 +1,11 @@
+import { ApplicationStopError } from '@errors/applicationStop.error';
 import { CandleBucket } from '@models/event.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { DummyExchange } from '@services/exchange/exchange.types';
 import { isDummyExchange } from '@services/exchange/exchange.utils';
 import { inject } from '@services/injecter/injecter';
-import { info, warning } from '@services/logger';
+import { info, error as logError, warning } from '@services/logger';
 import { Writable } from 'node:stream';
 
 export class PluginsStream extends Writable {
@@ -49,8 +50,14 @@ export class PluginsStream extends Writable {
     } catch (error) {
       // Finalize all plugins before destroying the stream
       await this.finalizeAllPlugins();
-      info('stream', 'Gekko is closing the application due to an error!');
-      this.destroy(error instanceof Error ? error : new Error(String(error)));
+
+      if (error instanceof ApplicationStopError) {
+        warning('stream', `Application stopped gracefully: ${error.message}`);
+        this.destroy(); // cleanly destroys without error
+      } else {
+        logError('stream', 'Gekko is closing the application due to an error!');
+        this.destroy(error instanceof Error ? error : new Error(String(error)));
+      }
     }
   }
 

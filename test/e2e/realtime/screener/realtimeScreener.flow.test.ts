@@ -296,14 +296,23 @@ describe('E2E: Realtime Screener Flow', () => {
       storage.close = () => {};
 
       const pipelinePromise = gekkoPipeline();
-      await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
+      try {
+        await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
+        throw new Error('Pipeline should have thrown an error');
+      } catch (err: any) {
+        // Assert that the stream closed prematurely due to the ApplicationStopError
+        expect(err.code).toBe('ERR_STREAM_PREMATURE_CLOSE');
+      }
 
       const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
-      expect(calls.length).toBeGreaterThan(0);
 
       // DebugAdvice logs "Order Errored: <id>" when onOrderErrored is called.
       // EventSubscriber picks this up as a strategy log.
-      expect(calls.filter(call => call.payload.text.includes('Order Errored')).length).toBeGreaterThan(0);
+      // Since maxConsecutiveErrors defaults to 5, the first 4 errors are logged by the strategy.
+      // On the 5th error, the ApplicationStopError is thrown *before* the strategy onOrderErrored is called.
+      // Therefore, we expect exactly 4 strategy error logs.
+      const errorCalls = calls.filter(call => call.payload.text.includes('Order Errored'));
+      expect(errorCalls.length).toBe(4);
     } finally {
       // Restore original method
       DummyCentralizedExchange.prototype.createLimitOrder = originalCreateLimitOrder;

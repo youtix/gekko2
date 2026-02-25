@@ -26,11 +26,13 @@ export class TradingAdvisor extends Plugin {
   private strategyName: string;
   private strategyPath?: string;
   private strategyManager?: StrategyManager;
+  private maxConsecutiveErrors: number;
 
-  constructor({ name, strategyName, strategyPath }: TradingAdvisorConfiguration) {
+  constructor({ name, strategyName, strategyPath, maxConsecutiveErrors }: TradingAdvisorConfiguration) {
     super(name);
     this.strategyName = strategyName;
     this.strategyPath = strategyPath;
+    this.maxConsecutiveErrors = maxConsecutiveErrors;
 
     const timeframeInMinutes = TIMEFRAME_TO_MINUTES[this.timeframe!]; // Timeframe will always defined in thanks to zod super refine
     this.bucketBatcher = new CandleBucketBatcher(this.pairs, timeframeInMinutes);
@@ -41,7 +43,7 @@ export class TradingAdvisor extends Plugin {
 
   // --- BEGIN INTERNALS ---
   private async setUpStrategy() {
-    this.strategyManager = new StrategyManager(this.warmupPeriod);
+    this.strategyManager = new StrategyManager(this.warmupPeriod, this.maxConsecutiveErrors);
     await this.strategyManager.createStrategy(this.strategyName, this.strategyPath);
   }
 
@@ -103,7 +105,7 @@ export class TradingAdvisor extends Plugin {
 
   public onPortfolioChange(payloads: Portfolio[]) {
     const portfolio = payloads[payloads.length - 1];
-    this.strategyManager?.setPortfolio(portfolio);
+    this.strategyManager?.onPortfolioChange(portfolio);
   }
 
   /* -------------------------------------------------------------------------- */
@@ -121,7 +123,7 @@ export class TradingAdvisor extends Plugin {
     this.strategyManager?.setMarketData(allMarketData);
 
     const balance = await exchange.fetchBalance();
-    this.strategyManager?.setPortfolio(balance);
+    this.strategyManager?.onPortfolioChange(balance);
     info('trading advisor', `Using the strategy: ${this.strategyName}`);
   }
 

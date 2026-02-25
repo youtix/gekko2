@@ -1,6 +1,7 @@
+import { ApplicationStopError } from '@errors/applicationStop.error';
 import { Candle } from '@models/candle.types';
 import { Plugin } from '@plugins/plugin';
-import { info, warning } from '@services/logger';
+import { error, info, warning } from '@services/logger';
 import { describe, expect, it, vi } from 'vitest';
 import { PluginsStream } from './plugins.stream';
 
@@ -141,50 +142,49 @@ describe('PluginsStream', () => {
     });
 
     describe('error handling', () => {
-      it('finalizes all plugins before destroying stream', async () => {
+      it.each`
+        description                                    | throwValueError                | expectErrorMessage
+        ${'finalizes all plugins before destroying'}   | ${new Error('process-failed')} | ${'process-failed'}
+        ${'logs closing message on error'}             | ${new Error('dummy_err')}      | ${'dummy_err'}
+        ${'converts non-Error thrown values to Error'} | ${'string error'}              | ${'string error'}
+      `('$description', async ({ throwValueError, expectErrorMessage }) => {
         injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
         const plugin = createPluginStub({
           processInputStream: vi.fn(async () => {
-            throw new Error('processing failed');
+            throw throwValueError;
           }),
         });
         const stream = new PluginsStream([plugin]);
 
-        const error = await Promise.race([waitForError(stream), writeCandle(stream).catch(e => e)]);
         stream.write(MOCK_CANDLE);
+        const errorResponse = await waitForError(stream);
+
+        // Common Expectations
+        expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+
+        expect(errorResponse!.message).toBe(expectErrorMessage);
+
+        if (expectErrorMessage === 'dummy_err') {
+          expect(error).toHaveBeenCalledWith('stream', 'Gekko is closing the application due to an error!');
+        }
+      });
+
+      it('stops gracefully on ApplicationStopError', async () => {
+        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
+        const plugin = createPluginStub({
+          processInputStream: vi.fn(async () => {
+            throw new ApplicationStopError('stop error application');
+          }),
+        });
+        const stream = new PluginsStream([plugin]);
+
+        await new Promise<void>(resolve => {
+          stream.on('close', resolve);
+          stream.write(MOCK_CANDLE);
+        });
 
         expect(plugin.processCloseStream).toHaveBeenCalledOnce();
-        expect((error as Error).message).toBe('processing failed');
-      });
-
-      it('logs closing message on error', async () => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
-        const plugin = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            throw new Error('fail');
-          }),
-        });
-        const stream = new PluginsStream([plugin]);
-        stream.write(MOCK_CANDLE);
-
-        await waitForError(stream);
-
-        expect(info).toHaveBeenCalledWith('stream', 'Gekko is closing the application due to an error!');
-      });
-
-      it('converts non-Error thrown values to Error', async () => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
-        const plugin = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            throw 'string error';
-          }),
-        });
-        const stream = new PluginsStream([plugin]);
-        stream.write(MOCK_CANDLE);
-
-        const error = await waitForError(stream);
-
-        expect(error.message).toBe('string error');
+        expect(warning).toHaveBeenCalledWith('stream', 'Application stopped gracefully: [CORE] stop error application');
       });
 
       it('does not finalize twice when _final called after error', async () => {

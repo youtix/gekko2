@@ -1,5 +1,5 @@
-import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Candle } from '@models/candle.types';
+import { InvalidOrder } from '@services/exchange/exchange.error';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DummyCentralizedExchange } from './dummyCentralizedExchange';
 import type { DummyCentralizedExchangeConfig } from './dummyCentralizedExchange.types';
@@ -144,7 +144,7 @@ describe('DummyCentralizedExchange', () => {
     });
 
     it('throws when amount below minimum', async () => {
-      await expect(createExchange().createLimitOrder(SYMBOL, 'BUY', 0.01, 100)).rejects.toBeInstanceOf(OrderOutOfRangeError);
+      await expect(createExchange().createLimitOrder(SYMBOL, 'BUY', 0.01, 100)).rejects.toBeInstanceOf(InvalidOrder);
     });
 
     it('throws when insufficient currency for BUY', async () => {

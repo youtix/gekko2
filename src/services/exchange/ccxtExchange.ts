@@ -1,4 +1,5 @@
 import { GekkoError } from '@errors/gekko.error';
+import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Candle } from '@models/candle.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
@@ -12,14 +13,12 @@ import { Exchange as CCXT, MarketInterface } from 'ccxt';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
+import { checkOrderAmount, checkOrderCost, checkOrderPrice } from '../../utils/market/market.utils';
 import { binanceExchangeSchema } from './binance/binance.schema';
 import { LIMITS, PARAMS } from './exchange.const';
 import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback, Ticker } from './exchange.types';
 import {
   checkMandatoryFeatures,
-  checkOrderAmount,
-  checkOrderCost,
-  checkOrderPrice,
   createExchange,
   mapCcxtOrderToOrder,
   mapCcxtTradeToTrade,
@@ -163,9 +162,19 @@ export class CCXTExchange implements Exchange {
   ) {
     return retry<OrderState>(async () => {
       const limits = this.publicClient.market(symbol).limits;
-      const orderPrice = checkOrderPrice(price, limits);
-      const orderAmount = checkOrderAmount(amount, limits);
-      checkOrderCost(orderAmount, orderPrice, limits);
+
+      const priceResult = checkOrderPrice(price, limits);
+      if (!priceResult.isValid) throw new OrderOutOfRangeError('exchange', priceResult.reason, price, priceResult.min, priceResult.max);
+      const orderPrice = priceResult.value;
+
+      const amountResult = checkOrderAmount(amount, limits);
+      if (!amountResult.isValid)
+        throw new OrderOutOfRangeError('exchange', amountResult.reason, amount, amountResult.min, amountResult.max);
+      const orderAmount = amountResult.value;
+
+      const costResult = checkOrderCost(orderAmount, orderPrice, limits);
+      if (!costResult.isValid)
+        throw new OrderOutOfRangeError('exchange', costResult.reason, orderAmount * orderPrice, costResult.min, costResult.max);
 
       const order = await this.privateClient.createOrder(symbol, 'limit', side, orderAmount, orderPrice);
       return mapCcxtOrderToOrder(order);
@@ -175,10 +184,18 @@ export class CCXTExchange implements Exchange {
   public async createMarketOrder(symbol: string, side: OrderSide, amount: number) {
     return retry<OrderState>(async () => {
       const limits = this.publicClient.market(symbol).limits;
-      const orderAmount = checkOrderAmount(amount, limits);
+
+      const amountResult = checkOrderAmount(amount, limits);
+      if (!amountResult.isValid)
+        throw new OrderOutOfRangeError('exchange', amountResult.reason, amount, amountResult.min, amountResult.max);
+      const orderAmount = amountResult.value;
+
       const ticker = await this.fetchTicker(symbol);
       const price = side === 'BUY' ? ticker.ask : ticker.bid;
-      checkOrderCost(orderAmount, price, limits);
+
+      const costResult = checkOrderCost(orderAmount, price, limits);
+      if (!costResult.isValid)
+        throw new OrderOutOfRangeError('exchange', costResult.reason, orderAmount * price, costResult.min, costResult.max);
 
       const order = await this.privateClient.createOrder(symbol, 'market', side, orderAmount);
       return mapCcxtOrderToOrder(order);

@@ -1,10 +1,8 @@
-import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import * as logger from '@services/logger';
 import { NetworkError } from 'ccxt';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { describe, expect, it, vi } from 'vitest';
-import { MarketData } from './exchange.types';
 import * as utils from './exchange.utils';
 
 vi.mock('@services/logger', () => ({
@@ -17,85 +15,6 @@ vi.mock('@utils/process/process.utils', () => ({
 }));
 
 describe('Exchange Utils', () => {
-  const marketData: MarketData = {
-    price: { min: 10, max: 100 },
-    amount: { min: 1, max: 10 },
-    cost: { min: 10, max: 1000 },
-  };
-
-  describe('checkOrderPrice', () => {
-    it.each`
-      price  | data                                             | description
-      ${50}  | ${marketData}                                    | ${'valid price'}
-      ${10}  | ${marketData}                                    | ${'min price'}
-      ${100} | ${marketData}                                    | ${'max price'}
-      ${50}  | ${{}}                                            | ${'no limits'}
-      ${5}   | ${{ price: { min: undefined, max: undefined } }} | ${'undefined limits'}
-    `('should return $price for $description', ({ price, data }) => {
-      expect(utils.checkOrderPrice(price, data)).toBe(price);
-    });
-
-    it.each`
-      price  | data                      | description
-      ${9}   | ${marketData}             | ${'below min'}
-      ${101} | ${marketData}             | ${'above max'}
-      ${9}   | ${{ price: { min: 10 } }} | ${'below specific min'}
-      ${11}  | ${{ price: { max: 10 } }} | ${'above specific max'}
-    `('should throw OrderOutOfRangeError for $description', ({ price, data }) => {
-      expect(() => utils.checkOrderPrice(price, data)).toThrow(OrderOutOfRangeError);
-    });
-
-    it('should throw with specific message for price violation', () => {
-      expect(() => utils.checkOrderPrice(5, marketData)).toThrow(/price/);
-    });
-  });
-
-  describe('checkOrderAmount', () => {
-    it.each`
-      amount | data                                              | description
-      ${5}   | ${marketData}                                     | ${'valid amount'}
-      ${1}   | ${marketData}                                     | ${'min amount'}
-      ${10}  | ${marketData}                                     | ${'max amount'}
-      ${5}   | ${{ amount: { min: 1 } }}                         | ${'above min'}
-      ${5}   | ${{ amount: { min: undefined, max: undefined } }} | ${'undefined limits'}
-    `('should return $amount for $description', ({ amount, data }) => {
-      expect(utils.checkOrderAmount(amount, data)).toBe(amount);
-    });
-
-    it.each`
-      amount | data                               | description
-      ${0.5} | ${marketData}                      | ${'below min'}
-      ${11}  | ${marketData}                      | ${'above max'}
-      ${0.5} | ${{ amount: { min: 1 } }}          | ${'below specific min'}
-      ${11}  | ${{ amount: { min: 1, max: 10 } }} | ${'above specific max'}
-    `('should throw OrderOutOfRangeError for $description', ({ amount, data }) => {
-      expect(() => utils.checkOrderAmount(amount, data)).toThrow(OrderOutOfRangeError);
-    });
-  });
-
-  describe('checkOrderCost', () => {
-    it.each`
-      amount | price  | data                            | description
-      ${2}   | ${10}  | ${marketData}                   | ${'valid cost'}
-      ${1}   | ${10}  | ${marketData}                   | ${'min cost'}
-      ${10}  | ${100} | ${marketData}                   | ${'max cost'}
-      ${20}  | ${1}   | ${{ cost: { min: 10 } }}        | ${'above min cost'}
-      ${5}   | ${5}   | ${{ cost: { min: undefined } }} | ${'undefined limits'}
-    `('should succeed for $description', ({ amount, price, data }) => {
-      expect(() => utils.checkOrderCost(amount, price, data)).not.toThrow();
-    });
-
-    it.each`
-      amount | price  | data                                | description
-      ${1}   | ${5}   | ${marketData}                       | ${'below min'}
-      ${11}  | ${100} | ${marketData}                       | ${'above max'}
-      ${5}   | ${1}   | ${{ cost: { min: 10 } }}            | ${'below specific min'}
-      ${50}  | ${21}  | ${{ cost: { min: 10, max: 1000 } }} | ${'above specific max'}
-    `('should throw OrderOutOfRangeError for $description', ({ amount, price, data }) => {
-      expect(() => utils.checkOrderCost(amount, price, data)).toThrow(OrderOutOfRangeError);
-    });
-  });
-
   describe('retry', () => {
     it('should return result immediately on success', async () => {
       const fn = vi.fn().mockResolvedValue('success');

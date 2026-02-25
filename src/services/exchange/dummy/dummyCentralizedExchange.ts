@@ -12,10 +12,10 @@ import { clonePortfolio, initializePortfolio } from '@utils/portfolio/portfolio.
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil } from 'lodash-es';
 import { AsyncMutex } from '../../../utils/async/asyncMutex';
-import { checkOrderAmount, checkOrderCost, checkOrderPrice } from '../exchange.utils';
+
+import { checkOrderAmount, checkOrderCost, checkOrderPrice } from '../../../utils/market/market.utils';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
 import { findCandleIndexByTimestamp } from './dummyCentralizedExchange.utils';
-
 export class DummyCentralizedExchange implements Exchange {
   private readonly mutex = new AsyncMutex();
   private readonly ordersMap: Map<string, DummyInternalOrder>;
@@ -129,9 +129,16 @@ export class DummyCentralizedExchange implements Exchange {
     onSettled?: OrderSettledCallback,
   ): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
-      const checkedPrice = checkOrderPrice(price, this.marketData.get(symbol)!);
-      const normalizedAmount = checkOrderAmount(amount, this.marketData.get(symbol)!);
-      checkOrderCost(normalizedAmount, checkedPrice, this.marketData.get(symbol)!);
+      const priceResult = checkOrderPrice(price, this.marketData.get(symbol)!);
+      if (!priceResult.isValid) throw new InvalidOrder(`Invalid price: ${priceResult.reason}`);
+      const checkedPrice = priceResult.value;
+
+      const amountResult = checkOrderAmount(amount, this.marketData.get(symbol)!);
+      if (!amountResult.isValid) throw new InvalidOrder(`Invalid amount: Must be between ${amountResult.min} and ${amountResult.max}`);
+      const normalizedAmount = amountResult.value;
+
+      const costResult = checkOrderCost(normalizedAmount, checkedPrice, this.marketData.get(symbol)!);
+      if (!costResult.isValid) throw new InvalidOrder(`Invalid cost: Must be between ${costResult.min} and ${costResult.max}`);
 
       this.reserveBalance(symbol, side, normalizedAmount, checkedPrice);
 
@@ -161,11 +168,15 @@ export class DummyCentralizedExchange implements Exchange {
 
   public async createMarketOrder(symbol: TradingPair, side: OrderSide, amount: number): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
-      const normalizedAmount = checkOrderAmount(amount, this.marketData.get(symbol)!);
+      const amountResult = checkOrderAmount(amount, this.marketData.get(symbol)!);
+      if (!amountResult.isValid) throw new InvalidOrder(`Invalid amount: ${amountResult.reason}`);
+      const normalizedAmount = amountResult.value;
+
       const price = side === 'BUY' ? this.ticker.get(symbol)?.ask : this.ticker.get(symbol)?.bid;
       if (isNil(price)) throw new InvalidOrder(`Ticker not found for symbol ${symbol}`);
 
-      checkOrderCost(normalizedAmount, price, this.marketData.get(symbol)!);
+      const costResult = checkOrderCost(normalizedAmount, price, this.marketData.get(symbol)!);
+      if (!costResult.isValid) throw new InvalidOrder(`Invalid cost: ${costResult.reason}`);
 
       const id = `order-${++this.orderSequence}`;
       const cost = normalizedAmount * price;

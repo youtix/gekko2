@@ -60,7 +60,7 @@ vi.mock('@strategies/strategyManager', () => {
       onOneMinuteBucket() {}
       createStrategy() {}
       setMarketData() {}
-      setPortfolio() {}
+      onPortfolioChange() {}
       setCurrentTimestamp() {}
       onTimeFrameCandle() {}
       onStrategyEnd() {}
@@ -99,6 +99,7 @@ describe('TradingAdvisor', () => {
   const config = {
     name: 'TradingAdvisor',
     strategyName: 'DummyStrategy',
+    maxConsecutiveErrors: 5,
   } satisfies TradingAdvisorConfiguration;
 
   const defaultAdvice: AdviceOrder = {
@@ -192,6 +193,7 @@ describe('TradingAdvisor', () => {
         const badAdvisor = new TradingAdvisor({
           name: 'TradingAdvisor',
           strategyName: 'NonExistentStrategy',
+          maxConsecutiveErrors: 5,
         });
         attachMockExchange(badAdvisor);
 
@@ -309,7 +311,7 @@ describe('TradingAdvisor', () => {
         (advisor as any).strategyManager.onOrderCompleted = vi.fn();
         (advisor as any).strategyManager.onOrderCanceled = vi.fn();
         (advisor as any).strategyManager.onOrderErrored = vi.fn();
-        (advisor as any).strategyManager.setPortfolio = vi.fn();
+        (advisor as any).strategyManager.onPortfolioChange = vi.fn();
       }
     });
 
@@ -347,7 +349,7 @@ describe('TradingAdvisor', () => {
 
         advisor.onPortfolioChange([portfolio]);
 
-        expect((advisor as any).strategyManager?.setPortfolio).toHaveBeenCalledExactlyOnceWith(portfolio);
+        expect((advisor as any).strategyManager?.onPortfolioChange).toHaveBeenCalledExactlyOnceWith(portfolio);
       });
     });
   });
