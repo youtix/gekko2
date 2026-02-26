@@ -75,16 +75,16 @@ describe('weightedMean', () => {
     expect(weightedMean(values, weights)).toBeCloseTo(expected);
   });
 
-  it('should throw an error when values and weights have different lengths', () => {
-    expect(() => weightedMean([1, 2], [1])).toThrow();
+  it('should return NaN when values and weights have different lengths', () => {
+    expect(weightedMean([1, 2], [1])).toBeNaN();
   });
 
-  it('should throw an error when provided with empty arrays', () => {
-    expect(() => weightedMean([], [])).toThrow();
+  it('should return NaN when provided with empty arrays', () => {
+    expect(weightedMean([], [])).toBeNaN();
   });
 
-  it('should throw an error when sum of weights is zero', () => {
-    expect(() => weightedMean([1, 2, 3], [0, 0, 0])).toThrow();
+  it('should return NaN when sum of weights is zero', () => {
+    expect(weightedMean([1, 2, 3], [0, 0, 0])).toBeNaN();
   });
 
   it('should not mutate the input arrays', () => {

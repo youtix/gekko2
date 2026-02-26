@@ -5,8 +5,8 @@ import { HistoricalCandleError } from '@services/core/stream/historicalCandle/hi
 import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
 import { info } from '@services/logger';
-import { resetDateParts, toISOString } from '@utils/date/date.utils';
-import { formatDuration, Interval, intervalToDuration, isAfter, isBefore } from 'date-fns';
+import { toISOString } from '@utils/date/date.utils';
+import { formatDuration, Interval, intervalToDuration, isAfter, isBefore, startOfMinute } from 'date-fns';
 import { bindAll, each, filter, last } from 'lodash-es';
 import { Readable } from 'stream';
 
@@ -31,8 +31,8 @@ export class HistoricalCandleStream extends Readable {
   constructor({ daterange, tickrate, symbol }: HistoricalCandleStreamParams) {
     super({ objectMode: true });
 
-    this.startDate = resetDateParts(daterange.start, ['s', 'ms']);
-    this.endDate = resetDateParts(daterange.end, ['s', 'ms']);
+    this.startDate = startOfMinute(daterange.start).getTime();
+    this.endDate = startOfMinute(daterange.end).getTime();
 
     this.initialStartDate = this.startDate;
     this.totalDuration = this.endDate - this.startDate;

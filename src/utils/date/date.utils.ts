@@ -1,18 +1,5 @@
-import { TZDateMini } from '@date-fns/tz';
 import { addMinutes, differenceInMinutes, isBefore, isValid, startOfMinute, subMilliseconds } from 'date-fns';
-import { isNil, reduce } from 'lodash-es';
-import { dateFnsMapper } from './date.const';
-import { Time } from './date.types';
-
-/**
- * Resets specific parts of a date to zero.
- *
- * @param date - The original date represented as an EpochTimeStamp.
- * @param parts - An array of Time units ('h', 'm', 's', 'ms') to reset.
- * @returns The modified date as an EpochTimeStamp with specified parts reset to zero.
- */
-export const resetDateParts = (date?: EpochTimeStamp, parts?: Time[]): EpochTimeStamp =>
-  date ? reduce(parts, (modifiedDate, part) => dateFnsMapper[part](modifiedDate, 0), new TZDateMini(date, '+00:00')).getTime() : 0;
+import { isNil } from 'lodash-es';
 
 export const toISOString = (timestamp?: EpochTimeStamp): string => (!isNil(timestamp) ? new Date(timestamp).toISOString() : 'Unknown Date');
 

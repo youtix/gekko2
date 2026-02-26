@@ -16,17 +16,16 @@ import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
-import { OrderSummary } from '@services/core/order/order.types';
 import { error, info, warning } from '@services/logger';
 import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
-import { createEmptyPortfolio, getAssetBalance } from '@utils/portfolio/portfolio.utils';
+import { clonePortfolio, createEmptyPortfolio, getAssetBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
-import { bindAll, cloneDeep, filter } from 'lodash-es';
+import { bindAll, filter, isNil } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { ORDER_FACTORY } from './trader.const';
 import { traderSchema } from './trader.schema';
-import { TraderOrderMetadata } from './trader.types';
+import { CheckOrderSummaryParams, TraderOrderMetadata } from './trader.types';
 import {
   computeOrderPricing,
   getBacktestModeIntervalSyncTime,
@@ -37,27 +36,20 @@ import {
 
 export class Trader extends Plugin {
   private readonly orders: Map<UUID, TraderOrderMetadata>;
-  private warmupCompleted: boolean;
-  private warmupBucket: CandleBucket;
-  private portfolio: Portfolio;
-  private prices: Map<TradingPair, number>;
-  private currentTimestamp: EpochTimeStamp;
-  private syncInterval: NodeJS.Timeout | null;
-  private lastEmittedPortfolio: Portfolio | null;
   private readonly portfolioUpdatesConfig: PortfolioUpdatesConfig | null;
+
+  private warmupCompleted: boolean = false;
+  private warmupBucket: CandleBucket = new Map();
+  private portfolio: Portfolio = createEmptyPortfolio();
+  private prices: Map<TradingPair, number> = new Map();
+  private currentTimestamp: EpochTimeStamp = 0;
+  private syncInterval: NodeJS.Timeout | null = null;
+  private lastEmittedPortfolio: Portfolio | null = null;
 
   constructor(parameters?: { portfolioUpdates?: PortfolioUpdatesConfig }) {
     super(Trader.name);
     this.orders = new Map();
-    this.warmupCompleted = false;
-    this.warmupBucket = new Map();
-    this.portfolio = createEmptyPortfolio();
-    this.prices = new Map();
-    this.currentTimestamp = 0;
-    this.syncInterval = null;
-    this.lastEmittedPortfolio = null;
     this.portfolioUpdatesConfig = parameters?.portfolioUpdates ?? null;
-
     bindAll(this, [this.synchronize.name]);
   }
 
@@ -83,46 +75,47 @@ export class Trader extends Plugin {
         portfolioConfig: this.portfolioUpdatesConfig,
       };
       if (shouldEmitPortfolio(params)) {
-        this.emitPortfolioChangeEvent();
-        this.lastEmittedPortfolio = cloneDeep(this.portfolio);
+        this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, this.portfolio);
+        this.lastEmittedPortfolio = clonePortfolio(this.portfolio);
       }
     } else {
-      this.emitPortfolioChangeEvent();
+      this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, this.portfolio);
     }
   }
 
   /* -------------------------------------------------------------------------- */
-  /*                             EVENT EMITERS                                  */
+  /*                             PRIVATE FUNCTIONS                              */
   /* -------------------------------------------------------------------------- */
 
-  private emitPortfolioChangeEvent() {
-    this.addDeferredEmit<Portfolio>(PORTFOLIO_CHANGE_EVENT, this.portfolio);
-  }
-
-  private emitOrderCompletedEvent(id: UUID, summary: OrderSummary) {
-    const orderMetadata = this.orders.get(id);
-    if (!orderMetadata) throw new GekkoError('trader', `[${id}] No order metadata found in order completed event`);
-
+  private checkOrderSummary({ id, symbol, type, orderCreationDate, summary }: CheckOrderSummaryParams): OrderCompletedEvent {
     const { amount, price, feePercent, side, orderExecutionDate } = summary;
     const { effectivePrice, fee } = computeOrderPricing(side, price, amount, feePercent);
-    const { orderCreationDate, type, symbol } = orderMetadata;
 
-    info(
-      'trader',
-      [
-        `[${id}] ${side} ${type} order summary for ${symbol}:`,
-        `Completed at: ${toISOString(orderExecutionDate)}`,
-        `Order amount: ${amount},`,
-        `Effective price: ${effectivePrice},`,
-        `Fee: ${fee},`,
-        `Fee percent: ${feePercent},`,
-      ].join(' '),
-    );
+    if (Number.isNaN(price)) {
+      error(
+        'trader',
+        `[${id}] Order Summary: price is NaN. This usually happens when the exchange returns invalid data or the order was not filled correctly.`,
+      );
+    } else {
+      if (isNil(feePercent) || !Number.isFinite(feePercent))
+        warning('trader', 'Exchange did not provide fee information, assuming no fees.');
+      info(
+        'trader',
+        [
+          `[${id}] ${side} ${type} order summary for ${symbol}:`,
+          `Completed at: ${toISOString(orderExecutionDate)}`,
+          `Order amount: ${amount},`,
+          `Effective price: ${effectivePrice},`,
+          `Fee: ${fee},`,
+          `Fee percent: ${feePercent},`,
+        ].join(' '),
+      );
+    }
 
     const currentPrice = this.prices.get(symbol) ?? 0;
     const order = { ...summary, id, orderCreationDate, type, fee, effectivePrice, symbol };
     const exchange = { price: currentPrice, portfolio: this.portfolio };
-    this.addDeferredEmit<OrderCompletedEvent>(ORDER_COMPLETED_EVENT, { order, exchange });
+    return { order, exchange };
   }
 
   /* -------------------------------------------------------------------------- */
@@ -162,18 +155,11 @@ export class Trader extends Plugin {
 
         // Handle Order success event (maybe it completed before we succeed to cancel)
         orderInstance.once(ORDER_COMPLETED_EVENT, async () => {
-          try {
-            const summary = await orderInstance.createSummary();
-            await this.synchronize();
-            this.emitOrderCompletedEvent(id, summary);
-          } catch (err) {
-            error(
-              'trader',
-              err instanceof Error ? `[${id}] Error in order completed ${err.message}` : `[${id}] Unknown error on order completed`,
-            );
-          } finally {
-            this.orders.delete(id);
-          }
+          const summary = await orderInstance.createSummary();
+          const orderCompletedEvent = this.checkOrderSummary({ id, symbol, type, orderCreationDate, summary });
+          await this.synchronize();
+          this.addDeferredEmit<OrderCompletedEvent>(ORDER_COMPLETED_EVENT, orderCompletedEvent);
+          this.orders.delete(id);
         });
 
         // Handle Cancel Error hook
@@ -261,18 +247,11 @@ export class Trader extends Plugin {
 
         // SUCCES EVENTS
         orderInstance.on(ORDER_COMPLETED_EVENT, async () => {
-          try {
-            const summary = await orderInstance.createSummary();
-            await this.synchronize();
-            this.emitOrderCompletedEvent(id, summary);
-          } catch (err) {
-            error(
-              'trader',
-              err instanceof Error ? `[${id}] Error in order completed ${err.message}` : `[${id}] Unknown error on order completed`,
-            );
-          } finally {
-            this.orders.delete(id);
-          }
+          const summary = await orderInstance.createSummary();
+          const orderCompletedEvent = this.checkOrderSummary({ id, symbol, type, orderCreationDate, summary });
+          await this.synchronize();
+          this.addDeferredEmit<OrderCompletedEvent>(ORDER_COMPLETED_EVENT, orderCompletedEvent);
+          this.orders.delete(id);
         });
 
         // Launch the order

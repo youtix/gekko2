@@ -142,7 +142,7 @@ export class DummyCentralizedExchange implements Exchange {
 
       this.reserveBalance(symbol, side, normalizedAmount, checkedPrice);
 
-      const id = `order-${++this.orderSequence}`;
+      const id = `limit-order-${++this.orderSequence}`;
       const order: DummyInternalOrder = {
         id,
         symbol,
@@ -178,7 +178,7 @@ export class DummyCentralizedExchange implements Exchange {
       const costResult = checkOrderCost(normalizedAmount, price, this.marketData.get(symbol)!);
       if (!costResult.isValid) throw new InvalidOrder(`Invalid cost: ${costResult.reason}`);
 
-      const id = `order-${++this.orderSequence}`;
+      const id = `market-order-${++this.orderSequence}`;
       const cost = normalizedAmount * price;
       const totalCost = cost * (1 + (this.marketData.get(symbol)?.fee?.taker ?? 0));
 

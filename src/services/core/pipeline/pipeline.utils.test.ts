@@ -1,9 +1,9 @@
 import { config } from '@services/configuration/configuration';
 import { getCandleTimeOffset } from '@utils/candle/candle.utils';
-import { resetDateParts, toTimestamp } from '@utils/date/date.utils';
+import { toTimestamp } from '@utils/date/date.utils';
 import { processStartTime } from '@utils/process/process.utils';
 import { synchronizeStreams } from '@utils/stream/stream.utils';
-import { subMinutes } from 'date-fns';
+import { startOfMinute, subMinutes } from 'date-fns';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
@@ -33,7 +33,6 @@ vi.mock('@utils/candle/candle.utils', () => ({
 }));
 
 vi.mock('@utils/date/date.utils', () => ({
-  resetDateParts: vi.fn(),
   toTimestamp: vi.fn(),
 }));
 
@@ -46,6 +45,7 @@ vi.mock('@utils/stream/stream.utils', () => ({
 }));
 
 vi.mock('date-fns', () => ({
+  startOfMinute: vi.fn(),
   subMinutes: vi.fn(),
   formatDuration: vi.fn().mockReturnValue('1h 30m'),
   intervalToDuration: vi.fn(),
@@ -105,6 +105,39 @@ describe('Pipeline Utils', () => {
 
       expect(result).toEqual(expected);
     });
+
+    it('should destroy underlying streams when merged stream is destroyed with an error', () => {
+      const s1 = Readable.from([1]);
+      const s2 = Readable.from([2]);
+      const merged = mergeSequentialStreams(s1, s2);
+
+      const spy1 = vi.spyOn(s1, 'destroy');
+      const spy2 = vi.spyOn(s2, 'destroy');
+
+      const error = new Error('test error');
+      merged.on('error', () => {});
+      s1.on('error', () => {});
+      s2.on('error', () => {});
+      merged.destroy(error);
+
+      expect(spy1).toHaveBeenCalledWith(error);
+      expect(spy2).toHaveBeenCalledWith(error);
+    });
+
+    it('should not destroy an already destroyed underlying stream and pass undefined error', () => {
+      const s1 = Readable.from([1]);
+      const s2 = Readable.from([2]);
+      s1.destroy();
+      const merged = mergeSequentialStreams(s1, s2);
+
+      const spy1 = vi.spyOn(s1, 'destroy');
+      const spy2 = vi.spyOn(s2, 'destroy');
+
+      merged.destroy();
+
+      expect(spy1).not.toHaveBeenCalled();
+      expect(spy2).toHaveBeenCalledWith(undefined);
+    });
   });
 
   describe('streamPipelines', () => {
@@ -118,7 +151,7 @@ describe('Pipeline Utils', () => {
         const mockPairs = [{ symbol: 'BTC/USDT', timeframe: '1m' }];
 
         (processStartTime as Mock).mockReturnValue(new Date('2023-01-01T12:00:00.123Z'));
-        (resetDateParts as Mock).mockReturnValue(mockNow);
+        (startOfMinute as Mock).mockReturnValue(mockNow);
         (getCandleTimeOffset as Mock).mockReturnValue(mockOffset);
         (subMinutes as Mock).mockReturnValue(mockStartDate);
 
@@ -132,14 +165,13 @@ describe('Pipeline Utils', () => {
         await streamPipelines.realtime(mockPlugins);
 
         expect(processStartTime).toHaveBeenCalled();
-        expect(resetDateParts).toHaveBeenCalledWith(expect.anything(), ['s', 'ms']);
-        expect(subMinutes).toHaveBeenCalledWith(mockNow, 60);
+        expect(subMinutes).toHaveBeenCalledWith(mockNow.getTime(), 60);
 
         // Verify Streams Initialization
         expect(MultiAssetHistoricalStream).toHaveBeenCalledWith({
           daterange: {
             start: mockStartDate.getTime(),
-            end: mockNow,
+            end: mockNow.getTime(),
           },
           tickrate: 1000,
           pairs: mockPairs,
@@ -178,6 +210,11 @@ describe('Pipeline Utils', () => {
         });
         expect(PluginsStream).toHaveBeenCalledWith(mockPlugins);
         expect(pipeline).toHaveBeenCalled();
+      });
+
+      it('should throw an error if daterange is not set in config', async () => {
+        (config.getWatch as Mock).mockReturnValue({ daterange: undefined, pairs: [] });
+        await expect(streamPipelines.backtest(mockPlugins)).rejects.toThrow('daterange is not set');
       });
     });
 
@@ -227,6 +264,11 @@ describe('Pipeline Utils', () => {
         await streamPipelines.importer(mockPlugins);
 
         expect(MultiAssetHistoricalStream).toHaveBeenCalledWith(expect.objectContaining({ pairs: mockPairs }));
+      });
+
+      it('should throw an error if daterange is not set in config', async () => {
+        (config.getWatch as Mock).mockReturnValue({ daterange: undefined, pairs: [] });
+        await expect(streamPipelines.importer(mockPlugins)).rejects.toThrow('daterange is not set');
       });
     });
   });

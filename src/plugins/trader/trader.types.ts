@@ -1,6 +1,8 @@
 import { OrderSide, OrderType } from '@models/order.types';
 import { TradingPair } from '@models/utility.types';
 import { Order as AbstractOrder } from '@services/core/order/order';
+import { OrderSummary } from '@services/core/order/order.types';
+import { UUID } from 'node:crypto';
 import { z } from 'zod';
 import { traderSchema } from './trader.schema';
 
@@ -21,4 +23,12 @@ export type TraderOrderMetadata = {
   price: number;
   /** Trading Pair */
   symbol: TradingPair;
+};
+
+export type CheckOrderSummaryParams = {
+  id: UUID;
+  symbol: TradingPair;
+  type: OrderType;
+  orderCreationDate: EpochTimeStamp;
+  summary: OrderSummary;
 };

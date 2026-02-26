@@ -290,9 +290,9 @@ describe('Trader', () => {
 
       it('should always emit portfolio change event', async () => {
         // Even if portfolio is empty or unchanged
-        const spy = vi.spyOn(trader as any, 'emitPortfolioChangeEvent');
+        const spy = vi.spyOn(trader as any, 'addDeferredEmit');
         await trader['synchronize']();
-        expect(spy).toHaveBeenCalledOnce();
+        expect(spy).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, trader['portfolio']);
       });
     });
 
@@ -324,7 +324,7 @@ describe('Trader', () => {
         fakeExchange.fetchBalance.mockResolvedValue(newPortfolio);
 
         // Mock Emit
-        const emitSpy = vi.spyOn(filteredTrader as any, 'emitPortfolioChangeEvent');
+        const emitSpy = vi.spyOn(filteredTrader as any, 'addDeferredEmit');
 
         await filteredTrader['synchronize']();
 
@@ -338,20 +338,6 @@ describe('Trader', () => {
           expect(filteredTrader['lastEmittedPortfolio']).toEqual(oldPortfolio);
         }
       });
-    });
-  });
-
-  describe('emitPortfolioChangeEvent', () => {
-    it('defers portfolio change event with current portfolio', () => {
-      const portfolio = new Map<string, BalanceDetail>([
-        ['BTC', { free: 10, used: 0, total: 10 }],
-        ['USDT', { free: 25, used: 0, total: 25 }],
-      ]);
-      trader['portfolio'] = portfolio;
-
-      trader['emitPortfolioChangeEvent']();
-
-      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, portfolio);
     });
   });
 
@@ -604,7 +590,7 @@ describe('Trader', () => {
     it('delegates ORDER_COMPLETED_EVENT to completion handler', async () => {
       const advice = buildAdvice();
       const synchronizeSpy = vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
-      const completionSpy = vi.spyOn(trader as any, 'emitOrderCompletedEvent');
+      const completionSpy = vi.spyOn(trader as any, 'checkOrderSummary');
 
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
@@ -614,25 +600,7 @@ describe('Trader', () => {
 
       expect(order.createSummary).toHaveBeenCalled();
       expect(synchronizeSpy).toHaveBeenCalled();
-      expect(completionSpy).toHaveBeenCalledWith(advice.id, expect.objectContaining({ side: advice.side }));
-      expect(getOrdersMap().size).toBe(0);
-    });
-
-    it('logs error if summary creation fails on completion', async () => {
-      const advice = buildAdvice();
-      (logger.error as Mock).mockClear();
-      vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
-      const completionSpy = vi.spyOn(trader as any, 'emitOrderCompletedEvent');
-
-      await trader.onStrategyCreateOrder([advice]);
-      const order = getOrderInstance(advice.id)!;
-      (order.createSummary as Mock).mockRejectedValue(new Error('summary failed'));
-
-      order.emit(ORDER_COMPLETED_EVENT);
-      await tick();
-
-      expect(logger.error).toHaveBeenCalledWith('trader', expect.stringContaining('summary failed'));
-      expect(completionSpy).not.toHaveBeenCalled();
+      expect(completionSpy).toHaveBeenCalledWith(expect.objectContaining({ id: advice.id }));
       expect(getOrdersMap().size).toBe(0);
     });
 
@@ -736,7 +704,7 @@ describe('Trader', () => {
 
     it('handles completion during cancellation', async () => {
       const advice = buildAdvice();
-      const completionSpy = vi.spyOn(trader as any, 'emitOrderCompletedEvent');
+      const completionSpy = vi.spyOn(trader as any, 'checkOrderSummary');
       trader['prices'].set('BTC/USDT', 100);
 
       await trader.onStrategyCreateOrder([advice]);
@@ -753,12 +721,8 @@ describe('Trader', () => {
     });
   });
 
-  describe('emitOrderCompletedEvent', () => {
-    it('throws error when order metadata is missing', () => {
-      expect(() => trader['emitOrderCompletedEvent']('unknown-id' as any, {} as any)).toThrow(/No order metadata found/);
-    });
-
-    it('emits completion summary with computed pricing', async () => {
+  describe('checkOrderSummary', () => {
+    it('returns completion summary with computed pricing', () => {
       const summary: OrderSummary = {
         amount: 2,
         price: 100,
@@ -767,35 +731,34 @@ describe('Trader', () => {
         orderExecutionDate: 1_700_000_111_000,
       };
 
-      const advice = buildAdvice({ amount: 2 });
-      // We need to inject order metadata into map
-      getOrdersMap().set(advice.id, {
-        amount: 2,
-        side: 'BUY',
-        orderCreationDate: 1_700_000_051_000,
-        type: 'STICKY',
-        price: 100,
-        orderInstance: {} as any,
-        symbol: 'BTC/USDT',
-      });
       trader['prices'].set('BTC/USDT', 100);
 
-      trader['emitOrderCompletedEvent'](advice.id, summary);
+      const result = trader['checkOrderSummary']({
+        id: '20a7abd2-546b-4c65-b04d-900b84fa5fe6',
+        symbol: 'BTC/USDT',
+        type: 'STICKY',
+        orderCreationDate: 1_700_000_051_000,
+        summary,
+      });
 
       // fee = 2 * 100 * 0.5% = 1
       // effective price = 100 + 100 * 0.5% = 100.5
 
-      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
-        ORDER_COMPLETED_EVENT,
-        expect.objectContaining({
-          order: expect.objectContaining({
-            effectivePrice: 100.5,
-            fee: 1,
-            symbol: 'BTC/USDT',
-          }),
-          exchange: { price: 100, portfolio: trader['portfolio'] },
-        }),
-      );
+      expect(result).toEqual({
+        order: {
+          ...summary,
+          id: '20a7abd2-546b-4c65-b04d-900b84fa5fe6',
+          symbol: 'BTC/USDT',
+          type: 'STICKY',
+          orderCreationDate: 1_700_000_051_000,
+          fee: 1,
+          effectivePrice: 100.5,
+        },
+        exchange: {
+          price: 100,
+          portfolio: trader['portfolio'],
+        },
+      });
     });
   });
 

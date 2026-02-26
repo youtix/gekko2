@@ -2,10 +2,9 @@ import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
 import { getCandleTimeOffset } from '@utils/candle/candle.utils';
-import { resetDateParts } from '@utils/date/date.utils';
 import { processStartTime } from '@utils/process/process.utils';
 import { synchronizeStreams } from '@utils/stream/stream.utils';
-import { subMinutes } from 'date-fns';
+import { startOfMinute, subMinutes } from 'date-fns';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { MultiAssetBacktestStream } from '../stream/backtest/multiAssetBacktest.stream';
@@ -19,7 +18,7 @@ import { RejectFutureCandleStream } from '../stream/validation/rejectFutureCandl
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
   const { pairs, timeframe, warmup } = config.getWatch();
   // End time of the last candle to download (now)
-  const end = resetDateParts(processStartTime(), ['s', 'ms']);
+  const end = startOfMinute(processStartTime()).getTime();
   // Offset to align candles to the start of the timeframe
   const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe!], end); // Timeframe will always defined in thanks to zod super refine
   // Start time of the first candle to download

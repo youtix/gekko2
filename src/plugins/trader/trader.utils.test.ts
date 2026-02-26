@@ -1,6 +1,5 @@
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
-import { warning } from '@services/logger';
 import { describe, expect, it, vi } from 'vitest';
 import { computeOrderPricing, PortfolioUpdatesConfig, shouldEmitPortfolio } from './trader.utils';
 
@@ -10,8 +9,6 @@ vi.mock('@services/logger', () => ({
   info: vi.fn(),
   error: vi.fn(),
 }));
-
-const warningMock = vi.mocked(warning);
 
 describe('trader.utils', () => {
   describe('computeOrderPricing', () => {
@@ -25,10 +22,6 @@ describe('trader.utils', () => {
     `('should $description', ({ side, price, amount, feePercent, expected }) => {
       const result = computeOrderPricing(side, price, amount, feePercent);
       expect(result).toEqual(expected);
-
-      if (feePercent === undefined) {
-        expect(warningMock).toHaveBeenCalledWith('trader', expect.stringContaining('Exchange did not provide fee information'));
-      }
     });
 
     it.each`
@@ -36,8 +29,9 @@ describe('trader.utils', () => {
       ${'price is not positive'}    | ${0}  | ${1}
       ${'amount is not positive'}   | ${10} | ${0}
       ${'price and amount invalid'} | ${-5} | ${-10}
-    `('should throw when $description', ({ price, amount }) => {
-      expect(() => computeOrderPricing('BUY', price, amount, 0.5)).toThrowError(/Invalid order inputs/);
+    `('should return NaNs when $description', ({ price, amount }) => {
+      const result = computeOrderPricing('BUY', price, amount, 0.5);
+      expect(result).toEqual({ effectivePrice: NaN, base: NaN, fee: NaN, total: NaN });
     });
   });
 

@@ -1,10 +1,8 @@
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
-import { GekkoError } from '@errors/gekko.error';
 import { Timeframe } from '@models/configuration.types';
 import { OrderSide } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
-import { warning } from '@services/logger';
 import { isNil } from 'lodash-es';
 
 type OrderPricing = {
@@ -27,9 +25,9 @@ type ComputeOrderPricingFn = (
 ) => OrderPricing;
 
 export const computeOrderPricing: ComputeOrderPricingFn = (side, price, amount, feePercent) => {
-  if (!(price > 0) || !(amount > 0)) {
-    throw new GekkoError('trader', 'Invalid order inputs: price must be > 0 and amount must be > 0');
-  }
+  // Invalid price or amount due to exchange returning invalid data or order not filled correctly
+  if (Number.isNaN(price) || Number.isNaN(amount) || !(price > 0) || !(amount > 0))
+    return { effectivePrice: NaN, base: NaN, fee: NaN, total: NaN };
 
   const base = amount * price;
 
@@ -41,7 +39,7 @@ export const computeOrderPricing: ComputeOrderPricingFn = (side, price, amount, 
     return { effectivePrice, base, fee, total };
   }
 
-  warning('trader', 'Exchange did not provide fee information, assuming no fees.');
+  // Exchange did not provide fee information, assuming no fees.
   return { effectivePrice: price, base, fee: 0, total: base };
 };
 

@@ -60,7 +60,7 @@ export type OrderErroredEvent = OrderInitiatedEvent & {
     orderErrorDate: EpochTimeStamp;
   };
 };
-
+/** Can return NaN values in price, amount,effectivePrice, fee, feePercent */
 export type OrderCompletedEvent = OrderInitiatedEvent & {
   order: OrderEvent & {
     /** Order Execution date */

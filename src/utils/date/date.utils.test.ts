@@ -1,32 +1,8 @@
 import { addMinutes, startOfMinute, subMilliseconds } from 'date-fns';
 import { describe, expect, it } from 'vitest';
-import { Time } from './date.types';
-import { isDaterangeValid, resetDateParts, splitIntervals } from './date.utils';
+import { isDaterangeValid, splitIntervals } from './date.utils';
 
 describe('', () => {
-  describe('resetDateParts', () => {
-    it.each`
-      date                                              | parts                    | expected
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['h']}                 | ${new Date('2024-01-01T00:34:56.789Z').getTime()}
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['m']}                 | ${new Date('2024-01-01T12:00:56.789Z').getTime()}
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['s']}                 | ${new Date('2024-01-01T12:34:00.789Z').getTime()}
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['ms']}                | ${new Date('2024-01-01T12:34:56.000Z').getTime()}
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['h', 'm', 's', 'ms']} | ${new Date('2024-01-01T00:00:00.000Z').getTime()}
-    `('resets $parts correctly', ({ date, parts, expected }) => {
-      expect(resetDateParts(date, parts)).toBe(expected);
-    });
-
-    it('returns the same date if no parts are provided', () => {
-      const date = new Date('2024-01-01T12:34:56.789Z').getTime();
-      expect(resetDateParts(date, [])).toBe(date);
-    });
-
-    it('throws an error for invalid parts', () => {
-      const date = new Date('2024-01-01T12:34:56.789Z').getTime();
-      expect(() => resetDateParts(date, ['invalid' as Time])).toThrow();
-    });
-  });
-
   describe('isDaterangeValid', () => {
     it.each`
       startDate                           | endDate                             | expected

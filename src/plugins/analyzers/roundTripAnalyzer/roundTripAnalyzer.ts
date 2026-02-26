@@ -20,7 +20,7 @@ import { stdev } from '@utils/math/math.utils';
 import { round } from '@utils/math/round.utils';
 import { calculatePairEquity, getAssetBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
-import { first } from 'lodash-es';
+import { first, isNil } from 'lodash-es';
 import { Plugin } from '../../plugin';
 import { analyzerSchema } from '../analyzer.schema';
 import { AnalyzerConfig } from '../analyzer.types';
@@ -111,7 +111,7 @@ export class RoundTripAnalyzer extends Plugin {
   // --- BEGIN INTERNALS ---
 
   private registerRoundtripPart({ order, exchange }: OrderCompletedEvent): void {
-    if (order.price == null || order.price <= 0) {
+    if (Number.isNaN(order.price) || isNil(order.price) || order.price <= 0) {
       warning('roundtrip analyzer', `Order ${order.id} completed without a valid price. Skipping roundtrip update.`);
       return;
     }
