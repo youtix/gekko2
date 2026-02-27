@@ -47,6 +47,7 @@ export class StrategyManager extends EventEmitter {
   private pendingTrailingStops = new Map<UUID, TrailingConfig>();
   private consecutiveErrors = 0;
   private strategy?: Strategy<object>;
+  private tools: Tools<object>;
 
   constructor(warmupPeriod: number, maxConsecutiveErrors: number = 5) {
     super();
@@ -64,6 +65,15 @@ export class StrategyManager extends EventEmitter {
       this.onTrailingStopActivated.name,
       this.onTrailingStopTriggered.name,
     ]);
+
+    this.tools = {
+      createOrder: this.createOrder,
+      cancelOrder: this.cancelOrder,
+      log: this.log,
+      strategyParams: this.strategyParams,
+      marketData: this.marketData,
+      cancelTrailingOrder: this.cancelTrailingOrder,
+    };
 
     this.trailingStopManager.on(TRAILING_STOP_TRIGGERED, this.onTrailingStopTriggered);
     this.trailingStopManager.on(TRAILING_STOP_ACTIVATED, this.onTrailingStopActivated);
@@ -95,8 +105,7 @@ export class StrategyManager extends EventEmitter {
   }
 
   public onTimeFrameCandle(bucket: CandleBucket) {
-    const tools = this.createTools();
-    const params = { candle: bucket, portfolio: this.portfolio, tools };
+    const params = { candle: bucket, portfolio: this.portfolio, tools: this.tools };
 
     // Initialize strategy with time frame candle (do not use one minute candle)
     if (this.age === 0) this.strategy?.init?.({ ...params, addIndicator: this.addIndicator });
@@ -126,7 +135,7 @@ export class StrategyManager extends EventEmitter {
 
   public onOrderCompleted({ order, exchange }: OrderCompletedEvent) {
     this.consecutiveErrors = 0;
-    this.strategy?.onOrderCompleted?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
+    this.strategy?.onOrderCompleted?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
 
     if (this.pendingTrailingStops.has(order.id)) {
       this.trailingStopManager.addOrder({
@@ -142,7 +151,7 @@ export class StrategyManager extends EventEmitter {
 
   public onOrderCanceled({ order, exchange }: OrderCanceledEvent) {
     this.consecutiveErrors = 0;
-    this.strategy?.onOrderCanceled?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
+    this.strategy?.onOrderCanceled?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
     this.cancelTrailingOrder(order.id);
   }
 
@@ -150,7 +159,7 @@ export class StrategyManager extends EventEmitter {
     this.consecutiveErrors++;
     const isConsecutiveErrorsReached = this.maxConsecutiveErrors !== -1 && this.consecutiveErrors >= this.maxConsecutiveErrors;
     if (isConsecutiveErrorsReached) throw new ApplicationStopError(`Max consecutive order errors reached (${this.maxConsecutiveErrors})`);
-    this.strategy?.onOrderErrored?.({ order, exchange, tools: this.createTools() }, ...this.indicatorsResults);
+    this.strategy?.onOrderErrored?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
     this.cancelTrailingOrder(order.id);
   }
 
@@ -181,6 +190,7 @@ export class StrategyManager extends EventEmitter {
 
   public setMarketData(marketData: Map<TradingPair, MarketData>) {
     this.marketData = marketData;
+    this.tools.marketData = marketData;
   }
 
   /* -------------------------------------------------------------------------- */
@@ -246,16 +256,5 @@ export class StrategyManager extends EventEmitter {
     const firstCandle = bucket.values().next().value;
     info('strategy', `Strategy warmup done ! Sending first candle bucket (${toISOString(firstCandle?.start)}) to strategy`);
     this.emit<CandleBucket>(STRATEGY_WARMUP_COMPLETED_EVENT, bucket);
-  }
-
-  private createTools(): Tools<object> {
-    return {
-      createOrder: this.createOrder,
-      cancelOrder: this.cancelOrder,
-      log: this.log,
-      strategyParams: this.strategyParams,
-      marketData: this.marketData,
-      cancelTrailingOrder: this.cancelTrailingOrder,
-    };
   }
 }

@@ -28,7 +28,7 @@ describe('EMARibbon', () => {
       advices.push({ ...order, amount: order.amount ?? 1 });
       return '00000000-0000-0000-0000-000000000000' as UUID;
     });
-    tools = { createOrder, log } as any;
+    tools = { createOrder, log, strategyParams: { spreadCompressionThreshold: 1 } } as any;
 
     bucket = new Map();
     bucket.set(symbol, { close: 100 } as any);
@@ -83,14 +83,15 @@ describe('EMARibbon', () => {
       else expect(advices).toHaveLength(0);
     });
 
-    it('goes long then flips short when ribbon loses bullish order', () => {
+    it('goes long then flips short when spread is compressing', () => {
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([10, 9, 8, 7]),
+        ...makeIndicator([10, 9, 8, 7], 0.5),
       );
+      strategy.onOrderCompleted({ order: { id: '00000000-0000-0000-0000-000000000000' } } as any);
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([10, 11, 9, 8]),
+        ...makeIndicator([10, 11, 9, 8], 0.2),
       );
 
       expect(advices).toEqual([longAdvice, shortAdvice]);
@@ -99,15 +100,16 @@ describe('EMARibbon', () => {
     it('does not reissue long while already long and still bullish', () => {
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([100, 90, 80]),
+        ...makeIndicator([100, 90, 80], 0.5),
+      );
+      strategy.onOrderCompleted({ order: { id: '00000000-0000-0000-0000-000000000000' } } as any);
+      strategy.onTimeframeCandleAfterWarmup(
+        { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
+        ...makeIndicator([90, 80, 70], 0.5),
       );
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([90, 80, 70]),
-      );
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([70, 60, 50]),
+        ...makeIndicator([70, 60, 50], 0.5),
       );
 
       expect(advices).toEqual([longAdvice]);

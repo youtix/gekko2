@@ -14,7 +14,6 @@ import { addMinutes } from 'date-fns';
 import { UUID } from 'node:crypto';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Tools } from './strategy.types';
 import { StrategyManager } from './strategyManager';
 
 const indicatorMocks = vi.hoisted(() => {
@@ -465,7 +464,7 @@ describe('StrategyManager', () => {
 
         manager.setMarketData(marketData);
 
-        const tools = manager['createTools']();
+        const tools = manager['tools'];
         expect(tools.marketData).toEqual(marketData);
       });
     });
@@ -588,21 +587,6 @@ describe('StrategyManager', () => {
   });
 
   describe('utils function', () => {
-    describe('createTools', () => {
-      it('builds a toolset wired with the candle, helpers, and manager state', () => {
-        const tools = manager['createTools']();
-
-        expect(tools).toStrictEqual({
-          strategyParams: manager['strategyParams'],
-          marketData: defaultMarketData,
-          createOrder: manager['createOrder'],
-          cancelOrder: manager['cancelOrder'],
-          cancelTrailingOrder: manager['cancelTrailingOrder'],
-          log: manager['log'],
-        } as Tools<object>);
-      });
-    });
-
     describe('emitWarmupCompletedEvent', () => {
       it('should log warmup completion', () => {
         manager['emitWarmupCompletedEvent'](bucket);
