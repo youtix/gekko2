@@ -6,3 +6,4 @@ db
 .sql-shm
 .sql-wal
 src/strategies/custom
+documentation/dev

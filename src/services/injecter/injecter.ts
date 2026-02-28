@@ -15,7 +15,8 @@ class Injecter {
     if (this.storageInstance) return this.storageInstance;
     const storageConfig = config.getStorage();
     if (!storageConfig?.type) throw new GekkoError('injecter', 'Missing or unknown storage.');
-    this.storageInstance = new SQLiteStorage();
+    const { pairs } = config.getWatch();
+    this.storageInstance = new SQLiteStorage(pairs.map(({ symbol }) => symbol));
     return this.storageInstance;
   }
 
@@ -38,6 +39,12 @@ class Injecter {
         throw new GekkoError('injecter', 'Missing or unknown exchange.');
     }
     return this.exchangeInstance;
+  }
+
+  /** Reset all singleton instances. Use only in tests. */
+  public reset() {
+    this.storageInstance = undefined;
+    this.exchangeInstance = undefined;
   }
 }
 

@@ -6,20 +6,19 @@ import { Interval } from 'date-fns';
 
 export class MissingCandlesError extends GekkoError {
   constructor(
+    symbol: string,
     { start, end }: Interval<EpochTimeStamp, EpochTimeStamp>,
     availableDateRanges: Nullable<CandleDateranges[]> = [],
   ) {
     const availableRangesMessage = availableDateRanges?.length
       ? availableDateRanges
-          .map(
-            ({ daterange_start, daterange_end }) => `[${toISOString(daterange_start)} - ${toISOString(daterange_end)}]`,
-          )
+          .map(({ daterange_start, daterange_end }) => `[${toISOString(daterange_start)} - ${toISOString(daterange_end)}]`)
           .join(', ')
       : 'No date ranges found in database';
 
     const message = [
       'Missing candles in database:',
-      `${toISOString(start)} -> ${toISOString(end)},`,
+      `${symbol} ${toISOString(start)} -> ${toISOString(end)},`,
       'Available date ranges:',
       availableRangesMessage,
     ];

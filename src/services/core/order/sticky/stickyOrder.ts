@@ -1,5 +1,6 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderSide, OrderState } from '@models/order.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { debug, info, warning } from '@services/logger';
@@ -16,8 +17,8 @@ export class StickyOrder extends Order {
   private id?: string;
   private interval?: Timer;
 
-  constructor(gekkoOrderId: UUID, action: OrderSide, amount: number, _price?: number) {
-    super(gekkoOrderId, action, 'STICKY');
+  constructor(symbol: TradingPair, gekkoOrderId: UUID, action: OrderSide, amount: number, _price?: number) {
+    super(symbol, gekkoOrderId, action, 'STICKY');
     const orderSync = config.getExchange().orderSynchInterval;
     this.isCanceling = false;
     this.isMoving = false;
@@ -87,8 +88,8 @@ export class StickyOrder extends Order {
   }
 
   private async processStickyPrice() {
-    const { bid, ask } = await this.exchange.fetchTicker();
-    const marketData = this.exchange.getMarketData();
+    const { bid, ask } = await this.exchange.fetchTicker(this.symbol);
+    const marketData = this.exchange.getMarketData(this.symbol);
     const minimalPrice = marketData?.price?.min ?? 0;
     return this.side === 'BUY' ? bid + minimalPrice : ask - minimalPrice;
   }
@@ -147,15 +148,11 @@ export class StickyOrder extends Order {
 
   protected handleCreateOrderError(error: unknown) {
     clearInterval(this.interval);
-    if (error instanceof OrderOutOfRangeError && this.isOrderPartiallyFilled())
-      return Promise.resolve(this.orderFilled());
+    if (error instanceof OrderOutOfRangeError && this.isOrderPartiallyFilled()) return Promise.resolve(this.orderFilled());
 
-    if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError)
-      return Promise.resolve(this.orderRejected(error.message));
+    if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError) return Promise.resolve(this.orderRejected(error.message));
 
-    if (error instanceof Error) this.orderErrored(error);
-
-    throw error;
+    if (error instanceof Error) return Promise.resolve(this.orderErrored(error));
   }
 
   protected handleCancelOrderSuccess({ id, status, filled, remaining, timestamp, price }: OrderState) {
@@ -249,7 +246,7 @@ export class StickyOrder extends Order {
   private async createLimitOrderWithCallback(side: OrderSide, amount: number, price: number) {
     try {
       const callback = (order: OrderState) => this.handleCreateOrderSuccess(order);
-      const order = await this.exchange.createLimitOrder(side, amount, price, callback);
+      const order = await this.exchange.createLimitOrder(this.symbol, side, amount, price, callback);
       await this.handleCreateOrderSuccess(order);
     } catch (error) {
       await this.handleCreateOrderError(error);

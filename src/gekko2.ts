@@ -16,6 +16,7 @@
 
 import { config } from '@services/configuration/configuration';
 import { gekkoPipeline } from '@services/core/pipeline/pipeline';
+import { inject } from '@services/injecter/injecter';
 import { error, info } from '@services/logger';
 import { logVersion } from '@utils/process/process.utils';
 
@@ -41,6 +42,8 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
   } catch (e) {
     error('gekko', e instanceof Error ? e.message : e);
     process.exit(1);
+  } finally {
+    inject.storage().close();
   }
 };
 

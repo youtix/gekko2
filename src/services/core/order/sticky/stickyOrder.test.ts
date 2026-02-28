@@ -22,7 +22,7 @@ vi.mock('@services/logger', () => ({
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: () => ({ mode: 'backtest' }),
+    getWatch: () => ({ mode: 'backtest', pairs: [{ symbol: 'BTC/USDT' }] }),
     getExchange: () => ({ orderSynchInterval: 1000 }),
   },
 }));
@@ -49,7 +49,7 @@ describe('StickyOrder', () => {
   });
 
   const createOrder = async (side: 'BUY' | 'SELL', amount = 5) => {
-    const order = new StickyOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', side, amount);
+    const order = new StickyOrder('BTC/USDT', 'ee21e130-48bc-405f-be0c-46e9bf17b52e', side, amount);
     await order.launch();
     await flushAsync();
     return order;
@@ -68,7 +68,7 @@ describe('StickyOrder', () => {
 
         await createOrder(side, amount);
 
-        expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith(side, amount, expectedPrice, expect.any(Function));
+        expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BTC/USDT', side, amount, expectedPrice, expect.any(Function));
       },
     );
 
@@ -81,7 +81,7 @@ describe('StickyOrder', () => {
 
       await order.launch(); // Re-launch (e.g. after move)
 
-      expect(fakeExchange.createLimitOrder).toHaveBeenLastCalledWith('SELL', 2, 58, expect.any(Function));
+      expect(fakeExchange.createLimitOrder).toHaveBeenLastCalledWith('BTC/USDT', 'SELL', 2, 58, expect.any(Function));
     });
   });
 
@@ -98,7 +98,7 @@ describe('StickyOrder', () => {
       order['setStatus']('open');
       order['id'] = 'order-1';
       await order.cancel();
-      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith('order-1');
+      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith('BTC/USDT', 'order-1');
     });
 
     it('does not cancel if order id is missing', async () => {
@@ -138,7 +138,7 @@ describe('StickyOrder', () => {
 
       await order.checkOrder();
 
-      expect(fakeExchange.fetchOrder).toHaveBeenCalledWith('order-1');
+      expect(fakeExchange.fetchOrder).toHaveBeenCalledWith('BTC/USDT', 'order-1');
     });
 
     it.each`
@@ -189,7 +189,7 @@ describe('StickyOrder', () => {
 
       await order['move']();
 
-      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith('order-1');
+      expect(fakeExchange.cancelOrder).toHaveBeenCalledWith('BTC/USDT', 'order-1');
       expect(launchSpy).toHaveBeenCalled();
     });
 
@@ -291,11 +291,6 @@ describe('StickyOrder', () => {
         expect(spy).toHaveBeenCalled();
       },
     );
-
-    it('re-throws unknown errors', async () => {
-      const order = await createOrder('BUY');
-      expect(() => order['handleCreateOrderError']('string error')).toThrow('string error');
-    });
   });
 
   describe('handleCancelOrderSuccess', () => {

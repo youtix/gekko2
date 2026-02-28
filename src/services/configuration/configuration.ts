@@ -7,7 +7,7 @@ import { find } from 'lodash-es';
 import { Configuration as ConfigurationModel } from '../../models/configuration.types';
 import { configurationSchema } from './configuration.schema';
 
-class Configuration {
+export class Configuration {
   private configuration?: ConfigurationModel;
   constructor() {
     const configFilePath = process.env['GEKKO_CONFIG_FILE_PATH'];

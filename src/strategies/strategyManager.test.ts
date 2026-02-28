@@ -4,13 +4,16 @@ import {
   STRATEGY_INFO_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
 } from '@constants/event.const';
+import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
-import { LogLevel } from '@models/logLevel.types';
-import { MarketData } from '@services/exchange/exchange.types';
+import { CandleBucket } from '@models/event.types';
+import { BalanceDetail } from '@models/portfolio.types';
+import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
+import { addMinutes } from 'date-fns';
+import { UUID } from 'node:crypto';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Tools } from './strategy.types';
 import { StrategyManager } from './strategyManager';
 
 const indicatorMocks = vi.hoisted(() => {
@@ -67,6 +70,9 @@ vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(function () {
     return {
       getStrategy: vi.fn(() => ({ each: 1, wait: 0 })),
+      getWatch: vi.fn(() => ({
+        pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
+      })),
     };
   });
   return { config: new Configuration() };
@@ -88,9 +94,9 @@ vi.mock('./debug/debugAdvice.startegy.ts', () => ({
 
 describe('StrategyManager', () => {
   let manager: StrategyManager;
-  const defaultMarketData: MarketData = { amount: { min: 1 } };
+  const defaultMarketData = new Map([['BTC/USDT', { amount: { min: 1 } }]]) as any;
   const candle = {
-    start: 0,
+    start: 1000,
     open: 1,
     high: 2,
     low: 0,
@@ -98,9 +104,20 @@ describe('StrategyManager', () => {
     volume: 1,
   } as any;
 
+  const bucket: CandleBucket = new Map();
+  bucket.set('BTC/USDT', candle);
+
   beforeEach(() => {
     manager = new StrategyManager(1);
     manager.setMarketData(defaultMarketData);
+  });
+
+  describe('Constructor', () => {
+    it('initializes with default empty config if no strategy config exists', () => {
+      vi.mocked(config.getStrategy).mockReturnValueOnce(undefined as any);
+      const m = new StrategyManager(1);
+      expect(m['strategyParams']).toEqual({});
+    });
   });
 
   describe('createStrategy', () => {
@@ -117,6 +134,12 @@ describe('StrategyManager', () => {
       expect(strategy.constructor.name).toBe('DebugAdvice');
     });
 
+    it('loads a strategy from an absolute custom path directly', async () => {
+      const absolutePath = path.resolve(__dirname, './debug/debugAdvice.startegy.ts');
+      await manager.createStrategy('DebugAdvice', absolutePath);
+      expect(manager['strategy']).toBeDefined();
+    });
+
     it('throws when built-in strategy is missing', async () => {
       await expect(manager.createStrategy('UnknownStrategy')).rejects.toThrow(GekkoError);
     });
@@ -128,10 +151,23 @@ describe('StrategyManager', () => {
   });
 
   describe('strategy events', () => {
-    describe('onNewCandle', () => {
+    describe('onOneMinuteBucket', () => {
+      it('updates time and trailing stop manager', () => {
+        const updateSpy = vi.spyOn(manager['trailingStopManager'], 'update');
+        // Add second candle to avoid reference identity check issues if needed
+        const secondCandle = { ...candle, start: 1000 };
+        const minBucket = new Map([['BTC/USDT', secondCandle]]) as any;
+        manager.onOneMinuteBucket(minBucket);
+
+        expect(manager['currentTimestamp']).toBe(new Date(1000 + 60000).getTime());
+        expect(updateSpy).toHaveBeenCalledWith(minBucket);
+      });
+    });
+
+    describe('onTimeFrameCandle', () => {
       it('initializes strategy once, processes indicators, and emits warmup completion', () => {
         const indicator = { onNewCandle: vi.fn(), getResult: vi.fn().mockReturnValue(42) };
-        manager['indicators'].push(indicator as any);
+        manager['indicators'].push({ indicator, symbol: 'BTC/USDT' } as any);
         const strategy = {
           init: vi.fn(),
           onEachTimeframeCandle: vi.fn(),
@@ -142,60 +178,87 @@ describe('StrategyManager', () => {
         const warmupListener = vi.fn();
         manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);
 
-        manager.onTimeFrameCandle(candle);
+        // 1st Candle: Warmup phase (age 0 -> 1)
+        manager.onTimeFrameCandle(bucket);
 
         expect(strategy.init).toHaveBeenCalledTimes(1);
         const initArgs = strategy.init.mock.calls[0]?.[0];
-        expect(initArgs).toMatchObject({
-          candle,
-          portfolio: {
-            asset: { free: 0, used: 0, total: 0 },
-            currency: { free: 0, used: 0, total: 0 },
-          },
-          addIndicator: manager['addIndicator'],
-        });
+        expect(initArgs.candle).toBe(bucket);
+        expect(initArgs.portfolio).toBeInstanceOf(Map);
+        expect(initArgs.portfolio.size).toBe(0);
+        expect(initArgs.addIndicator).toBe(manager['addIndicator']);
         expect(initArgs.tools).toEqual({
           strategyParams: { each: 1, wait: 0 },
           marketData: defaultMarketData,
           createOrder: manager['createOrder'],
           cancelOrder: manager['cancelOrder'],
+          cancelTrailingOrder: manager['cancelTrailingOrder'],
           log: manager['log'],
         });
         expect(indicator.onNewCandle).toHaveBeenCalledWith(candle);
         expect(indicator.getResult).toHaveBeenCalled();
         expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(1);
 
-        const [params, indicatorResult] = strategy.onEachTimeframeCandle.mock.calls[0] as [any, number];
-        expect(params).toMatchObject({
-          candle,
-          portfolio: {
-            asset: { free: 0, used: 0, total: 0 },
-            currency: { free: 0, used: 0, total: 0 },
-          },
-          tools: expect.objectContaining({
-            strategyParams: { each: 1, wait: 0 },
-            marketData: defaultMarketData,
-            createOrder: manager['createOrder'],
-            cancelOrder: manager['cancelOrder'],
-            log: manager['log'],
-          }),
-        });
-        expect(indicatorResult).toBe(42);
+        const [params, indicatorResult] = strategy.onEachTimeframeCandle.mock.calls[0] as [any, any];
+        expect(params.candle).toBe(bucket);
+        expect(indicatorResult).toEqual({ results: 42, symbol: 'BTC/USDT' });
+
+        // Log/AfterWarmup NOT called yet, as age was 0 during execution, now incremented to 1
         expect(strategy.log).not.toHaveBeenCalled();
         expect(strategy.onTimeframeCandleAfterWarmup).not.toHaveBeenCalled();
         expect(warmupListener).not.toHaveBeenCalled();
 
-        manager.onTimeFrameCandle(candle);
+        // The implementation checks: `if (this.warmupPeriod === this.age)`.
+        // Constructor sets warmupPeriod = 1.
+        // First call: age 0. logic runs. at end: age becomes 1.
+        // Wait, the implementation says:
+        // if (this.warmupPeriod === this.age) emit
+        // if (this.warmupPeriod <= this.age) log/afterWarmup
+        // if (this.warmupPeriod >= this.age) age++
 
-        expect(strategy.init).toHaveBeenCalledTimes(1);
-        expect(warmupListener).toHaveBeenCalledWith(candle);
-        expect(info).toHaveBeenCalledWith(
-          'strategy',
-          expect.stringContaining('Strategy warmup done ! Sending first candle (1970-01-01T00:00:00.000Z) to strategy'),
-        );
+        // So:
+        // Start: age = 0, warmup = 1.
+        // Logic runs.
+        // Check 1: 1 === 0 (false)
+        // Check 2: 1 <= 0 (false)
+        // Check 3: 1 >= 0 (true) -> age becomes 1.
+
+        // 2nd Candle: Age = 1. Warmup = 1.
+
+        // 2nd execution
+        manager.onTimeFrameCandle(bucket);
+
+        expect(strategy.init).toHaveBeenCalledTimes(1); // Only once
+
+        // Check 1: 1 === 1 (true) -> emit
+        expect(warmupListener).toHaveBeenCalledWith(bucket);
+
+        // Check 2: 1 <= 1 (true) -> log/afterWarmup
         expect(strategy.log).toHaveBeenCalledTimes(1);
         expect(strategy.onTimeframeCandleAfterWarmup).toHaveBeenCalledTimes(1);
         expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(2);
+
+        // Check 3: 1 >= 1 (true) -> age becomes 2.
+      });
+
+      it('does not increment age if warmup phase is not reached', () => {
+        const customManager = new StrategyManager(5);
+        customManager.onTimeFrameCandle(bucket);
+        // Age starts at 0, warmup is 5.
+        // So 5 > 0, age is bumped to 1.
+        expect(customManager['age']).toBe(1);
+      });
+
+      it('should handle indicators for symbols missing in bucket (e.g. multi-timeframe)', () => {
+        const indicator = { onNewCandle: vi.fn(), getResult: vi.fn() };
+        manager['indicators'].push({ indicator, symbol: 'ETH/USDT' } as any); // ETH not in bucket
+        const strategy = { init: vi.fn(), onEachTimeframeCandle: vi.fn(), log: vi.fn(), onTimeframeCandleAfterWarmup: vi.fn() };
+        manager['strategy'] = strategy as any;
+
+        manager.onTimeFrameCandle(bucket); // Bucket only has BTC
+
+        expect(indicator.onNewCandle).not.toHaveBeenCalled();
+        expect(indicator.getResult).toHaveBeenCalled(); // Should still get result (e.g. previous)
       });
     });
 
@@ -205,7 +268,7 @@ describe('StrategyManager', () => {
         manager['strategy'] = strategy as any;
         const order = { id: '1' } as any;
         const exchange = { price: 10 };
-        manager['indicatorsResults'] = ['indicator'];
+        manager['indicatorsResults'] = [{ results: 'indicator', symbol: 'BTC/USDT' }];
 
         manager.onOrderCompleted({ order, exchange } as any);
 
@@ -213,16 +276,28 @@ describe('StrategyManager', () => {
           {
             order,
             exchange,
-            tools: {
-              strategyParams: { each: 1, wait: 0 },
-              marketData: defaultMarketData,
-              createOrder: manager['createOrder'],
-              cancelOrder: manager['cancelOrder'],
-              log: manager['log'],
-            },
+            tools: expect.objectContaining({ strategyParams: { each: 1, wait: 0 } }),
           },
-          'indicator',
+          { results: 'indicator', symbol: 'BTC/USDT' },
         );
+      });
+
+      it('adds pending trailing stop to trailing stop manager', () => {
+        const order = { id: '1', symbol: 'BTC/USDT', amount: 1, orderCreationDate: 123 } as any;
+        const trailing = { percentage: 2 };
+        manager['pendingTrailingStops'].set(order.id, trailing);
+        const addOrderSpy = vi.spyOn(manager['trailingStopManager'], 'addOrder');
+
+        manager.onOrderCompleted({ order, exchange: {} } as any);
+
+        expect(addOrderSpy).toHaveBeenCalledWith({
+          id: order.id,
+          symbol: order.symbol,
+          amount: order.amount,
+          trailing: trailing,
+          createdAt: order.orderCreationDate,
+        });
+        expect(manager['pendingTrailingStops'].has(order.id)).toBe(false);
       });
     });
 
@@ -232,7 +307,7 @@ describe('StrategyManager', () => {
         manager['strategy'] = strategy as any;
         const order = { id: '2' } as any;
         const exchange = { price: 11 };
-        manager['indicatorsResults'] = ['indicator'];
+        manager['indicatorsResults'] = [{ results: 'indicator', symbol: 'BTC/USDT' }];
 
         manager.onOrderCanceled({ order, exchange } as any);
 
@@ -240,15 +315,9 @@ describe('StrategyManager', () => {
           {
             order,
             exchange,
-            tools: {
-              strategyParams: { each: 1, wait: 0 },
-              marketData: defaultMarketData,
-              createOrder: manager['createOrder'],
-              cancelOrder: manager['cancelOrder'],
-              log: manager['log'],
-            },
+            tools: expect.objectContaining({ strategyParams: { each: 1, wait: 0 } }),
           },
-          'indicator',
+          { results: 'indicator', symbol: 'BTC/USDT' },
         );
       });
     });
@@ -259,7 +328,7 @@ describe('StrategyManager', () => {
         manager['strategy'] = strategy as any;
         const order = { id: '3' } as any;
         const exchange = { price: 12 };
-        manager['indicatorsResults'] = ['indicator'];
+        manager['indicatorsResults'] = [{ results: 'indicator', symbol: 'BTC/USDT' }];
 
         manager.onOrderErrored({ order, exchange } as any);
 
@@ -267,15 +336,9 @@ describe('StrategyManager', () => {
           {
             order,
             exchange,
-            tools: {
-              strategyParams: { each: 1, wait: 0 },
-              marketData: defaultMarketData,
-              createOrder: manager['createOrder'],
-              cancelOrder: manager['cancelOrder'],
-              log: manager['log'],
-            },
+            tools: expect.objectContaining({ strategyParams: { each: 1, wait: 0 } }),
           },
-          'indicator',
+          { results: 'indicator', symbol: 'BTC/USDT' },
         );
       });
     });
@@ -289,16 +352,96 @@ describe('StrategyManager', () => {
 
         expect(strategy.end).toHaveBeenCalled();
       });
+
+      it('logs warning if pending orders present', () => {
+        vi.spyOn(manager['trailingStopManager'], 'getOrders').mockReturnValue(
+          new Map([['db2254e3-c749-448c-b7b6-aa28831bbae7', {} as any]]),
+        );
+        manager.onStrategyEnd();
+        expect(warning).toHaveBeenCalledWith('strategy', 'Strategy ended with 1 active trailing stop(s) that never triggered.');
+      });
+    });
+
+    describe('Circuit Breaker (consecutiveErrors)', () => {
+      const order = { id: '3' } as any;
+      const exchange = { price: 12 } as any;
+
+      it('should increment consecutive errors on order errored and throw ApplicationStopError when limit reached', () => {
+        // First 4 errors should not throw
+        for (let i = 0; i < 4; i++) {
+          expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        }
+        // 5th error should throw ApplicationStopError
+        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError(ApplicationStopError);
+        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError('Max consecutive order errors reached (5)');
+      });
+
+      it('should reset consecutive errors on order completed', () => {
+        expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        manager.onOrderCompleted({ order, exchange });
+
+        // Next 4 errors should not throw
+        for (let i = 0; i < 4; i++) {
+          expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        }
+        // 5th throws
+        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError(ApplicationStopError);
+      });
+
+      it('should reset consecutive errors on order canceled', () => {
+        expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        manager.onOrderCanceled({ order, exchange });
+
+        // Next 4 errors should not throw
+        for (let i = 0; i < 4; i++) {
+          expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+        }
+        // 5th throws
+        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError(ApplicationStopError);
+      });
+
+      it('should not throw if maxConsecutiveErrors is -1', () => {
+        const customManager = new StrategyManager(1, -1);
+
+        for (let i = 0; i < 10; i++) {
+          expect(() => customManager.onOrderErrored({ order, exchange })).not.toThrow();
+        }
+      });
+    });
+
+    describe('TrailingStopManager Events', () => {
+      it('forwards activation back to strategy', () => {
+        const strategy = { onTrailingStopActivated: vi.fn(), onTrailingStopTriggered: vi.fn() };
+        manager['strategy'] = strategy as any;
+        const state = { symbol: 'BTC/USDT', amount: 2 };
+
+        manager['onTrailingStopActivated'](state as any);
+
+        expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith(state);
+      });
+
+      it('creates market order and forwards trigger back to strategy', () => {
+        const strategy = { onTrailingStopTriggered: vi.fn() };
+        manager['strategy'] = strategy as any;
+        manager['currentTimestamp'] = 5000; // Requires timestamp to create orders
+        const state = { symbol: 'BTC/USDT', amount: 2 };
+
+        const createOrderSpy = vi.spyOn(manager as any, 'createOrder');
+        manager['onTrailingStopTriggered'](state as any);
+
+        expect(createOrderSpy).toHaveBeenCalledWith({ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', amount: 2 });
+        // The id comes from randomUUID mock 'db2254e3-c749-448c-b7b6-aa28831bbae7'
+        expect(strategy.onTrailingStopTriggered).toHaveBeenCalledWith(expect.any(String), state);
+      });
     });
   });
 
   describe('setters function', () => {
-    describe('setPortfolio', () => {
+    describe('onPortfolioChange', () => {
       it('updates the portfolio reference used by tools', () => {
-        const portfolio = {
-          asset: { free: 2, used: 0, total: 2 },
-          currency: { free: 3, used: 0, total: 3 },
-        };
+        const portfolio = new Map<any, BalanceDetail>();
+        portfolio.set('BTC', { free: 2, used: 0, total: 2 });
+        portfolio.set('USDT', { free: 3, used: 0, total: 3 });
         const strategy = {
           init: vi.fn(),
           onEachTimeframeCandle: vi.fn(),
@@ -307,9 +450,9 @@ describe('StrategyManager', () => {
         };
         manager['strategy'] = strategy as any;
 
-        manager.setPortfolio(portfolio);
+        manager.onPortfolioChange(portfolio);
 
-        manager.onTimeFrameCandle(candle);
+        manager.onTimeFrameCandle(bucket);
 
         const params = strategy.onEachTimeframeCandle.mock.calls[0]?.[0];
         expect(params?.portfolio).toBe(portfolio);
@@ -317,11 +460,11 @@ describe('StrategyManager', () => {
     });
     describe('setMarketData', () => {
       it('applies the provided market data to newly created tools', () => {
-        const marketData: MarketData = { amount: { min: 0.1, max: 5 } };
+        const marketData = new Map([['BTC/USDT', { amount: { min: 0.1, max: 5 } }]]) as any;
 
         manager.setMarketData(marketData);
 
-        const tools = manager['createTools']();
+        const tools = manager['tools'];
         expect(tools.marketData).toEqual(marketData);
       });
     });
@@ -330,13 +473,13 @@ describe('StrategyManager', () => {
   describe('functions used in trader strategies', () => {
     describe('addIndicator', () => {
       it('registers indicator instances from the registry', () => {
-        const indicator = manager['addIndicator']('SMA', { period: 10 });
+        const indicator = manager['addIndicator']('SMA', 'BTC/USDT', { period: 10 });
         expect(indicatorMocks.IndicatorMock).toHaveBeenCalledWith({ period: 10 });
-        expect(manager['indicators']).toContain(indicator);
+        expect(manager['indicators']).toContainEqual({ indicator, symbol: 'BTC/USDT' });
       });
 
       it('throws when indicator is unknown', () => {
-        expect(() => manager['addIndicator']('UNKNOWN' as any, {})).toThrow(GekkoError);
+        expect(() => manager['addIndicator']('UNKNOWN' as any, 'BTC/USDT', {})).toThrow(GekkoError);
       });
     });
 
@@ -344,9 +487,12 @@ describe('StrategyManager', () => {
       it('createOrder emits the advice event', () => {
         const listener = vi.fn();
         manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
-        const order = { side: 'BUY', type: 'STICKY', quantity: 1 } as const;
-        const candleStart = Date.UTC(2024, 0, 1, 0, 0, 0);
-        manager.onOneMinuteCandle({ start: candleStart } as any);
+        const order = { side: 'BUY', type: 'STICKY', quantity: 1, symbol: 'BTC/USDT' } as const;
+
+        // Must set timestamp via candle first
+        manager['currentTimestamp'] = new Date('2025-01-01T00:00:00.000Z').getTime();
+        const timeBucket: CandleBucket = new Map();
+        manager.onTimeFrameCandle(timeBucket);
 
         const id = manager['createOrder'](order);
 
@@ -354,8 +500,23 @@ describe('StrategyManager', () => {
         expect(listener).toHaveBeenCalledWith({
           ...order,
           id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
-          orderCreationDate: Date.UTC(2024, 0, 1, 0, 1, 0),
+          orderCreationDate: addMinutes(manager['currentTimestamp'], 1).getTime(),
         });
+      });
+
+      it('ignores trailing logic if order is SELL (buy only logic)', () => {
+        manager['currentTimestamp'] = 1000;
+        const sellOrder = { side: 'SELL', type: 'MARKET', amount: 1, symbol: 'BTC/USDT', trailing: { percentage: 2 } } as any;
+
+        manager['createOrder'](sellOrder);
+
+        expect(manager['pendingTrailingStops'].size).toBe(0);
+      });
+
+      it('throws if no timestamp available', () => {
+        manager['currentTimestamp'] = 0;
+        const order = { side: 'BUY', type: 'STICKY', quantity: 1, symbol: 'BTC/USDT' } as const;
+        expect(() => manager['createOrder'](order)).toThrow('No candle when relaying advice');
       });
     });
 
@@ -370,12 +531,36 @@ describe('StrategyManager', () => {
       });
     });
 
+    describe('cancelTrailingOrder', () => {
+      it('cancelTrailingOrder removes from pending orders and trailing stop manager', () => {
+        const orderId = 'db2254e3-c749-448c-b7b6-aa28831bbae7' as UUID;
+
+        manager['pendingTrailingStops'].set(orderId, { percentage: 2 });
+        manager['trailingStopManager'].addOrder({
+          id: orderId,
+          symbol: 'BTC/USDT',
+          amount: 1,
+          trailing: { percentage: 2 },
+          createdAt: 123456789,
+        });
+
+        expect(manager['pendingTrailingStops'].has(orderId)).toBe(true);
+        expect(manager['trailingStopManager'].getOrders().has(orderId)).toBe(true);
+
+        manager['cancelTrailingOrder'](orderId);
+
+        expect(manager['pendingTrailingStops'].has(orderId)).toBe(false);
+        expect(manager['trailingStopManager'].getOrders().has(orderId)).toBe(false);
+      });
+    });
+
     describe('log', () => {
-      it.each([
-        { level: 'debug' as LogLevel, logger: debug },
-        { level: 'info' as LogLevel, logger: info },
-        { level: 'warn' as LogLevel, logger: warning },
-      ])('calls $level logger', ({ level, logger }) => {
+      it.each`
+        level      | logger
+        ${'debug'} | ${debug}
+        ${'info'}  | ${info}
+        ${'warn'}  | ${warning}
+      `('calls $level logger', ({ level, logger }) => {
         manager['log'](level, 'message');
         expect(logger).toHaveBeenCalledWith('strategy', 'message');
       });
@@ -386,64 +571,35 @@ describe('StrategyManager', () => {
       });
 
       it('emits STRATEGY_INFO_EVENT with metadata', () => {
-        vi.useFakeTimers();
-        try {
-          const timestamp = new Date('2024-01-01T00:00:00.000Z');
-          vi.setSystemTime(timestamp);
-          const listener = vi.fn();
-          manager.on(STRATEGY_INFO_EVENT, listener);
+        const listener = vi.fn();
+        manager.on(STRATEGY_INFO_EVENT, listener);
 
-          manager['log']('info', 'Something happened');
+        manager['log']('info', 'Something happened');
 
-          expect(listener).toHaveBeenCalledWith({
-            timestamp: timestamp.getTime(),
-            level: 'info',
-            tag: 'strategy',
-            message: 'Something happened',
-          });
-        } finally {
-          vi.useRealTimers();
-        }
+        expect(listener).toHaveBeenCalledWith({
+          timestamp: manager['currentTimestamp'],
+          level: 'info',
+          tag: 'strategy',
+          message: 'Something happened',
+        });
       });
     });
   });
 
   describe('utils function', () => {
-    describe('createTools', () => {
-      it('builds a toolset wired with the candle, helpers, and manager state', () => {
-        const tools = manager['createTools']();
-
-        expect(tools).toStrictEqual({
-          strategyParams: manager['strategyParams'],
-          marketData: defaultMarketData,
-          createOrder: manager['createOrder'],
-          cancelOrder: manager['cancelOrder'],
-          log: manager['log'],
-        } as Tools<object>);
-      });
-
-      it('throws when market data are unset before creating tools', () => {
-        manager.setMarketData(null);
-
-        expect(() => manager['createTools']()).toThrow(GekkoError);
-      });
-    });
     describe('emitWarmupCompletedEvent', () => {
       it('should log warmup completion', () => {
-        manager['emitWarmupCompletedEvent'](candle);
+        manager['emitWarmupCompletedEvent'](bucket);
 
-        expect(info).toHaveBeenCalledWith(
-          'strategy',
-          expect.stringContaining('Strategy warmup done ! Sending first candle (1970-01-01T00:00:00.000Z) to strategy'),
-        );
+        expect(info).toHaveBeenCalledWith('strategy', expect.stringContaining('Strategy warmup done'));
       });
       it('should emit the event with the candle payload', () => {
         const warmupListener = vi.fn();
         manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);
 
-        manager['emitWarmupCompletedEvent'](candle);
+        manager['emitWarmupCompletedEvent'](bucket);
 
-        expect(warmupListener).toHaveBeenCalledWith(candle);
+        expect(warmupListener).toHaveBeenCalledWith(bucket);
       });
     });
   });

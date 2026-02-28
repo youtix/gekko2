@@ -42,11 +42,8 @@ export class SequentialEventEmitter {
   public addDeferredEmit<T = unknown>(name: string, payload: T): void {
     debug('event', `[${this.emitterName}] Adding deferred event: ${name}`);
     const existing = this.deferredEvents.get(name);
-    if (existing) {
-      existing.push(payload);
-    } else {
-      this.deferredEvents.set(name, [payload]);
-    }
+    if (existing) existing.push(structuredClone(payload));
+    else this.deferredEvents.set(name, [structuredClone(payload)]);
   }
 
   public async broadcastDeferredEmit(): Promise<boolean> {

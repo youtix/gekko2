@@ -9,11 +9,8 @@ describe('getRetryDelay', () => {
     ${2}    | ${1000}   | ${3000}  | ${2000}
     ${10}   | ${1000}   | ${3000}  | ${3000}
     ${3}    | ${500}    | ${1500}  | ${1160.964047443681}
-  `(
-    'returns $expected ms for attempt $attempt, baseDelay $baseDelay, maxDelay $maxDelay',
-    ({ attempt, baseDelay, maxDelay, expected }) => {
-      const result = getRetryDelay(attempt, baseDelay, maxDelay);
-      expect(result).toBe(expected);
-    },
-  );
+  `('returns $expected ms for attempt $attempt, baseDelay $baseDelay, maxDelay $maxDelay', ({ attempt, baseDelay, maxDelay, expected }) => {
+    const result = getRetryDelay(attempt, baseDelay, maxDelay);
+    expect(result).toBe(expected);
+  });
 });

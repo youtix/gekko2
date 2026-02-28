@@ -1,12 +1,20 @@
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
-import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
+import { TradingPair } from '@models/utility.types';
 import z from 'zod';
 import { exchangeSchema } from './exchange.schema';
 
 export type ExchangeConfig = z.infer<typeof exchangeSchema>;
+
+export type MarketValidationResult<T> = { isValid: true; value: T } | { isValid: false; reason: string; min?: number; max?: number };
+
+export interface Ticker {
+  bid: number;
+  ask: number;
+}
 
 export interface ExchangeDataLimits {
   candles: number;
@@ -46,23 +54,24 @@ export type FetchOHLCVParams = {
 export type OrderSettledCallback = (orderState: OrderState) => void;
 
 export interface Exchange {
-  fetchTicker(): Promise<Ticker>;
-  fetchOHLCV(params?: FetchOHLCVParams): Promise<Candle[]>;
-  fetchMyTrades(from?: EpochTimeStamp): Promise<Trade[]>;
+  fetchTickers(symbols: TradingPair[]): Promise<Record<TradingPair, Ticker>>;
+  fetchTicker(symbol: TradingPair): Promise<Ticker>;
+  fetchOHLCV(symbol: TradingPair, params?: FetchOHLCVParams): Promise<Candle[]>;
+  fetchMyTrades(symbol: TradingPair, from?: EpochTimeStamp): Promise<Trade[]>;
   fetchBalance(): Promise<Portfolio>;
   getExchangeName(): string;
-  getMarketData(): MarketData;
+  getMarketData(symbol: TradingPair): MarketData;
   createLimitOrder(
+    symbol: TradingPair,
     side: OrderSide,
     amount: number,
     price: number,
     onSettled?: OrderSettledCallback,
   ): Promise<OrderState>;
-  createMarketOrder(side: OrderSide, amount: number): Promise<OrderState>;
-  cancelOrder(id: string): Promise<OrderState>;
+  createMarketOrder(symbol: TradingPair, side: OrderSide, amount: number): Promise<OrderState>;
+  cancelOrder(symbol: TradingPair, id: string): Promise<OrderState>;
   loadMarkets(): Promise<void>;
-  fetchOrder(id: string): Promise<OrderState>;
-  onNewCandle(onNewCandle: (candle: Candle) => void): () => void;
+  fetchOrder(symbol: TradingPair, id: string): Promise<OrderState>;
 }
 
-export type DummyExchange = Exchange & { processOneMinuteCandle: (candle: Candle) => void };
+export type DummyExchange = Exchange & { processOneMinuteBucket: (bucket: CandleBucket) => Promise<void> };

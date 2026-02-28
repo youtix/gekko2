@@ -9,6 +9,7 @@ export const EVENT_NAMES = [
   'order_cancel',
   'order_error',
   'order_complete',
+  'roundtrip_complete',
 ] as const;
 
 export type Event = (typeof EVENT_NAMES)[number];

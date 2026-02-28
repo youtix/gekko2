@@ -1,11 +1,5 @@
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { TradingPair } from '@models/utility.types';
+import { IndicatorResults, InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { SMACrossoverStrategyParams } from './smaCrossover.types';
 
@@ -21,23 +15,30 @@ import { SMACrossoverStrategyParams } from './smaCrossover.types';
 export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
   /** Tracks whether price was above SMA in the previous candle */
   private wasPriceAboveSMA: boolean | null = null;
+  private pair?: TradingPair;
 
-  init({ tools, addIndicator }: InitParams<SMACrossoverStrategyParams>): void {
+  init({ candle, tools, addIndicator }: InitParams<SMACrossoverStrategyParams>): void {
     const { period, src } = tools.strategyParams;
-    addIndicator('SMA', { period, src });
+    const [pair] = candle.keys();
+    this.pair = pair;
+    addIndicator('SMA', this.pair, { period, src });
   }
 
   onTimeframeCandleAfterWarmup(
     { candle, tools }: OnCandleEventParams<SMACrossoverStrategyParams>,
-    ...indicators: unknown[]
+    ...indicators: IndicatorResults<number | null>[]
   ): void {
     const { log, createOrder } = tools;
     const [sma] = indicators;
-    const price = candle.close;
 
-    if (!isNumber(sma)) return;
+    if (!this.pair) return;
+    const currentCandle = candle.get(this.pair);
+    if (!currentCandle) return;
+    const price = currentCandle.close;
 
-    const isPriceAboveSMA = price > sma;
+    if (!isNumber(sma.results)) return;
+
+    const isPriceAboveSMA = price > sma.results;
 
     // First candle after warmup - just record the position
     if (this.wasPriceAboveSMA === null) {
@@ -49,29 +50,27 @@ export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
     // Detect crossovers
     if (this.wasPriceAboveSMA && !isPriceAboveSMA) {
       // Price crossed below SMA => SMA crossed UP the price => SELL
-      log('info', `SMA crossed UP price (${sma.toFixed(5)} > ${price.toFixed(5)}) => SELL`);
-      createOrder({ type: 'MARKET', side: 'SELL' });
+      log('info', `SMA crossed UP price (${sma.results.toFixed(5)} > ${price.toFixed(5)}) => SELL`);
+      createOrder({ type: 'MARKET', side: 'SELL', symbol: this.pair });
     } else if (!this.wasPriceAboveSMA && isPriceAboveSMA) {
       // Price crossed above SMA => SMA crossed DOWN the price => BUY
-      log('info', `SMA crossed DOWN price (${sma.toFixed(5)} < ${price.toFixed(5)}) => BUY`);
-      createOrder({ type: 'MARKET', side: 'BUY' });
+      log('info', `SMA crossed DOWN price (${sma.results.toFixed(5)} < ${price.toFixed(5)}) => BUY`);
+      createOrder({ type: 'MARKET', side: 'BUY', symbol: this.pair });
     }
 
     this.wasPriceAboveSMA = isPriceAboveSMA;
   }
 
-  log({ candle, tools }: OnCandleEventParams<SMACrossoverStrategyParams>, ...indicators: unknown[]): void {
+  log({ candle, tools }: OnCandleEventParams<SMACrossoverStrategyParams>, ...indicators: IndicatorResults<number | null>[]): void {
     const { log } = tools;
     const [sma] = indicators;
-    if (!isNumber(sma)) return;
 
-    log('debug', `SMA: ${sma.toFixed(5)} | Price: ${candle.close.toFixed(5)}`);
+    if (!this.pair) return;
+    const currentCandle = candle.get(this.pair);
+    if (!currentCandle) return;
+
+    if (!isNumber(sma.results)) return;
+
+    log('debug', `SMA: ${sma.results.toFixed(5)} | Price: ${currentCandle.close.toFixed(5)}`);
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<SMACrossoverStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<SMACrossoverStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<SMACrossoverStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<SMACrossoverStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

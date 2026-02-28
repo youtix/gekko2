@@ -4,6 +4,7 @@ export default {
   test: {
     mockReset: true,
     restoreMock: true,
+    include: ['src/**/*.test.ts'],
     coverage: {
       reporter: ['text'],
       include: ['src/**/*.ts'],

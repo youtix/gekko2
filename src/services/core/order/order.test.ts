@@ -20,7 +20,7 @@ vi.mock('@services/logger', () => ({
 
 vi.mock('@services/configuration/configuration', () => ({
   config: {
-    getWatch: () => ({ mode: 'backtest' }),
+    getWatch: () => ({ mode: 'backtest', pairs: [{ symbol: 'BTC/USDT' }] }),
   },
 }));
 
@@ -66,7 +66,7 @@ describe('order', () => {
     Object.values(fakeExchange).forEach(value => {
       if (typeof value === 'function') value.mockReset?.();
     });
-    testOrder = new TestOrder('ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 'STICKY');
+    testOrder = new TestOrder('BTC/USDT', 'ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 'STICKY');
   });
 
   it('should have status "initializing" upon creation', () => {

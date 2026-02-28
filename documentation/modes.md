@@ -40,7 +40,6 @@ watch:
   currency: USDT
   mode: importer
   tickrate: 500              # Milliseconds between API requests (rate limiting)
-  fillGaps: empty            # How to handle missing candles: 'empty' | 'no'
   daterange:
     start: '2024-01-01T00:00:00.000Z'
     end: '2024-12-01T00:00:00.000Z'
@@ -63,7 +62,6 @@ plugins:
 | `asset`            | The base asset to import     | `BTC`, `ETH`, `SOL`  |
 | `currency`         | The quote currency           | `USDT`, `EUR`, `BTC` |
 | `tickrate`         | Delay between API calls (ms) | `500` (recommended)  |
-| `fillGaps`         | Handling of missing data     | `empty`, `no`        |
 | `daterange.start`  | Start date for import        | ISO 8601 format      |
 | `daterange.end`    | End date for import          | ISO 8601 format      |
 

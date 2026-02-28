@@ -1,6 +1,7 @@
 import type { OrderSide } from '@models/order.types';
-import type { Portfolio } from '@models/portfolio.types';
-import type {
+import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
+import { TradingPair } from '@models/utility.types';
+import {
   InitParams,
   OnCandleEventParams,
   OnOrderCanceledEventParams,
@@ -17,6 +18,7 @@ import {
   computeLevelPrice,
   computeRebalancePlan,
   deriveLevelQuantity,
+  getPortfolioContent,
   hasOnlyOneSide,
   inferPricePrecision,
   isOutOfRange,
@@ -37,6 +39,12 @@ import {
  * - When price exits the grid range, a warning is logged but trading continues
  */
 export class GridBot implements Strategy<GridBotStrategyParams> {
+  /** Base asset */
+  private base: string = '';
+  /** Quote asset */
+  private quote: string = '';
+  /** Trading pair */
+  private pair: TradingPair = '/';
   /** All grid levels with their state */
   private levels: LevelState[] = [];
   /** Grid price boundaries */
@@ -61,17 +69,22 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private priceStep?: number;
 
   init({ candle, portfolio, tools }: InitParams<GridBotStrategyParams>): void {
+    const [pair] = candle.keys();
+    this.pair = pair;
+    const [base, quote] = pair.split('/');
+    this.base = base;
+    this.quote = quote;
     this.reset();
     this.retryLimit = Math.max(1, tools.strategyParams.retryOnError ?? DEFAULT_RETRY_LIMIT);
 
-    const { priceDecimals, priceStep } = inferPricePrecision(candle.close, tools.marketData);
+    const { priceDecimals, priceStep } = inferPricePrecision(candle.get(this.pair)!.close, tools.marketData.get(this.pair)!);
     this.priceDecimals = priceDecimals;
     this.priceStep = priceStep;
 
-    const centerPrice = roundPrice(candle.close, priceDecimals, priceStep);
+    const centerPrice = roundPrice(candle.get(this.pair)!.close, priceDecimals, priceStep);
 
     // Validate configuration
-    const validationError = validateConfig(tools.strategyParams, centerPrice, tools.marketData);
+    const validationError = validateConfig(tools.strategyParams, centerPrice, tools.marketData.get(this.pair)!);
     if (validationError) {
       tools.log('error', `GridBot: ${validationError}`);
       return;
@@ -83,22 +96,17 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
   onEachTimeframeCandle({ candle, tools }: OnCandleEventParams<GridBotStrategyParams>): void {
     if (!this.gridBounds || this.awaitingRebalance) return;
+    const close = candle.get(this.pair)!.close;
 
-    if (isOutOfRange(candle.close, this.gridBounds)) {
-      tools.log(
-        'warn',
-        `GridBot: Price ${candle.close} is out of grid range [${this.gridBounds.min}, ${this.gridBounds.max}]`,
-      );
+    if (isOutOfRange(close, this.gridBounds)) {
+      tools.log('warn', `GridBot: Price ${close} is out of grid range [${this.gridBounds.min}, ${this.gridBounds.max}]`);
     }
-  }
-
-  onTimeframeCandleAfterWarmup(_params: OnCandleEventParams<GridBotStrategyParams>): void {
-    // Range checks happen in onEachTimeframeCandle
   }
 
   onOrderCompleted({ order, exchange, tools }: OnOrderCompletedEventParams<GridBotStrategyParams>): void {
     // Handle rebalance order completion
-    if (this.handleRebalanceCompletion(order.id, exchange.price, exchange.portfolio, tools)) {
+    const { asset, currency } = getPortfolioContent(exchange.portfolio, this.base, this.quote);
+    if (this.handleRebalanceCompletion(order.id, exchange.price, asset.free, currency.free, tools)) {
       return;
     }
 
@@ -134,7 +142,8 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   onOrderCanceled({ order, exchange, tools }: OnOrderCanceledEventParams<GridBotStrategyParams>): void {
     // Handle rebalance order cancellation
     if (this.rebalanceOrderId && order.id === this.rebalanceOrderId) {
-      this.handleRebalanceFailure('Order was canceled', exchange.price, exchange.portfolio, tools);
+      const { asset, currency } = getPortfolioContent(exchange.portfolio, this.base, this.quote);
+      this.handleRebalanceFailure('Order was canceled', exchange.price, asset, currency, tools);
       return;
     }
 
@@ -158,7 +167,8 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   onOrderErrored({ order, exchange, tools }: OnOrderErroredEventParams<GridBotStrategyParams>): void {
     // Handle rebalance order error
     if (this.rebalanceOrderId && order.id === this.rebalanceOrderId) {
-      this.handleRebalanceFailure(order.reason ?? 'Unknown error', exchange.price, exchange.portfolio, tools);
+      const { asset, currency } = getPortfolioContent(exchange.portfolio, this.base, this.quote);
+      this.handleRebalanceFailure(order.reason ?? 'Unknown error', exchange.price, asset, currency, tools);
       return;
     }
 
@@ -183,14 +193,6 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     this.placeOrder(levelIndex, level.side, tools);
   }
 
-  log(_params: OnCandleEventParams<GridBotStrategyParams>): void {
-    // No logging implementation needed
-  }
-
-  end(): void {
-    // No cleanup needed
-  }
-
   /** Reset all internal state */
   private reset(): void {
     this.levels = [];
@@ -207,18 +209,20 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   /** Check if rebalancing is needed and initiate it, or build grid directly */
   private prepareGrid(centerPrice: number, portfolio: Portfolio, tools: Tools<GridBotStrategyParams>): void {
     const { buyLevels, sellLevels } = tools.strategyParams;
-    const plan = computeRebalancePlan(centerPrice, portfolio, buyLevels, sellLevels, tools.marketData);
+    const { asset, currency } = getPortfolioContent(portfolio, this.base, this.quote);
+    const marketData = tools.marketData.get(this.pair)!;
+    const plan = computeRebalancePlan(centerPrice, asset.total, currency.total, buyLevels, sellLevels, marketData);
 
     if (plan) {
       // Validate rebalance is possible
-      if (plan.side === 'SELL' && plan.amount > portfolio.asset.free) {
+      if (plan.side === 'SELL' && plan.amount > asset.free) {
         tools.log('warn', 'GridBot: Insufficient asset for rebalance, building grid with current allocation');
-        this.buildGrid(centerPrice, portfolio, tools);
+        this.buildGrid(centerPrice, asset.free, currency.free, tools);
         return;
       }
-      if (plan.side === 'BUY' && plan.estimatedNotional > portfolio.currency.free) {
+      if (plan.side === 'BUY' && plan.estimatedNotional > currency.free) {
         tools.log('warn', 'GridBot: Insufficient currency for rebalance, building grid with current allocation');
-        this.buildGrid(centerPrice, portfolio, tools);
+        this.buildGrid(centerPrice, asset.free, currency.free, tools);
         return;
       }
 
@@ -227,7 +231,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       this.rebalanceRetryCount = 0;
       this.placeRebalanceOrder(tools);
     } else {
-      this.buildGrid(centerPrice, portfolio, tools);
+      this.buildGrid(centerPrice, asset.free, currency.free, tools);
     }
   }
 
@@ -236,7 +240,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     if (!this.pendingRebalance) return;
 
     const { side, amount } = this.pendingRebalance;
-    this.rebalanceOrderId = tools.createOrder({ type: 'STICKY', side, amount });
+    this.rebalanceOrderId = tools.createOrder({ type: 'STICKY', side, amount, symbol: this.pair });
     tools.log('info', `GridBot: Rebalancing - ${side} ${amount} (STICKY order)`);
   }
 
@@ -244,7 +248,8 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private handleRebalanceCompletion(
     orderId: UUID,
     currentPrice: number,
-    portfolio: Portfolio,
+    assetFree: number,
+    currencyFree: number,
     tools: Tools<GridBotStrategyParams>,
   ): boolean {
     if (!this.pendingRebalance || this.rebalanceOrderId !== orderId) return false;
@@ -257,7 +262,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     tools.log('info', 'GridBot: Rebalance complete, building grid');
 
     const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep);
-    this.buildGrid(centerPrice, portfolio, tools);
+    this.buildGrid(centerPrice, assetFree, currencyFree, tools);
 
     return true;
   }
@@ -266,7 +271,8 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private handleRebalanceFailure(
     reason: string,
     currentPrice: number,
-    portfolio: Portfolio,
+    asset: BalanceDetail,
+    currency: BalanceDetail,
     tools: Tools<GridBotStrategyParams>,
   ): void {
     this.rebalanceRetryCount++;
@@ -279,15 +285,17 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
       // Build grid anyway with current allocation
       const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep);
-      this.buildGrid(centerPrice, portfolio, tools);
+      this.buildGrid(centerPrice, asset.free, currency.free, tools);
       return;
     }
 
     tools.log('warn', `GridBot: Rebalance attempt ${this.rebalanceRetryCount} failed: ${reason}. Retrying...`);
 
+    const marketData = tools.marketData.get(this.pair)!;
+
     // Refresh the rebalance plan with current portfolio
     const { buyLevels, sellLevels } = tools.strategyParams;
-    const plan = computeRebalancePlan(currentPrice, portfolio, buyLevels, sellLevels, tools.marketData);
+    const plan = computeRebalancePlan(currentPrice, asset.free, currency.free, buyLevels, sellLevels, marketData);
     if (plan) {
       this.pendingRebalance = plan;
       this.placeRebalanceOrder(tools);
@@ -296,24 +304,18 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       this.awaitingRebalance = false;
       this.pendingRebalance = undefined;
       const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep);
-      this.buildGrid(centerPrice, portfolio, tools);
+      this.buildGrid(centerPrice, asset.free, currency.free, tools);
     }
   }
 
   /** Build the grid around the center price */
-  private buildGrid(centerPrice: number, portfolio: Portfolio, tools: Tools<GridBotStrategyParams>): void {
+  private buildGrid(centerPrice: number, assetFree: number, currencyFree: number, tools: Tools<GridBotStrategyParams>): void {
     const { buyLevels, sellLevels, spacingType, spacingValue } = tools.strategyParams;
 
+    const marketData = tools.marketData.get(this.pair)!;
+
     // Compute grid bounds
-    const bounds = computeGridBounds(
-      centerPrice,
-      buyLevels,
-      sellLevels,
-      this.priceDecimals,
-      spacingType,
-      spacingValue,
-      this.priceStep,
-    );
+    const bounds = computeGridBounds(centerPrice, buyLevels, sellLevels, this.priceDecimals, spacingType, spacingValue, this.priceStep);
 
     if (!bounds) {
       tools.log('error', 'GridBot: Could not compute valid grid bounds');
@@ -325,13 +327,14 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     // Derive quantity per level
     this.quantity = deriveLevelQuantity(
       centerPrice,
-      portfolio,
+      assetFree,
+      currencyFree,
       buyLevels,
       sellLevels,
       this.priceDecimals,
       spacingType,
       spacingValue,
-      tools.marketData,
+      marketData,
       this.priceStep,
     );
 
@@ -367,10 +370,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       this.placeOrder(i, level.side, tools);
     }
 
-    tools.log(
-      'info',
-      `GridBot: Grid built around ${centerPrice} with ${buyLevels} buy / ${sellLevels} sell levels, qty=${this.quantity}`,
-    );
+    tools.log('info', `GridBot: Grid built around ${centerPrice} with ${buyLevels} buy / ${sellLevels} sell levels, qty=${this.quantity}`);
   }
 
   /** Place a LIMIT order for a level */
@@ -383,6 +383,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       side,
       amount: this.quantity,
       price: level.price,
+      symbol: this.pair,
     });
 
     level.orderId = orderId;

@@ -1,17 +1,22 @@
+import { assetsSchema, currencySchema } from '@models/schema/pairConfig.schema';
+import { TradingPair } from '@models/utility.types';
 import { binanceExchangeSchema } from '@services/exchange/binance/binance.schema';
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
 import { hyperliquidExchangeSchema } from '@services/exchange/hyperliquid/hyperliquid.schema';
 import { paperBinanceExchangeSchema } from '@services/exchange/paper/paperTradingBinanceExchange.schema';
+import { toTimestamp } from '@utils/date/date.utils';
 import { some } from 'lodash-es';
 import { z } from 'zod';
 import { TIMEFRAMES } from './configuration.const';
 
 const disclaimerField = 'I understand that Gekko only automates MY OWN trading strategies' as const;
 
-const daterangeSchema = z.object({
-  start: z.iso.datetime(),
-  end: z.iso.datetime(),
-});
+const daterangeSchema = z
+  .object({
+    start: z.iso.datetime(),
+    end: z.iso.datetime(),
+  })
+  .transform(({ start, end }) => ({ start: toTimestamp(start), end: toTimestamp(end) }));
 
 const warmupSchema = z
   .object({
@@ -22,23 +27,37 @@ const warmupSchema = z
 
 export const watchSchema = z
   .object({
-    currency: z.string(),
-    asset: z.string(),
+    assets: assetsSchema,
+    currency: currencySchema,
+    timeframe: z.enum(TIMEFRAMES).optional(),
     tickrate: z.number().default(1000),
     mode: z.enum(['realtime', 'backtest', 'importer']),
-    timeframe: z.enum(TIMEFRAMES).default('1m'),
-    fillGaps: z.enum(['no', 'empty']).default('empty'),
     warmup: warmupSchema,
-    daterange: z.union([daterangeSchema, z.null()]).default(null),
+    daterange: daterangeSchema.optional(),
     batchSize: z.number().optional(),
   })
+  .transform(data => ({
+    ...data,
+    pairs: data.assets.map(asset => ({
+      symbol: `${asset}/${data.currency}` as TradingPair,
+    })),
+  }))
   .superRefine((data, ctx) => {
     const requiresDaterange = data.mode === 'importer' || data.mode === 'backtest';
-    if (requiresDaterange && data.daterange === null) {
+    if (requiresDaterange && !data.daterange) {
       ctx.addIssue({
         code: 'custom',
         path: ['daterange'],
         message: 'daterange is required for importer and backtest modes',
+      });
+    }
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode !== 'importer' && !data.timeframe) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['timeframe'],
+        message: 'timeframe is required for backtest and realtime modes',
       });
     }
   });
@@ -77,8 +96,7 @@ export const configurationSchema = z
     // Disclaimer validation for real exchanges (exclude dummy-cex and paper-binance)
     const hasTraderPlugin = some(data.plugins, plugin => plugin.name?.toLowerCase() === 'trader');
     const isSimulatedExchange = data.exchange.name === 'dummy-cex' || data.exchange.name === 'paper-binance';
-    const isUsingRealExchange =
-      data.exchange && !isSimulatedExchange && !('sandbox' in data.exchange && data.exchange.sandbox);
+    const isUsingRealExchange = data.exchange && !isSimulatedExchange && !('sandbox' in data.exchange && data.exchange.sandbox);
     const isDisclaimerIgnored = !data[disclaimerField];
     if (hasTraderPlugin && isUsingRealExchange && isDisclaimerIgnored) {
       ctx.addIssue({

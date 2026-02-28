@@ -18,7 +18,7 @@ export type OrderSummary = {
   amount: number;
   price: number;
   side: OrderSide;
-  feePercent?: number;
+  feePercent: number;
   orderExecutionDate: EpochTimeStamp;
 };
 export type OrderCancelDetails = {

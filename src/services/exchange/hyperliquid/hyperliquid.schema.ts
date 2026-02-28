@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { exchangeSchema } from '../exchange.schema';
+import { exchangeSchema, proxySchema } from '../exchange.schema';
 
 export const hyperliquidExchangeSchema = exchangeSchema.extend({
   name: z.literal('hyperliquid'),
@@ -7,4 +7,5 @@ export const hyperliquidExchangeSchema = exchangeSchema.extend({
   walletAddress: z.string().startsWith('0x'),
   sandbox: z.boolean().default(false),
   verbose: z.boolean().default(false),
+  proxy: proxySchema,
 });

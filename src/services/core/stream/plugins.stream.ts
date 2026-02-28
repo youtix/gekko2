@@ -1,10 +1,11 @@
-import { Candle } from '@models/candle.types';
+import { ApplicationStopError } from '@errors/applicationStop.error';
+import { CandleBucket } from '@models/event.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { DummyExchange } from '@services/exchange/exchange.types';
 import { isDummyExchange } from '@services/exchange/exchange.utils';
 import { inject } from '@services/injecter/injecter';
-import { info, warning } from '@services/logger';
+import { info, error as logError, warning } from '@services/logger';
 import { Writable } from 'node:stream';
 
 export class PluginsStream extends Writable {
@@ -29,13 +30,13 @@ export class PluginsStream extends Writable {
     }
   }
 
-  public async _write(candle: Candle, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
+  public async _write(bucket: CandleBucket, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
     try {
-      // Forward candle to dummy exchange (if set by user) before all plugins
-      await this.dummyExchange?.processOneMinuteCandle(candle);
+      // Forward bucket to dummy exchange (if set by user) before all plugins
+      await this.dummyExchange?.processOneMinuteBucket(bucket);
 
-      // Forward candle to all plugins concurrently
-      await Promise.all(this.plugins.map(plugin => plugin.processInputStream(candle)));
+      // Forward bucket to all plugins concurrently
+      await Promise.all(this.plugins.map(plugin => plugin.processInputStream(bucket)));
 
       // Broadcast all deferred events sequentially
       for (const plugin of this.plugins) {
@@ -49,8 +50,14 @@ export class PluginsStream extends Writable {
     } catch (error) {
       // Finalize all plugins before destroying the stream
       await this.finalizeAllPlugins();
-      info('stream', 'Gekko is closing the application due to an error!');
-      this.destroy(error instanceof Error ? error : new Error(String(error)));
+
+      if (error instanceof ApplicationStopError) {
+        warning('stream', `Application stopped gracefully: ${error.message}`);
+        this.destroy(); // cleanly destroys without error
+      } else {
+        logError('stream', 'Gekko is closing the application due to an error!');
+        this.destroy(error instanceof Error ? error : new Error(String(error)));
+      }
     }
   }
 

@@ -1,31 +1,31 @@
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { TradingPair } from '@models/utility.types';
+import { IndicatorResults, InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { DEMAStrategyParams } from './dema.types';
 
 export class DEMA implements Strategy<DEMAStrategyParams> {
   private currentTrend?: 'down' | 'up';
+  private pair?: TradingPair;
 
-  init({ tools, addIndicator }: InitParams<DEMAStrategyParams>): void {
-    addIndicator('DEMA', { period: tools.strategyParams.period });
-    addIndicator('SMA', { period: tools.strategyParams.period });
+  init({ candle, tools, addIndicator }: InitParams<DEMAStrategyParams>): void {
+    const [pair] = candle.keys();
+    this.pair = pair;
+    addIndicator('DEMA', this.pair, { period: tools.strategyParams.period });
+    addIndicator('SMA', this.pair, { period: tools.strategyParams.period });
   }
 
-  onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<DEMAStrategyParams>, ...indicators: unknown[]) {
+  onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<DEMAStrategyParams>, ...indicators: IndicatorResults[]) {
     const { strategyParams, log, createOrder } = tools;
     const [dema, sma] = indicators;
-    const price = candle.close;
-    if (!isNumber(sma) || !isNumber(dema)) return;
+    if (!this.pair) return;
+    const currentCandle = candle.get(this.pair);
+    if (!currentCandle) return;
+    const price = currentCandle.close;
+    if (!isNumber(sma.results) || !isNumber(dema.results)) return;
 
-    const diff = sma - dema;
+    const diff = sma.results - dema.results;
 
-    const message = '@ ' + price.toFixed(8) + ' (' + dema.toFixed(5) + '/' + diff.toFixed(5) + ')';
+    const message = '@ ' + price.toFixed(8) + ' (' + dema.results.toFixed(5) + '/' + diff.toFixed(5) + ')';
 
     if (diff > strategyParams.thresholds.up) {
       log('debug', `We are currently in uptrend: ${message}`);
@@ -33,7 +33,7 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
       if (this.currentTrend !== 'up') {
         this.currentTrend = 'up';
         log('info', `Executing long advice due to detected uptrend: ${message}`);
-        createOrder({ type: 'STICKY', side: 'BUY' });
+        createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
       }
     } else if (diff < strategyParams.thresholds.down) {
       log('debug', `We are currently in a downtrend: ${message}`);
@@ -41,30 +41,21 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
       if (this.currentTrend !== 'down') {
         this.currentTrend = 'down';
         log('info', `Executing short advice due to detected downtrend: ${message}`);
-        createOrder({ type: 'STICKY', side: 'SELL' });
+        createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
       }
     } else {
       log('debug', `We are currently not in an up or down trend: ${message}`);
     }
   }
 
-  log({ tools }: OnCandleEventParams<DEMAStrategyParams>, ...indicators: unknown[]): void {
+  log({ tools }: OnCandleEventParams<DEMAStrategyParams>, ...indicators: IndicatorResults[]): void {
     const { log } = tools;
     const [dema, sma] = indicators;
-    if (!isNumber(sma) || !isNumber(dema)) return;
+    if (!isNumber(sma.results) || !isNumber(dema.results)) return;
 
     log(
       'debug',
-      ['Calculated DEMA and SMA properties for candle:', `DEMA: ${dema.toFixed(5)}`, `SMA: ${sma.toFixed(5)}`].join(
-        ' ',
-      ),
+      ['Calculated DEMA and SMA properties for candle:', `DEMA: ${dema.results.toFixed(5)}`, `SMA: ${sma.results.toFixed(5)}`].join(' '),
     );
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<DEMAStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

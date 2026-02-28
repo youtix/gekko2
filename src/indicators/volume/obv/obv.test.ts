@@ -44,19 +44,16 @@ describe('OBV', () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${443}  | ${323}    | ${840.9884168589101}  | ${-194.9884168589101}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${105}  | ${191.8}  | ${481.631399265159}   | ${-98.031399265159}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-718} | ${40.4}   | ${837.7863304572006}  | ${-756.9863304572007}
-  `(
-    'should return expected results when candle close to $candle.close',
-    ({ candle, obv: expectedObv, ma, upper, lower }) => {
-      obv.onNewCandle(candle);
-      const result = obv.getResult();
-      if (expectedObv === null) expect(result.obv).toBeNull();
-      else expect(result.obv).toBeCloseTo(expectedObv, 13);
-      if (ma === null) expect(result.ma).toBeNull();
-      else expect(result.ma).toBeCloseTo(ma, 13);
-      if (upper === null) expect(result.upper).toBeNull();
-      else expect(result.upper).toBeCloseTo(upper, 13);
-      if (lower === null) expect(result.lower).toBeNull();
-      else expect(result.lower).toBeCloseTo(lower, 13);
-    },
-  );
+  `('should return expected results when candle close to $candle.close', ({ candle, obv: expectedObv, ma, upper, lower }) => {
+    obv.onNewCandle(candle);
+    const result = obv.getResult();
+    if (expectedObv === null) expect(result.obv).toBeNull();
+    else expect(result.obv).toBeCloseTo(expectedObv, 13);
+    if (ma === null) expect(result.ma).toBeNull();
+    else expect(result.ma).toBeCloseTo(ma, 13);
+    if (upper === null) expect(result.upper).toBeNull();
+    else expect(result.upper).toBeCloseTo(upper, 13);
+    if (lower === null) expect(result.lower).toBeNull();
+    else expect(result.lower).toBeCloseTo(lower, 13);
+  });
 });

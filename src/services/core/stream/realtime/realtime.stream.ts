@@ -1,49 +1,53 @@
-import { Candle } from '@models/candle.types';
-import { candleSchema } from '@models/schema/candle.schema';
-import { config } from '@services/configuration/configuration';
+import { ONE_MINUTE } from '@constants/time.const';
+import { TradingPair } from '@models/utility.types';
+import { Heart } from '@services/core/heart/heart';
 import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
-import { debug } from '@services/logger';
+import { debug, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { bindAll } from 'lodash-es';
+import { startOfMinute, subMinutes } from 'date-fns';
+import { first } from 'lodash-es';
 import { Readable } from 'node:stream';
 
 export class RealtimeStream extends Readable {
+  protected heart: Heart;
   private readonly exchange: Exchange;
-  private readonly unsubscribe: () => void;
-  private readonly symbol: string;
 
-  constructor() {
+  constructor(symbol: TradingPair) {
     super({ objectMode: true });
-    const { asset, currency } = config.getWatch();
     this.exchange = inject.exchange();
-    this.symbol = `${asset}/${currency}`;
+    this.heart = new Heart(ONE_MINUTE);
 
-    bindAll(this, ['onNewCandle']);
+    this.heart.on('tick', () => this.onNewCandle(symbol));
 
-    this.unsubscribe = this.exchange.onNewCandle(this.onNewCandle);
+    const delay = ONE_MINUTE - (Date.now() % ONE_MINUTE);
+    setTimeout(() => this.heart.pump(), delay);
   }
 
-  private onNewCandle(candle: Candle) {
-    debug(
-      'stream',
-      [
-        `1m candle from ${this.exchange.getExchangeName()} for ${this.symbol} @ ${toISOString(candle.start)} `,
-        `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`,
-      ].join(' '),
-    );
-
-    candleSchema.parse(candle);
-    this.push(candle);
+  private async onNewCandle(symbol: TradingPair) {
+    // Calculate the start of the previous minute to ensure we fetch the last completed candle
+    const from = startOfMinute(subMinutes(Date.now(), 1)).getTime();
+    const candles = await this.exchange.fetchOHLCV(symbol, { from, limit: 1 });
+    const candle = first(candles);
+    if (candle) {
+      debug(
+        'stream',
+        [
+          `1m candle from ${this.exchange.getExchangeName()} for ${symbol} @ ${toISOString(candle.start)} `,
+          `O:${candle.open} H:${candle.high} L:${candle.low} C:${candle.close} V:${candle.volume}`,
+        ].join(' '),
+      );
+      this.push({ symbol, candle });
+    } else warning('stream', 'Received undefined candle');
   }
 
   _read(): void {
-    // Data is pushed from the websocket callback
+    // Data is pushed from the exchange callback
   }
 
   _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
     try {
-      this.unsubscribe();
+      this.heart.stop();
     } finally {
       callback(error);
     }

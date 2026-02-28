@@ -1,34 +1,31 @@
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-  Strategy,
-} from '@strategies/strategy.types';
+import { TradingPair } from '@models/utility.types';
+import { IndicatorResults, InitParams, OnCandleEventParams, Strategy } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber } from 'lodash-es';
 import { RSICurrentTrend, RSIStrategyParams } from './rsi.types';
 
 export class RSI implements Strategy<RSIStrategyParams> {
   private trend: RSICurrentTrend;
+  private pair?: TradingPair;
 
   constructor() {
     this.trend = { direction: 'none', duration: 0, adviced: false };
   }
 
-  init({ tools, addIndicator }: InitParams<RSIStrategyParams>): void {
+  init({ candle, tools, addIndicator }: InitParams<RSIStrategyParams>): void {
     const { period, src } = tools.strategyParams;
-    addIndicator('RSI', { period, src });
+    const [pair] = candle.keys();
+    this.pair = pair;
+    addIndicator('RSI', this.pair, { period, src });
   }
 
-  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<RSIStrategyParams>, ...indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<RSIStrategyParams>, ...indicators: IndicatorResults<number | null>[]): void {
     const { strategyParams, log, createOrder } = tools;
     const [rsi] = indicators;
-    if (!isNumber(rsi)) return;
+    if (!isNumber(rsi.results) || !this.pair) return;
     const { thresholds } = strategyParams;
 
-    if (rsi > thresholds.high) {
+    if (rsi.results > thresholds.high) {
       if (this.trend.direction !== 'high') {
         log('info', 'RSI: high trend detected');
         this.trend = { duration: 0, direction: 'high', adviced: false };
@@ -38,9 +35,9 @@ export class RSI implements Strategy<RSIStrategyParams> {
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;
-        createOrder({ type: 'STICKY', side: 'SELL' });
+        createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
       }
-    } else if (rsi < thresholds.low) {
+    } else if (rsi.results < thresholds.low) {
       if (this.trend.direction !== 'low') {
         log('info', 'RSI: low trend detected');
         this.trend = { duration: 0, direction: 'low', adviced: false };
@@ -50,16 +47,8 @@ export class RSI implements Strategy<RSIStrategyParams> {
 
       if (this.trend.duration >= thresholds.persistence && !this.trend.adviced) {
         this.trend.adviced = true;
-        createOrder({ type: 'STICKY', side: 'BUY' });
+        createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
       }
     }
   }
-
-  // NOT USED
-  onEachTimeframeCandle(_params: OnCandleEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  log(_params: OnCandleEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCompleted(_params: OnOrderCompletedEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderCanceled(_params: OnOrderCanceledEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  onOrderErrored(_params: OnOrderErroredEventParams<RSIStrategyParams>, ..._indicators: unknown[]): void {}
-  end(): void {}
 }

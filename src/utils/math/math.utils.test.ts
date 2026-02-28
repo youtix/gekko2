@@ -1,16 +1,5 @@
-import { BalanceSnapshot } from '@models/event.types';
 import { describe, expect, it } from 'vitest';
-import {
-  addPrecise,
-  linreg,
-  longestDrawdownDuration,
-  maxDrawdown,
-  percentile,
-  sharpeRatio,
-  sortinoRatio,
-  stdev,
-  weightedMean,
-} from './math.utils';
+import { addPrecise, linreg, percentile, stdev, weightedMean } from './math.utils';
 
 describe('stdev', () => {
   it.each`
@@ -58,15 +47,12 @@ describe('linreg', () => {
     ${[1, 2, 3]}       | ${[1, 2, 3]}        | ${1}      | ${0}
     ${[1, 2, 3]}       | ${[2, 2, 2]}        | ${0}      | ${2}
     ${[1, 2, 3, 4, 5]} | ${[1, 3, 2, 5, 4]}  | ${0.8}    | ${0.6}
-  `(
-    'should calculate regression for valuesX: $valuesX and valuesY: $valuesY',
-    ({ valuesX, valuesY, expectedM, expectedB }) => {
-      const [m, b] = linreg(valuesX, valuesY);
-      // Compare the Big numbers by converting them to string.
-      expect(m).toBeCloseTo(expectedM);
-      expect(b).toBeCloseTo(expectedB);
-    },
-  );
+  `('should calculate regression for valuesX: $valuesX and valuesY: $valuesY', ({ valuesX, valuesY, expectedM, expectedB }) => {
+    const [m, b] = linreg(valuesX, valuesY);
+    // Compare the Big numbers by converting them to string.
+    expect(m).toBeCloseTo(expectedM);
+    expect(b).toBeCloseTo(expectedB);
+  });
 
   // Test that when the input arrays are empty, the function returns [].
   it('should return [] when given empty arrays', () => {
@@ -89,16 +75,16 @@ describe('weightedMean', () => {
     expect(weightedMean(values, weights)).toBeCloseTo(expected);
   });
 
-  it('should throw an error when values and weights have different lengths', () => {
-    expect(() => weightedMean([1, 2], [1])).toThrow();
+  it('should return NaN when values and weights have different lengths', () => {
+    expect(weightedMean([1, 2], [1])).toBeNaN();
   });
 
-  it('should throw an error when provided with empty arrays', () => {
-    expect(() => weightedMean([], [])).toThrow();
+  it('should return NaN when provided with empty arrays', () => {
+    expect(weightedMean([], [])).toBeNaN();
   });
 
-  it('should throw an error when sum of weights is zero', () => {
-    expect(() => weightedMean([1, 2, 3], [0, 0, 0])).toThrow();
+  it('should return NaN when sum of weights is zero', () => {
+    expect(weightedMean([1, 2, 3], [0, 0, 0])).toBeNaN();
   });
 
   it('should not mutate the input arrays', () => {
@@ -126,152 +112,5 @@ describe('addPrecise', () => {
     ${1.234567} | ${8.765433} | ${10}
   `('returns $expected for $a + $b', ({ a, b, expected }) => {
     expect(addPrecise(a, b)).toBe(expected);
-  });
-});
-
-describe('sharpeRatio', () => {
-  it.each`
-    description                                  | returns         | yearlyProfit | riskFreeReturn | elapsedYears | expected
-    ${'return 0 for empty returns array'}        | ${[]}           | ${10}        | ${1}           | ${1}         | ${0}
-    ${'return 0 for zero elapsed years'}         | ${[1, 2, 3]}    | ${10}        | ${1}           | ${0}         | ${0}
-    ${'return 0 for negative elapsed years'}     | ${[1, 2, 3]}    | ${10}        | ${1}           | ${-1}        | ${0}
-    ${'return 0 when all returns are identical'} | ${[5, 5, 5, 5]} | ${10}        | ${1}           | ${1}         | ${0}
-  `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, expected }) => {
-    expect(sharpeRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears })).toBe(expected);
-  });
-
-  it.each`
-    description                                           | returns                     | yearlyProfit | riskFreeReturn | elapsedYears | comparison
-    ${'calculate positive ratio for profitable strategy'} | ${[2, -1, 3, -0.5, 2.5, 1]} | ${15}        | ${2}           | ${1}         | ${'positive'}
-    ${'calculate negative ratio when below risk-free'}    | ${[2, -1, 3, -0.5, 2.5, 1]} | ${0.5}       | ${2}           | ${1}         | ${'negative'}
-  `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, comparison }) => {
-    const result = sharpeRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears });
-    if (comparison === 'positive') expect(result).toBeGreaterThan(0);
-    else expect(result).toBeLessThan(0);
-  });
-
-  it('should scale correctly with elapsed years', () => {
-    const params = {
-      returns: [2, -1, 3, -0.5, 2.5, 1, 0.5, -0.3, 1.5, 2, -1, 0.8],
-      yearlyProfit: 10,
-      riskFreeReturn: 1,
-      elapsedYears: 1,
-    };
-    const oneYear = sharpeRatio(params);
-    const twoYears = sharpeRatio({ ...params, elapsedYears: 2 });
-    // Same number of observations over 2 years means fewer observations per year,
-    // so annualized volatility is lower, and sharpe should be higher
-    expect(twoYears).toBeGreaterThan(oneYear);
-  });
-});
-
-describe('sortinoRatio', () => {
-  it.each`
-    description                                      | returns               | yearlyProfit | riskFreeReturn | elapsedYears | expected
-    ${'return 0 for empty returns array'}            | ${[]}                 | ${10}        | ${1}           | ${1}         | ${0}
-    ${'return 0 for zero elapsed years'}             | ${[-1, -2, 3]}        | ${10}        | ${1}           | ${0}         | ${0}
-    ${'return 0 for negative elapsed years'}         | ${[-1, -2, 3]}        | ${10}        | ${1}           | ${-1}        | ${0}
-    ${'return 0 when there are no negative returns'} | ${[1, 2, 3, 4, 5]}    | ${10}        | ${1}           | ${1}         | ${0}
-    ${'return 0 when all losses are identical'}      | ${[-2, -2, -2, 5, 5]} | ${10}        | ${1}           | ${1}         | ${0}
-  `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, expected }) => {
-    expect(sortinoRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears })).toBe(expected);
-  });
-
-  it.each`
-    description                                             | returns                         | yearlyProfit | riskFreeReturn | elapsedYears | comparison
-    ${'calculate positive ratio for profitable strategy'}   | ${[2, -1, 3, -0.5, 2.5, -2, 1]} | ${15}        | ${2}           | ${1}         | ${'positive'}
-    ${'calculate negative ratio when below risk-free rate'} | ${[2, -1, 3, -0.5, 2.5, -2, 1]} | ${0.5}       | ${2}           | ${1}         | ${'negative'}
-  `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, comparison }) => {
-    const result = sortinoRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears });
-    if (comparison === 'positive') expect(result).toBeGreaterThan(0);
-    else expect(result).toBeLessThan(0);
-  });
-
-  it('should be higher than sharpe ratio when there are more gains than losses', () => {
-    // When there are more positive returns, downside deviation is typically lower
-    // than overall standard deviation, leading to higher Sortino vs Sharpe
-    const params = {
-      returns: [3, 4, 5, -1, 2, 3, -0.5, 4, 5, 2],
-      yearlyProfit: 20,
-      riskFreeReturn: 2,
-      elapsedYears: 1,
-    };
-    const sharpe = sharpeRatio(params);
-    const sortino = sortinoRatio(params);
-    expect(sortino).toBeGreaterThan(sharpe);
-  });
-});
-
-describe('maxDrawdown', () => {
-  it.each`
-    description                                      | balances                   | initialBalance | expected
-    ${'return 0 for empty balances array'}           | ${[]}                      | ${1000}        | ${0}
-    ${'return 0 when initialBalance is 0'}           | ${[100, 200]}              | ${0}           | ${0}
-    ${'return 0 when initialBalance is negative'}    | ${[100, 200]}              | ${-100}        | ${0}
-    ${'return 0 when balances only increase'}        | ${[1100, 1200, 1300]}      | ${1000}        | ${0}
-    ${'return 0 when balances stay constant'}        | ${[1000, 1000, 1000]}      | ${1000}        | ${0}
-    ${'calculate drawdown from initial balance'}     | ${[900]}                   | ${1000}        | ${10}
-    ${'calculate drawdown from new peak'}            | ${[1100, 990]}             | ${1000}        | ${10}
-    ${'return max drawdown among multiple declines'} | ${[1100, 1000, 1200, 900]} | ${1000}        | ${25}
-    ${'handle 100% drawdown'}                        | ${[1000, 0]}               | ${1000}        | ${100}
-    ${'handle small fractional changes'}             | ${[100.5, 100.0, 100.2]}   | ${100}         | ${0.4975124378109453}
-  `('should $description', ({ balances, initialBalance, expected }) => {
-    const result = maxDrawdown(balances, initialBalance);
-    if (expected === 0) {
-      expect(result).toBe(0);
-    } else {
-      expect(result).toBeCloseTo(expected, 5);
-    }
-  });
-
-  it('should track peak correctly through multiple ups and downs', () => {
-    // Peak at 1500, then drop to 1000, that's 33.33% drawdown
-    const balances = [1000, 1200, 1500, 1200, 1000, 1300];
-    const result = maxDrawdown(balances, 1000);
-    expect(result).toBeCloseTo(33.333333, 4);
-  });
-
-  it('should not mutate input array', () => {
-    const balances = [1100, 1000, 1200];
-    const copy = [...balances];
-    maxDrawdown(balances, 1000);
-    expect(balances).toEqual(copy);
-  });
-});
-
-describe('longestDrawdownDuration', () => {
-  it.each`
-    description                                     | samples                                                                                                                                                                                                              | initialBalance | expected
-    ${'return 0 for empty samples'}                 | ${[]}                                                                                                                                                                                                                | ${1000}        | ${0}
-    ${'return 0 when initialBalance is 0'}          | ${[{ date: 1000, balance: { total: 900 } }]}                                                                                                                                                                         | ${0}           | ${0}
-    ${'return 0 when initialBalance is negative'}   | ${[{ date: 1000, balance: { total: 900 } }]}                                                                                                                                                                         | ${-100}        | ${0}
-    ${'return 0 if balance never drops below peak'} | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 1100 } }]}                                                                                                                              | ${1000}        | ${0}
-    ${'calculate duration of single drawdown'}      | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 900 } }, { date: 3000, balance: { total: 1000 } }]}                                                                                     | ${1000}        | ${2000}
-    ${'find longest among multiple drawdowns'}      | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 900 } }, { date: 3000, balance: { total: 1000 } }, { date: 4000, balance: { total: 800 } }, { date: 10000, balance: { total: 1000 } }]} | ${1000}        | ${7000}
-    ${'handle ongoing drawdown at end'}             | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 900 } }]}                                                                                                                               | ${1000}        | ${1000}
-  `('should $description', ({ samples, initialBalance, expected }) => {
-    expect(longestDrawdownDuration(samples, initialBalance)).toBe(expected);
-  });
-
-  it('should track recovery to exact peak value', () => {
-    // Drop from 1000 to 800, then recover to exactly 1000 at date 5000
-    const samples = [
-      { date: 1000, balance: { total: 1000 } },
-      { date: 2000, balance: { total: 800 } },
-      { date: 3000, balance: { total: 900 } },
-      { date: 4000, balance: { total: 950 } },
-      { date: 5000, balance: { total: 1000 } },
-    ] as BalanceSnapshot[];
-    expect(longestDrawdownDuration(samples, 1000)).toBe(4000);
-  });
-
-  it('should not mutate input array', () => {
-    const samples = [
-      { date: 1000, balance: { total: 1000 } },
-      { date: 2000, balance: { total: 900 } },
-    ] as BalanceSnapshot[];
-    const copy = JSON.parse(JSON.stringify(samples));
-    longestDrawdownDuration(samples, 1000);
-    expect(samples).toEqual(copy);
   });
 });

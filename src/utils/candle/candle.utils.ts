@@ -1,45 +1,21 @@
+import { ONE_MINUTE } from '@constants/time.const';
+import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
-import { addMinutes, differenceInMinutes, isBefore } from 'date-fns';
-import { filter, last } from 'lodash-es';
+import { CandleBucket } from '@models/event.types';
 
 export const hl2 = (candle: Candle): number => (candle.high + candle.low) / 2;
 export const hlc3 = (candle: Candle): number => (candle.high + candle.low + candle.close) / 3;
 export const ohlc4 = (candle: Candle): number => (candle.open + candle.high + candle.low + candle.close) / 4;
 
-export const fillMissingCandles = (candles: Candle[]): Candle[] => {
-  if (candles.length < 2) return [];
-  const firstCandle = candles[0];
-  const lastCandle = candles[candles.length - 1];
-  const firstCandleStart = firstCandle.start;
-  const lastCandleStart = lastCandle.start;
-  const startDates = candles.map(c => c.start);
-
-  return Array(differenceInMinutes(lastCandleStart, firstCandleStart) + 1)
-    .fill(undefined)
-    .map((_, index) => {
-      const startDate = addMinutes(firstCandleStart, index).getTime();
-      const existingCandleIndex = startDates.indexOf(startDate);
-
-      if (existingCandleIndex !== -1) return candles[existingCandleIndex];
-
-      const previousCandle = last(filter(candles, c => isBefore(c.start, startDate)));
-      const previousClose = previousCandle?.close ?? 0;
-      const nextDate = addMinutes(startDate, 1).getTime();
-      const nextCandleIndex = startDates.indexOf(nextDate);
-      const immediateNextCandle = nextCandleIndex !== -1 ? candles[nextCandleIndex] : null;
-
-      const close = immediateNextCandle ? immediateNextCandle.open : previousClose;
-
-      return {
-        start: startDate,
-        open: previousClose,
-        high: Math.max(previousClose, close),
-        low: Math.min(previousClose, close),
-        close,
-        volume: previousCandle?.volume ?? 0,
-      };
-    });
-};
+export const createEmptyCandle = (lastCandle: Candle) => ({
+  ...lastCandle,
+  start: lastCandle.start + ONE_MINUTE,
+  open: lastCandle.close,
+  close: lastCandle.close,
+  high: lastCandle.close,
+  low: lastCandle.close,
+  volume: 0,
+});
 
 export const getCandleTimeOffset = (candleSize: number, start: EpochTimeStamp) => {
   const now = new Date(start);
@@ -79,4 +55,10 @@ export const getCandleTimeOffset = (candleSize: number, start: EpochTimeStamp) =
   }
 
   return 0;
+};
+
+export const getFirstCandleFromBucket = (bucket: CandleBucket) => {
+  const firstCandle = bucket.values().next().value;
+  if (!firstCandle) throw new GekkoError('utils', 'Impossible to get first candle from bucket: Empty candle bucket');
+  return firstCandle;
 };

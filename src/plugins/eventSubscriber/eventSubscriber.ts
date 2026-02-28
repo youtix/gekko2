@@ -1,10 +1,20 @@
 import { AdviceOrder } from '@models/advice.types';
-import { Candle } from '@models/candle.types';
-import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
+import {
+  CandleBucket,
+  OrderCanceledEvent,
+  OrderCompletedEvent,
+  OrderErroredEvent,
+  OrderInitiatedEvent,
+  RoundTrip,
+} from '@models/event.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
+import { TradingPair } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { TelegramBot } from '@services/bots/telegram/TelegramBot';
 import { toISOString } from '@utils/date/date.utils';
+import { round } from '@utils/math/round.utils';
+import { getAssetBalance } from '@utils/portfolio/portfolio.utils';
+import { formatDuration, intervalToDuration } from 'date-fns';
 import { bindAll, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
@@ -12,12 +22,12 @@ import { Event, EVENT_NAMES, EventSubscriberConfig } from './eventSubscriber.typ
 
 export class EventSubscriber extends Plugin {
   private bot: TelegramBot;
-  private price?: number;
+  private prices = new Map<TradingPair, number>();
   private subscriptions = new Set<Event>();
 
   constructor({ name, token, botUsername }: EventSubscriberConfig) {
     super(name);
-    bindAll(this, ['handleCommand']);
+    bindAll(this, [this.handleCommand.name]);
     this.bot = new TelegramBot(token, botUsername, this.handleCommand);
   }
 
@@ -32,6 +42,7 @@ export class EventSubscriber extends Plugin {
           'sub_order_cancel - Notify on order cancellation',
           'sub_order_error - Notify on order error',
           'sub_order_complete - Notify on order completion',
+          'sub_roundtrip_complete - Notify on roundtrip completion',
           'subscribe_all - Subscribe to all notifications',
           'unsubscribe_all - Unsubscribe from all notifications',
           'subscriptions - View current subscriptions',
@@ -73,18 +84,19 @@ export class EventSubscriber extends Plugin {
 
   public async onStrategyCreateOrder(payloads: AdviceOrder[]) {
     await Promise.all(
-      payloads.map(({ id, orderCreationDate, side, type, amount, price }) => {
+      payloads.map(({ id, orderCreationDate, side, type, amount, price, symbol }) => {
         if (!this.subscriptions.has('strat_create')) return;
+        const [, currency] = symbol.split('/');
+        const currentPrice = this.prices.get(symbol);
         const priceLine =
-          type === 'LIMIT'
-            ? `Requested limit price: ${price} ${this.currency}`
-            : `Target price: ${this.price ?? 'unknown'} ${this.currency}`;
+          type === 'LIMIT' ? `Requested limit price: ${price} ${currency}` : `Target price: ${currentPrice ?? 'unknown'} ${currency}`;
         const message = [
           `Order Id: ${id}`,
-          `Received ${type} ${side} advice`,
+          `Received ${type} ${side} advice for ${symbol}`,
           `Requested amount: ${amount ?? 'auto'}`,
           `At time: ${toISOString(orderCreationDate)}`,
           priceLine,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -95,18 +107,20 @@ export class EventSubscriber extends Plugin {
     await Promise.all(
       payloads.map(({ order, exchange }) => {
         if (!this.subscriptions.has('order_init')) return;
-        const { balance, portfolio, price: currentPrice } = exchange;
-        const { id, amount, side, type, price, orderCreationDate } = order;
-        const priceLine = price
-          ? `Requested limit price: ${price} ${this.currency}`
-          : `Target price: ${currentPrice} ${this.currency}`;
+        const { portfolio } = exchange;
+        const { id, amount, side, type, price, orderCreationDate, symbol } = order;
+        const [asset, currency] = symbol.split('/');
+        const currentPrice = this.prices.get(symbol) ?? 0;
+        const priceLine = price ? `Requested limit price: ${price} ${currency}` : `Target price: ${currentPrice} ${currency}`;
+        const assetBalance = getAssetBalance(portfolio, asset);
+        const currencyBalance = getAssetBalance(portfolio, currency);
         const message = [
-          `${side} ${type} order created (${id})`,
+          `${side} ${type} order created (${id}) for ${symbol}`,
           `Requested amount: ${amount}`,
-          `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
-          `Current balance: ${balance.total}`,
+          `Current symbol portfolio: ${assetBalance.total} ${asset} / ${currencyBalance.total} ${currency}`,
           priceLine,
           `At time: ${toISOString(orderCreationDate)}`,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -115,19 +129,19 @@ export class EventSubscriber extends Plugin {
 
   public async onOrderCanceled(payloads: OrderCanceledEvent[]) {
     await Promise.all(
-      payloads.map(({ order, exchange }) => {
+      payloads.map(({ order }) => {
         if (!this.subscriptions.has('order_cancel')) return;
-        const { price: currentPrice } = exchange;
-        const { id, amount, side, type, price, orderCancelationDate, filled, remaining } = order;
-        const priceLine = price
-          ? `Requested limit price: ${price} ${this.currency}`
-          : `Current price: ${currentPrice} ${this.currency}`;
+        const { id, amount, side, type, price, orderCancelationDate, filled, remaining, symbol } = order;
+        const [asset, currency] = symbol.split('/');
+        const currentPrice = this.prices.get(symbol) ?? 0;
+        const priceLine = price ? `Requested limit price: ${price} ${currency}` : `Current price: ${currentPrice} ${currency}`;
         const message = [
-          `${side} ${type} order canceled (${id})`,
+          `${side} ${type} order canceled (${id}) for ${symbol}`,
           `At time: ${toISOString(orderCancelationDate)}`,
-          `Filled amount: ${filled} / ${amount} ${this.asset}`,
-          `Remaining amount: ${remaining} ${this.asset}`,
+          `Filled amount: ${filled} / ${amount} ${asset}`,
+          `Remaining amount: ${remaining} ${asset}`,
           priceLine,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -138,13 +152,16 @@ export class EventSubscriber extends Plugin {
     await Promise.all(
       payloads.map(({ order }) => {
         if (!this.subscriptions.has('order_error')) return;
-        const { id, amount, side, type, reason, orderErrorDate } = order;
+        const { id, amount, side, type, reason, orderErrorDate, symbol } = order;
+        const [, currency] = symbol.split('/');
+        const currentPrice = this.prices.get(symbol) ?? 0;
         const message = [
-          `${side} ${type} order errored (${id})`,
+          `${side} ${type} order errored (${id}) for ${symbol}`,
           `Due to ${reason}`,
           `At time: ${toISOString(orderErrorDate)}`,
           `Requested amount: ${amount}`,
-          `Current price: ${this.price} ${this.currency}`,
+          `Current price: ${currentPrice} ${currency}`,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -155,17 +172,20 @@ export class EventSubscriber extends Plugin {
     await Promise.all(
       payloads.map(({ order, exchange }) => {
         if (!this.subscriptions.has('order_complete')) return;
-        const { portfolio, balance } = exchange;
-        const { id, amount, side, type, orderExecutionDate, effectivePrice, feePercent, fee } = order;
+        const { portfolio } = exchange;
+        const { id, amount, side, type, orderExecutionDate, effectivePrice, feePercent, fee, symbol } = order;
+        const [asset, currency] = symbol.split('/');
+        const assetBalance = getAssetBalance(portfolio, asset);
+        const currencyBalance = getAssetBalance(portfolio, currency);
         const message = [
-          `${side} ${type} order completed (${id})`,
-          `Amount: ${amount} ${this.asset}`,
-          `Price: ${effectivePrice} ${this.currency}`,
+          `${side} ${type} order completed (${id}) for ${symbol}`,
+          `Amount: ${amount} ${asset}`,
+          `Price: ${effectivePrice} ${currency}`,
           `Fee percent: ${feePercent ?? '0'}%`,
-          `Fee: ${fee} ${this.currency}`,
+          `Fee: ${fee} ${currency}`,
           `At time: ${toISOString(orderExecutionDate)}`,
-          `Current portfolio: ${portfolio.asset.total} ${this.asset} / ${portfolio.currency.total} ${this.currency}`,
-          `Current balance: ${balance}`,
+          `Current portfolio: ${assetBalance.total} ${asset} / ${currencyBalance.total} ${currency}`,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -176,10 +196,29 @@ export class EventSubscriber extends Plugin {
     await Promise.all(
       payloads.map(id => {
         if (!this.subscriptions.has('strat_cancel')) return;
+        const message = ['Strategy requested order cancellation', `Order Id: ${id}`, `At time: ${toISOString(Date.now())}`].join('\n');
+        this.bot.sendMessage(message);
+      }),
+    );
+  }
+
+  public async onRoundtripCompleted(payloads: RoundTrip[]) {
+    await Promise.all(
+      payloads.map(roundtrip => {
+        if (!this.subscriptions.has('roundtrip_complete')) return;
+        const { pnl, profit, duration, entryPrice, exitPrice, maxAdverseExcursion, exitAt } = roundtrip;
+
+        const durationStr = formatDuration(intervalToDuration({ start: 0, end: duration }));
         const message = [
-          'Strategy requested order cancellation',
-          `Order Id: ${id}`,
-          `At time: ${toISOString(Date.now())}`,
+          'Roundtrip completed',
+          `PnL: ${round(pnl, 2)}`,
+          `Profit: ${round(profit, 2)}%`,
+          `Duration: ${durationStr}`,
+          `Entry Price: ${entryPrice}`,
+          `Exit Price: ${exitPrice}`,
+          `Max Adverse Excursion: ${round(maxAdverseExcursion, 2)}%`,
+          `At time: ${toISOString(exitAt)}`,
+          '------',
         ].join('\n');
         this.bot.sendMessage(message);
       }),
@@ -196,8 +235,10 @@ export class EventSubscriber extends Plugin {
     this.bot.listen();
   }
 
-  protected processOneMinuteCandle(candle: Candle) {
-    this.price = candle.close;
+  protected processOneMinuteBucket(bucket: CandleBucket) {
+    for (const [symbol, candle] of bucket) {
+      this.prices.set(symbol, candle.close);
+    }
   }
 
   protected processFinalize() {
