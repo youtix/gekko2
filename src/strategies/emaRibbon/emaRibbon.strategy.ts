@@ -42,7 +42,7 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
 
     // console.log(emaRibbon.results.spread);
 
-    if (!this.isLong && isBullish && isSpreadCompressed && !this.isPendingOrder) {
+    if (!this.isLong && isBullish && isSpreadCompressed && !isSpreadCompressing && !this.isPendingOrder) {
       this.buyOrderId = createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
       this.isPendingOrder = true;
     }
