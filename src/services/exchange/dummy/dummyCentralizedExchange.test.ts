@@ -1,4 +1,7 @@
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
+import { OrderSide } from '@models/order.types';
+import { TradingPair } from '@models/utility.types';
 import { InvalidOrder } from '@services/exchange/exchange.error';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DummyCentralizedExchange } from './dummyCentralizedExchange';
@@ -7,7 +10,10 @@ import type { DummyCentralizedExchangeConfig } from './dummyCentralizedExchange.
 vi.mock('@services/configuration/configuration', () => ({
   config: {
     getWatch: () => ({
-      pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
+      pairs: [
+        { symbol: 'BTC/USDT', timeframe: '1m' },
+        { symbol: 'ETH/USDT', timeframe: '1m' },
+      ],
       daterange: { start: '2024-01-01' },
     }),
   },
@@ -15,6 +21,7 @@ vi.mock('@services/configuration/configuration', () => ({
 vi.mock('@services/logger', () => ({ error: vi.fn() }));
 
 const SYMBOL: `${string}/${string}` = 'BTC/USDT';
+const ETH_SYMBOL: `${string}/${string}` = 'ETH/USDT';
 
 const defaultMarketData = {
   price: { min: 1, max: 10_000 },
@@ -273,6 +280,92 @@ describe('DummyCentralizedExchange', () => {
       const order = await exchange.createLimitOrder(SYMBOL, 'SELL', 1, 150);
       await exchange.processOneMinuteBucket(createBucket(Date.now(), { high: 120 }));
       expect(await exchange.fetchOrder(SYMBOL, order.id)).toMatchObject({ status: 'open' });
+    });
+  });
+
+  describe('Multi-pair isolation', () => {
+    // BTC/USDT trades around 100 and ETH/USDT around 20, with different maker fees. Each bucket below starts with the other
+    // pair's candle, which crosses the order price (an ETH low of 15 crosses a BTC BUY at 80, a BTC high of 110 an ETH SELL
+    // at 30), so a pair-blind matcher fills the order before its own candle is even read.
+    const btc = (overrides: Partial<Candle> = {}) => [SYMBOL, sampleCandle(1000, overrides)] as const;
+    const eth = (overrides: Partial<Candle> = {}) =>
+      [ETH_SYMBOL, sampleCandle(1000, { open: 20, high: 25, low: 15, close: 20, ...overrides })] as const;
+
+    const createMultiPairExchange = () =>
+      createExchange({
+        marketData: new Map([
+          [SYMBOL, defaultMarketData],
+          [ETH_SYMBOL, { ...defaultMarketData, fee: { maker: 0.003, taker: 0.004 } }],
+        ]),
+        simulationBalance: new Map([
+          ['BTC', 10],
+          ['ETH', 10],
+          ['USDT', 50_000],
+        ]),
+      });
+
+    const settleLimitOrder = async (symbol: TradingPair, side: OrderSide, price: number, bucket: CandleBucket) => {
+      const exchange = createMultiPairExchange();
+      const { id } = await exchange.createLimitOrder(symbol, side, 1, price);
+      await exchange.processOneMinuteBucket(bucket);
+      return { order: await exchange.fetchOrder(symbol, id), balance: await exchange.fetchBalance() };
+    };
+
+    it.each`
+      side      | symbol        | price | bucket
+      ${'BUY'}  | ${SYMBOL}     | ${80} | ${new Map([eth(), btc({ low: 90 })])}
+      ${'SELL'} | ${ETH_SYMBOL} | ${30} | ${new Map([btc(), eth({ high: 25 })])}
+    `('$side $symbol limit order stays open when only the other pair candle reaches its price', async ({ side, symbol, price, bucket }) => {
+      const { order } = await settleLimitOrder(symbol, side, price, bucket);
+      expect(order.status).toBe('open');
+    });
+
+    it.each`
+      side      | symbol        | price | bucket                                 | asset    | total
+      ${'BUY'}  | ${SYMBOL}     | ${80} | ${new Map([eth(), btc({ low: 75 })])}  | ${'BTC'} | ${11}
+      ${'BUY'}  | ${SYMBOL}     | ${80} | ${new Map([eth(), btc({ low: 75 })])}  | ${'ETH'} | ${10}
+      ${'SELL'} | ${ETH_SYMBOL} | ${30} | ${new Map([btc(), eth({ high: 35 })])} | ${'ETH'} | ${9}
+      ${'SELL'} | ${ETH_SYMBOL} | ${30} | ${new Map([btc(), eth({ high: 35 })])} | ${'BTC'} | ${10}
+    `('$side $symbol limit order filled by its own candle leaves $total $asset', async ({ side, symbol, price, bucket, asset, total }) => {
+      const { balance } = await settleLimitOrder(symbol, side, price, bucket);
+      expect(balance.get(asset)?.total).toBe(total);
+    });
+
+    it.each`
+      side      | symbol        | price | bucket                                 | usdt
+      ${'BUY'}  | ${SYMBOL}     | ${80} | ${new Map([eth(), btc({ low: 75 })])}  | ${50_000 - 80 * (1 + 0.001)}
+      ${'SELL'} | ${ETH_SYMBOL} | ${30} | ${new Map([btc(), eth({ high: 35 })])} | ${50_000 + 30 * (1 - 0.003)}
+    `('$side $symbol limit order filled by its own candle pays its own pair maker fee', async ({ side, symbol, price, bucket, usdt }) => {
+      const { balance } = await settleLimitOrder(symbol, side, price, bucket);
+      expect(balance.get('USDT')?.total).toBeCloseTo(usdt, 8);
+    });
+
+    it.each`
+      side      | symbol        | price | bucket                                 | reserved
+      ${'BUY'}  | ${SYMBOL}     | ${80} | ${new Map([eth(), btc({ low: 75 })])}  | ${'USDT'}
+      ${'SELL'} | ${ETH_SYMBOL} | ${30} | ${new Map([btc(), eth({ high: 35 })])} | ${'ETH'}
+    `(
+      '$side $symbol limit order filled by its own candle releases its $reserved reservation',
+      async ({ side, symbol, price, bucket, reserved }) => {
+        const { balance } = await settleLimitOrder(symbol, side, price, bucket);
+        expect(balance.get(reserved)?.used).toBe(0);
+      },
+    );
+
+    it('cancelOrder releases the reservation on the pair of the order, whatever symbol it is given', async () => {
+      const exchange = createMultiPairExchange();
+      const { id } = await exchange.createLimitOrder(ETH_SYMBOL, 'SELL', 1, 30);
+      await exchange.cancelOrder(SYMBOL, id);
+      const balance = await exchange.fetchBalance();
+      expect(balance.get('ETH')?.used).toBe(0);
+    });
+
+    it('fetchMyTrades without from only returns the trades of the requested pair', async () => {
+      const exchange = createMultiPairExchange();
+      await exchange.processOneMinuteBucket(new Map([btc(), eth()]));
+      await exchange.createMarketOrder(SYMBOL, 'BUY', 1);
+      await exchange.createMarketOrder(ETH_SYMBOL, 'BUY', 1);
+      expect(await exchange.fetchMyTrades(SYMBOL)).toHaveLength(1);
     });
   });
 

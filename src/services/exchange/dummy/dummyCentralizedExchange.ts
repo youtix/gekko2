@@ -20,8 +20,7 @@ export class DummyCentralizedExchange implements Exchange {
   private readonly mutex = new AsyncMutex();
   private readonly ordersMap: Map<string, DummyInternalOrder>;
   private readonly orderSettledCallbacks: Map<string, OrderSettledCallback>;
-  private readonly buyOrders: DummyInternalOrder[]; // Sorted by price DESC
-  private readonly sellOrders: DummyInternalOrder[]; // Sorted by price ASC
+  private readonly orderBooks: Map<TradingPair, Record<OrderSide, DummyInternalOrder[]>>; // BUY sorted by price DESC, SELL by price ASC
   private readonly candles: Map<TradingPair, Candle[]>;
   private readonly marketData: Map<TradingPair, MarketData>;
   private readonly portfolio: Portfolio;
@@ -41,8 +40,7 @@ export class DummyCentralizedExchange implements Exchange {
     this.ordersMap = new Map();
     this.orderSettledCallbacks = new Map();
     this.candles = new Map();
-    this.buyOrders = [];
-    this.sellOrders = [];
+    this.orderBooks = new Map();
     this.currentTimestamp = daterange?.start ? daterange.start : Date.now();
 
     bindAll(this, [this.mapOrderToTrade.name]);
@@ -112,7 +110,7 @@ export class DummyCentralizedExchange implements Exchange {
   public async fetchMyTrades(symbol: TradingPair, from?: EpochTimeStamp): Promise<Trade[]> {
     return this.mutex.runExclusive(() => {
       const arr = Array.from(this.ordersMap.values());
-      const filtered = isNil(from) ? arr : arr.filter(order => order.timestamp >= from && order.symbol === symbol);
+      const filtered = arr.filter(order => order.symbol === symbol && (isNil(from) || order.timestamp >= from));
       return filtered.map(this.mapOrderToTrade);
     });
   }
@@ -225,23 +223,19 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public async cancelOrder(symbol: TradingPair, id: string): Promise<OrderState> {
+  public async cancelOrder(_symbol: TradingPair, id: string): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
       const order = this.ordersMap.get(id);
       if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
 
       if (order.status === 'open') {
-        this.releaseBalance(symbol, order);
+        this.releaseBalance(order);
         order.status = 'canceled';
         order.timestamp = this.currentTimestamp;
 
-        if (order.side === 'BUY') {
-          const idx = this.buyOrders.indexOf(order);
-          if (idx !== -1) this.buyOrders.splice(idx, 1);
-        } else {
-          const idx = this.sellOrders.indexOf(order);
-          if (idx !== -1) this.sellOrders.splice(idx, 1);
-        }
+        const orders = this.getOrderBook(order.symbol)[order.side];
+        const idx = orders.indexOf(order);
+        if (idx !== -1) orders.splice(idx, 1);
 
         this.notifyAndCleanupCallback(order);
       }
@@ -284,7 +278,8 @@ export class DummyCentralizedExchange implements Exchange {
     }
   }
 
-  private releaseBalance(symbol: TradingPair, order: DummyInternalOrder) {
+  private releaseBalance(order: DummyInternalOrder) {
+    const { symbol } = order;
     const filled = order.filled ?? 0;
     const remaining = order.amount - filled;
     if (remaining <= 0) return;
@@ -306,43 +301,48 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   private settleOrdersWithCandle(symbol: TradingPair, candle: Candle) {
+    const orderBook = this.orderBooks.get(symbol);
+    if (!orderBook) return;
+    const { BUY: buyOrders, SELL: sellOrders } = orderBook;
+
     // Process BUYs (descending price)
     // Matches if candle.low <= order.price
     // Since sorted DESC, all orders from 0 to splitIndex match
-    let buySplitIndex = this.buyOrders.findIndex(o => (o.price ?? 0) < candle.low);
+    let buySplitIndex = buyOrders.findIndex(o => (o.price ?? 0) < candle.low);
     if (buySplitIndex === -1) {
       // If not found, it means EITHER all match (all > candle.low) OR empty
       // If array is not empty, and findIndex is -1, it means ALL elements failed the condition (price < low)
       // which means ALL elements satisfy price >= low. So ALL match.
-      buySplitIndex = this.buyOrders.length;
+      buySplitIndex = buyOrders.length;
     }
 
     if (buySplitIndex > 0) {
-      const matched = this.buyOrders.splice(0, buySplitIndex);
+      const matched = buyOrders.splice(0, buySplitIndex);
       for (const order of matched) {
-        this.fillOrder(symbol, order, candle);
+        this.fillOrder(order, candle);
       }
     }
 
     // Process SELLs (ascending price)
     // Matches if candle.high >= order.price
     // Since sorted ASC, all orders from 0 to splitIndex match
-    let sellSplitIndex = this.sellOrders.findIndex(o => (o.price ?? 0) > candle.high);
+    let sellSplitIndex = sellOrders.findIndex(o => (o.price ?? 0) > candle.high);
     if (sellSplitIndex === -1) {
-      sellSplitIndex = this.sellOrders.length;
+      sellSplitIndex = sellOrders.length;
     }
 
     if (sellSplitIndex > 0) {
-      const matched = this.sellOrders.splice(0, sellSplitIndex);
+      const matched = sellOrders.splice(0, sellSplitIndex);
       for (const order of matched) {
-        this.fillOrder(symbol, order, candle);
+        this.fillOrder(order, candle);
       }
     }
   }
 
-  private fillOrder(symbol: TradingPair, order: DummyInternalOrder, _candle?: Candle) {
+  private fillOrder(order: DummyInternalOrder, _candle?: Candle) {
     if (order.status !== 'open') return;
 
+    const { symbol } = order;
     const price = order.price ?? 0;
     order.status = 'closed';
     order.filled = order.amount;
@@ -382,28 +382,39 @@ export class DummyCentralizedExchange implements Exchange {
     }
   }
 
+  private getOrderBook(symbol: TradingPair) {
+    let orderBook = this.orderBooks.get(symbol);
+    if (!orderBook) {
+      orderBook = { BUY: [], SELL: [] };
+      this.orderBooks.set(symbol, orderBook);
+    }
+    return orderBook;
+  }
+
   private insertBuyOrder(order: DummyInternalOrder) {
     // DESC
+    const buyOrders = this.getOrderBook(order.symbol).BUY;
     let low = 0,
-      high = this.buyOrders.length;
+      high = buyOrders.length;
     while (low < high) {
       const mid = (low + high) >>> 1;
-      if (this.buyOrders[mid].price! > order.price!) low = mid + 1;
+      if (buyOrders[mid].price! > order.price!) low = mid + 1;
       else high = mid;
     }
-    this.buyOrders.splice(low, 0, order);
+    buyOrders.splice(low, 0, order);
   }
 
   private insertSellOrder(order: DummyInternalOrder) {
     // ASC
+    const sellOrders = this.getOrderBook(order.symbol).SELL;
     let low = 0,
-      high = this.sellOrders.length;
+      high = sellOrders.length;
     while (low < high) {
       const mid = (low + high) >>> 1;
-      if (this.sellOrders[mid].price! < order.price!) low = mid + 1;
+      if (sellOrders[mid].price! < order.price!) low = mid + 1;
       else high = mid;
     }
-    this.sellOrders.splice(low, 0, order);
+    sellOrders.splice(low, 0, order);
   }
 
   private cloneOrder(order: DummyInternalOrder): OrderState {
