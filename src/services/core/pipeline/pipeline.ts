@@ -7,6 +7,7 @@ import { inject } from '@services/injecter/injecter';
 import { debug } from '@services/logger';
 import { keepDuplicates } from '@utils/collection/array.utils';
 import { toCamelCase } from '@utils/string/string.utils';
+import { startOfMinute } from 'date-fns';
 import { compact, each, filter, flatMap, map } from 'lodash-es';
 import { MissingCandlesError } from '../stream/backtest/backtest.error';
 import { PluginsEmitSameEventError } from './pipeline.error';
@@ -20,7 +21,7 @@ export const launchStream = async (context: PipelineContext) => {
 
 export const injectServices = async (context: PipelineContext) =>
   each(context, pipeline => {
-    each(pipeline.inject, async serviceName => {
+    each(pipeline.inject, serviceName => {
       // @ts-expect-error TODO fix complex typescript error
       pipeline.plugin[toCamelCase('set', serviceName)](inject[serviceName]());
     });
@@ -103,22 +104,32 @@ export const checkPluginsModesCompatibility = async (context: PipelineContext) =
     if (!modes?.includes(mode)) throw new GekkoError('pipeline', `Plugin ${name} does not support ${mode} mode.`);
   });
 
-export const getPluginsStaticConfiguration = async (context: PipelineContext) =>
-  map(context, plugin => {
+export const getPluginsStaticConfiguration = async (context: PipelineContext) => {
+  // Bundled by `bun build`, the namespace is a plain object: arbitrary key order, and inherited keys such as 'constructor'
+  const pluginNames = Object.keys(pluginList).sort();
+  return map(context, plugin => {
+    if (!pluginNames.includes(plugin.name)) {
+      const suggestion = pluginNames.find(pluginName => pluginName.toLowerCase() === plugin.name.toLowerCase());
+      const didYouMean = suggestion ? ` Did you mean '${suggestion}'?` : '';
+      throw new GekkoError('pipeline', `Unknown plugin '${plugin.name}'.${didYouMean} Available plugins: ${pluginNames.join(', ')}.`);
+    }
     const PluginClass = pluginList[plugin.name as PluginsNames];
     const { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject } = PluginClass.getStaticConfiguration();
     return { modes, schema, dependencies, eventsEmitted, name, eventsHandlers, inject };
   });
+};
 
 export const checkDateRange = async (context: PipelineContext) => {
   const { pairs, mode, daterange } = config.getWatch();
   if (mode === 'backtest' && daterange) {
     const storage = inject.storage();
+    // Same minutes as the backtest reader (splitIntervals): checkInterval expects the starts of the first and last candles
+    const alignedDaterange = { start: startOfMinute(daterange.start).getTime(), end: startOfMinute(daterange.end).getTime() };
     for (const { symbol } of pairs) {
-      const result = storage.checkInterval(symbol, daterange);
+      const result = storage.checkInterval(symbol, alignedDaterange);
       if (result?.missingCandleCount) {
         const availableDateranges = storage.getCandleDateranges(symbol);
-        throw new MissingCandlesError(symbol, daterange, availableDateranges);
+        throw new MissingCandlesError(symbol, alignedDaterange, availableDateranges);
       }
     }
   }
