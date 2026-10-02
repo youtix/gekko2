@@ -61,4 +61,17 @@ describe('DatabaseHelper - seedDatabaseWithCandles', () => {
     expect(inserted[1].close).toBe(110);
     expect(inserted[1].volume).toBe(50);
   });
+
+  it.each(['1INCH/USDT', 'FLX-CRCL/USDC:USDC'])('should seed the table the storage reads for %s', pair => {
+    seedDatabaseWithCandles(storage, pair, [{ start: 1000000 }]);
+
+    expect(storage.getCandles(pair, { start: 990000, end: 1100000 })).toHaveLength(1);
+  });
+
+  it('should clean a table whose name needs quoting', () => {
+    seedDatabaseWithCandles(storage, 'FLX-CRCL/USDC:USDC', [{ start: 1000000 }]);
+    cleanDatabase(storage);
+
+    expect(storage.getCandles('FLX-CRCL/USDC:USDC', { start: 990000, end: 1100000 })).toEqual([]);
+  });
 });

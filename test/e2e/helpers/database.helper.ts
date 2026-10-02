@@ -1,7 +1,10 @@
 import { Candle } from '@models/candle.types';
 import { TradingPair } from '@models/utility.types';
 import type { SQLiteStorage } from '@services/storage/sqlite.storage';
-import { upperCase } from 'lodash-es';
+import { toUpper } from 'lodash-es';
+
+// Same quoting as SQLiteStorage: table names can hold digits and punctuation
+const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
 
 export const cleanDatabase = (storage: SQLiteStorage) => {
   const db = storage.db;
@@ -9,15 +12,16 @@ export const cleanDatabase = (storage: SQLiteStorage) => {
   const tables = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'candles_%'").all() as { name: string }[];
 
   for (const { name } of tables) {
-    db.run(`DELETE FROM ${name}`);
+    db.run(`DELETE FROM ${quote(name)}`);
   }
 };
 
 export const seedDatabaseWithCandles = (storage: SQLiteStorage, symbol: TradingPair, candles: Partial<Candle>[]) => {
   storage.upsertTable(symbol);
 
+  // Same name as Storage.getTable
   const [asset, currency] = symbol.split('/');
-  const tableName = `CANDLES_${upperCase(asset)}_${upperCase(currency)}`;
+  const tableName = quote(`CANDLES_${toUpper(asset)}_${toUpper(currency)}`);
 
   const stmt = storage.db.prepare(`INSERT INTO ${tableName} (start, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?)`);
 

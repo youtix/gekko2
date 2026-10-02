@@ -3,7 +3,7 @@ import { CandleBucket } from '@models/event.types';
 import { Nullable, TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Interval } from 'date-fns';
-import { upperCase } from 'lodash-es';
+import { toUpper } from 'lodash-es';
 import { INSERT_THRESHOLD } from './storage.const';
 import { CandleDateranges, MissingCandleCount } from './storage.types';
 
@@ -30,7 +30,8 @@ export abstract class Storage {
 
   protected getTable(symbol: TradingPair) {
     const [asset, currency] = symbol.split('/');
-    return `CANDLES_${upperCase(asset)}_${upperCase(currency)}`;
+    // Not upperCase: it splits words with spaces (1INCH becomes '1 INCH'). Letter-only tickers keep the names they always had.
+    return `CANDLES_${toUpper(asset)}_${toUpper(currency)}`;
   }
 
   public abstract insertCandles(symbol: TradingPair): void;

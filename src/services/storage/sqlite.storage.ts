@@ -24,7 +24,7 @@ export class SQLiteStorage extends Storage {
   }
 
   public insertCandles(symbol: TradingPair): void {
-    const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${this.getTable(symbol)} VALUES (?,?,?,?,?,?,?)`);
+    const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${this.getQuotedTable(symbol)} VALUES (?,?,?,?,?,?,?)`);
     const insertCandles = this.db.transaction((bucket: CandleBucket[]) => {
       const candles = bucket.flatMap(b => b.get(symbol) ?? []);
       each(candles, ({ start, open, high, low, close, volume }) => stmt.run(null, start, open, high, low, close, volume));
@@ -37,7 +37,7 @@ export class SQLiteStorage extends Storage {
   public upsertTable(symbol: TradingPair): void {
     const query = `
       CREATE TABLE IF NOT EXISTS
-      ${this.getTable(symbol)} (
+      ${this.getQuotedTable(symbol)} (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         start INTEGER UNIQUE,
         open REAL NOT NULL,
@@ -54,7 +54,7 @@ export class SQLiteStorage extends Storage {
     const query = this.db.query<CandleDateranges, SQLQueryBindings[]>(`
       WITH gaps AS (
         SELECT start, start / 60000 - ROW_NUMBER() OVER (ORDER BY start) AS gap_group
-        FROM ${this.getTable(symbol)}
+        FROM ${this.getQuotedTable(symbol)}
     )
     SELECT MIN(start) AS daterange_start, MAX(start) AS daterange_end
     FROM gaps
@@ -67,7 +67,7 @@ export class SQLiteStorage extends Storage {
   public getCandles(symbol: TradingPair, { start, end }: Interval<EpochTimeStamp, EpochTimeStamp>): Candle[] {
     const query = this.db.query<Candle, SQLQueryBindings[]>(`
       SELECT id,start,open,high,low,close,volume
-      FROM ${this.getTable(symbol)}
+      FROM ${this.getQuotedTable(symbol)}
       WHERE start BETWEEN $start AND $end
       ORDER BY start ASC
     `);
@@ -85,7 +85,7 @@ export class SQLiteStorage extends Storage {
       )
       SELECT COUNT(*) AS missingCandleCount
       FROM expected e
-      LEFT JOIN ${this.getTable(symbol)} c ON c.start = e.start_time
+      LEFT JOIN ${this.getQuotedTable(symbol)} c ON c.start = e.start_time
       WHERE c.start IS NULL;
     `);
     return query.get({ $start: start, $end: end });
@@ -93,5 +93,10 @@ export class SQLiteStorage extends Storage {
 
   public close(): void {
     this.db.close(false);
+  }
+
+  /** Tickers can hold digits and punctuation (1INCH, USDC:USDC), so the name is always quoted, its own quotes doubled. */
+  private getQuotedTable(symbol: TradingPair) {
+    return `"${this.getTable(symbol).replaceAll('"', '""')}"`;
   }
 }
