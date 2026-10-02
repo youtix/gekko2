@@ -6,7 +6,7 @@ import { Exchange } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
 import { info } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { formatDuration, Interval, intervalToDuration, isAfter, isBefore, startOfMinute } from 'date-fns';
+import { addMinutes, formatDuration, Interval, intervalToDuration, isAfter, isBefore, startOfMinute } from 'date-fns';
 import { bindAll, each, filter, last } from 'lodash-es';
 import { Readable } from 'stream';
 
@@ -48,8 +48,8 @@ export class HistoricalCandleStream extends Readable {
 
     this.heart.on('tick', this.onTick);
 
-    // Close stream if nothing to download
-    if (!isBefore(this.startDate, this.endDate)) {
+    // Close stream if nothing to download. Both bounds are inclusive: equal dates are a one-minute range.
+    if (isAfter(this.startDate, this.endDate)) {
       info('stream', `[${symbol}] No historical data to download`);
       process.nextTick(() => this.push(null));
     } else {
@@ -58,7 +58,7 @@ export class HistoricalCandleStream extends Readable {
         [
           `[${symbol}] Fetching historical data from ${toISOString(this.startDate)}`,
           `to ${toISOString(this.endDate)}`,
-          `(${formatDuration(intervalToDuration({ start: this.startDate, end: this.endDate }))})`,
+          `(${formatDuration(intervalToDuration({ start: this.startDate, end: addMinutes(this.endDate, 1) }))})`,
         ].join(' '),
       );
       this.heart.pump();

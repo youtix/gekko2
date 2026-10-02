@@ -1,8 +1,9 @@
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
-import { getCandleTimeOffset } from '@utils/candle/candle.utils';
-import { processStartTime } from '@utils/process/process.utils';
+import { warning } from '@services/logger';
+import { getCandleStart } from '@utils/candle/candle.utils';
+import { toISOString } from '@utils/date/date.utils';
 import { synchronizeStreams } from '@utils/stream/stream.utils';
 import { startOfMinute, subMinutes } from 'date-fns';
 import { Readable } from 'stream';
@@ -17,18 +18,17 @@ import { RejectFutureCandleStream } from '../stream/validation/rejectFutureCandl
 
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
   const { pairs, timeframe, warmup } = config.getWatch();
-  // End time of the last candle to download (now)
-  const end = startOfMinute(processStartTime()).getTime();
-  // Offset to align candles to the start of the timeframe
-  const offset = getCandleTimeOffset(TIMEFRAME_TO_MINUTES[timeframe!], end); // Timeframe will always defined in thanks to zod super refine
-  // Start time of the first candle to download
-  const start = subMinutes(end, warmup.candleCount * TIMEFRAME_TO_MINUTES[timeframe!] + offset).getTime(); // Timeframe will always defined in thanks to zod super refine
+  // Built before the clock is read below: a live stream starts with the minute in progress when it is built, so a minute
+  // that closes in between is fetched by both streams (the second copy is dropped as a duplicate) rather than by neither.
+  const liveStream = synchronizeStreams(pairs.map(p => new RealtimeStream(p.symbol)));
+  // The warmup history holds `candleCount` whole candles, then the closed minutes of the candle in progress
+  const currentMinute = startOfMinute(Date.now()).getTime();
+  const start = getCandleStart(TIMEFRAME_TO_MINUTES[timeframe!], currentMinute, warmup.candleCount); // Timeframe will always defined in thanks to zod super refine
+  const end = subMinutes(currentMinute, 1).getTime();
+  const history = new MultiAssetHistoricalStream({ daterange: { start, end }, tickrate: warmup.tickrate, pairs });
 
   await pipeline(
-    mergeSequentialStreams(
-      new MultiAssetHistoricalStream({ daterange: { start, end }, tickrate: warmup.tickrate, pairs }),
-      synchronizeStreams(pairs.map(p => new RealtimeStream(p.symbol))),
-    ),
+    mergeSequentialStreams(history, liveStream),
     new RejectFutureCandleStream(),
     new RejectDuplicateCandleStream(),
     new FillCandleGapStream(pairs.map(p => p.symbol)),
@@ -47,8 +47,19 @@ const buildImporterPipeline = async (plugins: Plugin[]) => {
   const { daterange, tickrate, pairs } = config.getWatch();
   if (!daterange) throw new Error('daterange is not set');
 
-  const stream = new MultiAssetHistoricalStream({ daterange, tickrate, pairs });
-  return pipeline(stream, new FillCandleGapStream(pairs.map(p => p.symbol)), new PluginsStream(plugins));
+  // Closed minutes only: the exchange serves the minute in progress as an unfinished candle, and storage never replaces a
+  // stored minute
+  const lastClosedMinute = subMinutes(startOfMinute(Date.now()), 1).getTime();
+  const isEndClosed = startOfMinute(daterange.end).getTime() <= lastClosedMinute;
+  if (!isEndClosed)
+    warning(
+      'pipeline',
+      `daterange.end ${toISOString(daterange.end)} is not a closed minute yet: importing up to the last closed minute, ${toISOString(lastClosedMinute)}.`,
+    );
+  const end = isEndClosed ? daterange.end : lastClosedMinute;
+
+  const stream = new MultiAssetHistoricalStream({ daterange: { start: daterange.start, end }, tickrate, pairs });
+  return pipeline(stream, new RejectFutureCandleStream(), new FillCandleGapStream(pairs.map(p => p.symbol)), new PluginsStream(plugins));
 };
 
 export const streamPipelines = {
@@ -68,12 +79,13 @@ export const mergeSequentialStreams = (...streams: Readable[]) => {
 
   const merged = Readable.from(concatGenerator());
 
-  // Ensure all underlying streams are destroyed when the merged stream is destroyed
+  // Ensure all underlying streams are destroyed when the merged stream is destroyed. They are destroyed without the error:
+  // the merged stream reports it, and a stream not consumed yet has no 'error' listener, so it would raise an unhandled error.
   const originalDestroy = merged.destroy.bind(merged);
   merged.destroy = (error?: Error | null) => {
     for (const stream of streams) {
       if (!stream.destroyed) {
-        stream.destroy(error ?? undefined);
+        stream.destroy();
       }
     }
     return originalDestroy(error ?? undefined);

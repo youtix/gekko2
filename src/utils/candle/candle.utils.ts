@@ -57,6 +57,19 @@ export const getCandleTimeOffset = (candleSize: number, start: EpochTimeStamp) =
   return 0;
 };
 
+// 1M, 3M, 6M and 1y candles span whole UTC months, so their length in minutes varies
+const MONTHS_PER_CANDLE: Partial<Record<number, number>> = { 43200: 1, 129600: 3, 259200: 6, 518400: 12 };
+
+/** Start of the candle `count` candles before the one holding `minute` (a minute start), on the candle batcher's boundaries. */
+export const getCandleStart = (candleSize: number, minute: EpochTimeStamp, count: number) => {
+  const candleStart = minute - getCandleTimeOffset(candleSize, minute) * ONE_MINUTE;
+  const months = MONTHS_PER_CANDLE[candleSize];
+  if (!months) return candleStart - count * candleSize * ONE_MINUTE;
+
+  const date = new Date(candleStart);
+  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - count * months, 1);
+};
+
 export const getFirstCandleFromBucket = (bucket: CandleBucket) => {
   const firstCandle = bucket.values().next().value;
   if (!firstCandle) throw new GekkoError('utils', 'Impossible to get first candle from bucket: Empty candle bucket');

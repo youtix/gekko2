@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { first, last } from 'lodash-es';
 import { generateSyntheticCandle } from '../fixtures/syntheticData';
 import { MockCCXTExchange } from '../mocks/ccxt.mock';
-import { MockWinston, clearLogs } from '../mocks/winston.mock';
+import { MockWinston, clearLogs, logStore } from '../mocks/winston.mock';
 
 // --------------------------------------------------------------------------
 // MOCKS SETUP
@@ -518,5 +518,78 @@ describe('E2E: Importer (Synthetic)', () => {
       .query('SELECT count(*) as count FROM candles_BTC_USDT WHERE start >= ? AND start < ?')
       .get(GAP_START, GAP_END) as { count: number };
     expect(gapCandles.count).toBe(0);
+  }, 60000);
+
+  // Scenarios K, L and M run on the real clock, against an exchange that serves candles up to the minute in progress (its
+  // candle is not closed yet) and none after it, as Binance does. A minute that closes while the pipeline is built is imported.
+  const minuteOf = (timestamp: number) => timestamp - (timestamp % ONE_MINUTE);
+  const serveCandlesUpToTheMinuteInProgress = () => {
+    MockCCXTExchange.simulatedGaps = [{ start: minuteOf(Date.now()) + 1, end: Infinity }];
+  };
+
+  it('Scenario K: daterange.end now (the candle in progress is not imported)', async () => {
+    serveCandlesUpToTheMinuteInProgress();
+    const lastClosedMinute = minuteOf(Date.now()) - ONE_MINUTE;
+    const SCENARIO_K_START = lastClosedMinute - 30 * ONE_MINUTE;
+    mockDaterange = { start: SCENARIO_K_START, end: Date.now() };
+    mockPairs = [{ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' }];
+
+    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
+    const { inject } = await import('@services/injecter/injecter');
+    const storage = inject.storage() as SQLiteStorage;
+    const db = storage['db'];
+
+    await gekkoPipeline();
+    const minuteInProgress = minuteOf(Date.now());
+
+    const { firstStart, lastStart } = db
+      .query('SELECT min(start) as firstStart, max(start) as lastStart FROM candles_BTC_USDT WHERE start >= ?')
+      .get(SCENARIO_K_START) as { firstStart: number; lastStart: number };
+
+    expect(firstStart).toBe(SCENARIO_K_START);
+    expect(lastStart).toBeGreaterThanOrEqual(lastClosedMinute);
+    expect(lastStart).toBeLessThan(minuteInProgress);
+  }, 60000);
+
+  it('Scenario L: daterange.end in the future (import stops at the last closed minute)', async () => {
+    serveCandlesUpToTheMinuteInProgress();
+    const lastClosedMinute = minuteOf(Date.now()) - ONE_MINUTE;
+    const SCENARIO_L_START = lastClosedMinute - 30 * ONE_MINUTE;
+    mockDaterange = { start: SCENARIO_L_START, end: Date.now() + 30 * ONE_MINUTE };
+    mockPairs = [{ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' }];
+
+    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
+    const { inject } = await import('@services/injecter/injecter');
+    const storage = inject.storage() as SQLiteStorage;
+    const db = storage['db'];
+
+    await gekkoPipeline();
+    const minuteInProgress = minuteOf(Date.now());
+
+    const { firstStart, lastStart } = db
+      .query('SELECT min(start) as firstStart, max(start) as lastStart FROM candles_BTC_USDT WHERE start >= ?')
+      .get(SCENARIO_L_START) as { firstStart: number; lastStart: number };
+
+    expect(firstStart).toBe(SCENARIO_L_START);
+    expect(lastStart).toBeGreaterThanOrEqual(lastClosedMinute);
+    expect(lastStart).toBeLessThan(minuteInProgress);
+    expect(logStore.some(({ level, message }) => level === 'warn' && message.includes('is not a closed minute yet'))).toBe(true);
+  }, 60000);
+
+  it('Scenario M: daterange entirely in the future (nothing to import, ends cleanly)', async () => {
+    serveCandlesUpToTheMinuteInProgress();
+    const SCENARIO_M_START = Date.now() + 60 * ONE_MINUTE;
+    mockDaterange = { start: SCENARIO_M_START, end: SCENARIO_M_START + 60 * ONE_MINUTE };
+    mockPairs = [{ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' }];
+
+    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
+    const { inject } = await import('@services/injecter/injecter');
+    const storage = inject.storage() as SQLiteStorage;
+    const db = storage['db'];
+
+    await gekkoPipeline();
+
+    const rowCountBTC = db.query('SELECT count(*) as count FROM candles_BTC_USDT').get() as { count: number };
+    expect(rowCountBTC.count).toBe(0);
   }, 60000);
 });

@@ -1,4 +1,6 @@
-import { describe, expect, it, Mock, vi } from 'vitest';
+import { Heart } from '@services/core/heart/heart';
+import { info } from '@services/logger';
+import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { toTimestamp } from '../../../../utils/date/date.utils';
 import { inject } from '../../../injecter/injecter';
 import { HistoricalCandleError } from './historicalCandle.error';
@@ -62,36 +64,62 @@ describe('HistoricalCandleStream', () => {
   };
 
   describe('constructor', () => {
+    describe('when startDate is after endDate', () => {
+      beforeEach(async () => {
+        injectExchangeMock.mockReturnValue({ fetchOHLCV: vi.fn().mockResolvedValue([]) });
+
+        launchHistoricalCandleStream({
+          startDate: toTimestamp('2023-01-02T00:00:00Z'),
+          endDate: toTimestamp('2023-01-01T00:00:00Z'),
+          tickrate: 1000,
+          symbol: 'BTC/USDT',
+        });
+
+        await new Promise(resolve => process.nextTick(resolve));
+      });
+
+      it('should close stream immediately', () => {
+        expect(isStreamClosed).toBeTruthy();
+      });
+
+      it('should not start fetching', () => {
+        expect(vi.mocked(Heart).mock.results[0].value.pump).not.toHaveBeenCalled();
+      });
+    });
+
+    // Both bounds are inclusive: equal dates are a one-minute range
     it.each`
       startDate                 | endDate                   | description
       ${'2023-01-01T00:00:00Z'} | ${'2023-01-01T00:00:00Z'} | ${'equal dates'}
-      ${'2023-01-02T00:00:00Z'} | ${'2023-01-01T00:00:00Z'} | ${'start after end'}
-    `('should close stream immediately for $description', async ({ startDate, endDate }) => {
+      ${'2023-01-01T00:00:00Z'} | ${'2023-01-02T00:00:00Z'} | ${'startDate before endDate'}
+    `('should not close stream immediately for $description', async ({ startDate, endDate }) => {
       injectExchangeMock.mockReturnValue({ fetchOHLCV: vi.fn().mockResolvedValue([]) });
 
       launchHistoricalCandleStream({
         startDate: toTimestamp(startDate),
         endDate: toTimestamp(endDate),
         tickrate: 1000,
-        symbol: 'BTC/USDT',
-      });
-
-      await new Promise(resolve => process.nextTick(resolve));
-      expect(isStreamClosed).toBeTruthy();
-    });
-
-    it('should not close stream immediately when startDate is before endDate', async () => {
-      injectExchangeMock.mockReturnValue({ fetchOHLCV: vi.fn().mockResolvedValue([]) });
-
-      launchHistoricalCandleStream({
-        startDate: toTimestamp('2023-01-01T00:00:00Z'),
-        endDate: toTimestamp('2023-01-02T00:00:00Z'),
-        tickrate: 1000,
         symbol: 'ETH/USDT',
       });
 
       await new Promise(resolve => process.nextTick(resolve));
       expect(isStreamClosed).toBeFalsy();
+    });
+
+    it('should log the length of a one-minute range', () => {
+      injectExchangeMock.mockReturnValue({ fetchOHLCV: vi.fn().mockResolvedValue([]) });
+
+      launchHistoricalCandleStream({
+        startDate: toTimestamp('2023-01-01T00:00:00Z'),
+        endDate: toTimestamp('2023-01-01T00:00:00Z'),
+        tickrate: 1000,
+        symbol: 'BTC/USDT',
+      });
+
+      expect(info).toHaveBeenCalledWith(
+        'stream',
+        '[BTC/USDT] Fetching historical data from 2023-01-01T00:00:00.000Z to 2023-01-01T00:00:00.000Z (1 minute)',
+      );
     });
   });
 
@@ -201,6 +229,38 @@ describe('HistoricalCandleStream', () => {
       await new Promise(resolve => process.nextTick(resolve));
 
       expect(results.length).toBe(2);
+    });
+  });
+
+  describe('with a one-minute range', () => {
+    const closedCandle = candleFactory('2023-01-01T00:00:00Z', 100);
+    // The exchange also returns the candle still in progress after the requested minute
+    const openCandle = candleFactory('2023-01-01T00:01:00Z', 101);
+
+    beforeEach(async () => {
+      // A heart that beats as soon as it is pumped
+      vi.mocked(Heart).mockImplementation(function () {
+        let beat = () => {};
+        return { on: (_event: string, listener: () => void) => (beat = listener), pump: () => beat(), stop: vi.fn() } as unknown as Heart;
+      });
+      injectExchangeMock.mockReturnValue({ fetchOHLCV: vi.fn().mockResolvedValue([closedCandle, openCandle]) });
+
+      launchHistoricalCandleStream({
+        startDate: closedCandle.start,
+        endDate: closedCandle.start,
+        tickrate: 1000,
+        symbol: 'BTC/USDT',
+      });
+
+      await new Promise(resolve => stream.once('end', resolve));
+    });
+
+    it('should push exactly the candle of that minute', () => {
+      expect(results).toEqual([{ symbol: 'BTC/USDT', candle: closedCandle }]);
+    });
+
+    it('should end the stream', () => {
+      expect(isStreamClosed).toBeTruthy();
     });
   });
 

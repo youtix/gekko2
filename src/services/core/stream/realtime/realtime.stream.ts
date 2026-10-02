@@ -12,6 +12,7 @@ import { Readable } from 'node:stream';
 export class RealtimeStream extends Readable {
   protected heart: Heart;
   private readonly exchange: Exchange;
+  private readonly startTimeout: Timer;
 
   constructor(symbol: TradingPair) {
     super({ objectMode: true });
@@ -21,7 +22,7 @@ export class RealtimeStream extends Readable {
     this.heart.on('tick', () => this.onNewCandle(symbol));
 
     const delay = ONE_MINUTE - (Date.now() % ONE_MINUTE);
-    setTimeout(() => this.heart.pump(), delay);
+    this.startTimeout = setTimeout(() => this.heart.pump(), delay);
   }
 
   private async onNewCandle(symbol: TradingPair) {
@@ -47,6 +48,7 @@ export class RealtimeStream extends Readable {
 
   _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
     try {
+      clearTimeout(this.startTimeout);
       this.heart.stop();
     } finally {
       callback(error);
