@@ -1,15 +1,32 @@
-import { Asset, TradingPair } from '@models/utility.types';
+import { TradingPair } from '@models/utility.types';
+import { uniq } from 'lodash-es';
 import { z } from 'zod';
 
-export const symbolSchema = z.custom<TradingPair>().refine(symbol => symbol?.includes('/'), 'Symbol must contain a slash');
+export const symbolSchema = z
+  .string()
+  .refine(symbol => symbol.includes('/'), 'Symbol must contain a slash')
+  .transform(symbol => symbol as TradingPair);
 
-export const assetSchema = z.custom<Asset>().refine(asset => asset && !asset.includes('/'), 'Asset must not contain a slash');
+export const assetSchema = z
+  .string()
+  .min(1, 'Asset must not be empty')
+  .refine(asset => !asset.includes('/'), 'Asset must not contain a slash');
 
 export const currencySchema = z
-  .custom<Asset>()
-  .refine(currency => currency && !currency.includes('/'), 'Currency must not contain a slash');
+  .string()
+  .min(1, 'Currency must not be empty')
+  .refine(currency => !currency.includes('/'), 'Currency must not contain a slash');
 
-export const assetsSchema = z.array(assetSchema).min(1, 'At least one asset is required').max(5, 'Maximum 5 assets allowed');
+export const assetsSchema = z
+  .array(assetSchema)
+  .min(1, 'At least one asset is required')
+  .max(5, 'Maximum 5 assets allowed')
+  .superRefine((assets, ctx) => {
+    const repeatedAssets = uniq(assets.filter((asset, index) => assets.indexOf(asset) !== index));
+    if (repeatedAssets.length) {
+      ctx.addIssue({ code: 'custom', message: `assets must not contain duplicates (repeated: ${repeatedAssets.join(', ')})` });
+    }
+  });
 
 export const pairConfigSchema = z.object({
   symbol: symbolSchema,

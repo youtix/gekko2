@@ -1,4 +1,6 @@
 import { readFileSync } from 'fs';
+import { dump } from 'js-yaml';
+import JSON5 from 'json5';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('fs', () => ({
@@ -13,7 +15,6 @@ describe('Configuration Service', () => {
     watch: {
       assets: ['BTC'],
       currency: 'USDT',
-      pairs: [{ symbol: 'BTC/USDT' }],
       timeframe: '1m',
       mode: 'realtime',
       warmup: { candleCount: 100, tickrate: 1000 },
@@ -22,12 +23,32 @@ describe('Configuration Service', () => {
     plugins: [{ name: 'PerformanceAnalyzer' }],
     strategy: { name: 'CCI' },
     exchange: {
-      name: 'dummy-cex',
+      name: 'paper-binance',
       simulationBalance: [
         { assetName: 'BTC', balance: 1 },
         { assetName: 'USDT', balance: 10000 },
       ],
     },
+  };
+  // What getWatch() returns for mockConfig: the schema derives pairs, which a config file cannot set.
+  const parsedWatch = { ...mockConfig.watch, pairs: [{ symbol: 'BTC/USDT' }] };
+  // Exchanges accepted by the importer and backtest modes, for the tests that switch mockConfig to them.
+  const importerExchange = { name: 'binance' };
+  const backtestExchange = {
+    ...mockConfig.exchange,
+    name: 'dummy-cex',
+    marketData: [
+      {
+        symbol: 'BTC/USDT',
+        marketData: {
+          price: { min: 0.01, max: 1000000 },
+          amount: { min: 0.00001, max: 9000 },
+          cost: { min: 5, max: 9000000 },
+          precision: { price: 8, amount: 8 },
+          fee: { maker: 0.0004, taker: 0.0007 },
+        },
+      },
+    ],
   };
 
   const setConfigFile = (path: string | undefined, content: unknown) => {
@@ -60,22 +81,35 @@ describe('Configuration Service', () => {
     ])('should load valid JSON/JSON5 config from %s', (path, content) => {
       setConfigFile(path, content);
       const config = new Configuration();
-      expect(config.getWatch()).toEqual(mockConfig.watch);
+      expect(config.getWatch()).toEqual(parsedWatch);
     });
 
     it.each([
       [
         'config.yaml',
-        'showLogo: true\nwatch:\n  assets:\n    - BTC\n  currency: USDT\n  timeframe: 1m\n  mode: realtime\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex\n  simulationBalance:\n    - assetName: BTC\n      balance: 1\n    - assetName: USDT\n      balance: 10000',
+        'showLogo: true\nwatch:\n  assets:\n    - BTC\n  currency: USDT\n  timeframe: 1m\n  mode: realtime\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: paper-binance\n  simulationBalance:\n    - assetName: BTC\n      balance: 1\n    - assetName: USDT\n      balance: 10000',
       ],
       [
         'config.yml',
-        'showLogo: true\nwatch:\n  assets:\n    - BTC\n  currency: USDT\n  timeframe: 1m\n  mode: realtime\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex\n  simulationBalance:\n    - assetName: BTC\n      balance: 1\n    - assetName: USDT\n      balance: 10000',
+        'showLogo: true\nwatch:\n  assets:\n    - BTC\n  currency: USDT\n  timeframe: 1m\n  mode: realtime\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: paper-binance\n  simulationBalance:\n    - assetName: BTC\n      balance: 1\n    - assetName: USDT\n      balance: 10000',
       ],
     ])('should load valid YAML config from %s', (path, content) => {
       setConfigFile(path, content);
       const config = new Configuration();
-      expect(config.getWatch()).toEqual(mockConfig.watch);
+      expect(config.getWatch()).toEqual(parsedWatch);
+    });
+
+    // Each content parses with its own format's parser only, so a row also proves which parser was picked.
+    it.each`
+      path              | content
+      ${'config.JSON'}  | ${JSON5.stringify(mockConfig)}
+      ${'config.Json5'} | ${JSON5.stringify(mockConfig)}
+      ${'config.YML'}   | ${dump(mockConfig)}
+      ${'config.Yaml'}  | ${dump(mockConfig)}
+    `('should load $path whatever the case of its extension', ({ path, content }) => {
+      setConfigFile(path, content);
+      const config = new Configuration();
+      expect(config.getWatch()).toEqual(parsedWatch);
     });
 
     it('should throw validation error for invalid config', () => {
@@ -86,6 +120,28 @@ describe('Configuration Service', () => {
     it('should throw error for empty content', () => {
       vi.mocked(readFileSync).mockReturnValue('');
       expect(() => new Configuration()).toThrow();
+    });
+
+    it.each`
+      path
+      ${'config.toml'}
+      ${'config'}
+      ${'myjson'}
+    `('should reject $path because its extension is not supported', ({ path }) => {
+      setConfigFile(path, mockConfig);
+      expect(() => new Configuration()).toThrow(
+        `[CONFIGURATION] Unsupported file extension: ${path} (expected .json, .json5, .yml or .yaml)`,
+      );
+    });
+
+    it.each`
+      description            | content
+      ${'empty'}             | ${''}
+      ${'only a comment'}    | ${'# nothing configured yet\n'}
+      ${'an empty document'} | ${'---\n'}
+    `('should throw an empty file error when the YAML file is $description', ({ content }) => {
+      setConfigFile('config.yml', content);
+      expect(() => new Configuration()).toThrow('[CONFIGURATION] Empty configuration file: config.yml');
     });
   });
 
@@ -133,7 +189,7 @@ describe('Configuration Service', () => {
     describe('getExchange', () => {
       it('should return exchange', () => {
         const exchange = configInstance.getExchange();
-        expect(exchange.name).toBe('dummy-cex');
+        expect(exchange.name).toBe('paper-binance');
         expect(exchange.simulationBalance).toBeInstanceOf(Map);
         expect(exchange.simulationBalance.get('BTC')).toBe(1);
         expect(exchange.simulationBalance.get('USDT')).toBe(10000);
@@ -147,7 +203,7 @@ describe('Configuration Service', () => {
 
     describe('getWatch', () => {
       it('should return watch config', () => {
-        expect(configInstance.getWatch()).toEqual(mockConfig.watch);
+        expect(configInstance.getWatch()).toEqual(parsedWatch);
       });
 
       it('should throw if configuration is missing', () => {
@@ -158,6 +214,7 @@ describe('Configuration Service', () => {
       it('should validate daterange in importer mode', () => {
         const importerConfig = {
           ...mockConfig,
+          exchange: importerExchange,
           watch: {
             ...mockConfig.watch,
             mode: 'importer',
@@ -169,6 +226,7 @@ describe('Configuration Service', () => {
 
         expect(config.getWatch()).toEqual({
           ...importerConfig.watch,
+          pairs: parsedWatch.pairs,
           daterange: {
             start: new Date(importerConfig.watch.daterange.start).getTime(),
             end: new Date(importerConfig.watch.daterange.end).getTime(),
@@ -179,6 +237,7 @@ describe('Configuration Service', () => {
       it('should throw on invalid daterange in importer mode', () => {
         const invalidRangeConfig = {
           ...mockConfig,
+          exchange: importerExchange,
           watch: {
             ...mockConfig.watch,
             mode: 'importer',
@@ -193,6 +252,7 @@ describe('Configuration Service', () => {
       it('should throw on invalid daterange in backtest mode', () => {
         const invalidRangeConfig = {
           ...mockConfig,
+          exchange: backtestExchange,
           watch: {
             ...mockConfig.watch,
             mode: 'backtest',
@@ -219,6 +279,7 @@ describe('Configuration Service', () => {
       it('should return storage when in backtest mode', () => {
         const backtestConfig = {
           ...mockConfig,
+          exchange: backtestExchange,
           watch: {
             ...mockConfig.watch,
             mode: 'backtest',

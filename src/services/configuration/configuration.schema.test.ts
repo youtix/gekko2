@@ -1,4 +1,6 @@
 import { pairConfigSchema, pairsSchema } from '@models/schema/pairConfig.schema';
+import { load } from 'js-yaml';
+import { cloneDeep, get, set } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { configurationSchema, watchSchema } from './configuration.schema';
 
@@ -6,6 +8,45 @@ const DISCLAIMER_FIELD = 'I understand that Gekko only automates MY OWN trading 
 
 const ISO_START = '2023-01-01T00:00:00.000Z';
 const ISO_END = '2023-01-02T00:00:00.000Z';
+const START_TIMESTAMP = Date.UTC(2023, 0, 1);
+const END_TIMESTAMP = Date.UTC(2023, 0, 2);
+
+const marketDataEntry = (symbol: string) => ({
+  symbol,
+  marketData: {
+    price: { min: 0.01, max: 1000000 },
+    amount: { min: 0.00001, max: 9000 },
+    cost: { min: 5, max: 9000000 },
+    precision: { price: 8, amount: 8 },
+    fee: { maker: 0.0004, taker: 0.0007 },
+  },
+});
+
+// js-yaml loads the unquoted timestamps below as Date objects, not strings.
+const UNQUOTED_DATERANGE_YAML = `
+watch:
+  assets: [BTC]
+  currency: USDT
+  timeframe: 1m
+  mode: backtest
+  daterange:
+    start: 2023-01-01T00:00:00Z
+    end: 2023-01-02T00:00:00Z
+exchange:
+  name: dummy-cex
+  simulationBalance:
+    - assetName: USDT
+      balance: 1000
+  marketData:
+    - symbol: BTC/USDT
+      marketData:
+        price: { min: 0.01, max: 1000000 }
+        amount: { min: 0.00001, max: 9000 }
+        cost: { min: 5, max: 9000000 }
+        precision: { price: 8, amount: 8 }
+        fee: { maker: 0.0004, taker: 0.0007 }
+plugins: []
+`;
 
 // Base pairs for v3 config format
 const basePairs = [{ symbol: 'BTC/USDT' }];
@@ -26,6 +67,18 @@ describe('pairConfigSchema', () => {
     const result = pairConfigSchema.safeParse({ symbol: '' });
     expect(result.success).toBe(false);
     expect(result.error?.issues[0].message).toBe('Symbol must contain a slash');
+  });
+
+  it.each`
+    type                          | symbol
+    ${'a number'}                 | ${1000}
+    ${'a boolean'}                | ${true}
+    ${'an object'}                | ${{ base: 'BTC', quote: 'USDT' }}
+    ${'an array holding a slash'} | ${['/']}
+    ${'null'}                     | ${null}
+  `('reports a symbol given as $type as a type issue instead of throwing', ({ symbol }) => {
+    const result = pairConfigSchema.safeParse({ symbol });
+    expect(result.error?.issues).toMatchObject([{ path: ['symbol'], code: 'invalid_type' }]);
   });
 });
 
@@ -51,6 +104,7 @@ describe('pairsSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  // The bound and the refinement both enforce the limit, so each one is pinned by its own issue.
   it('rejects config with 6 pairs with specific error message', () => {
     const pairs = [
       { symbol: 'BTC/USDT' },
@@ -61,12 +115,10 @@ describe('pairsSchema', () => {
       { symbol: 'DOT/USDT' },
     ];
     const result = pairsSchema.safeParse(pairs);
-    expect(result.success).toBe(false);
-    // Check for the "Maximum 5 pairs allowed" message
-    const hasMaxPairsError = result.error?.issues.some(
-      issue => issue.message.includes('Maximum 5 pairs allowed') || issue.message.includes('5'),
-    );
-    expect(hasMaxPairsError).toBe(true);
+    expect(result.error?.issues).toMatchObject([
+      { code: 'too_big', maximum: 5 },
+      { code: 'custom', message: 'Maximum 5 pairs allowed, found 6' },
+    ]);
   });
 
   it('rejects empty pairs array', () => {
@@ -93,10 +145,10 @@ describe('watchSchema', () => {
     const importerBase = { ...baseWatch, mode: 'importer' as const };
 
     it.each`
-      scenario                                | overrides                                                            | expectSuccess
-      ${'missing daterange fails validation'} | ${{}}                                                                | ${false}
-      ${'accepts valid daterange'}            | ${{ daterange: { start: ISO_START, end: ISO_END } }}                 | ${true}
-      ${'respects extra optional fields'}     | ${{ daterange: { start: ISO_START, end: ISO_END }, batchSize: 500 }} | ${true}
+      scenario                                               | overrides                                                            | expectSuccess
+      ${'a daterange with no value (null) fails validation'} | ${{}}                                                                | ${false}
+      ${'accepts valid daterange'}                           | ${{ daterange: { start: ISO_START, end: ISO_END } }}                 | ${true}
+      ${'respects extra optional fields'}                    | ${{ daterange: { start: ISO_START, end: ISO_END }, batchSize: 500 }} | ${true}
     `('$scenario', ({ overrides, expectSuccess }) => {
       const candidate: Record<string, unknown> = {
         ...importerBase,
@@ -129,10 +181,10 @@ describe('watchSchema', () => {
     const backtestBase = { ...baseWatch, mode: 'backtest' as const };
 
     it.each`
-      scenario                                | overrides                                                            | expectSuccess
-      ${'missing daterange fails validation'} | ${{}}                                                                | ${false}
-      ${'accepts valid daterange'}            | ${{ daterange: { start: ISO_START, end: ISO_END } }}                 | ${true}
-      ${'respects extra optional fields'}     | ${{ daterange: { start: ISO_START, end: ISO_END }, batchSize: 500 }} | ${true}
+      scenario                                               | overrides                                                            | expectSuccess
+      ${'a daterange with no value (null) fails validation'} | ${{}}                                                                | ${false}
+      ${'accepts valid daterange'}                           | ${{ daterange: { start: ISO_START, end: ISO_END } }}                 | ${true}
+      ${'respects extra optional fields'}                    | ${{ daterange: { start: ISO_START, end: ISO_END }, batchSize: 500 }} | ${true}
     `('$scenario', ({ overrides, expectSuccess }) => {
       const candidate: Record<string, unknown> = {
         ...backtestBase,
@@ -184,6 +236,11 @@ describe('watchSchema', () => {
       expect(result.daterange).toBeUndefined();
     });
 
+    it('fills in the warmup fields left out', () => {
+      const { warmup } = watchSchema.parse({ ...baseWatch, mode: 'realtime', warmup: {} });
+      expect(warmup).toEqual({ tickrate: 1000, candleCount: 0 });
+    });
+
     it('requires timeframe', () => {
       const candidate = {
         ...baseWatch,
@@ -199,6 +256,128 @@ describe('watchSchema', () => {
       });
     });
   });
+
+  describe('daterange', () => {
+    const backtestWatch = { ...baseWatch, mode: 'backtest' as const };
+
+    it.each`
+      scenario          | start                  | end
+      ${'ISO strings'}  | ${ISO_START}           | ${ISO_END}
+      ${'a Date start'} | ${new Date(ISO_START)} | ${ISO_END}
+      ${'a Date end'}   | ${ISO_START}           | ${new Date(ISO_END)}
+    `('converts $scenario to epoch milliseconds', ({ start, end }) => {
+      const { daterange } = watchSchema.parse({ ...backtestWatch, daterange: { start, end } });
+      expect(daterange).toEqual({ start: START_TIMESTAMP, end: END_TIMESTAMP });
+    });
+
+    it.each`
+      scenario                      | start                     | end                       | issue
+      ${'an invalid Date start'}    | ${new Date('not a date')} | ${ISO_END}                | ${{ path: ['daterange', 'start'], code: 'invalid_type' }}
+      ${'an invalid Date end'}      | ${ISO_START}              | ${new Date('not a date')} | ${{ path: ['daterange', 'end'], code: 'invalid_type' }}
+      ${'a date-only string start'} | ${'2023-01-01'}           | ${ISO_END}                | ${{ path: ['daterange', 'start'], message: 'Invalid ISO datetime' }}
+    `('reports $scenario as an issue on its path', ({ start, end, issue }) => {
+      const result = watchSchema.safeParse({ ...backtestWatch, daterange: { start, end } });
+      expect(result.error?.issues).toMatchObject([issue]);
+    });
+
+    // Omitted, not null: YAML loads a `daterange:` key with no value as null, which fails the type check before this rule runs.
+    it.each`
+      mode
+      ${'importer'}
+      ${'backtest'}
+    `('reports a daterange omitted in $mode mode as required', ({ mode }) => {
+      const result = watchSchema.safeParse({ ...baseWatch, mode });
+      expect(result.error?.issues).toMatchObject([
+        { code: 'custom', path: ['daterange'], message: 'daterange is required for importer and backtest modes' },
+      ]);
+    });
+  });
+
+  describe('numeric fields', () => {
+    const realtimeWatch = { ...baseWatch, mode: 'realtime' as const };
+
+    it.each`
+      path                         | value     | message
+      ${['tickrate']}              | ${0}      | ${'tickrate must be an integer of at least 100'}
+      ${['tickrate']}              | ${-1}     | ${'tickrate must be an integer of at least 100'}
+      ${['tickrate']}              | ${99}     | ${'tickrate must be an integer of at least 100'}
+      ${['tickrate']}              | ${500.5}  | ${'tickrate must be an integer of at least 100'}
+      ${['tickrate']}              | ${'500'}  | ${'tickrate must be an integer of at least 100'}
+      ${['warmup', 'tickrate']}    | ${0}      | ${'warmup.tickrate must be an integer of at least 100'}
+      ${['warmup', 'tickrate']}    | ${99}     | ${'warmup.tickrate must be an integer of at least 100'}
+      ${['warmup', 'tickrate']}    | ${500.5}  | ${'warmup.tickrate must be an integer of at least 100'}
+      ${['warmup', 'candleCount']} | ${-1}     | ${'warmup.candleCount must be an integer of at least 0'}
+      ${['warmup', 'candleCount']} | ${10.5}   | ${'warmup.candleCount must be an integer of at least 0'}
+      ${['batchSize']}             | ${0}      | ${'batchSize must be an integer of at least 1'}
+      ${['batchSize']}             | ${-1}     | ${'batchSize must be an integer of at least 1'}
+      ${['batchSize']}             | ${1440.5} | ${'batchSize must be an integer of at least 1'}
+    `('rejects $value at $path', ({ path, value, message }) => {
+      const result = watchSchema.safeParse(set(cloneDeep(realtimeWatch), path, value));
+      expect(result.error?.issues).toMatchObject([{ path, message }]);
+    });
+
+    it.each`
+      path                         | value
+      ${['tickrate']}              | ${100}
+      ${['warmup', 'tickrate']}    | ${100}
+      ${['warmup', 'candleCount']} | ${0}
+      ${['batchSize']}             | ${1}
+    `('accepts $value at $path, the lowest value allowed', ({ path, value }) => {
+      const watch = watchSchema.parse(set(cloneDeep(realtimeWatch), path, value));
+      expect(get(watch, path)).toBe(value);
+    });
+  });
+
+  describe('unknown keys', () => {
+    const daterange = { start: ISO_START, end: ISO_END };
+    const backtestWatch = { ...baseWatch, mode: 'backtest' as const, daterange };
+
+    it.each`
+      scenario                            | overrides                                                    | path             | keys
+      ${'a misspelt key under watch'}     | ${{ tickRate: 500 }}                                         | ${[]}            | ${['tickRate']}
+      ${'a misspelt key under warmup'}    | ${{ warmup: { candlecount: 250 } }}                          | ${['warmup']}    | ${['candlecount']}
+      ${'an unknown key under daterange'} | ${{ daterange: { ...daterange, timezone: 'Europe/Paris' } }} | ${['daterange']} | ${['timezone']}
+    `('rejects $scenario instead of dropping it', ({ overrides, path, keys }) => {
+      const result = watchSchema.safeParse({ ...backtestWatch, ...overrides });
+      expect(result.error?.issues).toMatchObject([{ code: 'unrecognized_keys', path, keys }]);
+    });
+  });
+
+  describe('assets and currency', () => {
+    it.each`
+      scenario                            | assets                                          | currency      | issue
+      ${'a duplicated asset'}             | ${['BTC', 'ETH', 'BTC']}                        | ${'USDT'}     | ${{ path: ['assets'], message: 'assets must not contain duplicates (repeated: BTC)' }}
+      ${'several duplicated assets'}      | ${['BTC', 'ETH', 'ETH', 'BTC', 'BTC']}          | ${'USDT'}     | ${{ path: ['assets'], message: 'assets must not contain duplicates (repeated: ETH, BTC)' }}
+      ${'an asset equal to the currency'} | ${['BTC', 'USDT']}                              | ${'USDT'}     | ${{ path: ['assets'], message: 'assets must not contain the currency (USDT)' }}
+      ${'a numeric asset'}                | ${['BTC', 1000]}                                | ${'USDT'}     | ${{ path: ['assets', 1], code: 'invalid_type' }}
+      ${'an empty asset'}                 | ${['']}                                         | ${'USDT'}     | ${{ path: ['assets', 0], message: 'Asset must not be empty' }}
+      ${'a numeric currency'}             | ${['BTC']}                                      | ${1000}       | ${{ path: ['currency'], code: 'invalid_type' }}
+      ${'an empty currency'}              | ${['BTC']}                                      | ${''}         | ${{ path: ['currency'], message: 'Currency must not be empty' }}
+      ${'no asset'}                       | ${[]}                                           | ${'USDT'}     | ${{ path: ['assets'], message: 'At least one asset is required' }}
+      ${'6 assets'}                       | ${['BTC', 'ETH', 'SOL', 'AVAX', 'LINK', 'DOT']} | ${'USDT'}     | ${{ path: ['assets'], message: 'Maximum 5 assets allowed' }}
+      ${'an asset with a slash'}          | ${['BTC/USDT']}                                 | ${'USDT'}     | ${{ path: ['assets', 0], message: 'Asset must not contain a slash' }}
+      ${'a currency with a slash'}        | ${['BTC']}                                      | ${'BTC/USDT'} | ${{ path: ['currency'], message: 'Currency must not contain a slash' }}
+    `('reports $scenario as an issue', ({ assets, currency, issue }) => {
+      const result = watchSchema.safeParse({ ...baseWatch, mode: 'realtime', assets, currency });
+      expect(result.error?.issues).toMatchObject([issue]);
+    });
+
+    it('accepts 5 assets, the most allowed', () => {
+      const result = watchSchema.safeParse({ ...baseWatch, mode: 'realtime', assets: ['BTC', 'ETH', 'SOL', 'AVAX', 'LINK'] });
+      expect(result.error?.issues).toBeUndefined();
+    });
+  });
+
+  describe('mode and timeframe', () => {
+    it.each`
+      field          | value
+      ${'mode'}      | ${'live'}
+      ${'timeframe'} | ${'60m'}
+    `('reports $value as a $field outside the allowed values', ({ field, value }) => {
+      const result = watchSchema.safeParse({ ...baseWatch, mode: 'realtime', [field]: value });
+      expect(result.error?.issues).toMatchObject([{ path: [field], code: 'invalid_value' }]);
+    });
+  });
 });
 
 describe('configurationSchema', () => {
@@ -211,7 +390,7 @@ describe('configurationSchema', () => {
     },
     plugins: [] as Array<{ name?: string }>,
     exchange: {
-      name: 'dummy-cex' as const,
+      name: 'paper-binance' as const,
       simulationBalance: [
         { assetName: 'BTC', balance: 1 },
         { assetName: 'USDT', balance: 10000 },
@@ -230,12 +409,17 @@ describe('configurationSchema', () => {
     expect(result.watch.warmup).toEqual({ tickrate: 1000, candleCount: 0 });
     expect(result.watch.daterange).toBeUndefined();
     expect(result.exchange).toMatchObject({
-      name: 'dummy-cex',
+      name: 'paper-binance',
       exchangeSynchInterval: 600000,
       orderSynchInterval: 20000,
     });
     expect(result.storage).toBeNull();
     expect(result[DISCLAIMER_FIELD]).toBeNull();
+  });
+
+  it('reports a storage type other than sqlite', () => {
+    const result = configurationSchema.safeParse({ ...createBaseConfig(), storage: { type: 'postgres', database: 'gekko.db' } });
+    expect(result.error?.issues).toMatchObject([{ path: ['storage', 'type'], code: 'invalid_value' }]);
   });
 
   const traderPlugin = [{ name: 'Trader' }];
@@ -246,6 +430,7 @@ describe('configurationSchema', () => {
   it.each`
     scenario                                              | plugins         | exchange           | disclaimer | expectSuccess
     ${'trader plugin with real exchange missing consent'} | ${traderPlugin} | ${binanceExchange} | ${null}    | ${false}
+    ${'trader plugin with disclaimer declined'}           | ${traderPlugin} | ${binanceExchange} | ${false}   | ${false}
     ${'trader plugin with disclaimer acknowledged'}       | ${traderPlugin} | ${binanceExchange} | ${true}    | ${true}
     ${'non-trader plugin without disclaimer'}             | ${OtherPlugin}  | ${binanceExchange} | ${null}    | ${true}
     ${'trader plugin on sandboxed exchange'}              | ${traderPlugin} | ${sandboxExchange} | ${null}    | ${true}
@@ -270,5 +455,205 @@ describe('configurationSchema', () => {
         path: [DISCLAIMER_FIELD],
       });
     }
+  });
+
+  describe('exchange allowed in each mode', () => {
+    const simulationBalance = [{ assetName: 'USDT', balance: 1000 }];
+    const exchanges: Record<string, object> = {
+      'dummy-cex': { name: 'dummy-cex', simulationBalance, marketData: [marketDataEntry('BTC/USDT')] },
+      binance: binanceExchange,
+      'binance sandbox': sandboxExchange,
+      hyperliquid: { name: 'hyperliquid', privateKey: '0x01', walletAddress: '0x02' },
+      'paper-binance': { name: 'paper-binance', simulationBalance },
+    };
+    // A daterange is required in backtest and importer modes and optional in realtime mode.
+    const createConfig = (mode: string, exchange: string) => ({
+      ...createBaseConfig(),
+      watch: { ...createBaseConfig().watch, mode, daterange: { start: ISO_START, end: ISO_END } },
+      exchange: exchanges[exchange],
+    });
+
+    it.each`
+      mode          | exchange             | verdict
+      ${'backtest'} | ${'dummy-cex'}       | ${'accepts'}
+      ${'backtest'} | ${'binance'}         | ${'refuses'}
+      ${'backtest'} | ${'binance sandbox'} | ${'refuses'}
+      ${'backtest'} | ${'hyperliquid'}     | ${'refuses'}
+      ${'backtest'} | ${'paper-binance'}   | ${'refuses'}
+      ${'importer'} | ${'dummy-cex'}       | ${'refuses'}
+      ${'importer'} | ${'binance'}         | ${'accepts'}
+      ${'importer'} | ${'binance sandbox'} | ${'accepts'}
+      ${'importer'} | ${'hyperliquid'}     | ${'accepts'}
+      ${'importer'} | ${'paper-binance'}   | ${'refuses'}
+      ${'realtime'} | ${'dummy-cex'}       | ${'refuses'}
+      ${'realtime'} | ${'binance'}         | ${'accepts'}
+      ${'realtime'} | ${'binance sandbox'} | ${'accepts'}
+      ${'realtime'} | ${'hyperliquid'}     | ${'accepts'}
+      ${'realtime'} | ${'paper-binance'}   | ${'accepts'}
+    `('$verdict $exchange in $mode mode', ({ mode, exchange, verdict }) => {
+      const result = configurationSchema.safeParse(createConfig(mode, exchange));
+      const issuePaths = result.error?.issues.map(issue => issue.path) ?? [];
+      expect(issuePaths).toEqual(verdict === 'accepts' ? [] : [['exchange', 'name']]);
+    });
+
+    // The first row is the reported trigger: a live trading config (keys, Trader, disclaimer accepted) switched to backtest.
+    it.each`
+      mode          | exchange       | message
+      ${'backtest'} | ${'binance'}   | ${'Exchange binance cannot be used in backtest mode (allowed: dummy-cex)'}
+      ${'realtime'} | ${'dummy-cex'} | ${'Exchange dummy-cex cannot be used in realtime mode (allowed: binance, hyperliquid, paper-binance)'}
+    `('reports $exchange in $mode mode as one issue naming the allowed exchanges', ({ mode, exchange, message }) => {
+      const result = configurationSchema.safeParse({
+        ...createConfig(mode, exchange),
+        plugins: [{ name: 'TradingAdvisor' }, { name: 'Trader' }],
+        [DISCLAIMER_FIELD]: true,
+      });
+      expect(result.error?.issues).toMatchObject([{ path: ['exchange', 'name'], message }]);
+    });
+
+    it.each`
+      mode          | exchange
+      ${'backtest'} | ${'dummy-cex'}
+      ${'realtime'} | ${'paper-binance'}
+    `('accepts a Trader on $exchange in $mode mode without the disclaimer', ({ mode, exchange }) => {
+      const result = configurationSchema.safeParse({ ...createConfig(mode, exchange), plugins: traderPlugin });
+      expect(result.error?.issues).toBeUndefined();
+    });
+  });
+
+  it('accepts a YAML daterange written as unquoted ISO timestamps', () => {
+    const { watch } = configurationSchema.parse(load(UNQUOTED_DATERANGE_YAML));
+    expect(watch.daterange).toEqual({ start: START_TIMESTAMP, end: END_TIMESTAMP });
+  });
+
+  describe('dummy-cex marketData', () => {
+    const createBacktestConfig = (assets: string[], symbols?: string[]) => ({
+      ...createBaseConfig(),
+      watch: { ...createBaseConfig().watch, assets, mode: 'backtest', daterange: { start: ISO_START, end: ISO_END } },
+      exchange: {
+        name: 'dummy-cex',
+        simulationBalance: [{ assetName: 'USDT', balance: 1000 }],
+        ...(symbols && { marketData: symbols.map(marketDataEntry) }),
+      },
+    });
+    const missingIssue = (symbols: string) => ({
+      path: ['exchange', 'marketData'],
+      message: `Each watched pair needs a marketData entry, or dummy-cex fills its orders with no fees and no order limits (missing: ${symbols})`,
+    });
+    const notWatchedIssue = (symbols: string) => ({
+      path: ['exchange', 'marketData'],
+      message: `Each marketData symbol must match a watched pair (not watched: ${symbols})`,
+    });
+
+    it.each`
+      scenario                            | assets            | symbols                     | issues
+      ${'no entry at all'}                | ${['BTC', 'ETH']} | ${undefined}                | ${[missingIssue('BTC/USDT, ETH/USDT')]}
+      ${'one pair missing out of two'}    | ${['BTC', 'ETH']} | ${['BTC/USDT']}             | ${[missingIssue('ETH/USDT')]}
+      ${'a mistyped symbol'}              | ${['BTC']}        | ${['BTC/USTD']}             | ${[missingIssue('BTC/USDT'), notWatchedIssue('BTC/USTD')]}
+      ${'a lowercase symbol'}             | ${['BTC']}        | ${['btc/usdt']}             | ${[missingIssue('BTC/USDT'), notWatchedIssue('btc/usdt')]}
+      ${'an entry for an unwatched pair'} | ${['BTC']}        | ${['BTC/USDT', 'ETH/USDT']} | ${[notWatchedIssue('ETH/USDT')]}
+    `('reports $scenario', ({ assets, symbols, issues }) => {
+      const result = configurationSchema.safeParse(createBacktestConfig(assets, symbols));
+      expect(result.error?.issues).toMatchObject(issues);
+    });
+
+    it('reports a missing entry and a strategy name mismatch together', () => {
+      const result = configurationSchema.safeParse({
+        ...createBacktestConfig(['BTC', 'ETH'], ['BTC/USDT']),
+        plugins: [{ name: 'TradingAdvisor', strategyName: 'SMACrossover' }],
+        strategy: { name: 'EMARibbon' },
+      });
+      expect(result.error?.issues).toMatchObject([missingIssue('ETH/USDT'), { path: ['strategy', 'name'] }]);
+    });
+
+    it('accepts an entry for every watched pair, in any order', () => {
+      const result = configurationSchema.safeParse(createBacktestConfig(['BTC', 'ETH'], ['ETH/USDT', 'BTC/USDT']));
+      expect(result.error?.issues).toBeUndefined();
+    });
+
+    it.each`
+      type           | symbol
+      ${'a number'}  | ${1000}
+      ${'a boolean'} | ${true}
+      ${'an object'} | ${{ base: 'BTC', quote: 'USDT' }}
+      ${'null'}      | ${null}
+    `('reports an entry symbol given as $type as a type issue instead of throwing', ({ symbol }) => {
+      const config = createBacktestConfig(['BTC']);
+      const marketData = [{ ...marketDataEntry('BTC/USDT'), symbol }];
+      const result = configurationSchema.safeParse({ ...config, exchange: { ...config.exchange, marketData } });
+      expect(result.error?.issues).toMatchObject([{ path: ['exchange', 'marketData', 0, 'symbol'], code: 'invalid_type' }]);
+    });
+
+    // Zod still runs the configuration's refinement after a non-aborting issue (a failed refine or bound) under watch or
+    // exchange, but skips the transforms that build watch.pairs and the marketData Map.
+    describe('when another field is invalid', () => {
+      const coveredConfig = createBacktestConfig(['BTC'], ['BTC/USDT']);
+
+      it.each`
+        scenario                                 | path                                       | value                             | issue
+        ${'a tickrate below 100'}                | ${['watch', 'tickrate']}                   | ${50}                             | ${{ path: ['watch', 'tickrate'], message: 'tickrate must be an integer of at least 100' }}
+        ${'a negative warmup candleCount'}       | ${['watch', 'warmup', 'candleCount']}      | ${-1}                             | ${{ path: ['watch', 'warmup', 'candleCount'], message: 'warmup.candleCount must be an integer of at least 0' }}
+        ${'a batchSize of 0'}                    | ${['watch', 'batchSize']}                  | ${0}                              | ${{ path: ['watch', 'batchSize'], message: 'batchSize must be an integer of at least 1' }}
+        ${'a duplicated asset'}                  | ${['watch', 'assets']}                     | ${['BTC', 'BTC']}                 | ${{ path: ['watch', 'assets'], message: 'assets must not contain duplicates (repeated: BTC)' }}
+        ${'an asset with a slash'}               | ${['watch', 'assets']}                     | ${['BTC/USDT']}                   | ${{ path: ['watch', 'assets', 0], message: 'Asset must not contain a slash' }}
+        ${'6 assets'}                            | ${['watch', 'assets']}                     | ${['A', 'B', 'C', 'D', 'E', 'F']} | ${{ path: ['watch', 'assets'], message: 'Maximum 5 assets allowed' }}
+        ${'a daterange start that is not ISO'}   | ${['watch', 'daterange', 'start']}         | ${'yesterday'}                    | ${{ path: ['watch', 'daterange', 'start'], message: 'Invalid ISO datetime' }}
+        ${'an asset equal to the currency'}      | ${['watch', 'assets']}                     | ${['USDT']}                       | ${{ path: ['watch', 'assets'], message: 'assets must not contain the currency (USDT)' }}
+        ${'a marketData symbol without a slash'} | ${['exchange', 'marketData', 0, 'symbol']} | ${'BTCUSDT'}                      | ${{ path: ['exchange', 'marketData', 0, 'symbol'], message: 'Symbol must contain a slash' }}
+      `('reports $scenario as the only issue', ({ path, value, issue }) => {
+        const result = configurationSchema.safeParse(set(cloneDeep(coveredConfig), path, value));
+        expect(result.error?.issues).toMatchObject([issue]);
+      });
+
+      it('reports both the watch issue and the mode issue of a realtime dummy-cex config', () => {
+        const result = configurationSchema.safeParse({
+          ...coveredConfig,
+          watch: { ...coveredConfig.watch, mode: 'realtime', tickrate: 50 },
+        });
+        expect(result.error?.issues).toMatchObject([
+          { path: ['watch', 'tickrate'], message: 'tickrate must be an integer of at least 100' },
+          {
+            path: ['exchange', 'name'],
+            message: 'Exchange dummy-cex cannot be used in realtime mode (allowed: binance, hyperliquid, paper-binance)',
+          },
+        ]);
+      });
+    });
+  });
+
+  describe('strategy name', () => {
+    const emaRibbon = { name: 'EMARibbon', src: 'close', count: 7 };
+    const createStrategyConfig = (plugins: object[], strategy?: object) => ({
+      ...createBaseConfig(),
+      plugins,
+      ...(strategy && { strategy }),
+    });
+    const mismatchIssue = (name: string, strategyName: string) => ({
+      path: ['strategy', 'name'],
+      message: `strategy.name '${name}' must equal the TradingAdvisor strategyName '${strategyName}', which selects the strategy class`,
+    });
+
+    it.each`
+      scenario                  | plugins
+      ${'the only plugin'}      | ${[{ name: 'TradingAdvisor', strategyName: 'SMACrossover' }]}
+      ${'not the first plugin'} | ${[{ name: 'CandleWriter' }, { name: 'TradingAdvisor', strategyName: 'SMACrossover' }]}
+    `('reports a strategy.name that differs from the strategyName of a TradingAdvisor that is $scenario', ({ plugins }) => {
+      const result = configurationSchema.safeParse(createStrategyConfig(plugins, emaRibbon));
+      expect(result.error?.issues).toMatchObject([mismatchIssue('EMARibbon', 'SMACrossover')]);
+    });
+
+    // A strategyName that is not a string is reported by the TradingAdvisor schema, when the pipeline parses the plugins.
+    it.each`
+      scenario                                    | plugins                                                              | strategy
+      ${'the two names are equal'}                | ${[{ name: 'TradingAdvisor', strategyName: 'EMARibbon' }]}           | ${emaRibbon}
+      ${'there is no strategy block'}             | ${[{ name: 'TradingAdvisor', strategyName: 'SMACrossover' }]}        | ${undefined}
+      ${'there is no TradingAdvisor plugin'}      | ${[{ name: 'Trader' }]}                                              | ${emaRibbon}
+      ${'the TradingAdvisor has no strategyName'} | ${[{ name: 'TradingAdvisor' }]}                                      | ${emaRibbon}
+      ${'the strategyName is a number'}           | ${[{ name: 'TradingAdvisor', strategyName: 1000 }]}                  | ${emaRibbon}
+      ${'the strategyName is null'}               | ${[{ name: 'TradingAdvisor', strategyName: null }]}                  | ${emaRibbon}
+      ${'the strategyName is an object'}          | ${[{ name: 'TradingAdvisor', strategyName: { name: 'EMARibbon' } }]} | ${emaRibbon}
+    `('reports no issue when $scenario', ({ plugins, strategy }) => {
+      const result = configurationSchema.safeParse(createStrategyConfig(plugins, strategy));
+      expect(result.error?.issues).toBeUndefined();
+    });
   });
 });

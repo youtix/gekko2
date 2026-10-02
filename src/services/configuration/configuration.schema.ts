@@ -5,36 +5,52 @@ import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedEx
 import { hyperliquidExchangeSchema } from '@services/exchange/hyperliquid/hyperliquid.schema';
 import { paperBinanceExchangeSchema } from '@services/exchange/paper/paperTradingBinanceExchange.schema';
 import { toTimestamp } from '@utils/date/date.utils';
-import { some } from 'lodash-es';
+import { difference, find, some } from 'lodash-es';
 import { z } from 'zod';
 import { TIMEFRAMES } from './configuration.const';
 
 const disclaimerField = 'I understand that Gekko only automates MY OWN trading strategies' as const;
 
+// js-yaml loads an unquoted timestamp as a Date. An invalid Date is not converted (toISOString() would throw)
+// and fails the string check instead.
+const isoDatetimeSchema = z.preprocess(
+  value => (value instanceof Date && !Number.isNaN(value.getTime()) ? value.toISOString() : value),
+  z.iso.datetime(),
+);
+
 const daterangeSchema = z
-  .object({
-    start: z.iso.datetime(),
-    end: z.iso.datetime(),
+  .strictObject({
+    start: isoDatetimeSchema,
+    end: isoDatetimeSchema,
   })
   .transform(({ start, end }) => ({ start: toTimestamp(start), end: toTimestamp(end) }));
 
+// Heart throws once two ticks are more than 3 tick periods apart. At 100 ms only an event-loop stall of over 200 ms trips
+// it, well clear of ordinary stalls such as a batch of SQLite inserts (up to 80 ms measured on a laptop).
+const MIN_TICKRATE = 100;
+
+const integerAtLeast = (field: string, min: number) => {
+  const message = `${field} must be an integer of at least ${min}`;
+  return z.number(message).int(message).min(min, message);
+};
+
 const warmupSchema = z
-  .object({
-    tickrate: z.number().default(1000),
-    candleCount: z.number().default(0),
+  .strictObject({
+    tickrate: integerAtLeast('warmup.tickrate', MIN_TICKRATE).default(1000),
+    candleCount: integerAtLeast('warmup.candleCount', 0).default(0),
   })
   .default({ tickrate: 1000, candleCount: 0 });
 
 export const watchSchema = z
-  .object({
+  .strictObject({
     assets: assetsSchema,
     currency: currencySchema,
     timeframe: z.enum(TIMEFRAMES).optional(),
-    tickrate: z.number().default(1000),
+    tickrate: integerAtLeast('tickrate', MIN_TICKRATE).default(1000),
     mode: z.enum(['realtime', 'backtest', 'importer']),
     warmup: warmupSchema,
     daterange: daterangeSchema.optional(),
-    batchSize: z.number().optional(),
+    batchSize: integerAtLeast('batchSize', 1).optional(),
   })
   .transform(data => ({
     ...data,
@@ -42,6 +58,11 @@ export const watchSchema = z
       symbol: `${asset}/${data.currency}` as TradingPair,
     })),
   }))
+  .superRefine((data, ctx) => {
+    if (data.assets.includes(data.currency)) {
+      ctx.addIssue({ code: 'custom', path: ['assets'], message: `assets must not contain the currency (${data.currency})` });
+    }
+  })
   .superRefine((data, ctx) => {
     const requiresDaterange = data.mode === 'importer' || data.mode === 'backtest';
     if (requiresDaterange && !data.daterange) {
@@ -84,12 +105,19 @@ export const configurationSchema = z
     [disclaimerField]: z.boolean().nullable().default(null),
   })
   .superRefine((data, ctx) => {
-    // Paper trading only works in realtime mode
-    if (data.exchange.name === 'paper-binance' && data.watch.mode !== 'realtime') {
+    // Only the simulator fills orders from replayed candles: any other exchange, sandbox included, would receive the
+    // backtest's orders. The importer needs a real exchange to download candles from.
+    const exchangesByMode: Record<typeof data.watch.mode, Array<typeof data.exchange.name>> = {
+      backtest: ['dummy-cex'],
+      importer: ['binance', 'hyperliquid'],
+      realtime: ['binance', 'hyperliquid', 'paper-binance'],
+    };
+    const allowedExchanges = exchangesByMode[data.watch.mode];
+    if (!allowedExchanges.includes(data.exchange.name)) {
       ctx.addIssue({
         code: 'custom',
         path: ['exchange', 'name'],
-        message: 'Paper trading exchange (paper-binance) can only be used in realtime mode',
+        message: `Exchange ${data.exchange.name} cannot be used in ${data.watch.mode} mode (allowed: ${allowedExchanges.join(', ')})`,
       });
     }
 
@@ -104,6 +132,43 @@ export const configurationSchema = z
         path: [disclaimerField],
         message:
           'These settings enable Trader with a real exchange and may spend real money, leading to severe losses. Confirm by setting the disclaimer sentence to true in the settings app.',
+      });
+    }
+
+    // marketData is dummy-cex's only source of fees and order limits, looked up by exact symbol: a watched pair without an
+    // entry would trade free of both, and an entry for any other symbol (a typo, a swapped asset) would never be read.
+    // Zod also runs this refinement after a non-aborting issue (a failed refine or bound), with the transforms that build
+    // watch.pairs and the marketData Map skipped, so the rule only checks a configuration that has no other issue.
+    if (data.exchange.name === 'dummy-cex' && !ctx.issues.length) {
+      const watchedSymbols = data.watch.pairs.map(({ symbol }) => symbol);
+      const marketDataSymbols = [...data.exchange.marketData.keys()];
+      const missingSymbols = difference(watchedSymbols, marketDataSymbols);
+      const unwatchedSymbols = difference(marketDataSymbols, watchedSymbols);
+      if (missingSymbols.length) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['exchange', 'marketData'],
+          message: `Each watched pair needs a marketData entry, or dummy-cex fills its orders with no fees and no order limits (missing: ${missingSymbols.join(', ')})`,
+        });
+      }
+      if (unwatchedSymbols.length) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['exchange', 'marketData'],
+          message: `Each marketData symbol must match a watched pair (not watched: ${unwatchedSymbols.join(', ')})`,
+        });
+      }
+    }
+
+    // strategyName selects the strategy class, strategy.name only labels the run (backtest log, PerformanceReporter rows): a
+    // strategy block left over from another strategy would file the results under that strategy's name. Plugin entries are
+    // loose objects, so a strategyName that is not a string is left to the TradingAdvisor schema, applied by the pipeline.
+    const strategyName = find(data.plugins, { name: 'TradingAdvisor' })?.strategyName;
+    if (typeof strategyName === 'string' && data.strategy && data.strategy.name !== strategyName) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['strategy', 'name'],
+        message: `strategy.name '${data.strategy.name}' must equal the TradingAdvisor strategyName '${strategyName}', which selects the strategy class`,
       });
     }
   });

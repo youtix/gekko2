@@ -3,7 +3,8 @@ import { isDaterangeValid } from '@utils/date/date.utils';
 import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import JSON5 from 'json5';
-import { find } from 'lodash-es';
+import { find, isNil } from 'lodash-es';
+import { extname } from 'path';
 import { Configuration as ConfigurationModel } from '../../models/configuration.types';
 import { configurationSchema } from './configuration.schema';
 
@@ -12,12 +13,15 @@ export class Configuration {
   constructor() {
     const configFilePath = process.env['GEKKO_CONFIG_FILE_PATH'];
     if (!configFilePath) throw new GekkoError('configuration', 'Missing GEKKO_CONFIG_FILE_PATH environment variable');
-    const isJson = configFilePath?.endsWith('json') || configFilePath?.endsWith('json5');
-    const isYaml = configFilePath?.endsWith('yml') || configFilePath?.endsWith('yaml');
+    const extension = extname(configFilePath).toLowerCase();
+    const isJson = extension === '.json' || extension === '.json5';
+    const isYaml = extension === '.yml' || extension === '.yaml';
+    if (!isJson && !isYaml)
+      throw new GekkoError('configuration', `Unsupported file extension: ${configFilePath} (expected .json, .json5, .yml or .yaml)`);
     const data = readFileSync(configFilePath, 'utf8');
-    if (isJson) this.configuration = JSON5.parse(data);
-    else if (isYaml) this.configuration = load(data) as ConfigurationModel;
-    this.configuration = configurationSchema.parse(this.configuration);
+    const content = isJson ? JSON5.parse(data) : load(data);
+    if (isNil(content)) throw new GekkoError('configuration', `Empty configuration file: ${configFilePath}`);
+    this.configuration = configurationSchema.parse(content);
   }
 
   public showLogo() {
