@@ -1,7 +1,11 @@
 import { secondsToMilliseconds } from 'date-fns';
 import packageJson from '../../../package.json';
 
-export const logVersion = () => `Gekko version: v${packageJson.version}, Bun version: ${process.version}`;
+export const logVersion = () => {
+  // Under Bun, process.version is the Node version Bun emulates, not Bun's own version.
+  const runtime = process.versions.bun ? `Bun version: v${process.versions.bun}` : `Node version: ${process.version}`;
+  return `Gekko version: v${packageJson.version}, ${runtime}`;
+};
 
 export const processStartTime = (): EpochTimeStamp => {
   return Date.now() - secondsToMilliseconds(process.uptime());

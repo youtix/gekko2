@@ -6,14 +6,29 @@ import { logVersion, processStartTime, wait, waitSync } from './process.utils';
 
 describe('process', () => {
   describe('logVersion()', () => {
+    afterEach(() => {
+      Reflect.deleteProperty(process.versions, 'bun');
+    });
+
     it('should include the package version', () => {
       const result = logVersion();
       expect(result).toContain(`v${packageJson.version}`);
     });
 
-    it('should include the process version', () => {
+    it('should include the Bun version under the Bun label when running on Bun', () => {
+      process.versions.bun = '1.3.14';
       const result = logVersion();
-      expect(result).toContain(process.version);
+      expect(result).toContain('Bun version: v1.3.14');
+    });
+
+    it('should include the Node version under the Node label when not running on Bun', () => {
+      const result = logVersion();
+      expect(result).toContain(`Node version: ${process.version}`);
+    });
+
+    it('should not claim a Bun version when not running on Bun', () => {
+      const result = logVersion();
+      expect(result).not.toContain('Bun');
     });
   });
 
