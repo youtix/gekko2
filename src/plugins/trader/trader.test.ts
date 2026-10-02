@@ -185,6 +185,8 @@ describe('Trader', () => {
   const getOrdersMap = () => (trader as any).orders;
   const getOrderMetadata = (id: string) => getOrdersMap().get(id);
   const getOrderInstance = (id: string) => getOrderMetadata(id)?.orderInstance;
+  const getCompletedEvent = () =>
+    (trader['addDeferredEmit'] as unknown as Mock).mock.calls.find(call => call[0] === ORDER_COMPLETED_EVENT)?.[1];
 
   const buildAdvice = (overrides?: Partial<AdviceOrder>): AdviceOrder => ({
     id: overrides?.id ?? '20a7abd2-546b-4c65-b04d-900b84fa5fe6',
@@ -604,6 +606,21 @@ describe('Trader', () => {
       expect(getOrdersMap().size).toBe(0);
     });
 
+    it('emits ORDER_COMPLETED_EVENT with the portfolio fetched after the fill', async () => {
+      const portfolioAfterFill = new Map<string, BalanceDetail>([
+        ['BTC', { free: 12.5, used: 0, total: 12.5 }],
+        ['USDT', { free: 50, used: 0, total: 50 }],
+      ]);
+      fakeExchange.fetchBalance.mockResolvedValue(portfolioAfterFill);
+      const advice = buildAdvice();
+
+      await trader.onStrategyCreateOrder([advice]);
+      getOrderInstance(advice.id)!.emit(ORDER_COMPLETED_EVENT);
+      await tick(10); // createSummary, then synchronize (fetchBalance, fetchTickers)
+
+      expect(getCompletedEvent()?.exchange.portfolio).toEqual(portfolioAfterFill);
+    });
+
     it('logs order updates (partially filled)', async () => {
       const advice = buildAdvice();
       await trader.onStrategyCreateOrder([advice]);
@@ -718,6 +735,24 @@ describe('Trader', () => {
 
       expect(completionSpy).toHaveBeenCalled();
       expect(getOrdersMap().size).toBe(0);
+    });
+
+    it('emits ORDER_COMPLETED_EVENT with the portfolio fetched after a fill that beat the cancel', async () => {
+      const portfolioAfterFill = new Map<string, BalanceDetail>([
+        ['BTC', { free: 9.5, used: 0, total: 9.5 }],
+        ['USDT', { free: 50, used: 0, total: 50 }],
+      ]);
+      fakeExchange.fetchBalance.mockResolvedValue(portfolioAfterFill);
+      trader['prices'].set('BTC/USDT', 100);
+      const advice = buildAdvice();
+
+      await trader.onStrategyCreateOrder([advice]);
+      const order = getOrderInstance(advice.id)!;
+      await trader.onStrategyCancelOrder([advice.id]);
+      order.emit(ORDER_COMPLETED_EVENT);
+      await tick(10); // createSummary, then synchronize (fetchBalance, fetchTickers)
+
+      expect(getCompletedEvent()?.exchange.portfolio).toEqual(portfolioAfterFill);
     });
   });
 

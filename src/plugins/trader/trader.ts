@@ -156,8 +156,8 @@ export class Trader extends Plugin {
         // Handle Order success event (maybe it completed before we succeed to cancel)
         orderInstance.once(ORDER_COMPLETED_EVENT, async () => {
           const summary = await orderInstance.createSummary();
-          const orderCompletedEvent = this.checkOrderSummary({ id, symbol, type, orderCreationDate, summary });
           await this.synchronize();
+          const orderCompletedEvent = this.checkOrderSummary({ id, symbol, type, orderCreationDate, summary });
           this.addDeferredEmit<OrderCompletedEvent>(ORDER_COMPLETED_EVENT, orderCompletedEvent);
           this.orders.delete(id);
         });
@@ -248,8 +248,8 @@ export class Trader extends Plugin {
         // SUCCES EVENTS
         orderInstance.on(ORDER_COMPLETED_EVENT, async () => {
           const summary = await orderInstance.createSummary();
-          const orderCompletedEvent = this.checkOrderSummary({ id, symbol, type, orderCreationDate, summary });
           await this.synchronize();
+          const orderCompletedEvent = this.checkOrderSummary({ id, symbol, type, orderCreationDate, summary });
           this.addDeferredEmit<OrderCompletedEvent>(ORDER_COMPLETED_EVENT, orderCompletedEvent);
           this.orders.delete(id);
         });
