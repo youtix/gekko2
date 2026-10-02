@@ -177,14 +177,16 @@ export class Supervision extends Plugin {
     if (this.logMonitorInterval) return;
     debug('supervision', 'Starting Log monitoring');
     this.lastSentTimestamp = getBufferedLogs().at(-1)?.timestamp ?? 0;
-    this.logMonitorInterval = setInterval(() => {
-      const logs = getBufferedLogs().filter(l => l.timestamp > this.lastSentTimestamp && ['warn', 'error'].includes(l.level));
-      if (logs.length) {
-        this.lastSentTimestamp = logs[logs.length - 1].timestamp;
-        const message = logs.map(l => `• ${toISOString(l.timestamp)} [${l.level.toUpperCase()}] (${l.tag})\n${l.message}`).join('---\n');
-        this.bot.sendMessage(message);
-      }
-    }, this.logMonitorIntervalTime);
+    this.logMonitorInterval = setInterval(() => this.sendNewLogs(), this.logMonitorIntervalTime);
+  }
+
+  private async sendNewLogs() {
+    const logs = getBufferedLogs().filter(l => l.timestamp > this.lastSentTimestamp && ['warn', 'error'].includes(l.level));
+    if (logs.length) {
+      this.lastSentTimestamp = logs[logs.length - 1].timestamp;
+      const message = logs.map(l => `• ${toISOString(l.timestamp)} [${l.level.toUpperCase()}] (${l.tag})\n${l.message}`).join('---\n');
+      await this.bot.sendMessage(message);
+    }
   }
 
   private stopLogMonitoring() {
@@ -245,12 +247,14 @@ export class Supervision extends Plugin {
     /** Nothing to do */
   }
 
-  protected processFinalize() {
+  protected async processFinalize() {
     this.bot.close();
     this.stopCpuCheck();
     this.stopMemoryCheck();
     this.stopTimeframeCandleCheck();
     this.stopLogMonitoring();
+    // Last flush: what is logged while the application stops (such as why it stops) would otherwise never be sent
+    if (this.subscriptions.has('monitor_log')) await this.sendNewLogs();
   }
 
   public static getStaticConfiguration() {

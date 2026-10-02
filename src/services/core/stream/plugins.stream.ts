@@ -10,6 +10,8 @@ import { Writable } from 'node:stream';
 
 export class PluginsStream extends Writable {
   private readonly plugins: Plugin[];
+  /** Only these are finalised: all the plugins, unless _construct failed part way */
+  private readonly initializedPlugins: Plugin[] = [];
   private readonly dummyExchange?: DummyExchange;
   private finalized = false;
 
@@ -22,7 +24,10 @@ export class PluginsStream extends Writable {
 
   public async _construct(callback: (error?: Error | null) => void): Promise<void> {
     try {
-      for (const plugin of this.plugins) await plugin.processInitStream();
+      for (const plugin of this.plugins) {
+        await plugin.processInitStream();
+        this.initializedPlugins.push(plugin);
+      }
       callback();
     } catch (error) {
       if (error instanceof Error) callback(error);
@@ -48,16 +53,14 @@ export class PluginsStream extends Writable {
       // Tell the stream that we're done
       done();
     } catch (error) {
+      if (error instanceof ApplicationStopError) warning('stream', `Application stopped gracefully: ${error.message}`);
+      else logError('stream', 'Gekko is closing the application due to an error!');
+
       // Finalize all plugins before destroying the stream
       await this.finalizeAllPlugins();
 
-      if (error instanceof ApplicationStopError) {
-        warning('stream', `Application stopped gracefully: ${error.message}`);
-        this.destroy(); // cleanly destroys without error
-      } else {
-        logError('stream', 'Gekko is closing the application due to an error!');
-        this.destroy(error instanceof Error ? error : new Error(String(error)));
-      }
+      // The pipeline rejects with this error, which is how main() tells an ApplicationStopError from a crash
+      this.destroy(error instanceof Error ? error : new Error(String(error)));
     }
   }
 
@@ -76,14 +79,28 @@ export class PluginsStream extends Writable {
   }
 
   /**
-   * Safely finalize all plugins, ensuring each plugin's cleanup runs
+   * Runs on every teardown. _final and a failed _write finalise the plugins before it, but stream/promises destroys this
+   * stream without calling _final when a stream upstream fails, or _construct does: the plugins are finalised here then.
+   */
+  public async _destroy(error: Nullable<Error>, callback: (error?: Nullable<Error>) => void) {
+    try {
+      await this.finalizeAllPlugins();
+    } catch (finalizeError) {
+      warning('stream', `Finalization errors: ${finalizeError instanceof Error ? finalizeError.message : finalizeError}`);
+    }
+    // Always the error the stream was destroyed with, never a finalisation failure: the pipeline rejects with it
+    callback(error);
+  }
+
+  /**
+   * Safely finalize all plugins whose init completed, ensuring each plugin's cleanup runs
    * regardless of errors in other plugins.
    */
   private async finalizeAllPlugins(): Promise<void> {
     if (this.finalized) return;
     this.finalized = true;
 
-    const results = await Promise.allSettled(this.plugins.map(plugin => plugin.processCloseStream()));
+    const results = await Promise.allSettled(this.initializedPlugins.map(plugin => plugin.processCloseStream()));
 
     const errors = results
       .filter((r): r is PromiseRejectedResult => r.status === 'rejected')

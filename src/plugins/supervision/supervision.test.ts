@@ -1,5 +1,6 @@
 import { CandleBucket } from '@models/event.types';
 import { getBufferedLogs } from '@services/logger';
+import { BufferedLog } from '@services/logger.types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Supervision } from './supervision';
 import { supervisionSchema } from './supervision.schema';
@@ -145,6 +146,32 @@ describe('Supervision', () => {
 
     await vi.advanceTimersByTimeAsync(100);
     expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('m3'));
+  });
+
+  describe('processFinalize', () => {
+    const stopReasonLog: BufferedLog = {
+      timestamp: 2,
+      level: 'warn',
+      tag: 'stream',
+      message: 'Application stopped gracefully: [CORE] Max consecutive order errors reached (5)',
+    };
+
+    it('sends the warnings and errors logged since the last check when log monitoring is on', async () => {
+      plugin['handleCommand']('/sub_monitor_log');
+      vi.mocked(getBufferedLogs).mockReturnValue([stopReasonLog]);
+
+      await plugin['processFinalize']();
+
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Max consecutive order errors reached (5)'));
+    });
+
+    it('sends nothing when log monitoring is off', async () => {
+      vi.mocked(getBufferedLogs).mockReturnValue([stopReasonLog]);
+
+      await plugin['processFinalize']();
+
+      expect(fakeBot.sendMessage).not.toHaveBeenCalled();
+    });
   });
 
   it('should return help information', () => {

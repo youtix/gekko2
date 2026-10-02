@@ -20,6 +20,11 @@ class Injecter {
     return this.storageInstance;
   }
 
+  /** Closes the storage if one was created. Unlike storage(), it never creates one, so it never throws for want of a configuration. */
+  public closeStorage() {
+    this.storageInstance?.close();
+  }
+
   public exchange() {
     if (this.exchangeInstance) return this.exchangeInstance;
     const exchangeConfig = config.getExchange();

@@ -290,6 +290,7 @@ describe('E2E: Realtime Screener Flow', () => {
     };
 
     try {
+      const { ApplicationStopError } = await import('@errors/applicationStop.error');
       const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
       const { inject } = await import('@services/injecter/injecter');
       const storage = inject.storage() as SQLiteStorage;
@@ -300,8 +301,9 @@ describe('E2E: Realtime Screener Flow', () => {
         await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
         throw new Error('Pipeline should have thrown an error');
       } catch (err: any) {
-        // Assert that the stream closed prematurely due to the ApplicationStopError
-        expect(err.code).toBe('ERR_STREAM_PREMATURE_CLOSE');
+        // The pipeline rejects with the ApplicationStopError itself (not a premature close), so main() can exit with 0
+        expect(err).toBeInstanceOf(ApplicationStopError);
+        expect(err.message).toBe('[CORE] Max consecutive order errors reached (5)');
       }
 
       const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');

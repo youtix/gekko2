@@ -2,7 +2,9 @@ import { ApplicationStopError } from '@errors/applicationStop.error';
 import { Candle } from '@models/candle.types';
 import { Plugin } from '@plugins/plugin';
 import { error, info, warning } from '@services/logger';
-import { describe, expect, it, vi } from 'vitest';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginsStream } from './plugins.stream';
 
 /* -------------------------------------------------------------------------- */
@@ -169,22 +171,37 @@ describe('PluginsStream', () => {
         }
       });
 
-      it('stops gracefully on ApplicationStopError', async () => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
-        const plugin = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            throw new ApplicationStopError('stop error application');
-          }),
-        });
-        const stream = new PluginsStream([plugin]);
+      describe('on ApplicationStopError', () => {
+        const stopError = new ApplicationStopError('stop error application');
+        let plugin: Plugin;
+        let pipelineRejection: unknown;
 
-        await new Promise<void>(resolve => {
-          stream.on('close', resolve);
-          stream.write(MOCK_CANDLE);
+        beforeEach(async () => {
+          plugin = createPluginStub({
+            processInputStream: vi.fn(async () => {
+              throw stopError;
+            }),
+          });
+          pipelineRejection = await pipeline(Readable.from([MOCK_CANDLE]), new PluginsStream([plugin])).catch((reason: unknown) => reason);
         });
 
-        expect(plugin.processCloseStream).toHaveBeenCalledOnce();
-        expect(warning).toHaveBeenCalledWith('stream', 'Application stopped gracefully: [CORE] stop error application');
+        it('rejects the pipeline with the ApplicationStopError itself, not a premature close', () => {
+          expect(pipelineRejection).toBe(stopError);
+        });
+
+        it('finalizes all plugins', () => {
+          expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+        });
+
+        it('logs the stop reason as a warning', () => {
+          expect(warning).toHaveBeenCalledWith('stream', 'Application stopped gracefully: [CORE] stop error application');
+        });
+
+        it('logs the stop reason before finalizing the plugins', () => {
+          const [logCallOrder] = vi.mocked(warning).mock.invocationCallOrder;
+          const [finalizeCallOrder] = vi.mocked(plugin.processCloseStream).mock.invocationCallOrder;
+          expect(logCallOrder).toBeLessThan(finalizeCallOrder);
+        });
       });
 
       it('does not finalize twice when _final called after error', async () => {
@@ -331,6 +348,116 @@ describe('PluginsStream', () => {
       await (stream as unknown as { finalizeAllPlugins: () => Promise<void> }).finalizeAllPlugins();
 
       expect(plugin.processCloseStream).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('_destroy', () => {
+    describe('when a stream upstream fails mid-stream', () => {
+      const sourceError = new Error('download failed');
+      let plugins: Plugin[];
+      let pipelineRejection: unknown;
+
+      beforeEach(async () => {
+        let onBucketProcessed = () => {};
+        const bucketProcessed = new Promise<void>(resolve => (onBucketProcessed = resolve));
+        plugins = [
+          createPluginStub({ processInputStream: vi.fn(async () => onBucketProcessed()) }),
+          createPluginStub({
+            processCloseStream: vi.fn(async () => {
+              throw new Error('finalize failed');
+            }),
+          }),
+        ];
+        async function* failingSource() {
+          yield MOCK_CANDLE;
+          await bucketProcessed; // Fails once the plugins have processed a bucket, like a download that breaks off
+          throw sourceError;
+        }
+
+        pipelineRejection = await pipeline(Readable.from(failingSource()), new PluginsStream(plugins)).catch((reason: unknown) => reason);
+      });
+
+      it('rejects the pipeline with the error of the source, not with the finalization failure', () => {
+        expect(pipelineRejection).toBe(sourceError);
+      });
+
+      it.each`
+        index | plugin
+        ${0}  | ${'first'}
+        ${1}  | ${'second'}
+      `('finalizes the $plugin plugin exactly once', ({ index }) => {
+        expect(plugins[index].processCloseStream).toHaveBeenCalledOnce();
+      });
+    });
+
+    describe('when _construct fails on the second of three plugins', () => {
+      const initError = new Error('init failed');
+      let plugins: Plugin[];
+      let pipelineRejection: unknown;
+
+      beforeEach(async () => {
+        plugins = [
+          createPluginStub(),
+          createPluginStub({
+            processInitStream: vi.fn(async () => {
+              throw initError;
+            }),
+          }),
+          createPluginStub(),
+        ];
+
+        pipelineRejection = await pipeline(Readable.from([MOCK_CANDLE]), new PluginsStream(plugins)).catch((reason: unknown) => reason);
+      });
+
+      it('rejects the pipeline with the init error', () => {
+        expect(pipelineRejection).toBe(initError);
+      });
+
+      it.each`
+        index | outcome                | plugin                 | calls
+        ${0}  | ${'finalizes'}         | ${'initialized'}       | ${1}
+        ${1}  | ${'does not finalize'} | ${'whose init failed'} | ${0}
+        ${2}  | ${'does not finalize'} | ${'never initialized'} | ${0}
+      `('$outcome the plugin $plugin', ({ index, calls }) => {
+        expect(plugins[index].processCloseStream).toHaveBeenCalledTimes(calls);
+      });
+    });
+
+    it('does not finalize the plugins again after a normal end', async () => {
+      const plugin = createPluginStub();
+
+      await pipeline(Readable.from([MOCK_CANDLE]), new PluginsStream([plugin]));
+
+      expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+    });
+
+    describe('when finalizing the plugins throws', () => {
+      const destroyError = new Error('download failed');
+
+      const destroyWhileFinalizationThrows = (thrown: unknown) => {
+        const stream = new PluginsStream([createPluginStub()]);
+        Object.defineProperty(stream, 'finalizeAllPlugins', {
+          value: async () => {
+            throw thrown;
+          },
+        });
+        stream.destroy(destroyError);
+        return waitForError(stream);
+      };
+
+      it('still reports the error the stream was destroyed with', async () => {
+        expect(await destroyWhileFinalizationThrows(new Error('finalize failed'))).toBe(destroyError);
+      });
+
+      it.each`
+        kind               | thrown
+        ${'an Error'}      | ${new Error('finalize failed')}
+        ${'another value'} | ${'finalize failed'}
+      `('logs the failure as a warning when finalization throws $kind', async ({ thrown }) => {
+        await destroyWhileFinalizationThrows(thrown);
+
+        expect(warning).toHaveBeenCalledWith('stream', 'Finalization errors: finalize failed');
+      });
     });
   });
 });
