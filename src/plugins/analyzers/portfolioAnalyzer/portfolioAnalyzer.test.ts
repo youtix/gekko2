@@ -136,6 +136,14 @@ describe('PortfolioAnalyzer', () => {
       expect(emitSpy).toHaveBeenCalledWith(PERFORMANCE_REPORT_EVENT, EMPTY_PORTFOLIO_REPORT);
     });
 
+    it('should say why the run was interrupted in the report', () => {
+      (analyzer as any).processFinalize(new Error('a stream upstream failed'));
+      expect(emitSpy).toHaveBeenCalledWith(PERFORMANCE_REPORT_EVENT, {
+        ...EMPTY_PORTFOLIO_REPORT,
+        interruption: 'a stream upstream failed',
+      });
+    });
+
     it('should log warning if insufficient data', () => {
       (analyzer as any).processFinalize();
       expect(warning).toHaveBeenCalledWith('portfolio analyzer', expect.stringContaining('Insufficient data'));

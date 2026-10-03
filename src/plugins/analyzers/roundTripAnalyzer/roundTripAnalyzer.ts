@@ -280,8 +280,9 @@ export class RoundTripAnalyzer extends Plugin {
     }
   }
 
-  protected processFinalize(): void {
-    const report = this.calculateReportStatistics();
+  protected processFinalize(failure?: Error): void {
+    // An interrupted run (a crash or the circuit breaker) gives a partial report, and says so
+    const report: TradingReport = { ...this.calculateReportStatistics(), ...(failure && { interruption: failure.message }) };
     if (this.enableConsoleTable) logFinalize(report, this.currency);
     else info('roundtrip analyzer', report);
 

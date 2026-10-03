@@ -108,6 +108,10 @@ describe('PluginsStream', () => {
         expect(plugins[0].processCloseStream).toHaveBeenCalledOnce();
       });
 
+      it('tells the plugin why the run stops', () => {
+        expect(plugins[0].processCloseStream).toHaveBeenCalledWith(destroyError);
+      });
+
       it('does not initialize the plugins left', () => {
         expect(plugins[1].processInitStream).not.toHaveBeenCalled();
       });

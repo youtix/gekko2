@@ -28,10 +28,10 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 
 const PORTFOLIO_HEADER =
-  'id;pair;net profit;total return;yearly profit;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;start time;end time;duration;exposure;original balance;current balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset\n';
+  'id;pair;net profit;total return;yearly profit;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;start time;end time;duration;exposure;original balance;current balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset;status\n';
 
 const TRADING_HEADER =
-  'id;pair;net profit;total return;annualized return;win rate;market;alpha;sharpe ratio;sortino ratio;trade count;start time;end time;duration;exposure;start balance;final balance;start price;end price;standard deviation;downside deviation;top maes\n';
+  'id;pair;net profit;total return;annualized return;win rate;market;alpha;sharpe ratio;sortino ratio;trade count;start time;end time;duration;exposure;start balance;final balance;start price;end price;standard deviation;downside deviation;top maes;status\n';
 
 const baseConfig = {
   name: 'PerformanceReporter',
@@ -141,13 +141,17 @@ describe('PerformanceReporter', () => {
       });
 
       it.each`
-        report                   | expectedPart
-        ${samplePortfolioReport} | ${'DEMA'}
-        ${samplePortfolioReport} | ${'Portfolio'}
-        ${samplePortfolioReport} | ${'3,650 (116.8%)'}
-        ${sampleTradingReport}   | ${'DEMA'}
-        ${sampleTradingReport}   | ${'Trading'}
-        ${sampleTradingReport}   | ${'1,320'}
+        report                                                                                            | expectedPart
+        ${samplePortfolioReport}                                                                          | ${'DEMA'}
+        ${samplePortfolioReport}                                                                          | ${'Portfolio'}
+        ${samplePortfolioReport}                                                                          | ${'3,650 (116.8%)'}
+        ${sampleTradingReport}                                                                            | ${'DEMA'}
+        ${sampleTradingReport}                                                                            | ${'Trading'}
+        ${sampleTradingReport}                                                                            | ${'1,320'}
+        ${sampleTradingReport}                                                                            | ${';completed\n'}
+        ${samplePortfolioReport}                                                                          | ${';completed\n'}
+        ${{ ...sampleTradingReport, interruption: 'Max consecutive order errors reached (5); stopping' }} | ${';interrupted: Max consecutive order errors reached (5)  stopping\n'}
+        ${{ ...samplePortfolioReport, interruption: 'Missing candles' }}                                  | ${';interrupted: Missing candles\n'}
       `('should append correct parts ($expectedPart) for $report.id', ({ report, expectedPart }) => {
         (fs.existsSync as Mock).mockReturnValue(false);
         (fs.statSync as Mock).mockReturnValue({ size: 0 });

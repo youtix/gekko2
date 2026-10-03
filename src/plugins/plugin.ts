@@ -70,12 +70,13 @@ export abstract class Plugin extends SequentialEventEmitter {
     await this.processOneMinuteBucket(bucket);
   }
 
-  /** Invoked once when the stream pipeline terminates. */
-  public async processCloseStream() {
-    await this.processFinalize();
+  /** Invoked once when the stream pipeline terminates, with the error that stops the run before its end, if any. */
+  public async processCloseStream(failure?: Error) {
+    await this.processFinalize(failure);
   }
 
   protected abstract processInit(): void;
   protected abstract processOneMinuteBucket(bucket: CandleBucket): void;
-  protected abstract processFinalize(): void;
+  /** `failure` is set when the run stops on an error (an ApplicationStopError included): the run is then partial. */
+  protected abstract processFinalize(failure?: Error): void;
 }

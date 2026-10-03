@@ -15,16 +15,20 @@ import { performanceReporterSchema } from './performanceReporter.schema';
 import { PerformanceReporterConfig } from './performanceReporter.types';
 import { generateStrategyId } from './performanceReporter.utils';
 
+/** A row of a run that stopped before its end (a crash, the circuit breaker) says so rather than passing for a full run */
+const formatStatus = (report: Report) =>
+  report.interruption ? `interrupted: ${report.interruption.replaceAll(/[;\n]/g, ' ')}` : 'completed';
+
 export class PerformanceReporter extends Plugin {
   private readonly formater: Intl.NumberFormat;
   private readonly filePath: string;
   private fs: Fs = { lockSync: defaultLockSync };
 
   private readonly portfolioHeader =
-    'id;pair;net profit;total return;yearly profit;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;start time;end time;duration;exposure;original balance;current balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset\n';
+    'id;pair;net profit;total return;yearly profit;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;start time;end time;duration;exposure;original balance;current balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset;status\n';
 
   private readonly tradingHeader =
-    'id;pair;net profit;total return;annualized return;win rate;market;alpha;sharpe ratio;sortino ratio;trade count;start time;end time;duration;exposure;start balance;final balance;start price;end price;standard deviation;downside deviation;top maes\n';
+    'id;pair;net profit;total return;annualized return;win rate;market;alpha;sharpe ratio;sortino ratio;trade count;start time;end time;duration;exposure;start balance;final balance;start price;end price;standard deviation;downside deviation;top maes;status\n';
 
   constructor({ name, filePath, fileName }: PerformanceReporterConfig) {
     super(name);
@@ -125,6 +129,7 @@ export class PerformanceReporter extends Plugin {
         formatRatio(report.downsideDeviation),
         formattedDrawdownDuration,
         report.benchmarkAsset,
+        formatStatus(report),
       ].join(';') + '\n'
     );
   }
@@ -154,6 +159,7 @@ export class PerformanceReporter extends Plugin {
         formatRatio(report.volatility),
         formatRatio(report.downsideDeviation),
         JSON.stringify(report.topMAEs),
+        formatStatus(report),
       ].join(';') + '\n'
     );
   }

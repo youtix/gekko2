@@ -79,7 +79,7 @@ export class PluginsStream extends Writable {
   public async _destroy(error: Nullable<Error>, callback: (error?: Nullable<Error>) => void) {
     await this.pendingWrite; // Never rejects: a failed bucket is handled by stopOnError
     try {
-      await this.finalizeAllPlugins();
+      await this.finalizeAllPlugins(this.caughtError ?? error ?? undefined);
     } catch (finalizeError) {
       warning('stream', `Finalization errors: ${toError(finalizeError).message}`);
     }
@@ -113,7 +113,7 @@ export class PluginsStream extends Writable {
     else logError('stream', `Gekko is closing the application due to an error: ${error.message}`);
 
     // Finalize all plugins before destroying the stream. A failed finalisation is logged by _destroy, which waits for it too.
-    await this.finalizeAllPlugins().catch(() => undefined);
+    await this.finalizeAllPlugins(error).catch(() => undefined);
 
     // The pipeline rejects with this error, which is how main() tells an ApplicationStopError from a crash
     this.destroy(error);
@@ -123,13 +123,14 @@ export class PluginsStream extends Writable {
    * Safely finalize all plugins whose init completed, ensuring each plugin's cleanup runs
    * regardless of errors in other plugins.
    */
-  private finalizeAllPlugins(): Promise<void> {
-    this.finalization ??= this.finalizePlugins();
+  private finalizeAllPlugins(failure?: Error): Promise<void> {
+    this.finalization ??= this.finalizePlugins(failure);
     return this.finalization;
   }
 
-  private async finalizePlugins(): Promise<void> {
-    const results = await Promise.allSettled(this.initializedPlugins.map(plugin => plugin.processCloseStream()));
+  /** `failure` tells the plugins that the run stops before its end: their final reports then describe a partial run */
+  private async finalizePlugins(failure?: Error): Promise<void> {
+    const results = await Promise.allSettled(this.initializedPlugins.map(plugin => plugin.processCloseStream(failure)));
 
     const errors = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected').map(r => toError(r.reason));
 
