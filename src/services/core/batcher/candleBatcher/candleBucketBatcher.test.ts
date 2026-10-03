@@ -1,138 +1,106 @@
+import { ONE_MINUTE } from '@constants/time.const';
+import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { toISOString, toTimestamp } from '@utils/date/date.utils';
+import { range } from 'lodash-es';
+import { describe, expect, it, vi } from 'vitest';
 import { CandleBucketBatcher } from './candleBucketBatcher';
-import { FastCandleBatcher } from './fastCandleBatcher';
 
-// Mock FastCandleBatcher using classic function to ensure `this` context is tracked in mock.instances
-vi.mock('./fastCandleBatcher', () => {
-  return {
-    FastCandleBatcher: vi.fn(function (this: any) {
-      this.addCandle = vi.fn();
-    }),
-  };
-});
+vi.mock('@services/logger', () => ({ warning: vi.fn() }));
+
+const BTC: TradingPair = 'BTC/USDT';
+const ETH: TradingPair = 'ETH/USDT';
+const T0 = toTimestamp('2023-01-01T00:00:00Z');
+const at = (minute: number) => T0 + minute * ONE_MINUTE;
+
+// BTC and ETH prices differ, so that a candle of one pair cannot pass for the other
+const candleAt = (pair: TradingPair, minute: number): Candle => {
+  const price = (pair === BTC ? 20_000 : 1_000) + minute;
+  return { start: at(minute), open: price, high: price + 5, low: price - 5, close: price + 1, volume: 2 };
+};
+
+const bucketAt = (minute: number, pairs: TradingPair[] = [BTC, ETH]): CandleBucket =>
+  new Map(pairs.map(pair => [pair, candleAt(pair, minute)]));
+
+/** Feeds the 5-minute batcher of BTC and ETH one bucket per minute and returns what each call returned */
+const feed = (minutes: number[]) => {
+  const batcher = new CandleBucketBatcher([BTC, ETH], 5);
+  return minutes.map(minute => batcher.addBucket(bucketAt(minute)));
+};
 
 describe('CandleBucketBatcher', () => {
-  const pairA: TradingPair = 'USDT/BTC';
-  const pairB: TradingPair = 'USDT/ETH';
-  const pairs = [pairA, pairB];
-  const candleSize = 5;
-
-  let batcher: CandleBucketBatcher;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    batcher = new CandleBucketBatcher(pairs, candleSize);
+  it('should count the pairs it batches', () => {
+    expect(new CandleBucketBatcher([BTC, ETH], 5).pairCount).toBe(2);
   });
 
-  it('should initialize correctly with given pairs', () => {
-    expect(batcher.pairCount).toBe(2);
-    expect(FastCandleBatcher).toHaveBeenCalledTimes(2);
-    expect(FastCandleBatcher).toHaveBeenCalledWith(candleSize);
+  it('should refuse to batch no pair at all', () => {
+    expect(() => new CandleBucketBatcher([], 5)).toThrow('CandleBucketBatcher needs at least one pair');
   });
 
-  describe('addBucket', () => {
-    const mockCandle = {
-      start: 1000,
-      open: 100,
-      high: 110,
-      low: 90,
-      close: 105,
-      volume: 1000,
-      trades: 50,
-    } as unknown as Candle;
-
-    it('should throw an error if a registered pair is missing from the bucket', () => {
-      const bucket = new Map([[pairA, mockCandle]]);
-      expect(() => batcher.addBucket(bucket)).toThrowError(/CandleBucketBatcher: Missing candle for pair/);
+  describe('batching', () => {
+    it('should return nothing until the timeframe candle closes', () => {
+      expect(feed(range(0, 4))).toEqual([undefined, undefined, undefined, undefined]);
     });
 
-    it('should ignore unregistered pairs in the bucket', () => {
-      // Use mock.instances now that we use function() implementation
-      const mockInstances = vi.mocked(FastCandleBatcher).mock.instances as any[];
-
-      mockInstances.forEach(instance => {
-        instance.addCandle.mockReturnValue(undefined);
-      });
-
-      const bucket = new Map([
-        [pairA, mockCandle],
-        [pairB, mockCandle],
-        ['USDT/LTC' as TradingPair, mockCandle], // Unregistered
-      ]);
-
-      const result = batcher.addBucket(bucket);
-
-      expect(result).toBeUndefined();
-      mockInstances.forEach(instance => {
-        expect(instance.addCandle).toHaveBeenCalledTimes(1);
-      });
+    it('should return the timeframe candle of every pair when it closes', () => {
+      expect(feed(range(0, 5))[4]).toEqual(
+        new Map([
+          [BTC, { start: at(0), open: 20_000, high: 20_009, low: 19_995, close: 20_005, volume: 10 }],
+          [ETH, { start: at(0), open: 1_000, high: 1_009, low: 995, close: 1_005, volume: 10 }],
+        ]),
+      );
     });
 
-    it('should return undefined if not all pairs are ready', () => {
-      const mockInstances = vi.mocked(FastCandleBatcher).mock.instances as any[];
-      const batcherA = mockInstances[0];
-      const batcherB = mockInstances[1];
-
-      batcherA.addCandle.mockReturnValue(mockCandle);
-      batcherB.addCandle.mockReturnValue(undefined);
-
-      const bucket = new Map([
-        [pairA, mockCandle],
-        [pairB, mockCandle],
-      ]);
-
-      const result = batcher.addBucket(bucket);
-      expect(result).toBeUndefined();
+    it('should return the timeframe candles of the next period once the first one closed', () => {
+      expect(feed(range(0, 10))[9]?.get(ETH)).toEqual({ start: at(5), open: 1_005, high: 1_014, low: 1_000, close: 1_010, volume: 10 });
     });
 
-    it('should return a completed bucket when all pairs are ready', () => {
-      const mockInstances = vi.mocked(FastCandleBatcher).mock.instances as any[];
-      const batcherA = mockInstances[0];
-      const batcherB = mockInstances[1];
-
-      batcherA.addCandle.mockReturnValue(mockCandle);
-      batcherB.addCandle.mockReturnValue(mockCandle);
-
-      const bucket = new Map([
-        [pairA, mockCandle],
-        [pairB, mockCandle],
-      ]);
-
-      const result = batcher.addBucket(bucket);
-      expect(result).toBeDefined();
-      expect(result!.size).toBe(2);
-      expect(result!.get(pairA)).toBe(mockCandle);
-      expect(result!.get(pairB)).toBe(mockCandle);
+    it('should ignore the candles of a pair it does not batch', () => {
+      const batcher = new CandleBucketBatcher([BTC], 1);
+      expect(batcher.addBucket(bucketAt(0, [ETH, BTC]))).toEqual(new Map([[BTC, { ...candleAt(BTC, 0) }]]));
     });
 
-    it('should NOT emit if synchronization is lost (one ready, one not in same step)', () => {
-      const mockInstances = vi.mocked(FastCandleBatcher).mock.instances as any[];
-      const batcherA = mockInstances[0];
-      const batcherB = mockInstances[1];
+    it('should return nothing on the close of a timeframe candle that started before its first bucket', () => {
+      expect(feed(range(3, 5))).toEqual([undefined, undefined]);
+    });
 
-      // Step 1: A ready, B not
-      batcherA.addCandle.mockReturnValue(mockCandle);
-      batcherB.addCandle.mockReturnValue(undefined);
+    it('should return the first whole timeframe candle after skipping the minutes before the first boundary', () => {
+      expect(feed(range(3, 10))[6]?.get(BTC)?.start).toBe(at(5));
+    });
+  });
 
-      const bucket1 = new Map([
-        [pairA, mockCandle],
-        [pairB, mockCandle],
-      ]);
+  describe('invalid buckets', () => {
+    it.each`
+      case               | bucket
+      ${'misses a pair'} | ${bucketAt(0, [BTC])}
+      ${'is empty'}      | ${new Map()}
+      ${'mixes minutes'} | ${new Map([[BTC, candleAt(BTC, 0)], [ETH, candleAt(ETH, 1)]])}
+    `('should throw a GekkoError when the bucket $case', ({ bucket }) => {
+      expect(() => new CandleBucketBatcher([BTC, ETH], 5).addBucket(bucket)).toThrow(GekkoError);
+    });
 
-      expect(batcher.addBucket(bucket1)).toBeUndefined();
+    it.each`
+      case               | bucket                                                         | message
+      ${'misses a pair'} | ${bucketAt(0, [BTC])}                                          | ${`Missing ETH/USDT candle in the bucket of ${toISOString(at(0))}: every watched pair needs a candle every minute`}
+      ${'is empty'}      | ${new Map()}                                                   | ${'Missing BTC/USDT candle in the bucket of Unknown Date: every watched pair needs a candle every minute'}
+      ${'mixes minutes'} | ${new Map([[BTC, candleAt(BTC, 0)], [ETH, candleAt(ETH, 1)]])} | ${`The ETH/USDT candle starts at ${toISOString(at(1))} instead of ${toISOString(at(0))} like the rest of its bucket`}
+    `('should name the pair and the minute when the bucket $case', ({ bucket, message }) => {
+      expect(() => new CandleBucketBatcher([BTC, ETH], 5).addBucket(bucket)).toThrow(`[CORE] ${message}`);
+    });
 
-      // Step 2: A not ready, B ready
-      batcherA.addCandle.mockReturnValue(undefined);
-      batcherB.addCandle.mockReturnValue(mockCandle);
-
-      const bucket2 = new Map([
-        [pairA, mockCandle],
-        [pairB, mockCandle],
-      ]);
-
-      expect(batcher.addBucket(bucket2)).toBeUndefined();
+    it.each`
+      case                   | minutes
+      ${'skips a minute'}    | ${[0, 2]}
+      ${'repeats a minute'}  | ${[0, 1, 1]}
+      ${'goes back in time'} | ${[0, 1, 0]}
+    `('should throw when the next bucket $case', ({ minutes }) => {
+      const last = minutes.at(-1);
+      const previous = minutes.at(-2);
+      expect(() => feed(minutes)).toThrow(
+        `Received the bucket of ${toISOString(at(last))} after the one of ${toISOString(at(previous))}: buckets must follow each other minute by minute`,
+      );
     });
   });
 });

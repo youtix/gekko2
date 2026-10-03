@@ -57,7 +57,20 @@ export class FastCandleBatcher {
    * IMPORTANT: The returned candle is owned by this batcher; clone if you need to keep it.
    */
   addCandle(candle: Candle): Candle | null {
-    if (!this.hasStarted && !this.startsOnBoundary(candle)) return null;
+    this.accumulate(candle);
+    return isTimeframeCandleClose(this.candleSize, candle.start) ? this.flush() : null;
+  }
+
+  /** Returns the timeframe candle in progress, if any, and starts a new one. */
+  flush(): Candle | null {
+    const result = this.accumulator;
+    this.accumulator = null;
+    return result;
+  }
+
+  /** Adds a 1-minute candle to the timeframe candle in progress, unless it comes before the first timeframe boundary. */
+  accumulate(candle: Candle): void {
+    if (!this.hasStarted && !this.startsOnBoundary(candle)) return;
 
     if (this.accumulator === null) {
       // First candle: shallow clone without `id`
@@ -76,14 +89,6 @@ export class FastCandleBatcher {
       this.accumulator.close = candle.close;
       this.accumulator.volume = addPrecise(this.accumulator.volume, candle.volume);
     }
-
-    if (isTimeframeCandleClose(this.candleSize, candle.start)) {
-      const result = this.accumulator;
-      this.accumulator = null;
-      return result;
-    }
-
-    return null;
   }
 
   /**

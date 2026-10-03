@@ -1,68 +1,83 @@
-import { Candle } from '@models/candle.types';
+import { ONE_MINUTE } from '@constants/time.const';
+import { GekkoError } from '@errors/gekko.error';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
+import { getBucketTimestamp } from '@utils/candle/candle.utils';
+import { toISOString } from '@utils/date/date.utils';
 import { CandleSize } from './candleBatcher.types';
-import { FastCandleBatcher } from './fastCandleBatcher';
+import { FastCandleBatcher, isTimeframeCandleClose } from './fastCandleBatcher';
 
 /**
  * Batches 1-minute CandleBuckets into higher timeframe CandleBuckets.
- * Emits a completed bucket only when ALL pairs have reached the timeframe boundary.
+ * Every bucket must hold a candle of every pair, all starting on the same minute, one minute after the previous bucket.
  */
 export class CandleBucketBatcher {
   private readonly batchers: Map<TradingPair, FastCandleBatcher>;
-  private readonly pairs: ReadonlySet<TradingPair>;
-  private pendingBucket: Map<TradingPair, Candle>;
+  private readonly candleSize: CandleSize;
+  private lastTimestamp?: EpochTimeStamp;
 
   constructor(pairs: TradingPair[], candleSize: CandleSize) {
-    this.pairs = new Set(pairs);
+    if (!pairs.length) throw new GekkoError('core', 'CandleBucketBatcher needs at least one pair');
+    this.candleSize = candleSize;
     this.batchers = new Map(pairs.map(pair => [pair, new FastCandleBatcher(candleSize)]));
-    this.pendingBucket = new Map();
   }
 
   /**
    * Process a 1-minute candle bucket.
-   * @param bucket - Must contain candles for ALL registered pairs
+   * @param bucket - Must contain candles for ALL registered pairs; candles of other pairs are ignored
    * @returns Completed timeframe bucket, or undefined if not yet ready
-   * @throws Error if bucket is missing any registered pair
+   * @throws GekkoError if the bucket misses a pair, mixes minutes or does not follow the previous bucket
    */
   addBucket(bucket: CandleBucket): CandleBucket | undefined {
-    // Validate bucket completeness (fail fast)
-    for (const pair of this.pairs) {
-      if (!bucket.has(pair)) {
-        // Upstream MUST guarantee strict completeness of the bucket, that's why we throw here
-        throw new Error(`CandleBucketBatcher: Missing candle for pair "${pair}". ` + `Expected pairs: [${[...this.pairs].join(', ')}]`);
-      }
+    const timestamp = this.checkBucket(bucket);
+    for (const [pair, batcher] of this.batchers) batcher.accumulate(bucket.get(pair)!);
+
+    // Every candle of the bucket starts on the same minute, so they all close a timeframe candle or none does
+    if (!isTimeframeCandleClose(this.candleSize, timestamp)) return undefined;
+
+    const completedBucket: CandleBucket = new Map();
+    for (const [pair, batcher] of this.batchers) {
+      const candle = batcher.flush();
+      if (candle) completedBucket.set(pair, candle);
     }
-
-    // Process each pair
-    let allReady = true;
-    for (const [pair, candle] of bucket) {
-      if (!this.pairs.has(pair)) continue; // Ignore unregistered pairs
-
-      const batcher = this.batchers.get(pair)!;
-      const completedCandle = batcher.addCandle(candle);
-
-      if (completedCandle) {
-        this.pendingBucket.set(pair, completedCandle);
-      } else {
-        allReady = false;
-      }
-    }
-
-    // Emit only when all pairs are ready
-    if (allReady && this.pendingBucket.size === this.pairs.size) {
-      const result = this.pendingBucket;
-      this.pendingBucket = new Map();
-      return result;
-    }
-
-    return undefined;
+    // Empty when the timeframe candle closing now started before the first boundary, so was skipped
+    return completedBucket.size === this.batchers.size ? completedBucket : undefined;
   }
 
   /**
    * Get the number of registered trading pairs.
    */
   get pairCount(): number {
-    return this.pairs.size;
+    return this.batchers.size;
+  }
+
+  /** Checks that the bucket can be batched (upstream must guarantee it, hence the errors) and returns its minute. */
+  private checkBucket(bucket: CandleBucket): EpochTimeStamp {
+    let timestamp: EpochTimeStamp | undefined;
+    for (const pair of this.batchers.keys()) {
+      const candle = bucket.get(pair);
+      if (!candle) {
+        throw new GekkoError(
+          'core',
+          `Missing ${pair} candle in the bucket of ${toISOString(getBucketTimestamp(bucket))}: every watched pair needs a candle every minute`,
+        );
+      }
+      timestamp ??= candle.start;
+      if (candle.start !== timestamp) {
+        throw new GekkoError(
+          'core',
+          `The ${pair} candle starts at ${toISOString(candle.start)} instead of ${toISOString(timestamp)} like the rest of its bucket`,
+        );
+      }
+    }
+
+    if (this.lastTimestamp !== undefined && timestamp !== this.lastTimestamp + ONE_MINUTE) {
+      throw new GekkoError(
+        'core',
+        `Received the bucket of ${toISOString(timestamp)} after the one of ${toISOString(this.lastTimestamp)}: buckets must follow each other minute by minute`,
+      );
+    }
+    this.lastTimestamp = timestamp;
+    return timestamp!;
   }
 }
