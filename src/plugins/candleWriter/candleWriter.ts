@@ -21,7 +21,7 @@ export class CandleWriter extends Plugin {
   }
 
   protected processFinalize(): void {
-    for (const pair of this.pairs) this.getStorage().insertCandles(pair);
+    // close() inserts the buffered candles first
     this.getStorage().close();
   }
 

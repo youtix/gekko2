@@ -56,10 +56,14 @@ describe('Storage', () => {
       expect(storage.insertCandles).not.toHaveBeenCalled();
     });
 
-    it('inserts the candles of every pair of the bucket once the insert threshold is reached', () => {
-      storage.addCandle(bucket);
-      storage.addCandle(bucket);
-      expect(storage.insertCandles.mock.calls).toEqual([['BTC/USDT'], ['ETH/USDT']]);
+    it.each`
+      scenario                                 | buckets                                                 | expected
+      ${'every pair in both buckets'}          | ${[['BTC/USDT', 'ETH/USDT'], ['BTC/USDT', 'ETH/USDT']]} | ${[['BTC/USDT'], ['ETH/USDT']]}
+      ${'a pair missing from the last bucket'} | ${[['BTC/USDT', 'ETH/USDT'], ['BTC/USDT']]}             | ${[['BTC/USDT'], ['ETH/USDT']]}
+      ${'a pair only in the last bucket'}      | ${[['BTC/USDT'], ['ETH/USDT']]}                         | ${[['BTC/USDT'], ['ETH/USDT']]}
+    `('inserts the candles of every buffered pair once the insert threshold is reached, with $scenario', ({ buckets, expected }) => {
+      for (const symbols of buckets) storage.addCandle(new Map(symbols.map((symbol: string) => [symbol, { start: 0 } as Candle])));
+      expect(storage.insertCandles.mock.calls).toEqual(expected);
     });
 
     it('empties the buffer once the candles are inserted', () => {

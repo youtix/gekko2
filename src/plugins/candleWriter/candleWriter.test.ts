@@ -25,7 +25,7 @@ describe('CandleWriter', () => {
   beforeEach(() => {
     const config = { name: 'CandleWriter' };
     writer = new CandleWriter(config);
-    fakeStorage = { addCandle: vi.fn(), insertCandles: vi.fn(), close: vi.fn() } as unknown as Storage;
+    fakeStorage = { addCandle: vi.fn(), close: vi.fn() } as unknown as Storage;
     // @ts-expect-error Force casting to storage
     writer.getStorage = (): Storage => fakeStorage;
   });
@@ -54,12 +54,7 @@ describe('CandleWriter', () => {
   });
 
   describe('processFinalize', () => {
-    it('should call insertCandles on the storage', () => {
-      writer['processFinalize']();
-      expect(fakeStorage.insertCandles).toHaveBeenCalled();
-    });
-
-    it('should call close on the storage', () => {
+    it('closes the storage, which inserts the buffered candles', () => {
       writer['processFinalize']();
       expect(fakeStorage.close).toHaveBeenCalled();
     });

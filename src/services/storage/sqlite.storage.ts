@@ -101,8 +101,10 @@ export class SQLiteStorage extends Storage {
   public close(): void {
     if (this.closed) return;
     this.closed = true;
-    // Copies the WAL into the database file and empties it, so that the file alone holds every candle (a copy, a backup)
     try {
+      // Without it, a crash or a stop outside the plugins (main()'s uncaughtException handler) would lose the buffered buckets
+      this.flush();
+      // Copies the WAL into the database file and empties it, so that the file alone holds every candle (a copy, a backup)
       this.db.run('PRAGMA wal_checkpoint(TRUNCATE);');
     } finally {
       this.db.close(false);

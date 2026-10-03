@@ -27,6 +27,7 @@ const attempt = (call: () => void) => {
 describe('SQLiteStorage', () => {
   const symbol = 'A"B/USDT';
   const interval = { start: 0, end: 0 };
+  const candle = { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 };
   let storage: SQLiteStorage;
 
   beforeEach(() => {
@@ -121,6 +122,31 @@ describe('SQLiteStorage', () => {
       });
       attempt(() => storage.close());
       expect(mockDb.close).toHaveBeenCalledOnce();
+    });
+
+    it.each`
+      scenario              | buckets                                     | inserted
+      ${'an empty buffer'}  | ${[]}                                       | ${[]}
+      ${'buffered buckets'} | ${[['BTC/USDT'], ['BTC/USDT', 'ETH/USDT']]} | ${[[null, 1, 2, 3, 4, 5, 6], [null, 1, 2, 3, 4, 5, 6], [null, 1, 2, 3, 4, 5, 6]]}
+    `('inserts the candles of $scenario before closing', ({ buckets, inserted }) => {
+      const statement = { run: vi.fn(), finalize: vi.fn() };
+      mockDb.prepare.mockReturnValue(statement);
+      mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database: ':memory:', insertThreshold: 10 });
+      storage = new SQLiteStorage([]);
+      for (const symbols of buckets) storage.addCandle(new Map(symbols.map((symbol: string) => [symbol, candle])));
+      storage.close();
+      expect(statement.run.mock.calls).toEqual(inserted);
+    });
+
+    it('inserts the buffered candles before checkpointing the WAL', () => {
+      const statement = { run: vi.fn(), finalize: vi.fn() };
+      mockDb.prepare.mockReturnValue(statement);
+      mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database: ':memory:', insertThreshold: 10 });
+      storage = new SQLiteStorage([]);
+      storage.addCandle(new Map([['BTC/USDT', candle]]));
+      storage.close();
+      const checkpointCall = mockDb.run.mock.calls.findIndex(([sql]) => sql === 'PRAGMA wal_checkpoint(TRUNCATE);');
+      expect(statement.run.mock.invocationCallOrder[0]).toBeLessThan(mockDb.run.mock.invocationCallOrder[checkpointCall]);
     });
 
     it('does nothing when the database is already closed', () => {

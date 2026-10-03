@@ -22,10 +22,15 @@ export abstract class Storage {
 
   public addCandle(bucket: CandleBucket) {
     this.buffer.push(bucket);
-    if (this.buffer.length >= this.insertThreshold) {
-      bucket.keys().forEach(symbol => this.insertCandles(symbol));
-      this.buffer = [];
-    }
+    if (this.buffer.length >= this.insertThreshold) this.flush();
+  }
+
+  /** Inserts the candles of every pair the buffer holds, not only the pairs of its last bucket, then empties it. */
+  protected flush() {
+    const symbols = new Set<TradingPair>();
+    for (const bucket of this.buffer) for (const symbol of bucket.keys()) symbols.add(symbol);
+    for (const symbol of symbols) this.insertCandles(symbol);
+    this.buffer = [];
   }
 
   protected getTable(symbol: TradingPair) {
@@ -39,5 +44,6 @@ export abstract class Storage {
   public abstract getCandleDateranges(symbol: TradingPair): Nullable<CandleDateranges[]>;
   public abstract getCandles(symbol: TradingPair, interval: Interval<EpochTimeStamp, EpochTimeStamp>): Candle[];
   public abstract checkInterval(symbol: TradingPair, interval: Interval<EpochTimeStamp, EpochTimeStamp>): Nullable<MissingCandleCount>;
+  /** Inserts the buffered candles, then closes the connection. */
   public abstract close(): void;
 }
