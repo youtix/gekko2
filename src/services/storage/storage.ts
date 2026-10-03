@@ -13,11 +13,9 @@ export abstract class Storage {
 
   constructor() {
     const { mode } = config.getWatch();
-    const storage = config.getStorage();
     this.buffer = [];
-    if (storage?.insertThreshold) this.insertThreshold = storage.insertThreshold;
-    else if (mode === 'realtime') this.insertThreshold = 1;
-    else this.insertThreshold = INSERT_THRESHOLD;
+    // Realtime writes each minute as it closes; the importer batches its inserts
+    this.insertThreshold = config.getStorage()?.insertThreshold ?? (mode === 'realtime' ? 1 : INSERT_THRESHOLD);
   }
 
   public addBucket(bucket: CandleBucket) {

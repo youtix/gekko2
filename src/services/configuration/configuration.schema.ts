@@ -34,6 +34,14 @@ const integerAtLeast = (field: string, min: number) => {
   return z.number(message).int(message).min(min, message);
 };
 
+const integerBetween = (field: string, min: number, max: number, reason: string) => {
+  const message = `${field} must be an integer between ${min} and ${max} (${reason})`;
+  return z.number(message).int(message).min(min, message).max(max, message);
+};
+
+// A backtest reads each batch of candles into memory at once, for every pair: 31 days of 1-minute candles is ample.
+const MAX_BATCH_SIZE = 31 * 24 * 60;
+
 const warmupSchema = z
   .strictObject({
     tickrate: integerAtLeast('warmup.tickrate', MIN_TICKRATE).default(1000),
@@ -50,7 +58,12 @@ export const watchSchema = z
     mode: z.enum(['realtime', 'backtest', 'importer']),
     warmup: warmupSchema,
     daterange: daterangeSchema.optional(),
-    batchSize: integerAtLeast('batchSize', 1).optional(),
+    batchSize: integerBetween(
+      'batchSize',
+      1,
+      MAX_BATCH_SIZE,
+      'minutes, 31 days at most: each batch is read into memory at once',
+    ).optional(),
   })
   .transform(data => ({
     ...data,
@@ -83,10 +96,11 @@ export const watchSchema = z
     }
   });
 
-export const storageSchema = z.object({
+export const storageSchema = z.strictObject({
   type: z.literal('sqlite'),
-  database: z.string(),
-  insertThreshold: z.number().optional(),
+  // Bun opens an in-memory database for an empty path: the candles would be lost on exit, without a word
+  database: z.string().trim().min(1, 'storage.database must not be empty'),
+  insertThreshold: integerAtLeast('storage.insertThreshold', 1).optional(),
 });
 
 export const configurationSchema = z
@@ -105,6 +119,17 @@ export const configurationSchema = z
     [disclaimerField]: z.boolean().nullable().default(null),
   })
   .superRefine((data, ctx) => {
+    // Checked here rather than when the storage is first used: the backtest reads its candles from it at once, but a
+    // CandleWriter would only need it after the markets are loaded from the exchange.
+    const hasCandleWriter = some(data.plugins, { name: 'CandleWriter' });
+    if (!data.storage && (data.watch.mode === 'backtest' || hasCandleWriter)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['storage'],
+        message: `storage is required ${data.watch.mode === 'backtest' ? 'in backtest mode, which reads the candles from it' : 'by the CandleWriter plugin, which writes the candles to it'}`,
+      });
+    }
+
     // Only the simulator fills orders from replayed candles: any other exchange, sandbox included, would receive the
     // backtest's orders. The importer needs a real exchange to download candles from.
     const exchangesByMode: Record<typeof data.watch.mode, Array<typeof data.exchange.name>> = {

@@ -258,6 +258,7 @@ describe('Configuration Service', () => {
             mode: 'backtest',
             daterange: { start: '2023-01-02T00:00:00Z', end: '2023-01-01T00:00:00Z' },
           },
+          storage: { type: 'sqlite', database: 'gekko.db' },
         };
         setConfigFile('config.json', invalidRangeConfig);
         const config = new Configuration();

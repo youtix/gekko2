@@ -30,8 +30,12 @@ describe('Storage', () => {
       mode          | storage                   | expected
       ${'backtest'} | ${{ insertThreshold: 5 }} | ${5}
       ${'realtime'} | ${{ insertThreshold: 5 }} | ${5}
+      ${'importer'} | ${{ insertThreshold: 1 }} | ${1}
       ${'realtime'} | ${undefined}              | ${1}
+      ${'realtime'} | ${{}}                     | ${1}
+      ${'importer'} | ${undefined}              | ${INSERT_THRESHOLD}
       ${'importer'} | ${{}}                     | ${INSERT_THRESHOLD}
+      ${'backtest'} | ${{}}                     | ${INSERT_THRESHOLD}
     `('sets the insert threshold to $expected in $mode mode with storage $storage', ({ mode, storage, expected }) => {
       mockConfig.getWatch.mockReturnValue({ mode });
       mockConfig.getStorage.mockReturnValue(storage);
