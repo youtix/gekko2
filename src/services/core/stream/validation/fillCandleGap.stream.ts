@@ -1,4 +1,5 @@
 import { ONE_MINUTE } from '@constants/time.const';
+import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
@@ -6,6 +7,7 @@ import { warning } from '@services/logger';
 import { createEmptyCandle } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
 import { Transform, TransformCallback } from 'node:stream';
+import { MAX_GAP_FILL_MINUTES } from './fillCandleGap.const';
 
 export type FillCandleGapOptions = {
   /**
@@ -22,6 +24,8 @@ export class FillCandleGapStream extends Transform {
   private lastKnownCandles = new Map<TradingPair, Candle>();
   private lastTimestamp: number | null = null;
   private droppedLeadingMinutes = 0;
+  /** First minute of each partial gap still open, by pair: warned about when it opens and when it closes, not every minute */
+  private partialGapStarts = new Map<TradingPair, EpochTimeStamp>();
 
   constructor(pairs: TradingPair[], options: FillCandleGapOptions = {}) {
     super({ objectMode: true });
@@ -55,6 +59,15 @@ export class FillCandleGapStream extends Transform {
         const expectedTimestamp = this.lastTimestamp + ONE_MINUTE;
         if (currentTimestamp > expectedTimestamp) {
           const gapMinutes = (currentTimestamp - expectedTimestamp) / ONE_MINUTE;
+          if (gapMinutes > MAX_GAP_FILL_MINUTES) {
+            throw new GekkoError(
+              'stream',
+              [
+                `No candle from ${toISOString(expectedTimestamp)} to ${toISOString(currentTimestamp - ONE_MINUTE)} (${gapMinutes} minutes):`,
+                `refusing to fill more than ${MAX_GAP_FILL_MINUTES} minutes with empty candles`,
+              ].join(' '),
+            );
+          }
           warning('stream', `Total gap detected: filling ${gapMinutes} minute(s) for all assets from ${toISOString(expectedTimestamp)}`);
 
           let fillTimestamp = expectedTimestamp;
@@ -86,12 +99,13 @@ export class FillCandleGapStream extends Transform {
         const candle = bucket.get(pair);
 
         if (candle) {
+          this.closePartialGap(pair, currentTimestamp);
           this.lastKnownCandles.set(pair, candle);
           completeBucket.set(pair, candle);
         } else {
           const lastCandle = this.lastKnownCandles.get(pair);
           if (lastCandle) {
-            warning('stream', `Partial gap detected for ${pair} at ${toISOString(currentTimestamp)}: filling with empty candle`);
+            this.openPartialGap(pair, currentTimestamp);
             const syntheticCandle = createEmptyCandle(lastCandle);
             syntheticCandle.start = currentTimestamp;
 
@@ -107,6 +121,23 @@ export class FillCandleGapStream extends Transform {
     } catch (error) {
       next(error as Error);
     }
+  }
+
+  private openPartialGap(pair: TradingPair, timestamp: EpochTimeStamp) {
+    if (this.partialGapStarts.has(pair)) return;
+    this.partialGapStarts.set(pair, timestamp);
+    warning('stream', `Partial gap: no ${pair} candle at ${toISOString(timestamp)}, filling with empty candles until it comes back`);
+  }
+
+  private closePartialGap(pair: TradingPair, timestamp: EpochTimeStamp) {
+    const gapStart = this.partialGapStarts.get(pair);
+    if (gapStart === undefined) return;
+    this.partialGapStarts.delete(pair);
+    const minutes = (timestamp - gapStart) / ONE_MINUTE;
+    warning(
+      'stream',
+      `Partial gap closed: ${pair} is back at ${toISOString(timestamp)}, ${minutes} minute(s) filled with empty candles from ${toISOString(gapStart)}`,
+    );
   }
 
   /**

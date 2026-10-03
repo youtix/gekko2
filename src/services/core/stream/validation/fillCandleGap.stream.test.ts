@@ -5,6 +5,7 @@ import { TradingPair } from '@models/utility.types';
 import { warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { describe, expect, it, vi } from 'vitest';
+import { MAX_GAP_FILL_MINUTES } from './fillCandleGap.const';
 import { FillCandleGapOptions, FillCandleGapStream } from './fillCandleGap.stream';
 
 vi.mock('@services/logger', () => ({ warning: vi.fn() }));
@@ -24,6 +25,9 @@ const describeBuckets = (buckets: CandleBucket[]) =>
   buckets.map(bucket =>
     [...bucket].map(([pair, { start, synthetic }]) => `${pair.split('/')[0]}${(start - T0) / ONE_MINUTE}${synthetic ? '~' : ''}`).join(' '),
   );
+
+/** The messages logged as warnings so far */
+const warnings = () => vi.mocked(warning).mock.calls.map(([, message]) => String(message));
 
 const run = async (buckets: CandleBucket[], options?: FillCandleGapOptions, pairs: TradingPair[] = [ETH, BTC]) => {
   const stream = new FillCandleGapStream(pairs, options);
@@ -82,7 +86,7 @@ describe('FillCandleGapStream', () => {
         BTC,
         'SOL/USDT',
       ]);
-      expect(vi.mocked(warning).mock.calls.map(([, message]) => message)).toEqual([
+      expect(warnings()).toEqual([
         `No BTC/USDT candle at ${toISOString(at(0))}: dropping the leading buckets until every pair has a candle`,
         `No SOL/USDT candle at ${toISOString(at(0))}: dropping the leading buckets until every pair has a candle`,
       ]);
@@ -112,6 +116,31 @@ describe('FillCandleGapStream', () => {
       const [, filled] = await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH)]);
       expect(filled.get(BTC)).toEqual({ start: at(1), open: 11, high: 11, low: 11, close: 11, volume: 0, synthetic: true });
     });
+    it('should warn once when a partial gap opens and once when it closes, however long it lasts', async () => {
+      await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH), bucketAt(2, ETH), bucketAt(3, ETH), bucketAt(4, ETH, BTC)]);
+      expect(warnings()).toEqual([
+        `Partial gap: no BTC/USDT candle at ${toISOString(at(1))}, filling with empty candles until it comes back`,
+        `Partial gap closed: BTC/USDT is back at ${toISOString(at(4))}, 3 minute(s) filled with empty candles from ${toISOString(at(1))}`,
+      ]);
+    });
+
+    it('should count the minutes of a total gap in the partial gap it interrupts', async () => {
+      await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH), bucketAt(4, ETH, BTC)]);
+      expect(warning).toHaveBeenLastCalledWith(
+        'stream',
+        `Partial gap closed: BTC/USDT is back at ${toISOString(at(4))}, 3 minute(s) filled with empty candles from ${toISOString(at(1))}`,
+      );
+    });
+
+    it('should warn about the partial gaps of each pair separately', async () => {
+      await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH), bucketAt(2, BTC), bucketAt(3, ETH, BTC)]);
+      expect(warnings().map(message => message.split(',')[0])).toEqual([
+        `Partial gap: no BTC/USDT candle at ${toISOString(at(1))}`,
+        `Partial gap: no ETH/USDT candle at ${toISOString(at(2))}`,
+        `Partial gap closed: BTC/USDT is back at ${toISOString(at(2))}`,
+        `Partial gap closed: ETH/USDT is back at ${toISOString(at(3))}`,
+      ]);
+    });
   });
 
   describe('total gaps', () => {
@@ -133,6 +162,24 @@ describe('FillCandleGapStream', () => {
     it('should fill a total gap that follows a partial gap from the filled candles', async () => {
       const buckets = await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH), bucketAt(3, ETH, BTC)]);
       expect(describeBuckets(buckets)).toEqual(['ETH0 BTC0', 'ETH1 BTC1~', 'ETH2~ BTC2~', 'ETH3 BTC3']);
+    });
+    it('should warn once about a total gap', async () => {
+      await run([bucketAt(0, ETH, BTC), bucketAt(4, ETH, BTC)]);
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        'stream',
+        `Total gap detected: filling 3 minute(s) for all assets from ${toISOString(at(1))}`,
+      );
+    });
+
+    it(`should fill a total gap of ${MAX_GAP_FILL_MINUTES} minutes`, async () => {
+      const buckets = await run([bucketAt(0, ETH, BTC), bucketAt(MAX_GAP_FILL_MINUTES + 1, ETH, BTC)]);
+      expect(buckets).toHaveLength(MAX_GAP_FILL_MINUTES + 2);
+    });
+
+    it(`should refuse to fill a total gap longer than ${MAX_GAP_FILL_MINUTES} minutes`, async () => {
+      await expect(run([bucketAt(0, ETH, BTC), bucketAt(MAX_GAP_FILL_MINUTES + 2, ETH, BTC)])).rejects.toThrow(
+        `No candle from ${toISOString(at(1))} to ${toISOString(at(MAX_GAP_FILL_MINUTES + 1))} (${MAX_GAP_FILL_MINUTES + 1} minutes): refusing to fill more than ${MAX_GAP_FILL_MINUTES} minutes with empty candles`,
+      );
     });
   });
 
