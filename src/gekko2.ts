@@ -19,7 +19,7 @@ import { GekkoError } from '@errors/gekko.error';
 import { config } from '@services/configuration/configuration';
 import { gekkoPipeline } from '@services/core/pipeline/pipeline';
 import { inject } from '@services/injecter/injecter';
-import { debug, error, info } from '@services/logger';
+import { debug, error, info, warning } from '@services/logger';
 import { logVersion } from '@utils/process/process.utils';
 import { isNil, isString } from 'lodash-es';
 import { inspect } from 'node:util';
@@ -111,8 +111,22 @@ const onUnhandledRejection = (reason: unknown) => {
   process.exitCode = 1;
 };
 
+// Ctrl-C, or a supervisor stopping the bot. The plugins are not finalised, but the storage is closed so that the candles it
+// buffers are written. The exit code is 128 + the signal number, as a shell reports a process the signal killed.
+const onSignal = (signal: 'SIGINT' | 'SIGTERM', exitCode: number) => () => {
+  warning('gekko', `Received ${signal}: closing the storage and exiting without finalising the plugins`);
+  try {
+    inject.closeStorage();
+  } catch (e) {
+    logFailure(e, 'Could not close the storage: ');
+  }
+  process.exit(exitCode);
+};
+
 // Without them, while `await main()` is pending, Bun only prints these errors on stderr and the process keeps running
 process.on('uncaughtException', onUncaughtException);
 process.on('unhandledRejection', onUnhandledRejection);
+process.on('SIGINT', onSignal('SIGINT', 130));
+process.on('SIGTERM', onSignal('SIGTERM', 143));
 
 await main();
