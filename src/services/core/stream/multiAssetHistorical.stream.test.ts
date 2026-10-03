@@ -1,40 +1,35 @@
-import { describe, expect, it, vi } from 'vitest';
+import { TradingPair } from '@models/utility.types';
+import { synchronizeStreams } from '@utils/stream/stream.utils';
+import { PassThrough, Readable } from 'stream';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HistoricalCandleStream } from './historicalCandle/historicalCandle.stream';
+import { MultiAssetStream } from './multiAsset.stream';
 import { MultiAssetHistoricalStream } from './multiAssetHistorical.stream';
 
-// Mock dependencies
+vi.mock('@utils/stream/stream.utils', () => ({ synchronizeStreams: vi.fn() }));
 vi.mock('./historicalCandle/historicalCandle.stream', () => ({
-  HistoricalCandleStream: vi.fn(),
+  HistoricalCandleStream: vi.fn(function () {
+    return new Readable({ objectMode: true, read() {} });
+  }),
 }));
 
-vi.mock('@utils/stream/stream.utils', () => ({
-  synchronizeStreams: vi.fn(() => ({
-    on: vi.fn(),
-    pause: vi.fn(),
-    resume: vi.fn(),
-    destroy: vi.fn(),
-    pipe: vi.fn(),
-  })),
-}));
+const pairs: { symbol: TradingPair }[] = [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }];
+const daterange = { start: Date.UTC(2024, 0, 1), end: Date.UTC(2024, 0, 2) };
+const tickrate = 1000;
 
 describe('MultiAssetHistoricalStream', () => {
-  it('should instantiate multiple HistoricalCandleStreams and synchronize them', () => {
-    const pairs = [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }] as any; // keeping as any for simplicity if strict types aren't easily mockable here without more imports
-    const daterange = { start: 1000, end: 2000 };
-    const tickrate = 60;
+  let stream: MultiAssetHistoricalStream;
 
-    new MultiAssetHistoricalStream({ pairs, daterange, tickrate });
+  beforeEach(() => {
+    vi.mocked(synchronizeStreams).mockReturnValue(new PassThrough({ objectMode: true }));
+    stream = new MultiAssetHistoricalStream({ pairs, daterange, tickrate });
+  });
 
-    expect(HistoricalCandleStream).toHaveBeenCalledTimes(2);
-    expect(HistoricalCandleStream).toHaveBeenCalledWith({
-      daterange,
-      tickrate,
-      symbol: 'BTC/USDT',
-    });
-    expect(HistoricalCandleStream).toHaveBeenCalledWith({
-      daterange,
-      tickrate,
-      symbol: 'ETH/USDT',
-    });
+  it.each`
+    description                                                         | actual                                                | expected
+    ${'build one history stream per pair, with the range and tickrate'} | ${() => vi.mocked(HistoricalCandleStream).mock.calls} | ${pairs.map(({ symbol }) => [{ daterange, tickrate, symbol }])}
+    ${'be a MultiAssetStream'}                                          | ${() => stream instanceof MultiAssetStream}           | ${true}
+  `('should $description', ({ actual, expected }) => {
+    expect(actual()).toEqual(expected);
   });
 });
