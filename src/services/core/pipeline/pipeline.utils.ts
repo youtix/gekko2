@@ -27,12 +27,15 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
   const end = subMinutes(currentMinute, 1).getTime();
   const history = new MultiAssetHistoricalStream({ daterange: { start, end }, tickrate: warmup.tickrate, pairs });
 
-  await pipeline(
-    mergeSequentialStreams(history, liveStream),
-    new RejectFutureCandleStream(),
-    new RejectDuplicateCandleStream(),
-    new FillCandleGapStream(pairs.map(p => p.symbol)),
-    new PluginsStream(plugins),
+  const sink = new PluginsStream(plugins);
+  await runPipeline(sink, () =>
+    pipeline(
+      mergeSequentialStreams(history, liveStream),
+      new RejectFutureCandleStream(),
+      new RejectDuplicateCandleStream(),
+      new FillCandleGapStream(pairs.map(p => p.symbol)),
+      sink,
+    ),
   );
 };
 
@@ -41,7 +44,8 @@ const buildBacktestPipeline = async (plugins: Plugin[]) => {
   if (!daterange) throw new Error('daterange is not set');
 
   warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
-  await pipeline(new MultiAssetBacktestStream({ daterange, pairs }), new PluginsStream(plugins));
+  const sink = new PluginsStream(plugins);
+  await runPipeline(sink, () => pipeline(new MultiAssetBacktestStream({ daterange, pairs }), sink));
 };
 
 const buildImporterPipeline = async (plugins: Plugin[]) => {
@@ -60,7 +64,21 @@ const buildImporterPipeline = async (plugins: Plugin[]) => {
   const end = isEndClosed ? daterange.end : lastClosedMinute;
 
   const stream = new MultiAssetHistoricalStream({ daterange: { start: daterange.start, end }, tickrate, pairs });
-  return pipeline(stream, new RejectFutureCandleStream(), new FillCandleGapStream(pairs.map(p => p.symbol)), new PluginsStream(plugins));
+  const sink = new PluginsStream(plugins);
+  await runPipeline(sink, () => pipeline(stream, new RejectFutureCandleStream(), new FillCandleGapStream(pairs.map(p => p.symbol)), sink));
+};
+
+/**
+ * pipeline() rejects with the first error of the chain. When a bucket fails and a stream upstream fails too during the
+ * finalisation that follows, that first error is the upstream one, but the bucket's error is the one main() has to see (an
+ * ApplicationStopError is a graceful stop, not a crash): it wins.
+ */
+const runPipeline = async (sink: PluginsStream, run: () => Promise<void>) => {
+  try {
+    await run();
+  } catch (error) {
+    throw sink.failure ?? error;
+  }
 };
 
 export const streamPipelines = {

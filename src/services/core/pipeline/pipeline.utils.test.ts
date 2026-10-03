@@ -348,6 +348,44 @@ describe('Pipeline Utils', () => {
       });
     });
 
+    describe('when the pipeline rejects', () => {
+      const upstreamError = new Error('a stream upstream failed');
+      const bucketError = new Error('a bucket failed');
+      const modes = Object.keys(streamPipelines) as (keyof typeof streamPipelines)[];
+
+      // Launches the pipeline of a mode with a plugins stream whose last bucket failed with `failure`, if any
+      const launchFailing = (mode: keyof typeof streamPipelines, failure?: Error) => {
+        (config.getWatch as Mock).mockReturnValue({
+          pairs: [{ symbol: 'BTC/USDT' }],
+          timeframe: '1h',
+          warmup: { candleCount: 1, tickrate: 1000 },
+          daterange: { start: new Date('2023-01-01').getTime(), end: new Date('2023-01-02').getTime() },
+          tickrate: 500,
+        });
+        vi.mocked(PluginsStream).mockImplementation(function () {
+          return { failure } as PluginsStream;
+        });
+        vi.mocked(pipeline).mockRejectedValue(upstreamError);
+        return streamPipelines[mode](mockPlugins);
+      };
+
+      beforeEach(() => {
+        const pendingStream = () => new Readable({ objectMode: true, read() {} });
+        vi.mocked(MultiAssetHistoricalStream).mockImplementation(function () {
+          return pendingStream() as MultiAssetHistoricalStream;
+        });
+        vi.mocked(synchronizeStreams).mockReturnValue(pendingStream());
+      });
+
+      it.each(modes)('should reject the %s pipeline with the error of the failed bucket rather than the upstream one', async mode => {
+        await expect(launchFailing(mode, bucketError)).rejects.toBe(bucketError);
+      });
+
+      it.each(modes)('should reject the %s pipeline with the upstream error when no bucket failed', async mode => {
+        await expect(launchFailing(mode)).rejects.toBe(upstreamError);
+      });
+    });
+
     describe('backtest', () => {
       const daterange = { start: new Date('2023-01-01').getTime(), end: new Date('2023-01-02').getTime() };
       const pairs = [{ symbol: 'BTC/USDT' }];
