@@ -62,6 +62,29 @@ describe('SQLiteStorage - table names', () => {
     });
   });
 
+  describe('a minute inserted twice', () => {
+    const symbol = 'BTC/USDT';
+    const flat = (price: number, volume: number) => ({ start, open: price, high: price, low: price, close: price, volume });
+    const real = (price: number, volume: number) => ({ start, open: price, high: price + 2, low: price - 1, close: price + 1, volume });
+
+    it.each([
+      ['replaces a made-up candle (flat, no volume) with a real one', flat(10, 0), real(20, 42), real(20, 42)],
+      ['replaces a made-up candle with a flat candle that traded', flat(10, 0), flat(20, 5), flat(20, 5)],
+      ['keeps a real candle over another real one', real(10, 5), real(20, 42), real(10, 5)],
+      ['keeps a candle without volume that is not flat', real(10, 0), real(20, 42), real(10, 0)],
+      ['keeps a flat candle that traded', flat(10, 5), real(20, 42), flat(10, 5)],
+      ['keeps a made-up candle over another made-up one', flat(10, 0), flat(20, 0), flat(10, 0)],
+      ['keeps a real candle over a made-up one', real(10, 5), flat(11, 0), real(10, 5)],
+    ])('%s', (_scenario, stored, inserted, expected) => {
+      const storage = new SQLiteStorage([symbol]);
+      storage.addCandle(new Map([[symbol, stored]]));
+      storage.addCandle(new Map([[symbol, inserted]]));
+      const candles = storage.getCandles(symbol, { start, end: start });
+      storage.close();
+      expect(candles).toEqual([{ id: 1, ...expected }]);
+    });
+  });
+
   it('reads a table created by the former, unquoted statement', () => {
     const storage = new SQLiteStorage([]);
     storage.db.run(

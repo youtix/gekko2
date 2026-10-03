@@ -26,12 +26,21 @@ export class SQLiteStorage extends Storage {
   }
 
   public insertCandles(symbol: TradingPair): void {
-    const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${this.getQuotedTable(symbol)} VALUES (?,?,?,?,?,?,?)`);
+    const table = this.getQuotedTable(symbol);
+    // A stored minute is only replaced when it looks like a candle made up by FillCandleGapStream (flat, no volume) and the new
+    // one has traded: a later import then corrects the minutes a realtime run had to invent, and never overwrites real data.
+    const stmt = this.db.prepare(`
+      INSERT INTO ${table} (start, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(start) DO UPDATE SET
+        open = excluded.open, high = excluded.high, low = excluded.low, close = excluded.close, volume = excluded.volume
+      WHERE ${table}.volume = 0 AND ${table}.open = ${table}.high AND ${table}.high = ${table}.low AND ${table}.low = ${table}.close
+        AND excluded.volume > 0
+    `);
     // A statement left open keeps the connection alive after close(false): the WAL is never checkpointed into the database file
     try {
       const insertCandles = this.db.transaction((bucket: CandleBucket[]) => {
         const candles = bucket.flatMap(b => b.get(symbol) ?? []);
-        each(candles, ({ start, open, high, low, close, volume }) => stmt.run(null, start, open, high, low, close, volume));
+        each(candles, ({ start, open, high, low, close, volume }) => stmt.run(start, open, high, low, close, volume));
         return candles.length;
       });
       const nbOfCandleInserted = insertCandles(this.buffer);

@@ -72,7 +72,7 @@ describe('SQLiteStorage', () => {
     storage.addCandle(new Map([['BTC/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
     storage.addCandle(new Map([['ETH/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
     storage.insertCandles('BTC/USDT');
-    expect(statement.run.mock.calls).toEqual([[null, 1, 2, 3, 4, 5, 6]]);
+    expect(statement.run.mock.calls).toEqual([[1, 2, 3, 4, 5, 6]]);
   });
 
   describe('insertCandles', () => {
@@ -81,6 +81,13 @@ describe('SQLiteStorage', () => {
     beforeEach(() => {
       mockDb.prepare.mockReturnValue(statement);
       storage.addCandle(new Map([['BTC/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
+    });
+
+    it('replaces a stored minute only when it is flat without volume and the new candle traded', () => {
+      storage.insertCandles('BTC/USDT');
+      expect(mockDb.prepare.mock.lastCall?.[0].replace(/\s+/g, ' ')).toContain(
+        'ON CONFLICT(start) DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low, close = excluded.close, volume = excluded.volume WHERE "CANDLES_BTC_USDT".volume = 0 AND "CANDLES_BTC_USDT".open = "CANDLES_BTC_USDT".high AND "CANDLES_BTC_USDT".high = "CANDLES_BTC_USDT".low AND "CANDLES_BTC_USDT".low = "CANDLES_BTC_USDT".close AND excluded.volume > 0',
+      );
     });
 
     it('finalizes the insert statement', () => {
@@ -127,7 +134,7 @@ describe('SQLiteStorage', () => {
     it.each`
       scenario              | buckets                                     | inserted
       ${'an empty buffer'}  | ${[]}                                       | ${[]}
-      ${'buffered buckets'} | ${[['BTC/USDT'], ['BTC/USDT', 'ETH/USDT']]} | ${[[null, 1, 2, 3, 4, 5, 6], [null, 1, 2, 3, 4, 5, 6], [null, 1, 2, 3, 4, 5, 6]]}
+      ${'buffered buckets'} | ${[['BTC/USDT'], ['BTC/USDT', 'ETH/USDT']]} | ${[[1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]]}
     `('inserts the candles of $scenario before closing', ({ buckets, inserted }) => {
       const statement = { run: vi.fn(), finalize: vi.fn() };
       mockDb.prepare.mockReturnValue(statement);
