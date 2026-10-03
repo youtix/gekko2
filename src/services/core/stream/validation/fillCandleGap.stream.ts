@@ -37,10 +37,19 @@ export class FillCandleGapStream extends Transform {
 
       const currentTimestamp = firstCandle.start;
 
-      // 2. Drop the leading buckets that miss a pair never seen so far, if asked to
+      // 2. Ignore a duplicate or out-of-order bucket: pushing it would move the clock back and refill minutes already pushed
+      if (this.lastTimestamp !== null && currentTimestamp <= this.lastTimestamp) {
+        warning(
+          'stream',
+          `Ignoring the bucket of ${toISOString(currentTimestamp)}: it does not follow the last bucket pushed (${toISOString(this.lastTimestamp)})`,
+        );
+        return next();
+      }
+
+      // 3. Drop the leading buckets that miss a pair never seen so far, if asked to
       if (this.dropIncompleteLeadingBuckets && this.isIncompleteLeadingBucket(bucket, currentTimestamp)) return next();
 
-      // 3. Handle Total Gaps (Time jumps). Once a bucket has been pushed with dropIncompleteLeadingBuckets, every pair has a
+      // 4. Handle Total Gaps (Time jumps). Once a bucket has been pushed with dropIncompleteLeadingBuckets, every pair has a
       // last known candle, so a synthetic bucket is always complete.
       if (this.lastTimestamp !== null) {
         const expectedTimestamp = this.lastTimestamp + ONE_MINUTE;
@@ -71,7 +80,7 @@ export class FillCandleGapStream extends Transform {
         }
       }
 
-      // 4. Process Current Bucket (Handle Partial Gaps)
+      // 5. Process Current Bucket (Handle Partial Gaps)
       const completeBucket: CandleBucket = new Map();
       for (const pair of this.pairs) {
         const candle = bucket.get(pair);

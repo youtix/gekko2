@@ -139,6 +139,25 @@ describe('FillCandleGapStream', () => {
     });
   });
 
+  describe('buckets that do not follow the last one', () => {
+    it.each`
+      case              | input                                                                                           | expected
+      ${'duplicate'}    | ${[bucketAt(0, ETH, BTC), bucketAt(1, ETH, BTC), bucketAt(1, ETH, BTC), bucketAt(2, ETH, BTC)]} | ${['ETH0 BTC0', 'ETH1 BTC1', 'ETH2 BTC2']}
+      ${'out-of-order'} | ${[bucketAt(0, ETH, BTC), bucketAt(2, ETH, BTC), bucketAt(1, ETH, BTC), bucketAt(3, ETH, BTC)]} | ${['ETH0 BTC0', 'ETH1~ BTC1~', 'ETH2 BTC2', 'ETH3 BTC3']}
+    `('should ignore a $case bucket without moving the clock back', async ({ input, expected }) => {
+      const buckets = await run(input);
+      expect(describeBuckets(buckets)).toEqual(expected);
+    });
+
+    it('should warn about an ignored bucket', async () => {
+      await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH, BTC), bucketAt(0, ETH, BTC)]);
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        'stream',
+        `Ignoring the bucket of ${toISOString(at(0))}: it does not follow the last bucket pushed (${toISOString(at(1))})`,
+      );
+    });
+  });
+
   describe('errors', () => {
     it('should forward an error thrown while reading a bucket', async () => {
       const unreadable = new Map([
