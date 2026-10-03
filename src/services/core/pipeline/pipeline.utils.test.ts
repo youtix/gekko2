@@ -270,6 +270,13 @@ describe('Pipeline Utils', () => {
         expect(await passThroughGapFiller(gapFiller, symbols)).toEqual([symbols]);
       });
 
+      it('should drop a leading bucket that misses a pair never seen instead of handing it incomplete to the plugins', async () => {
+        const watchedPairs = [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }];
+        await launchRealtime('1h', 2, watchedPairs);
+        const gapFiller = vi.mocked(pipeline).mock.lastCall![3] as FillCandleGapStream;
+        expect(await passThroughGapFiller(gapFiller, ['BTC/USDT'])).toEqual([]);
+      });
+
       // From the start of the candle `candleCount` candles before the one in progress to the last closed minute. The window
       // itself is swept over many dates in candle.utils.test.ts (getCandleStart).
       it.each`

@@ -33,7 +33,12 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
       mergeSequentialStreams(history, liveStream),
       new RejectFutureCandleStream(),
       new RejectDuplicateCandleStream(),
-      new FillCandleGapStream(pairs.map(p => p.symbol)),
+      // A pair listed after the start of the warmup has no candle in its first buckets: they are dropped rather than handed to
+      // the plugins incomplete (the timeframe batcher refuses a bucket that misses a pair)
+      new FillCandleGapStream(
+        pairs.map(p => p.symbol),
+        { dropIncompleteLeadingBuckets: true },
+      ),
       sink,
     ),
   );
