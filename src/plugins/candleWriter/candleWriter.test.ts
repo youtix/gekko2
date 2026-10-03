@@ -1,3 +1,4 @@
+import { Storage } from '@services/storage/storage';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CandleWriter } from './candleWriter';
 import { candleWriterSchema } from './candleWriter.schema';
@@ -26,13 +27,19 @@ describe('CandleWriter', () => {
     const config = { name: 'CandleWriter' };
     writer = new CandleWriter(config);
     fakeStorage = { addBucket: vi.fn(), close: vi.fn() } as unknown as Storage;
-    // @ts-expect-error Force casting to storage
     writer.getStorage = (): Storage => fakeStorage;
   });
 
   describe('constructor', () => {
     it('should create an instance with the given name', () => {
       expect(writer['pluginName']).toBe('CandleWriter');
+    });
+  });
+
+  describe('processInit', () => {
+    it('leaves the storage alone', () => {
+      writer['processInit']();
+      expect([fakeStorage.addBucket, fakeStorage.close].flatMap(mock => vi.mocked(mock).mock.calls)).toEqual([]);
     });
   });
 
