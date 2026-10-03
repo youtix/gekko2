@@ -1,41 +1,76 @@
 import { GekkoError } from '@errors/gekko.error';
 import { debug } from '@services/logger';
-import { bindAll, defer } from 'lodash-es';
 import EventEmitter from 'node:events';
 
+export type HeartOptions = {
+  /** How long after each multiple of the tick rate (in epoch time) a tick fires, in ms. Must stay below the tick rate. */
+  gracePeriod?: number;
+};
+
+/**
+ * Emits 'tick' once right after pump(), then once per tick rate, `gracePeriod` ms after each multiple of the tick rate in epoch
+ * time: with a tick rate of a minute, every tick fires just after a minute boundary. Each tick is a timeout armed by the previous
+ * one on the next boundary, so that a late timer never shifts the ticks after it (an interval keeps every delay and drifts).
+ *
+ * Emits 'error' with a GekkoError instead of a tick when a tick comes more than three tick rates after the previous one (the
+ * machine slept or the event loop was blocked); without an 'error' listener, the EventEmitter throws it from the timer.
+ */
 export class Heart extends EventEmitter {
   private lastTick: number;
-  private tickRate: number;
+  private readonly tickRate: number;
+  private readonly gracePeriod: number;
   private timeout?: Timer;
+  private nextTickAt?: number;
 
-  constructor(tickRate: number) {
+  constructor(tickRate: number, { gracePeriod = 0 }: HeartOptions = {}) {
     super();
     this.tickRate = tickRate;
+    this.gracePeriod = gracePeriod;
     this.lastTick = 0;
-    bindAll(this, [this.tick.name]);
   }
 
   public tick() {
     const currentTime = Date.now();
-    if (this.lastTick && this.lastTick < currentTime - this.tickRate * 3) throw new GekkoError('core', 'Failed to tick in time'); // see https://github.com/askmike/gekko/issues/514 for details
-
+    const isLate = this.lastTick && this.lastTick < currentTime - this.tickRate * 3;
+    // Updated before emitting: the next tick, if any, is measured from this one rather than failing again
     this.lastTick = currentTime;
-    this.emit('tick');
+    // see https://github.com/askmike/gekko/issues/514 for details
+    if (isLate) this.emit('error', new GekkoError('core', 'Failed to tick in time'));
+    else this.emit('tick');
   }
 
   public pump() {
+    if (this.isHeartBeating()) return;
     debug('core', 'Starting heartbeat ticks');
-    this.timeout = setInterval(this.tick, this.tickRate);
-    defer(this.tick);
+    this.timeout = setTimeout(this.beat, 0);
   }
 
   public stop() {
     debug('core', 'Stopping heartbeat ticks');
-    clearInterval(this.timeout);
+    clearTimeout(this.timeout);
     this.timeout = undefined;
+    this.nextTickAt = undefined;
   }
 
   public isHeartBeating() {
     return !!this.timeout;
   }
+
+  /** The first boundary (plus the grace period) strictly after `time` */
+  private getNextTickTime(time: number) {
+    return time - ((time - this.gracePeriod) % this.tickRate) + this.tickRate;
+  }
+
+  private readonly beat = () => {
+    const now = Date.now();
+    // A timer may fire a little early: wait for the boundary rather than tick twice around it
+    if (this.nextTickAt !== undefined && now < this.nextTickAt) {
+      this.timeout = setTimeout(this.beat, this.nextTickAt - now);
+      return;
+    }
+    // Armed before ticking, so that a listener that throws does not stop the heart
+    this.nextTickAt = this.getNextTickTime(now);
+    this.timeout = setTimeout(this.beat, this.nextTickAt - now);
+    this.tick();
+  };
 }
