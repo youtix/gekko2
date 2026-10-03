@@ -1,1 +1,4 @@
-export type CandleSize = 1 | 2 | 3 | 5 | 10 | 15 | 30 | 60 | 120 | 240 | 360 | 480 | 720 | 1440 | 10080 | 43200 | 129600 | 259200 | 518400;
+import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
+
+/** A timeframe in minutes: the values of TIMEFRAME_TO_MINUTES, the one list of timeframes */
+export type CandleSize = (typeof TIMEFRAME_TO_MINUTES)[keyof typeof TIMEFRAME_TO_MINUTES];

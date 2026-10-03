@@ -98,16 +98,34 @@ describe('candle utils', () => {
   });
 
   describe('getCandleTimeOffset', () => {
+    // Sunday 2025-06-22 19:53:30, 1193 minutes after midnight, 21 days into June, 82 into the quarter, 172 into the year
     it.each`
-      size     | expected
-      ${1}     | ${0}
-      ${5}     | ${53 % 5}
-      ${120}   | ${(19 * 60 + 53) % 120}
-      ${1440}  | ${19 * 60 + 53}
-      ${10080} | ${((0 + 6) % 7) * 1440 + 19 * 60 + 53}
-      ${43200} | ${Math.floor((toTimestamp('2025-06-22T19:53:30Z') - Date.UTC(2025, 5, 1)) / 60000)}
-    `('should return $size => $expected', ({ size, expected }) => {
+      size      | expected
+      ${1}      | ${0}
+      ${2}      | ${1}
+      ${3}      | ${2}
+      ${5}      | ${3}
+      ${10}     | ${3}
+      ${15}     | ${8}
+      ${30}     | ${23}
+      ${60}     | ${53}
+      ${120}    | ${113}
+      ${240}    | ${233}
+      ${360}    | ${113}
+      ${480}    | ${233}
+      ${720}    | ${473}
+      ${1440}   | ${1193}
+      ${10080}  | ${6 * 1440 + 1193}
+      ${43200}  | ${21 * 1440 + 1193}
+      ${129600} | ${82 * 1440 + 1193}
+      ${259200} | ${172 * 1440 + 1193}
+      ${518400} | ${172 * 1440 + 1193}
+    `('should return $expected minutes into a $size-minute candle', ({ size, expected }) => {
       expect(getCandleTimeOffset(size, toTimestamp('2025-06-22T19:53:30Z'))).toBe(expected);
+    });
+
+    it('should throw on a candle size that is not a timeframe', () => {
+      expect(() => getCandleTimeOffset(45 as CandleSize, defaultCandle.start)).toThrow('[UTILS] Unsupported candle size: 45 minutes');
     });
   });
 

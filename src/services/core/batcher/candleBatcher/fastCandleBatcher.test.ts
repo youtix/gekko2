@@ -179,4 +179,8 @@ describe('isTimeframeCandleClose', () => {
   `('should return $expected for a $size-minute candle at $minute', ({ size, minute, expected }) => {
     expect(isTimeframeCandleClose(size, toTimestamp(minute))).toBe(expected);
   });
+
+  it('should throw on a candle size that is not a timeframe', () => {
+    expect(() => isTimeframeCandleClose(45 as CandleSize, T0)).toThrow('[CORE] Unsupported candle size: 45 minutes');
+  });
 });

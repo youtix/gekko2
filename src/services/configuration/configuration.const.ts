@@ -1,21 +1,6 @@
-export const TIMEFRAMES = [
-  '1m',
-  '2m',
-  '3m',
-  '5m',
-  '10m',
-  '15m',
-  '30m',
-  '1h',
-  '2h',
-  '4h',
-  '6h',
-  '8h',
-  '12h',
-  '1d',
-  '1w',
-  '1M',
-  '3M',
-  '6M',
-  '1y',
-] as const;
+import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
+
+type Timeframe = keyof typeof TIMEFRAME_TO_MINUTES;
+
+/** The timeframes a config can watch: the keys of TIMEFRAME_TO_MINUTES, in its order (z.enum needs a non-empty tuple) */
+export const TIMEFRAMES = Object.keys(TIMEFRAME_TO_MINUTES) as [Timeframe, ...Timeframe[]];

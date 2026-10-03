@@ -60,7 +60,7 @@ Exit codes: 0 when a run ends normally or is stopped by `ApplicationStopError`, 
 - The path aliases (`@constants`, `@models`, `@errors`, `@utils`, `@services`, `@indicators`, `@strategies`, `@plugins`) are declared in `tsconfig.json` and copied by hand into `vitest.config.ts`. A new alias goes in both.
 - Files are named `<name>.<role>.ts` (`.types`, `.schema`, `.const`, `.error`, `.utils`, `.strategy`, `.indicator`, `.stream`, `.mock`, `.bench`). Coverage skips `.schema`, `.mock`, `.types`, `.error`, `.const` and `index.ts` files. `src/utils` has no barrel files; import `@utils/<dir>/<file>`.
 - `lodash-es` (never `lodash`), `date-fns` and zod v4 are used throughout. There is no decimal library; rounding goes through `round` and `addPrecise` in `src/utils/math`. Timestamps are epoch milliseconds.
-- The list of timeframes exists three times and must be kept in sync: `TIMEFRAMES` (`src/services/configuration/configuration.const.ts`), `TIMEFRAME_TO_MINUTES` (`src/constants/timeframe.const.ts`) and `CandleSize` (`src/services/core/batcher/candleBatcher/candleBatcher.types.ts`).
+- `TIMEFRAME_TO_MINUTES` (`src/constants/timeframe.const.ts`) is the one list of timeframes: `TIMEFRAMES` (`src/services/configuration/configuration.const.ts`) and `CandleSize` (`src/services/core/batcher/candleBatcher/candleBatcher.types.ts`) derive from it, and a new size does not compile until it has a case in the exhaustive switches of `isTimeframeCandleClose` (`fastCandleBatcher.ts`) and `getCandleTimeOffset` (`src/utils/candle/candle.utils.ts`).
 
 ## Architecture
 

@@ -2,6 +2,7 @@ import { ONE_MINUTE } from '@constants/time.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
+import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
 
 export const hl2 = (candle: Candle): number => (candle.high + candle.low) / 2;
 export const hlc3 = (candle: Candle): number => (candle.high + candle.low + candle.close) / 3;
@@ -18,51 +19,55 @@ export const createEmptyCandle = (lastCandle: Candle): Candle => ({
   synthetic: true,
 });
 
-export const getCandleTimeOffset = (candleSize: number, start: EpochTimeStamp) => {
-  const now = new Date(start);
+/** Minutes from the start of the timeframe candle of `candleSize` minutes holding `start` (0 on a timeframe boundary). */
+export const getCandleTimeOffset = (candleSize: CandleSize, start: EpochTimeStamp): number => {
+  const date = new Date(start);
+  const year = date.getUTCFullYear();
+  const month = date.getUTCMonth();
+  const minutesSinceMidnight = date.getUTCHours() * 60 + date.getUTCMinutes();
+  const minutesSince = (periodStart: EpochTimeStamp) => Math.floor((start - periodStart) / ONE_MINUTE);
 
-  const minute = now.getUTCMinutes();
-  const hour = now.getUTCHours();
-  const month = now.getUTCMonth();
-  const weekday = now.getUTCDay();
-
-  if (candleSize <= 1) return 0;
-  if (candleSize < 60) return minute % candleSize;
-
-  const minutesSinceMidnight = hour * 60 + minute;
-
-  if (candleSize < 1440) return minutesSinceMidnight % candleSize;
-  if (candleSize < 10080) return minutesSinceMidnight;
-  if (candleSize === 10080) return ((weekday + 6) % 7) * 1440 + minutesSinceMidnight;
-
-  const startOfMonth = Date.UTC(now.getUTCFullYear(), month, 1);
-  if (candleSize === 43200) return Math.floor((now.getTime() - startOfMonth) / 60000);
-
-  if (candleSize === 129600) {
-    const quarterStartMonth = Math.floor(month / 3) * 3;
-    const quarterStart = Date.UTC(now.getUTCFullYear(), quarterStartMonth, 1);
-    return Math.floor((now.getTime() - quarterStart) / 60000);
+  switch (candleSize) {
+    case 1:
+    case 2:
+    case 3:
+    case 5:
+    case 10:
+    case 15:
+    case 30:
+      return date.getUTCMinutes() % candleSize;
+    case 60:
+    case 120:
+    case 240:
+    case 360:
+    case 480:
+    case 720:
+      return minutesSinceMidnight % candleSize;
+    case 1440:
+      return minutesSinceMidnight;
+    case 10080:
+      return ((date.getUTCDay() + 6) % 7) * 1440 + minutesSinceMidnight; // Weeks start on Monday
+    case 43200:
+      return minutesSince(Date.UTC(year, month, 1));
+    case 129600:
+      return minutesSince(Date.UTC(year, month - (month % 3), 1));
+    case 259200:
+      return minutesSince(Date.UTC(year, month - (month % 6), 1));
+    case 518400:
+      return minutesSince(Date.UTC(year, 0, 1));
+    default: {
+      // A size added to TIMEFRAME_TO_MINUTES without a case here fails to compile
+      const unsupported: never = candleSize;
+      throw new GekkoError('utils', `Unsupported candle size: ${unsupported} minutes`);
+    }
   }
-
-  if (candleSize === 259200) {
-    const halfStartMonth = Math.floor(month / 6) * 6;
-    const halfStart = Date.UTC(now.getUTCFullYear(), halfStartMonth, 1);
-    return Math.floor((now.getTime() - halfStart) / 60000);
-  }
-
-  if (candleSize === 518400) {
-    const startOfYear = Date.UTC(now.getUTCFullYear(), 0, 1);
-    return Math.floor((now.getTime() - startOfYear) / 60000);
-  }
-
-  return 0;
 };
 
 // 1M, 3M, 6M and 1y candles span whole UTC months, so their length in minutes varies
 const MONTHS_PER_CANDLE: Partial<Record<number, number>> = { 43200: 1, 129600: 3, 259200: 6, 518400: 12 };
 
 /** Start of the candle `count` candles before the one holding `minute` (a minute start), on the candle batcher's boundaries. */
-export const getCandleStart = (candleSize: number, minute: EpochTimeStamp, count: number) => {
+export const getCandleStart = (candleSize: CandleSize, minute: EpochTimeStamp, count: number) => {
   const candleStart = minute - getCandleTimeOffset(candleSize, minute) * ONE_MINUTE;
   const months = MONTHS_PER_CANDLE[candleSize];
   if (!months) return candleStart - count * candleSize * ONE_MINUTE;
