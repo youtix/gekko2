@@ -17,7 +17,7 @@ export const cleanDatabase = (storage: SQLiteStorage) => {
 };
 
 export const seedDatabaseWithCandles = (storage: SQLiteStorage, symbol: TradingPair, candles: Partial<Candle>[]) => {
-  storage.upsertTable(symbol);
+  storage.createTable(symbol);
 
   // Same name as Storage.getTable
   const [asset, currency] = symbol.split('/');

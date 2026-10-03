@@ -25,7 +25,7 @@ describe('CandleWriter', () => {
   beforeEach(() => {
     const config = { name: 'CandleWriter' };
     writer = new CandleWriter(config);
-    fakeStorage = { addCandle: vi.fn(), close: vi.fn() } as unknown as Storage;
+    fakeStorage = { addBucket: vi.fn(), close: vi.fn() } as unknown as Storage;
     // @ts-expect-error Force casting to storage
     writer.getStorage = (): Storage => fakeStorage;
   });
@@ -49,7 +49,7 @@ describe('CandleWriter', () => {
       };
       const bucket = new Map([['BTC/USDT', candle]]);
       writer['processOneMinuteBucket'](bucket as any);
-      expect(fakeStorage.addCandle).toHaveBeenCalledWith(bucket);
+      expect(fakeStorage.addBucket).toHaveBeenCalledWith(bucket);
     });
   });
 

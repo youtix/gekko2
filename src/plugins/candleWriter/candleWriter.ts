@@ -17,7 +17,7 @@ export class CandleWriter extends Plugin {
   }
 
   protected processOneMinuteBucket(bucket: CandleBucket): void {
-    this.getStorage().addCandle(bucket);
+    this.getStorage().addBucket(bucket);
   }
 
   protected processFinalize(): void {

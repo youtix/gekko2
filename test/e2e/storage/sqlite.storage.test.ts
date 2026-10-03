@@ -35,7 +35,7 @@ describe('SQLiteStorage - table names', () => {
 
     beforeEach(() => {
       storage = new SQLiteStorage([symbol]);
-      candles.forEach(candle => storage.addCandle(new Map([[symbol, candle]])));
+      candles.forEach(candle => storage.addBucket(new Map([[symbol, candle]])));
     });
 
     afterEach(() => {
@@ -77,11 +77,40 @@ describe('SQLiteStorage - table names', () => {
       ['keeps a real candle over a made-up one', real(10, 5), flat(11, 0), real(10, 5)],
     ])('%s', (_scenario, stored, inserted, expected) => {
       const storage = new SQLiteStorage([symbol]);
-      storage.addCandle(new Map([[symbol, stored]]));
-      storage.addCandle(new Map([[symbol, inserted]]));
+      storage.addBucket(new Map([[symbol, stored]]));
+      storage.addBucket(new Map([[symbol, inserted]]));
       const candles = storage.getCandles(symbol, { start, end: start });
       storage.close();
       expect(candles).toEqual([{ id: 1, ...expected }]);
+    });
+  });
+
+  describe('minutes of an interval', () => {
+    const symbol = 'BTC/USDT';
+    const offGrid = { ...candles[0], start: start + 2 * MINUTE + 1 }; // Inside the missing minute, but not its start
+    let storage: ISQLiteStorage;
+
+    beforeEach(() => {
+      storage = new SQLiteStorage([symbol]);
+      [...candles, offGrid].forEach(candle => storage.addBucket(new Map([[symbol, candle]])));
+    });
+
+    afterEach(() => {
+      storage.close();
+    });
+
+    it.each([
+      ['every minute stored', start, start + MINUTE, 0],
+      ['one minute missing, the off-grid row not counted', start, end, 1],
+      ['the missing minute alone', start + 2 * MINUTE, start + 2 * MINUTE, 1],
+      ['two minutes after the last candle', start, end + 2 * MINUTE, 3],
+      ['no candle at all', end + MINUTE, end + 10 * MINUTE, 10],
+    ])('counts the missing candles with %s', (_scenario, from, to, missingCandleCount) => {
+      expect(storage.checkInterval(symbol, { start: from, end: to })).toEqual({ missingCandleCount });
+    });
+
+    it('reads only the candles that start a minute', () => {
+      expect(storage.getCandles(symbol, { start, end }).map(candle => candle.start)).toEqual(candles.map(candle => candle.start));
     });
   });
 
@@ -91,7 +120,7 @@ describe('SQLiteStorage - table names', () => {
       'CREATE TABLE IF NOT EXISTS CANDLES_BTC_USDT (id INTEGER PRIMARY KEY AUTOINCREMENT, start INTEGER UNIQUE, open REAL NOT NULL, high REAL NOT NULL, low REAL NOT NULL, close REAL NOT NULL, volume REAL NOT NULL)',
     );
     storage.db.run('INSERT INTO CANDLES_BTC_USDT VALUES (NULL, ?, 10, 12, 9, 11, 1)', [start]);
-    storage.upsertTable('btc/usdt');
+    storage.createTable('btc/usdt');
     expect(storage.getCandles('btc/usdt', { start, end })).toEqual([{ id: 1, ...candles[0] }]);
     storage.close();
   });

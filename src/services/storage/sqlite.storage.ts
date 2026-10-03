@@ -22,7 +22,7 @@ export class SQLiteStorage extends Storage {
     this.db.run('PRAGMA busy_timeout = 5000;'); // Wait instead of erroring when the DB is locked
     this.db.run('PRAGMA journal_mode = WAL;');
     this.db.run('PRAGMA synchronous = NORMAL;');
-    each(symbols, symbol => this.upsertTable(symbol));
+    each(symbols, symbol => this.createTable(symbol));
   }
 
   public insertCandles(symbol: TradingPair): void {
@@ -38,19 +38,22 @@ export class SQLiteStorage extends Storage {
     `);
     // A statement left open keeps the connection alive after close(false): the WAL is never checkpointed into the database file
     try {
-      const insertCandles = this.db.transaction((bucket: CandleBucket[]) => {
-        const candles = bucket.flatMap(b => b.get(symbol) ?? []);
-        each(candles, ({ start, open, high, low, close, volume }) => stmt.run(start, open, high, low, close, volume));
-        return candles.length;
+      const insertCandles = this.db.transaction((buffer: CandleBucket[]) => {
+        let written = 0; // Rows inserted or replaced, not the minutes already stored that were left as they were
+        for (const bucket of buffer) {
+          const candle = bucket.get(symbol);
+          if (candle) written += stmt.run(candle.start, candle.open, candle.high, candle.low, candle.close, candle.volume).changes;
+        }
+        return written;
       });
-      const nbOfCandleInserted = insertCandles(this.buffer);
-      debug('storage', `${nbOfCandleInserted} ${symbol} ${pluralize('candle', nbOfCandleInserted)} inserted in database`);
+      const written = insertCandles(this.buffer);
+      debug('storage', `${written} ${symbol} ${pluralize('candle', written)} written in database`);
     } finally {
       stmt.finalize();
     }
   }
 
-  public upsertTable(symbol: TradingPair): void {
+  public createTable(symbol: TradingPair): void {
     const query = `
       CREATE TABLE IF NOT EXISTS
       ${this.getQuotedTable(symbol)} (
@@ -84,25 +87,18 @@ export class SQLiteStorage extends Storage {
     const query = this.db.query<Candle, SQLQueryBindings[]>(`
       SELECT id,start,open,high,low,close,volume
       FROM ${this.getQuotedTable(symbol)}
-      WHERE start BETWEEN $start AND $end
+      WHERE start BETWEEN $start AND $end AND start % 60000 = 0
       ORDER BY start ASC
     `);
     return query.all({ $start: start, $end: end });
   }
 
+  /** The minutes of the interval with no candle. Its bounds must be starts of minutes, as the stored candles are. */
   public checkInterval(symbol: TradingPair, { start, end }: Interval<EpochTimeStamp, EpochTimeStamp>) {
     const query = this.db.query<MissingCandleCount, SQLQueryBindings[]>(`
-      WITH RECURSIVE expected(start_time) AS (
-        SELECT $start AS start_time
-        UNION ALL
-        SELECT start_time + 60000
-        FROM expected
-        WHERE start_time < $end
-      )
-      SELECT COUNT(*) AS missingCandleCount
-      FROM expected e
-      LEFT JOIN ${this.getQuotedTable(symbol)} c ON c.start = e.start_time
-      WHERE c.start IS NULL;
+      SELECT ($end - $start) / 60000 + 1 - COUNT(*) AS missingCandleCount
+      FROM ${this.getQuotedTable(symbol)}
+      WHERE start BETWEEN $start AND $end AND start % 60000 = 0
     `);
     return query.get({ $start: start, $end: end });
   }

@@ -1,3 +1,4 @@
+import { debug } from '@services/logger';
 import { Database } from 'bun:sqlite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SQLiteStorage } from './sqlite.storage';
@@ -33,7 +34,7 @@ describe('SQLiteStorage', () => {
   beforeEach(() => {
     mockConfig.getWatch.mockReturnValue({ mode: 'backtest' });
     mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database: ':memory:' });
-    mockDb.prepare.mockReturnValue({ run: vi.fn(), finalize: vi.fn() });
+    mockDb.prepare.mockReturnValue({ run: vi.fn(() => ({ changes: 1 })), finalize: vi.fn() });
     mockDb.query.mockReturnValue({ all: vi.fn(), get: vi.fn() });
     mockDb.transaction.mockImplementation(fn => fn);
     storage = new SQLiteStorage([]);
@@ -41,7 +42,7 @@ describe('SQLiteStorage', () => {
 
   it.each`
     method                   | call                                             | sqlRunBy
-    ${'upsertTable'}         | ${() => storage.upsertTable(symbol)}             | ${mockDb.run}
+    ${'createTable'}         | ${() => storage.createTable(symbol)}             | ${mockDb.run}
     ${'insertCandles'}       | ${() => storage.insertCandles(symbol)}           | ${mockDb.prepare}
     ${'getCandleDateranges'} | ${() => storage.getCandleDateranges(symbol)}     | ${mockDb.query}
     ${'getCandles'}          | ${() => storage.getCandles(symbol, interval)}    | ${mockDb.query}
@@ -49,6 +50,15 @@ describe('SQLiteStorage', () => {
   `('quotes the table name in the SQL of $method, doubling its quotes', ({ call, sqlRunBy }) => {
     call();
     expect(sqlRunBy.mock.lastCall?.[0]).toContain('"CANDLES_A""B_USDT"');
+  });
+
+  it.each`
+    method             | call
+    ${'getCandles'}    | ${() => storage.getCandles(symbol, interval)}
+    ${'checkInterval'} | ${() => storage.checkInterval(symbol, interval)}
+  `('reads only the rows that start a minute in $method, like the other one', ({ call }) => {
+    call();
+    expect(mockDb.query.mock.lastCall?.[0]).toContain('WHERE start BETWEEN $start AND $end AND start % 60000 = 0');
   });
 
   it.each`
@@ -67,20 +77,20 @@ describe('SQLiteStorage', () => {
   });
 
   it('inserts the buffered candles of the pair, skipping the buckets without it', () => {
-    const statement = { run: vi.fn(), finalize: vi.fn() };
+    const statement = { run: vi.fn(() => ({ changes: 1 })), finalize: vi.fn() };
     mockDb.prepare.mockReturnValue(statement);
-    storage.addCandle(new Map([['BTC/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
-    storage.addCandle(new Map([['ETH/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
+    storage.addBucket(new Map([['BTC/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
+    storage.addBucket(new Map([['ETH/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
     storage.insertCandles('BTC/USDT');
     expect(statement.run.mock.calls).toEqual([[1, 2, 3, 4, 5, 6]]);
   });
 
   describe('insertCandles', () => {
-    const statement = { run: vi.fn(), finalize: vi.fn() };
+    const statement = { run: vi.fn(() => ({ changes: 1 })), finalize: vi.fn() };
 
     beforeEach(() => {
       mockDb.prepare.mockReturnValue(statement);
-      storage.addCandle(new Map([['BTC/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
+      storage.addBucket(new Map([['BTC/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
     });
 
     it('replaces a stored minute only when it is flat without volume and the new candle traded', () => {
@@ -88,6 +98,18 @@ describe('SQLiteStorage', () => {
       expect(mockDb.prepare.mock.lastCall?.[0].replace(/\s+/g, ' ')).toContain(
         'ON CONFLICT(start) DO UPDATE SET open = excluded.open, high = excluded.high, low = excluded.low, close = excluded.close, volume = excluded.volume WHERE "CANDLES_BTC_USDT".volume = 0 AND "CANDLES_BTC_USDT".open = "CANDLES_BTC_USDT".high AND "CANDLES_BTC_USDT".high = "CANDLES_BTC_USDT".low AND "CANDLES_BTC_USDT".low = "CANDLES_BTC_USDT".close AND excluded.volume > 0',
       );
+    });
+
+    it.each`
+      changes   | message
+      ${[1, 1]} | ${'2 BTC/USDT candles written in database'}
+      ${[1, 0]} | ${'1 BTC/USDT candle written in database'}
+      ${[0, 0]} | ${'0 BTC/USDT candle written in database'}
+    `('logs the rows actually written, $changes, not the candles it tried', ({ changes, message }) => {
+      for (const count of changes) statement.run.mockReturnValueOnce({ changes: count });
+      storage.addBucket(new Map([['BTC/USDT', { start: 2, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
+      storage.insertCandles('BTC/USDT');
+      expect(debug).toHaveBeenLastCalledWith('storage', message);
     });
 
     it('finalizes the insert statement', () => {
@@ -136,21 +158,21 @@ describe('SQLiteStorage', () => {
       ${'an empty buffer'}  | ${[]}                                       | ${[]}
       ${'buffered buckets'} | ${[['BTC/USDT'], ['BTC/USDT', 'ETH/USDT']]} | ${[[1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 6]]}
     `('inserts the candles of $scenario before closing', ({ buckets, inserted }) => {
-      const statement = { run: vi.fn(), finalize: vi.fn() };
+      const statement = { run: vi.fn(() => ({ changes: 1 })), finalize: vi.fn() };
       mockDb.prepare.mockReturnValue(statement);
       mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database: ':memory:', insertThreshold: 10 });
       storage = new SQLiteStorage([]);
-      for (const symbols of buckets) storage.addCandle(new Map(symbols.map((symbol: string) => [symbol, candle])));
+      for (const symbols of buckets) storage.addBucket(new Map(symbols.map((symbol: string) => [symbol, candle])));
       storage.close();
       expect(statement.run.mock.calls).toEqual(inserted);
     });
 
     it('inserts the buffered candles before checkpointing the WAL', () => {
-      const statement = { run: vi.fn(), finalize: vi.fn() };
+      const statement = { run: vi.fn(() => ({ changes: 1 })), finalize: vi.fn() };
       mockDb.prepare.mockReturnValue(statement);
       mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database: ':memory:', insertThreshold: 10 });
       storage = new SQLiteStorage([]);
-      storage.addCandle(new Map([['BTC/USDT', candle]]));
+      storage.addBucket(new Map([['BTC/USDT', candle]]));
       storage.close();
       const checkpointCall = mockDb.run.mock.calls.findIndex(([sql]) => sql === 'PRAGMA wal_checkpoint(TRUNCATE);');
       expect(statement.run.mock.invocationCallOrder[0]).toBeLessThan(mockDb.run.mock.invocationCallOrder[checkpointCall]);

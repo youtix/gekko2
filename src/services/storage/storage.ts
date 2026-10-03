@@ -20,7 +20,7 @@ export abstract class Storage {
     else this.insertThreshold = INSERT_THRESHOLD;
   }
 
-  public addCandle(bucket: CandleBucket) {
+  public addBucket(bucket: CandleBucket) {
     this.buffer.push(bucket);
     if (this.buffer.length >= this.insertThreshold) this.flush();
   }
@@ -40,7 +40,7 @@ export abstract class Storage {
   }
 
   public abstract insertCandles(symbol: TradingPair): void;
-  public abstract upsertTable(symbol: TradingPair): void;
+  public abstract createTable(symbol: TradingPair): void;
   public abstract getCandleDateranges(symbol: TradingPair): Nullable<CandleDateranges[]>;
   public abstract getCandles(symbol: TradingPair, interval: Interval<EpochTimeStamp, EpochTimeStamp>): Candle[];
   public abstract checkInterval(symbol: TradingPair, interval: Interval<EpochTimeStamp, EpochTimeStamp>): Nullable<MissingCandleCount>;
