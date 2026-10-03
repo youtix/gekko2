@@ -176,7 +176,10 @@ export class MockCCXTExchange {
       // If exhausted, we gracefully fall through to synthetic generation below
     }
 
-    const candles = generateSyntheticHistory(symbol, since || Date.now() - limit * ONE_MINUTE, limit || 100);
+    // Like an exchange, serve the candles starting at the first minute at or after `since`: a request from the millisecond
+    // after the last candle received (the next page) starts at the next minute
+    const from = since || Date.now() - limit * ONE_MINUTE;
+    const candles = generateSyntheticHistory(symbol, Math.ceil(from / ONE_MINUTE) * ONE_MINUTE, limit || 100);
 
     // Filter out gaps logic
     const filteredCandles = candles.filter(c => {

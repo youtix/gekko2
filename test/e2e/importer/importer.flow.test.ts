@@ -239,6 +239,16 @@ describe('E2E: Importer (Synthetic)', () => {
       .get(SCENARIO_C_START, SCENARIO_C_END) as { count: number };
 
     expect(rowCountBTC.count).toBe(1001); // 1000 minutes + 1 inclusive
+
+    // The range spans two exchange pages: the second one, requested from the millisecond after the last candle of the
+    // first, must start at the next minute, and the last minute of the range must be there
+    const { lastStart, offGridRows } = db
+      .query(
+        'SELECT max(start) as lastStart, count(CASE WHEN start % ? != 0 THEN 1 END) as offGridRows FROM candles_BTC_USDT WHERE start >= ? AND start <= ?',
+      )
+      .get(ONE_MINUTE, SCENARIO_C_START, SCENARIO_C_END) as { lastStart: number; offGridRows: number };
+    expect(lastStart).toBe(SCENARIO_C_END);
+    expect(offGridRows).toBe(0);
   }, 120000); // Higher timeout for larger scale
 
   it('Scenario D: Error Handling & Resilience (Simulated Network Error)', async () => {
