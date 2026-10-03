@@ -4,7 +4,7 @@ import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
 import { warning } from '@services/logger';
-import { createEmptyCandle } from '@utils/candle/candle.utils';
+import { createEmptyCandle, getBucketTimestamp } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
 import { Transform, TransformCallback } from 'node:stream';
 import { MAX_GAP_FILL_MINUTES } from './fillCandleGap.const';
@@ -33,13 +33,11 @@ export class FillCandleGapStream extends Transform {
     this.dropIncompleteLeadingBuckets = options.dropIncompleteLeadingBuckets ?? false;
   }
 
-  async _transform(bucket: CandleBucket, _: BufferEncoding, next: TransformCallback) {
+  _transform(bucket: CandleBucket, _: BufferEncoding, next: TransformCallback) {
     try {
       // 1. Determine current timestamp from any available candle in the bucket
-      const firstCandle = bucket.values().next().value;
-      if (!firstCandle) return next();
-
-      const currentTimestamp = firstCandle.start;
+      const currentTimestamp = getBucketTimestamp(bucket);
+      if (currentTimestamp === undefined) return next();
 
       // 2. Ignore a duplicate or out-of-order bucket: pushing it would move the clock back and refill minutes already pushed
       if (this.lastTimestamp !== null && currentTimestamp <= this.lastTimestamp) {

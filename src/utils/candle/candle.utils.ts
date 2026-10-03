@@ -71,8 +71,13 @@ export const getCandleStart = (candleSize: number, minute: EpochTimeStamp, count
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - count * months, 1);
 };
 
+const peekCandle = (bucket: CandleBucket): Candle | undefined => bucket.values().next().value;
+
+/** The minute of a bucket (all its candles share it), or undefined for an empty bucket */
+export const getBucketTimestamp = (bucket: CandleBucket): EpochTimeStamp | undefined => peekCandle(bucket)?.start;
+
 export const getFirstCandleFromBucket = (bucket: CandleBucket) => {
-  const firstCandle = bucket.values().next().value;
+  const firstCandle = peekCandle(bucket);
   if (!firstCandle) throw new GekkoError('utils', 'Impossible to get first candle from bucket: Empty candle bucket');
   return firstCandle;
 };

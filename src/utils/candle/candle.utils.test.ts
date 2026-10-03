@@ -7,7 +7,16 @@ import { CandleBucketBatcher } from '@services/core/batcher/candleBatcher/candle
 import { range, sortedUniq } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { toISOString, toTimestamp } from '../date/date.utils';
-import { createEmptyCandle, getCandleStart, getCandleTimeOffset, hl2, hlc3, ohlc4 } from './candle.utils';
+import {
+  createEmptyCandle,
+  getBucketTimestamp,
+  getCandleStart,
+  getCandleTimeOffset,
+  getFirstCandleFromBucket,
+  hl2,
+  hlc3,
+  ohlc4,
+} from './candle.utils';
 
 describe('candle utils', () => {
   const defaultCandle: Candle = {
@@ -66,6 +75,26 @@ describe('candle utils', () => {
         volume: 0,
         synthetic: true,
       });
+    });
+  });
+
+  describe('getBucketTimestamp', () => {
+    it('should return the start of the candles of a bucket', () => {
+      expect(getBucketTimestamp(new Map([['BTC/USDT', defaultCandle]]))).toBe(defaultCandle.start);
+    });
+
+    it('should return undefined for an empty bucket', () => {
+      expect(getBucketTimestamp(new Map())).toBeUndefined();
+    });
+  });
+
+  describe('getFirstCandleFromBucket', () => {
+    it('should return the first candle of a bucket', () => {
+      expect(getFirstCandleFromBucket(new Map([['BTC/USDT', defaultCandle]]))).toBe(defaultCandle);
+    });
+
+    it('should throw on an empty bucket', () => {
+      expect(() => getFirstCandleFromBucket(new Map())).toThrow('Impossible to get first candle from bucket: Empty candle bucket');
     });
   });
 
