@@ -12,6 +12,8 @@ import { CandleDateranges, MissingCandleCount } from './storage.types';
 
 export class SQLiteStorage extends Storage {
   db: Database;
+  /** CandleWriter closes the storage when it is finalised, and main() closes it again on its way out */
+  private closed = false;
 
   constructor(symbols: TradingPair[]) {
     super();
@@ -25,13 +27,18 @@ export class SQLiteStorage extends Storage {
 
   public insertCandles(symbol: TradingPair): void {
     const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${this.getQuotedTable(symbol)} VALUES (?,?,?,?,?,?,?)`);
-    const insertCandles = this.db.transaction((bucket: CandleBucket[]) => {
-      const candles = bucket.flatMap(b => b.get(symbol) ?? []);
-      each(candles, ({ start, open, high, low, close, volume }) => stmt.run(null, start, open, high, low, close, volume));
-      return candles.length;
-    });
-    const nbOfCandleInserted = insertCandles(this.buffer);
-    debug('storage', `${nbOfCandleInserted} ${symbol} ${pluralize('candle', nbOfCandleInserted)} inserted in database`);
+    // A statement left open keeps the connection alive after close(false): the WAL is never checkpointed into the database file
+    try {
+      const insertCandles = this.db.transaction((bucket: CandleBucket[]) => {
+        const candles = bucket.flatMap(b => b.get(symbol) ?? []);
+        each(candles, ({ start, open, high, low, close, volume }) => stmt.run(null, start, open, high, low, close, volume));
+        return candles.length;
+      });
+      const nbOfCandleInserted = insertCandles(this.buffer);
+      debug('storage', `${nbOfCandleInserted} ${symbol} ${pluralize('candle', nbOfCandleInserted)} inserted in database`);
+    } finally {
+      stmt.finalize();
+    }
   }
 
   public upsertTable(symbol: TradingPair): void {
@@ -92,7 +99,14 @@ export class SQLiteStorage extends Storage {
   }
 
   public close(): void {
-    this.db.close(false);
+    if (this.closed) return;
+    this.closed = true;
+    // Copies the WAL into the database file and empties it, so that the file alone holds every candle (a copy, a backup)
+    try {
+      this.db.run('PRAGMA wal_checkpoint(TRUNCATE);');
+    } finally {
+      this.db.close(false);
+    }
   }
 
   /** Tickers can hold digits and punctuation (1INCH, USDC:USDC), so the name is always quoted, its own quotes doubled. */

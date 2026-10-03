@@ -15,6 +15,15 @@ vi.mock('bun:sqlite', () => ({
   }),
 }));
 
+/** Runs a call that is expected to throw and swallows the error, so that the test can check what happened around it */
+const attempt = (call: () => void) => {
+  try {
+    call();
+  } catch {
+    // Expected
+  }
+};
+
 describe('SQLiteStorage', () => {
   const symbol = 'A"B/USDT';
   const interval = { start: 0, end: 0 };
@@ -23,7 +32,7 @@ describe('SQLiteStorage', () => {
   beforeEach(() => {
     mockConfig.getWatch.mockReturnValue({ mode: 'backtest' });
     mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database: ':memory:' });
-    mockDb.prepare.mockReturnValue({ run: vi.fn() });
+    mockDb.prepare.mockReturnValue({ run: vi.fn(), finalize: vi.fn() });
     mockDb.query.mockReturnValue({ all: vi.fn(), get: vi.fn() });
     mockDb.transaction.mockImplementation(fn => fn);
     storage = new SQLiteStorage([]);
@@ -57,7 +66,7 @@ describe('SQLiteStorage', () => {
   });
 
   it('inserts the buffered candles of the pair, skipping the buckets without it', () => {
-    const statement = { run: vi.fn() };
+    const statement = { run: vi.fn(), finalize: vi.fn() };
     mockDb.prepare.mockReturnValue(statement);
     storage.addCandle(new Map([['BTC/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
     storage.addCandle(new Map([['ETH/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
@@ -65,8 +74,59 @@ describe('SQLiteStorage', () => {
     expect(statement.run.mock.calls).toEqual([[null, 1, 2, 3, 4, 5, 6]]);
   });
 
-  it('closes the database', () => {
-    storage.close();
-    expect(mockDb.close).toHaveBeenCalledWith(false);
+  describe('insertCandles', () => {
+    const statement = { run: vi.fn(), finalize: vi.fn() };
+
+    beforeEach(() => {
+      mockDb.prepare.mockReturnValue(statement);
+      storage.addCandle(new Map([['BTC/USDT', { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 }]]));
+    });
+
+    it('finalizes the insert statement', () => {
+      storage.insertCandles('BTC/USDT');
+      expect(statement.finalize).toHaveBeenCalledOnce();
+    });
+
+    it('rethrows a failed insert', () => {
+      statement.run.mockImplementation(() => {
+        throw new Error('disk full');
+      });
+      expect(() => storage.insertCandles('BTC/USDT')).toThrow('disk full');
+    });
+
+    it('finalizes the insert statement when an insert fails', () => {
+      statement.run.mockImplementation(() => {
+        throw new Error('disk full');
+      });
+      attempt(() => storage.insertCandles('BTC/USDT'));
+      expect(statement.finalize).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('close', () => {
+    it('closes the database', () => {
+      storage.close();
+      expect(mockDb.close).toHaveBeenCalledWith(false);
+    });
+
+    it('checkpoints the WAL into the database file before closing', () => {
+      storage.close();
+      const checkpointCall = mockDb.run.mock.calls.findIndex(([sql]) => sql === 'PRAGMA wal_checkpoint(TRUNCATE);');
+      expect(mockDb.run.mock.invocationCallOrder[checkpointCall]).toBeLessThan(mockDb.close.mock.invocationCallOrder[0]);
+    });
+
+    it('still closes the database when the checkpoint fails', () => {
+      mockDb.run.mockImplementation(sql => {
+        if (sql.startsWith('PRAGMA wal_checkpoint')) throw new Error('database is locked');
+      });
+      attempt(() => storage.close());
+      expect(mockDb.close).toHaveBeenCalledOnce();
+    });
+
+    it('does nothing when the database is already closed', () => {
+      storage.close();
+      storage.close();
+      expect(mockDb.close).toHaveBeenCalledOnce();
+    });
   });
 });
