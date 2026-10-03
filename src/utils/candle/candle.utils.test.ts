@@ -7,7 +7,7 @@ import { CandleBucketBatcher } from '@services/core/batcher/candleBatcher/candle
 import { range, sortedUniq } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { toISOString, toTimestamp } from '../date/date.utils';
-import { getCandleStart, getCandleTimeOffset, hl2, hlc3, ohlc4 } from './candle.utils';
+import { createEmptyCandle, getCandleStart, getCandleTimeOffset, hl2, hlc3, ohlc4 } from './candle.utils';
 
 describe('candle utils', () => {
   const defaultCandle: Candle = {
@@ -52,6 +52,20 @@ describe('candle utils', () => {
     `('returns $expected for open=$open, high=$high, low=$low and close=$close', ({ open, high, low, close, expected }) => {
       const candle = { ...defaultCandle, open, high, low, close };
       expect(ohlc4(candle)).toBeCloseTo(expected);
+    });
+  });
+
+  describe('createEmptyCandle', () => {
+    it('should make up the next minute flat at the last close, with no volume, marked synthetic and without id', () => {
+      expect(createEmptyCandle({ ...defaultCandle, id: 7 })).toEqual({
+        start: defaultCandle.start + ONE_MINUTE,
+        open: 100,
+        high: 100,
+        low: 100,
+        close: 100,
+        volume: 0,
+        synthetic: true,
+      });
     });
   });
 

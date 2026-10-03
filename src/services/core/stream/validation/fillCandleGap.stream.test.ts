@@ -19,13 +19,10 @@ const candleAt = (minute: number): Candle => ({ start: at(minute), open: 10, hig
 /** A bucket of `minute` holding a real candle of each given pair */
 const bucketAt = (minute: number, ...pairs: TradingPair[]): CandleBucket => new Map(pairs.map(pair => [pair, candleAt(minute)]));
 
-/**
- * Describes each emitted bucket as its candles: base asset, minute, and `~` for a candle filled in (volume 0),
- * e.g. 'ETH3 BTC3~'
- */
+/** Describes each emitted bucket as its candles: base asset, minute, and `~` for a synthetic candle, e.g. 'ETH3 BTC3~' */
 const describeBuckets = (buckets: CandleBucket[]) =>
   buckets.map(bucket =>
-    [...bucket].map(([pair, { start, volume }]) => `${pair.split('/')[0]}${(start - T0) / ONE_MINUTE}${volume === 0 ? '~' : ''}`).join(' '),
+    [...bucket].map(([pair, { start, synthetic }]) => `${pair.split('/')[0]}${(start - T0) / ONE_MINUTE}${synthetic ? '~' : ''}`).join(' '),
   );
 
 const run = async (buckets: CandleBucket[], options?: FillCandleGapOptions, pairs: TradingPair[] = [ETH, BTC]) => {
@@ -113,7 +110,7 @@ describe('FillCandleGapStream', () => {
 
     it('should fill a pair from its last known candle', async () => {
       const [, filled] = await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH)]);
-      expect(filled.get(BTC)).toMatchObject({ start: at(1), open: 11, high: 11, low: 11, close: 11, volume: 0 });
+      expect(filled.get(BTC)).toEqual({ start: at(1), open: 11, high: 11, low: 11, close: 11, volume: 0, synthetic: true });
     });
   });
 

@@ -7,14 +7,15 @@ export const hl2 = (candle: Candle): number => (candle.high + candle.low) / 2;
 export const hlc3 = (candle: Candle): number => (candle.high + candle.low + candle.close) / 3;
 export const ohlc4 = (candle: Candle): number => (candle.open + candle.high + candle.low + candle.close) / 4;
 
-export const createEmptyCandle = (lastCandle: Candle) => ({
-  ...lastCandle,
+/** The minute after `lastCandle`, made up for want of a real one: flat at its close, volume 0, marked synthetic and without `id`. */
+export const createEmptyCandle = (lastCandle: Candle): Candle => ({
   start: lastCandle.start + ONE_MINUTE,
   open: lastCandle.close,
-  close: lastCandle.close,
   high: lastCandle.close,
   low: lastCandle.close,
+  close: lastCandle.close,
   volume: 0,
+  synthetic: true,
 });
 
 export const getCandleTimeOffset = (candleSize: number, start: EpochTimeStamp) => {
