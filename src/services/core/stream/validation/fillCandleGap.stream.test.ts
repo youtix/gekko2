@@ -1,219 +1,157 @@
+import { ONE_MINUTE } from '@constants/time.const';
 import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
 import { warning } from '@services/logger';
-import { createEmptyCandle } from '@utils/candle/candle.utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { FillCandleGapStream } from './fillCandleGap.stream';
+import { toISOString } from '@utils/date/date.utils';
+import { describe, expect, it, vi } from 'vitest';
+import { FillCandleGapOptions, FillCandleGapStream } from './fillCandleGap.stream';
 
-// Mocks
-vi.mock('@services/logger', () => ({
-  warning: vi.fn(),
-}));
+vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 
-vi.mock('@utils/candle/candle.utils', () => ({
-  createEmptyCandle: vi.fn((lastCandle: Candle) => ({
-    ...lastCandle,
-    start: lastCandle.start + 60000,
-    volume: 0,
-    open: lastCandle.close,
-    high: lastCandle.close,
-    low: lastCandle.close,
-  })),
-}));
+const ETH: TradingPair = 'ETH/USDT';
+const BTC: TradingPair = 'BTC/USDT';
+const T0 = Date.UTC(2024, 0, 1);
+const at = (minute: number) => T0 + minute * ONE_MINUTE;
+
+const candleAt = (minute: number): Candle => ({ start: at(minute), open: 10, high: 12, low: 9, close: 11 + minute, volume: 100 });
+
+/** A bucket of `minute` holding a real candle of each given pair */
+const bucketAt = (minute: number, ...pairs: TradingPair[]): CandleBucket => new Map(pairs.map(pair => [pair, candleAt(minute)]));
+
+/**
+ * Describes each emitted bucket as its candles: base asset, minute, and `~` for a candle filled in (volume 0),
+ * e.g. 'ETH3 BTC3~'
+ */
+const describeBuckets = (buckets: CandleBucket[]) =>
+  buckets.map(bucket =>
+    [...bucket].map(([pair, { start, volume }]) => `${pair.split('/')[0]}${(start - T0) / ONE_MINUTE}${volume === 0 ? '~' : ''}`).join(' '),
+  );
+
+const run = async (buckets: CandleBucket[], options?: FillCandleGapOptions, pairs: TradingPair[] = [ETH, BTC]) => {
+  const stream = new FillCandleGapStream(pairs, options);
+  for (const bucket of buckets) stream.write(bucket);
+  stream.end();
+  return (await stream.toArray()) as CandleBucket[];
+};
 
 describe('FillCandleGapStream', () => {
-  let stream: FillCandleGapStream;
-  const eth: TradingPair = 'ETH/USDT';
-  const btc: TradingPair = 'BTC/USDT';
-  const pairs = [eth, btc];
-
-  const start = 1000000;
-
-  const ethCandle: Candle = { start, open: 100, high: 110, low: 90, close: 105, volume: 1000 };
-  const btcCandle: Candle = { start, open: 20000, high: 21000, low: 19000, close: 20500, volume: 50 };
-
-  beforeEach(() => {
-    stream = new FillCandleGapStream(pairs);
-    vi.clearAllMocks();
-  });
-
-  const createBucket = (timestamp?: number, candles: { pair: TradingPair; candle: Candle }[] = []): CandleBucket => {
-    const bucket: CandleBucket = new Map();
-    candles.forEach(({ pair, candle }) => {
-      // Pair is a string, so use it directly as key
-      bucket.set(pair, timestamp ? { ...candle, start: timestamp } : candle);
+  describe('complete buckets', () => {
+    it('should push complete consecutive buckets as they are', async () => {
+      const buckets = [bucketAt(0, ETH, BTC), bucketAt(1, ETH, BTC)];
+      expect(await run(buckets)).toEqual(buckets);
     });
-    return bucket;
-  };
 
-  it('Complete Stream: should pass through complete buckets without modification', () => {
-    const dataFn = vi.fn();
-    stream.on('data', dataFn);
+    it('should not warn about complete consecutive buckets', async () => {
+      await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH, BTC)]);
+      expect(warning).not.toHaveBeenCalled();
+    });
 
-    const bucket1 = createBucket(start, [
-      { pair: eth, candle: ethCandle },
-      { pair: btc, candle: btcCandle },
-    ]);
-    const bucket2 = createBucket(start + 60000, [
-      { pair: eth, candle: ethCandle },
-      { pair: btc, candle: btcCandle },
-    ]);
+    it('should push the pairs in the order the stream was built with', async () => {
+      const buckets = await run([bucketAt(0, BTC, ETH)]);
+      expect(describeBuckets(buckets)).toEqual(['ETH0 BTC0']);
+    });
 
-    stream.write(bucket1);
-    stream.write(bucket2);
+    it('should leave out a pair the stream was not built with', async () => {
+      const buckets = await run([bucketAt(0, ETH, 'LTC/USDT', BTC)]);
+      expect(describeBuckets(buckets)).toEqual(['ETH0 BTC0']);
+    });
 
-    expect(dataFn).toHaveBeenCalledTimes(2);
-    expect(dataFn).toHaveBeenNthCalledWith(1, bucket1);
-    expect(dataFn).toHaveBeenNthCalledWith(2, bucket2);
-    expect(createEmptyCandle).not.toHaveBeenCalled();
+    it('should drop an empty bucket', async () => {
+      const buckets = await run([new Map(), bucketAt(0, ETH, BTC)]);
+      expect(describeBuckets(buckets)).toEqual(['ETH0 BTC0']);
+    });
   });
 
-  it('Total Gap: should fill missing minutes for all assets', () => {
-    const dataFn = vi.fn();
-    stream.on('data', dataFn);
-
-    // T0
-    stream.write(
-      createBucket(start, [
-        { pair: eth, candle: ethCandle },
-        { pair: btc, candle: btcCandle },
-      ]),
+  describe('leading buckets missing a pair never seen', () => {
+    it.each`
+      dropIncompleteLeadingBuckets | input                                                               | expected
+      ${undefined}                 | ${[bucketAt(0, ETH), bucketAt(1, ETH), bucketAt(2, ETH, BTC)]}      | ${['ETH0', 'ETH1', 'ETH2 BTC2']}
+      ${false}                     | ${[bucketAt(0, ETH), bucketAt(1, ETH), bucketAt(2, ETH, BTC)]}      | ${['ETH0', 'ETH1', 'ETH2 BTC2']}
+      ${true}                      | ${[bucketAt(0, ETH), bucketAt(1, ETH), bucketAt(2, ETH, BTC)]}      | ${['ETH2 BTC2']}
+      ${true}                      | ${[bucketAt(0, ETH), bucketAt(1, BTC), bucketAt(2, ETH, BTC)]}      | ${['ETH1~ BTC1', 'ETH2 BTC2']}
+      ${true}                      | ${[bucketAt(0, ETH), bucketAt(1, ETH, BTC), bucketAt(4, ETH, BTC)]} | ${['ETH1 BTC1', 'ETH2~ BTC2~', 'ETH3~ BTC3~', 'ETH4 BTC4']}
+    `(
+      'should push $expected with dropIncompleteLeadingBuckets $dropIncompleteLeadingBuckets',
+      async ({ dropIncompleteLeadingBuckets, input, expected }) => {
+        const buckets = await run(input, { dropIncompleteLeadingBuckets });
+        expect(describeBuckets(buckets)).toEqual(expected);
+      },
     );
 
-    // T2 (Gap at T1)
-    const bucketT2 = createBucket(start + 120000, [
-      { pair: eth, candle: ethCandle },
-      { pair: btc, candle: btcCandle },
-    ]);
-    stream.write(bucketT2);
+    it('should warn once per pair never seen, then once when every pair has had a candle, when dropping leading buckets', async () => {
+      await run([bucketAt(0, ETH), bucketAt(1, ETH), bucketAt(2, ETH), bucketAt(3, ETH, BTC)], { dropIncompleteLeadingBuckets: true }, [
+        ETH,
+        BTC,
+        'SOL/USDT',
+      ]);
+      expect(vi.mocked(warning).mock.calls.map(([, message]) => message)).toEqual([
+        `No BTC/USDT candle at ${toISOString(at(0))}: dropping the leading buckets until every pair has a candle`,
+        `No SOL/USDT candle at ${toISOString(at(0))}: dropping the leading buckets until every pair has a candle`,
+      ]);
+    });
 
-    expect(dataFn).toHaveBeenCalledTimes(3);
-    expect(warning).toHaveBeenCalled();
+    it('should tell how many leading minutes were dropped once every pair has had a candle', async () => {
+      await run([bucketAt(0, ETH), bucketAt(1, ETH), bucketAt(2, ETH, BTC)], { dropIncompleteLeadingBuckets: true });
+      expect(warning).toHaveBeenLastCalledWith(
+        'stream',
+        `Every pair has had a candle by ${toISOString(at(2))}, the first minute pushed: 2 leading minute(s) dropped, so the warmup will end later than planned`,
+      );
+    });
 
-    // Check T1 (synthetic)
-    const filledBucket = dataFn.mock.calls[1][0] as CandleBucket;
-    expect(filledBucket.size).toBe(2);
-    expect(filledBucket.get(eth)).toMatchObject({ start: start + 60000, volume: 0 });
-    expect(filledBucket.get(btc)).toMatchObject({ start: start + 60000, volume: 0 });
-
-    // Check T2
-    expect(dataFn).toHaveBeenLastCalledWith(bucketT2);
+    it('should not warn about the leading buckets when they are pushed', async () => {
+      await run([bucketAt(0, ETH), bucketAt(1, ETH, BTC)]);
+      expect(warning).not.toHaveBeenCalled();
+    });
   });
 
-  it('Partial Gap (Start): should fill missing asset in initial bucket', () => {
-    const dataFn = vi.fn();
-    stream.on('data', dataFn);
+  describe('partial gaps', () => {
+    it('should fill a pair missing from a bucket with an empty candle', async () => {
+      const buckets = await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH), bucketAt(2, BTC), bucketAt(3, ETH, BTC)]);
+      expect(describeBuckets(buckets)).toEqual(['ETH0 BTC0', 'ETH1 BTC1~', 'ETH2~ BTC2', 'ETH3 BTC3']);
+    });
 
-    // Initial bucket only has ETH
-    const initialBucket = createBucket(start, [{ pair: eth, candle: ethCandle }]);
-    stream.write(initialBucket);
-
-    expect(dataFn).toHaveBeenCalledTimes(1);
-    const emittedBucket = dataFn.mock.calls[0][0] as CandleBucket;
-
-    expect(emittedBucket.size).toBe(1);
-    expect(emittedBucket.get(eth)).toBeDefined();
-    // note: btc cannot be filled as initialization has no prior state
-    expect(emittedBucket.get(btc)).toBeUndefined();
+    it('should fill a pair from its last known candle', async () => {
+      const [, filled] = await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH)]);
+      expect(filled.get(BTC)).toMatchObject({ start: at(1), open: 11, high: 11, low: 11, close: 11, volume: 0 });
+    });
   });
 
-  it('Partial Gap (Mid): should fill missing asset in a subsequent bucket', () => {
-    const dataFn = vi.fn();
-    stream.on('data', dataFn);
+  describe('total gaps', () => {
+    it('should fill every missing minute for every pair', async () => {
+      const buckets = await run([bucketAt(0, ETH, BTC), bucketAt(3, ETH, BTC)]);
+      expect(describeBuckets(buckets)).toEqual(['ETH0 BTC0', 'ETH1~ BTC1~', 'ETH2~ BTC2~', 'ETH3 BTC3']);
+    });
 
-    // T0: Both assets
-    stream.write(
-      createBucket(start, [
-        { pair: eth, candle: ethCandle },
-        { pair: btc, candle: btcCandle },
-      ]),
-    );
+    it('should fill only the pairs already seen', async () => {
+      const buckets = await run([bucketAt(0, ETH), bucketAt(2, ETH, BTC)]);
+      expect(describeBuckets(buckets)).toEqual(['ETH0', 'ETH1~', 'ETH2 BTC2']);
+    });
 
-    // T1: Only ETH
-    const partialBucket = createBucket(start + 60000, [{ pair: eth, candle: ethCandle }]);
-    stream.write(partialBucket);
+    it('should push no synthetic bucket when no pair was ever seen', async () => {
+      const buckets = await run([bucketAt(0, 'LTC/USDT'), bucketAt(2, ETH, BTC)]);
+      expect(describeBuckets(buckets)).toEqual(['', 'ETH2 BTC2']);
+    });
 
-    expect(dataFn).toHaveBeenCalledTimes(2);
-    const emittedBucket = dataFn.mock.calls[1][0] as CandleBucket;
-
-    expect(emittedBucket.size).toBe(2);
-    expect(emittedBucket.get(eth)).toBeDefined(); // Real
-    expect(emittedBucket.get(btc))?.toBeDefined(); // Filled
-    expect(emittedBucket.get(btc)!.volume).toBe(0);
-    expect(warning).toHaveBeenCalledWith('stream', expect.stringContaining(`Partial gap detected for ${btc}`));
+    it('should fill a total gap that follows a partial gap from the filled candles', async () => {
+      const buckets = await run([bucketAt(0, ETH, BTC), bucketAt(1, ETH), bucketAt(3, ETH, BTC)]);
+      expect(describeBuckets(buckets)).toEqual(['ETH0 BTC0', 'ETH1 BTC1~', 'ETH2~ BTC2~', 'ETH3 BTC3']);
+    });
   });
 
-  it('Partial Gap (Intermittent): should handle assets dropping in and out', () => {
-    const dataFn = vi.fn();
-    stream.on('data', dataFn);
-
-    // T0: Both
-    stream.write(
-      createBucket(start, [
-        { pair: eth, candle: ethCandle },
-        { pair: btc, candle: btcCandle },
-      ]),
-    );
-
-    // T1: BTC missing
-    stream.write(createBucket(start + 60000, [{ pair: eth, candle: ethCandle }]));
-
-    // T2: ETH missing
-    stream.write(createBucket(start + 120000, [{ pair: btc, candle: btcCandle }]));
-
-    // T3: Both present
-    stream.write(
-      createBucket(start + 180000, [
-        { pair: eth, candle: ethCandle },
-        { pair: btc, candle: btcCandle },
-      ]),
-    );
-
-    expect(dataFn).toHaveBeenCalledTimes(4);
-
-    // T1 check
-    expect(dataFn.mock.calls[1][0].get(btc)?.volume).toBe(0);
-
-    // T2 check
-    expect(dataFn.mock.calls[2][0].get(eth)?.volume).toBe(0);
-    expect(dataFn.mock.calls[2][0].get(btc)?.volume).toBe(50); // Real data
-  });
-
-  it('Cascading Gaps: Partial gap followed by Total gap', () => {
-    const dataFn = vi.fn();
-    stream.on('data', dataFn);
-
-    // T0: Both
-    stream.write(
-      createBucket(start, [
-        { pair: eth, candle: ethCandle },
-        { pair: btc, candle: btcCandle },
-      ]),
-    );
-
-    // T1: BTC missing (Partial)
-    stream.write(createBucket(start + 60000, [{ pair: eth, candle: ethCandle }]));
-
-    // T3: Both present (Total Gap at T2 of 1 min)
-    stream.write(
-      createBucket(start + 180000, [
-        { pair: eth, candle: ethCandle },
-        { pair: btc, candle: btcCandle },
-      ]),
-    );
-
-    // Events:
-    // 1. T0 (Full)
-    // 2. T1 (ETH real, BTC filled)
-    // 3. T2 (Synthetic fill for BOTH)
-    // 4. T3 (Full)
-    expect(dataFn).toHaveBeenCalledTimes(4);
-
-    // Check T2 (Index 2)
-    const t2Bucket = dataFn.mock.calls[2][0] as CandleBucket;
-    expect(t2Bucket.size).toBe(2);
-    expect(t2Bucket.get(eth)?.volume).toBe(0);
-    expect(t2Bucket.get(btc)?.volume).toBe(0);
+  describe('errors', () => {
+    it('should forward an error thrown while reading a bucket', async () => {
+      const unreadable = new Map([
+        [
+          ETH,
+          {
+            get start(): number {
+              throw new Error('unreadable');
+            },
+          },
+        ],
+      ]) as unknown as CandleBucket;
+      await expect(run([unreadable])).rejects.toThrow('unreadable');
+    });
   });
 });
