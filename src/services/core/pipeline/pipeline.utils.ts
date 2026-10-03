@@ -40,6 +40,7 @@ const buildBacktestPipeline = async (plugins: Plugin[]) => {
   const { daterange, pairs } = config.getWatch();
   if (!daterange) throw new Error('daterange is not set');
 
+  warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
   await pipeline(new MultiAssetBacktestStream({ daterange, pairs }), new PluginsStream(plugins));
 };
 
@@ -90,6 +91,10 @@ export const mergeSequentialStreams = (...streams: Readable[]) => {
     }
     return originalDestroy(error ?? undefined);
   };
+
+  // Relayed from the start, not only once the generator reads a stream: the live stream fails while the warmup history is
+  // still read, and an 'error' event without a listener is an uncaught exception, which exits without finalising the plugins
+  for (const stream of streams) stream.on('error', error => merged.destroy(error));
 
   return merged;
 };
