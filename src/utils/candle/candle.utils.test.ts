@@ -1,9 +1,8 @@
 import { ONE_MINUTE } from '@constants/time.const';
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { Candle } from '@models/candle.types';
-import { CandleBucket } from '@models/event.types';
 import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
-import { CandleBucketBatcher } from '@services/core/batcher/candleBatcher/candleBucketBatcher';
+import { FastCandleBatcher, isTimeframeCandleClose } from '@services/core/batcher/candleBatcher/fastCandleBatcher';
 import { range, sortedUniq } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { toISOString, toTimestamp } from '../date/date.utils';
@@ -135,8 +134,6 @@ describe('candle utils', () => {
     });
 
     describe('replayed through the TradingAdvisor batcher', () => {
-      const symbol = 'BTC/USDT';
-      const bucketAt = (start: EpochTimeStamp): CandleBucket => new Map([[symbol, { ...defaultCandle, start }]]);
       // Every month of 2023-2028 (2024 and 2028 are leap years): its first, second, a middle and its last minute
       const minutes = range(2023, 2029).flatMap(year =>
         range(12).flatMap(month => [
@@ -158,11 +155,11 @@ describe('candle utils', () => {
       const replay = (size: CandleSize, start: EpochTimeStamp, end: EpochTimeStamp) => {
         const closes = closeCandidates(size, start, end).filter(minute => minute > start && minute < end);
         const history = start > end ? [] : sortedUniq([start, ...closes, end]);
-        const batcher = new CandleBucketBatcher([symbol], size);
+        const batcher = new FastCandleBatcher(size);
         return {
           // The history starts on a candle boundary when the minute before it closes a candle
-          startsOnBoundary: new CandleBucketBatcher([symbol], size).addBucket(bucketAt(start - ONE_MINUTE)) !== undefined,
-          closedCandles: history.filter(minute => batcher.addBucket(bucketAt(minute))).length,
+          startsOnBoundary: isTimeframeCandleClose(size, start - ONE_MINUTE),
+          closedCandles: history.filter(minute => batcher.addCandle({ ...defaultCandle, start: minute })).length,
         };
       };
 
