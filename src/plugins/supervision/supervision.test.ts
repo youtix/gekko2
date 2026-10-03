@@ -38,6 +38,8 @@ describe('Supervision', () => {
     cpuCheckInterval: 100,
     memoryCheckInterval: 100,
     logMonitoringInterval: 100,
+    candleCheckInterval: 100,
+    candleStaleThreshold: 300,
   };
 
   beforeEach(() => {
@@ -124,6 +126,54 @@ describe('Supervision', () => {
     await plugin.onTimeframeCandle([bucket]);
 
     expect(fakeBot.sendMessage).not.toHaveBeenCalledWith(expect.stringContaining('⚠️ Timeframe candle mismatch detected'));
+  });
+
+  describe('candle freshness check', () => {
+    // Subscribes, then lets `minutes` of fake time pass with a bucket every minute for the first `bucketsFor` ms
+    const run = (elapsed: number, bucketsUntil = 0) => {
+      plugin['handleCommand']('/sub_candle_check');
+      for (let t = 100; t <= elapsed; t += 100) {
+        if (t <= bucketsUntil) plugin['processOneMinuteBucket']();
+        vi.advanceTimersByTime(100);
+      }
+    };
+
+    it('should alert once when no bucket came for longer than the stale threshold', () => {
+      run(1000);
+      expect(fakeBot.sendMessage.mock.calls.filter(([m]) => m.includes('⚠️ No 1m candle received'))).toHaveLength(1);
+    });
+
+    it('should name the age of the last bucket in the alert', () => {
+      vi.setSystemTime(new Date('2024-03-15T10:00:00.000Z'));
+      run(400);
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith('⚠️ No 1m candle received for 0 minute(s), last one @ 2024-03-15T10:00:00.000Z');
+    });
+
+    it('should not alert while the buckets keep coming', () => {
+      run(1000, 1000);
+      expect(fakeBot.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should say once that the candles are coming again', () => {
+      run(600);
+      plugin['processOneMinuteBucket']();
+      vi.advanceTimersByTime(300);
+      expect(fakeBot.sendMessage.mock.calls.filter(([m]) => m.includes('✅ 1m candles are coming again'))).toHaveLength(1);
+    });
+
+    it('should stop checking on unsubscribe', () => {
+      plugin['handleCommand']('/sub_candle_check');
+      plugin['handleCommand']('/sub_candle_check');
+      vi.advanceTimersByTime(1000);
+      expect(fakeBot.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('should not start a second check when already subscribed', () => {
+      plugin['handleCommand']('/sub_candle_check');
+      plugin['launchTimeframeCandleCheck']();
+      vi.advanceTimersByTime(1000);
+      expect(fakeBot.sendMessage).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('should start and stop log monitoring on subscription toggle', () => {

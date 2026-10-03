@@ -1,3 +1,4 @@
+import { ONE_MINUTE } from '@constants/time.const';
 import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
@@ -25,6 +26,11 @@ export class Supervision extends Plugin {
   private lastTimeframeCandleBucket?: CandleBucket;
   private logMonitorIntervalTime: number;
   private lastSentTimestamp = 0;
+  private candleCheckIntervalTime: number;
+  private candleStaleThreshold: number;
+  private candleCheckInterval?: Timer;
+  private lastBucketReceivedAt?: EpochTimeStamp;
+  private candlesReportedStale = false;
 
   constructor({
     name,
@@ -35,6 +41,8 @@ export class Supervision extends Plugin {
     cpuCheckInterval,
     memoryCheckInterval,
     logMonitoringInterval,
+    candleCheckInterval,
+    candleStaleThreshold,
   }: SupervisionConfig) {
     super(name);
     this.bot = new TelegramBot(token, botUsername, this.handleCommand.bind(this));
@@ -43,6 +51,8 @@ export class Supervision extends Plugin {
     this.cpuIntervalTime = cpuCheckInterval;
     this.memoryIntervalTime = memoryCheckInterval;
     this.logMonitorIntervalTime = logMonitoringInterval;
+    this.candleCheckIntervalTime = candleCheckInterval;
+    this.candleStaleThreshold = candleStaleThreshold;
   }
 
   private handleCommand(command: string): string {
@@ -52,7 +62,7 @@ export class Supervision extends Plugin {
           'healthcheck - Check if gekko is up',
           'sub_cpu_check - Check CPU usage',
           'sub_memory_check - Check memory usage',
-          'sub_candle_check - Check timeframe candle calculations',
+          'sub_candle_check - Check timeframe candle calculations and that 1m candles keep coming',
           'sub_monitor_log - Monitor log application',
           'subscribe_all - Subscribe to all notifications',
           'unsubscribe_all - Unsubscribe from all notifications',
@@ -166,11 +176,37 @@ export class Supervision extends Plugin {
   }
 
   private launchTimeframeCandleCheck() {
+    if (this.candleCheckInterval) return;
     debug('supervision', 'Starting Timeframe Candle monitoring');
+    // Counted from the subscription when no bucket came yet: a stall is measured from the last candle, or from here
+    this.lastBucketReceivedAt ??= Date.now();
+    this.candleCheckInterval = setInterval(() => this.checkCandleFreshness(), this.candleCheckIntervalTime);
   }
 
   private stopTimeframeCandleCheck() {
+    if (!this.candleCheckInterval) return;
+    clearInterval(this.candleCheckInterval);
+    this.candleCheckInterval = undefined;
+    this.candlesReportedStale = false;
     debug('supervision', 'Stopped Timeframe Candle monitoring');
+  }
+
+  /**
+   * The strategy, the trailing stops and the circuit breaker only run on candles: when they stop coming (the exchange, the
+   * network, or a stream that stalled), nothing else tells. One alert when they stop, one when they come back.
+   */
+  private checkCandleFreshness() {
+    const lastBucketReceivedAt = this.lastBucketReceivedAt ?? Date.now();
+    const age = Date.now() - lastBucketReceivedAt;
+    const isStale = age > this.candleStaleThreshold;
+    if (isStale && !this.candlesReportedStale) {
+      this.candlesReportedStale = true;
+      const minutes = Math.floor(age / ONE_MINUTE);
+      this.bot.sendMessage(`⚠️ No 1m candle received for ${minutes} minute(s), last one @ ${toISOString(lastBucketReceivedAt)}`);
+    } else if (!isStale && this.candlesReportedStale) {
+      this.candlesReportedStale = false;
+      this.bot.sendMessage(`✅ 1m candles are coming again, last one @ ${toISOString(lastBucketReceivedAt)}`);
+    }
   }
 
   private startLogMonitoring() {
@@ -244,7 +280,7 @@ export class Supervision extends Plugin {
   }
 
   protected processOneMinuteBucket(): void {
-    /** Nothing to do */
+    this.lastBucketReceivedAt = Date.now();
   }
 
   protected async processFinalize() {

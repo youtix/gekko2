@@ -422,6 +422,8 @@ plugins:
     cpuCheckInterval: 10000       # Check CPU every 10 seconds
     memoryCheckInterval: 10000    # Check memory every 10 seconds
     logMonitoringInterval: 60000  # Check logs every 60 seconds
+    candleCheckInterval: 60000    # Check every 60 seconds that 1m candles keep coming
+    candleStaleThreshold: 180000  # Alert when no 1m candle came for 3 minutes
 ```
 
 ### Configuration Reference
@@ -436,6 +438,8 @@ plugins:
 | `cpuCheckInterval`     | number | No       | `10000` | CPU check interval (milliseconds)      |
 | `memoryCheckInterval`  | number | No       | `10000` | Memory check interval (milliseconds)   |
 | `logMonitoringInterval`| number | No       | `60000` | Log monitoring interval (milliseconds) |
+| `candleCheckInterval`  | number | No       | `60000` | Candle freshness check interval (milliseconds) |
+| `candleStaleThreshold` | number | No       | `180000`| Age of the last 1m candle that triggers an alert (milliseconds) |
 
 ### Events
 
