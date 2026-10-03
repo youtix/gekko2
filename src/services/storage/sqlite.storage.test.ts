@@ -124,7 +124,10 @@ describe('SQLiteStorage', () => {
     it('looks up, in backtest mode, the table of every pair', () => {
       mockConfig.getWatch.mockReturnValue({ mode: 'backtest' });
       new SQLiteStorage(['BTC/USDT', 'ETH/USDT']);
-      expect(tablesQuery.get.mock.calls).toEqual([['CANDLES_BTC_USDT'], ['CANDLES_ETH_USDT']]);
+      expect(tablesQuery.get.mock.calls).toEqual([
+        ['table', 'CANDLES_BTC_USDT'],
+        ['table', 'CANDLES_ETH_USDT'],
+      ]);
     });
 
     it('refuses, in backtest mode, the pairs the database has no table for', () => {

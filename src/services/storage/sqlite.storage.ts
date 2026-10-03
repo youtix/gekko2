@@ -146,10 +146,10 @@ export class SQLiteStorage extends Storage {
 
   /** Read-only, a missing table cannot be created: the pair was never imported into this database. */
   private checkTables(database: string, symbols: TradingPair[]) {
-    const query = this.db.query<{ name: string }, [string]>(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE",
+    const query = this.db.query<{ name: string }, [string, string]>(
+      'SELECT name FROM sqlite_master WHERE type = ? AND name = ? COLLATE NOCASE',
     );
-    const missingSymbols = symbols.filter(symbol => !query.get(this.getTable(symbol)));
+    const missingSymbols = symbols.filter(symbol => !query.get('table', this.getTable(symbol)));
     if (missingSymbols.length) {
       throw new GekkoError('storage', `${resolve(database)} holds no candles of ${missingSymbols.join(', ')}: import them first.`);
     }
