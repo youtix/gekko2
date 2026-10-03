@@ -1,5 +1,8 @@
+import { GekkoError } from '@errors/gekko.error';
 import { debug } from '@services/logger';
 import { Database } from 'bun:sqlite';
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SQLiteStorage } from './sqlite.storage';
 
@@ -10,6 +13,7 @@ const { mockConfig, mockDb } = vi.hoisted(() => ({
 
 vi.mock('@services/configuration/configuration', () => ({ config: mockConfig }));
 vi.mock('@services/logger', () => ({ debug: vi.fn() }));
+vi.mock('node:fs', () => ({ mkdirSync: vi.fn() }));
 vi.mock('bun:sqlite', () => ({
   Database: vi.fn(function () {
     return mockDb;
@@ -25,19 +29,111 @@ const attempt = (call: () => void) => {
   }
 };
 
+const runSql = () => mockDb.run.mock.calls.map(([sql]) => sql);
+
 describe('SQLiteStorage', () => {
+  const database = 'db/candles.sql';
   const symbol = 'A"B/USDT';
   const interval = { start: 0, end: 0 };
   const candle = { start: 1, open: 2, high: 3, low: 4, close: 5, volume: 6 };
+  const tablesQuery = { all: vi.fn(), get: vi.fn() };
   let storage: SQLiteStorage;
 
   beforeEach(() => {
-    mockConfig.getWatch.mockReturnValue({ mode: 'backtest' });
-    mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database: ':memory:' });
+    mockConfig.getWatch.mockReturnValue({ mode: 'importer' });
+    mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database });
     mockDb.prepare.mockReturnValue({ run: vi.fn(() => ({ changes: 1 })), finalize: vi.fn() });
-    mockDb.query.mockReturnValue({ all: vi.fn(), get: vi.fn() });
+    mockDb.query.mockReturnValue(tablesQuery);
+    tablesQuery.get.mockReturnValue({ name: 'CANDLES_BTC_USDT' });
     mockDb.transaction.mockImplementation(fn => fn);
     storage = new SQLiteStorage([]);
+  });
+
+  describe('constructor', () => {
+    it.each`
+      mode          | path          | args
+      ${'importer'} | ${database}   | ${[database]}
+      ${'realtime'} | ${database}   | ${[database]}
+      ${'backtest'} | ${database}   | ${[database, { readonly: true, create: false }]}
+      ${'backtest'} | ${':memory:'} | ${[':memory:']}
+    `('opens $path in $mode mode with $args', ({ mode, path, args }) => {
+      mockConfig.getWatch.mockReturnValue({ mode });
+      mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database: path });
+      new SQLiteStorage([]);
+      expect(Database).toHaveBeenLastCalledWith(...args);
+    });
+
+    it.each`
+      mode          | path          | calls
+      ${'importer'} | ${database}   | ${[['db', { recursive: true }]]}
+      ${'realtime'} | ${database}   | ${[['db', { recursive: true }]]}
+      ${'backtest'} | ${database}   | ${[]}
+      ${'importer'} | ${':memory:'} | ${[]}
+    `('creates the parent directories of $path in $mode mode: $calls', ({ mode, path, calls }) => {
+      mockConfig.getWatch.mockReturnValue({ mode });
+      mockConfig.getStorage.mockReturnValue({ type: 'sqlite', database: path });
+      vi.mocked(mkdirSync).mockClear();
+      new SQLiteStorage([]);
+      expect(vi.mocked(mkdirSync).mock.calls).toEqual(calls);
+    });
+
+    it.each`
+      storageConfig
+      ${undefined}
+      ${{ type: 'sqlite', database: '' }}
+    `('refuses to open the database of storage $storageConfig', ({ storageConfig }) => {
+      mockConfig.getStorage.mockReturnValue(storageConfig);
+      expect(() => new SQLiteStorage([])).toThrow(
+        new GekkoError('storage', 'No database to open: set storage.database to the path of the SQLite file.'),
+      );
+    });
+
+    it.each`
+      mode          | thrown                                       | message
+      ${'importer'} | ${new Error('unable to open database file')} | ${`Cannot open the database ${resolve(database)} (unable to open database file).`}
+      ${'importer'} | ${'unable to open database file'}            | ${`Cannot open the database ${resolve(database)} (unable to open database file).`}
+      ${'backtest'} | ${new Error('unable to open database file')} | ${`Cannot open the database ${resolve(database)} (unable to open database file). A backtest reads an existing database: check storage.database, or import the candles first.`}
+    `('reports a database it cannot open in $mode mode with its resolved path', ({ mode, thrown, message }) => {
+      mockConfig.getWatch.mockReturnValue({ mode });
+      vi.mocked(Database).mockImplementationOnce(function () {
+        throw thrown;
+      });
+      expect(() => new SQLiteStorage([])).toThrow(new GekkoError('storage', message));
+    });
+
+    it('reports a directory it cannot create with the resolved path of the database', () => {
+      vi.mocked(mkdirSync).mockImplementationOnce(() => {
+        throw new Error('permission denied');
+      });
+      expect(() => new SQLiteStorage([])).toThrow(
+        new GekkoError('storage', `Cannot open the database ${resolve(database)} (permission denied).`),
+      );
+    });
+
+    it.each`
+      mode          | statements
+      ${'importer'} | ${['PRAGMA busy_timeout = 5000;', 'PRAGMA journal_mode = WAL;', 'PRAGMA synchronous = NORMAL;', 'CREATE TABLE', 'CREATE TABLE']}
+      ${'backtest'} | ${['PRAGMA busy_timeout = 5000;']}
+    `('sets up the database in $mode mode with $statements', ({ mode, statements }) => {
+      mockConfig.getWatch.mockReturnValue({ mode });
+      mockDb.run.mockClear();
+      new SQLiteStorage(['BTC/USDT', 'ETH/USDT']);
+      expect(runSql().map(sql => (sql.includes('CREATE TABLE') ? 'CREATE TABLE' : sql))).toEqual(statements);
+    });
+
+    it('looks up, in backtest mode, the table of every pair', () => {
+      mockConfig.getWatch.mockReturnValue({ mode: 'backtest' });
+      new SQLiteStorage(['BTC/USDT', 'ETH/USDT']);
+      expect(tablesQuery.get.mock.calls).toEqual([['CANDLES_BTC_USDT'], ['CANDLES_ETH_USDT']]);
+    });
+
+    it('refuses, in backtest mode, the pairs the database has no table for', () => {
+      mockConfig.getWatch.mockReturnValue({ mode: 'backtest' });
+      tablesQuery.get.mockReturnValueOnce({ name: 'CANDLES_BTC_USDT' }).mockReturnValueOnce(null).mockReturnValueOnce(null);
+      expect(() => new SQLiteStorage(['BTC/USDT', 'ETH/USDT', 'SOL/USDT'])).toThrow(
+        new GekkoError('storage', `${resolve(database)} holds no candles of ETH/USDT, SOL/USDT: import them first.`),
+      );
+    });
   });
 
   it.each`
@@ -59,21 +155,6 @@ describe('SQLiteStorage', () => {
   `('reads only the rows that start a minute in $method, like the other one', ({ call }) => {
     call();
     expect(mockDb.query.mock.lastCall?.[0]).toContain('WHERE start BETWEEN $start AND $end AND start % 60000 = 0');
-  });
-
-  it.each`
-    storageConfig                                     | path
-    ${{ type: 'sqlite', database: 'candles.sqlite' }} | ${'candles.sqlite'}
-    ${undefined}                                      | ${undefined}
-  `('opens the database $path', ({ storageConfig, path }) => {
-    mockConfig.getStorage.mockReturnValue(storageConfig);
-    new SQLiteStorage([]);
-    expect(Database).toHaveBeenLastCalledWith(path);
-  });
-
-  it('creates the table of every pair it is given', () => {
-    new SQLiteStorage(['BTC/USDT', 'ETH/USDT']);
-    expect(mockDb.run.mock.calls.filter(([sql]) => sql.includes('CREATE TABLE'))).toHaveLength(2);
   });
 
   it('inserts the buffered candles of the pair, skipping the buckets without it', () => {
@@ -176,6 +257,13 @@ describe('SQLiteStorage', () => {
       storage.close();
       const checkpointCall = mockDb.run.mock.calls.findIndex(([sql]) => sql === 'PRAGMA wal_checkpoint(TRUNCATE);');
       expect(statement.run.mock.invocationCallOrder[0]).toBeLessThan(mockDb.run.mock.invocationCallOrder[checkpointCall]);
+    });
+
+    it('does not checkpoint a database opened read-only', () => {
+      mockConfig.getWatch.mockReturnValue({ mode: 'backtest' });
+      storage = new SQLiteStorage([]);
+      storage.close();
+      expect(runSql()).not.toContain('PRAGMA wal_checkpoint(TRUNCATE);');
     });
 
     it('does nothing when the database is already closed', () => {

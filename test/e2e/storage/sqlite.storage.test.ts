@@ -1,11 +1,20 @@
 import type { SQLiteStorage as ISQLiteStorage } from '@services/storage/sqlite.storage';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const IN_MEMORY = { type: 'sqlite', database: ':memory:', insertThreshold: 1 };
+// Read by the configuration mock on each call: the tests on database files change them, then restore them
+let storageConfig: Record<string, unknown> = IN_MEMORY;
+let mode = 'backtest';
 
 // Mocks for configuration must be defined before imports that evaluate them
 mock.module('@services/configuration/configuration', () => ({
   config: {
-    getStorage: () => ({ type: 'sqlite', database: ':memory:', insertThreshold: 1 }),
-    getWatch: () => ({ mode: 'backtest' }),
+    getStorage: () => storageConfig,
+    getWatch: () => ({ mode }),
   },
 }));
 
@@ -123,5 +132,115 @@ describe('SQLiteStorage - table names', () => {
     storage.createTable('btc/usdt');
     expect(storage.getCandles('btc/usdt', { start, end })).toEqual([{ id: 1, ...candles[0] }]);
     storage.close();
+  });
+
+  describe('database file', () => {
+    let directory: string;
+    let database: string;
+    const symbol = 'BTC/USDT';
+    const writeCandles = (path: string) => {
+      storageConfig = { type: 'sqlite', database: path, insertThreshold: 1000 };
+      mode = 'importer';
+      const storage = new SQLiteStorage([symbol]);
+      candles.forEach(candle => storage.addBucket(new Map([[symbol, candle]])));
+      storage.close();
+    };
+    const countRows = (path: string) => {
+      const reader = new Database(path, { readonly: true });
+      const { count } = reader.query('SELECT COUNT(*) AS count FROM CANDLES_BTC_USDT').get() as { count: number };
+      reader.close();
+      return count;
+    };
+
+    beforeAll(() => {
+      directory = mkdtempSync(join(tmpdir(), 'gekko-storage-e2e-'));
+    });
+
+    beforeEach(() => {
+      database = join(directory, `${crypto.randomUUID()}/nested/candles.sql`);
+    });
+
+    afterEach(() => {
+      storageConfig = IN_MEMORY;
+      mode = 'backtest';
+    });
+
+    afterAll(() => {
+      rmSync(directory, { recursive: true, force: true });
+    });
+
+    it('creates the missing directories of a database it writes', () => {
+      writeCandles(database);
+      expect(existsSync(database)).toBe(true);
+    });
+
+    it('writes the buffered candles to the database file itself on close, leaving no WAL behind', () => {
+      writeCandles(database);
+      expect([existsSync(`${database}-wal`), existsSync(`${database}-shm`)]).toEqual([false, false]);
+    });
+
+    it('leaves every candle in the database file alone, as a copy of it shows', () => {
+      writeCandles(database);
+      const copy = `${database}.copy`;
+      copyFileSync(database, copy);
+      expect(countRows(copy)).toBe(candles.length);
+    });
+
+    it('reads in backtest mode the candles an import wrote', () => {
+      writeCandles(database);
+      storageConfig = { type: 'sqlite', database };
+      mode = 'backtest';
+      const storage = new SQLiteStorage([symbol]);
+      const read = storage.getCandles(symbol, { start, end });
+      storage.close();
+      expect(read).toHaveLength(candles.length);
+    });
+
+    it('opens the database read-only in backtest mode', () => {
+      writeCandles(database);
+      storageConfig = { type: 'sqlite', database };
+      mode = 'backtest';
+      const storage = new SQLiteStorage([symbol]);
+      const write = () => storage.db.run('DELETE FROM CANDLES_BTC_USDT');
+      try {
+        expect(write).toThrow('attempt to write a readonly database');
+      } finally {
+        storage.close();
+      }
+    });
+
+    it('refuses a database that does not exist in backtest mode, naming its path, without creating it', () => {
+      storageConfig = { type: 'sqlite', database };
+      mode = 'backtest';
+      expect(() => new SQLiteStorage([symbol])).toThrow(`[STORAGE] Cannot open the database ${database} (unable to open database file).`);
+    });
+
+    it('does not create the database it refused in backtest mode', () => {
+      storageConfig = { type: 'sqlite', database };
+      mode = 'backtest';
+      try {
+        new SQLiteStorage([symbol]);
+      } catch {
+        // Expected
+      }
+      expect(existsSync(database)).toBe(false);
+    });
+
+    it('refuses in backtest mode a pair the database has no table for', () => {
+      writeCandles(database);
+      storageConfig = { type: 'sqlite', database };
+      mode = 'backtest';
+      expect(() => new SQLiteStorage([symbol, 'ETH/USDT'])).toThrow(
+        `[STORAGE] ${database} holds no candles of ETH/USDT: import them first.`,
+      );
+    });
+
+    it('names the path of a database it cannot create', () => {
+      const blocked = join(directory, `${crypto.randomUUID()}.sql`);
+      writeCandles(blocked); // A file, where the next database wants a directory
+      storageConfig = { type: 'sqlite', database: join(blocked, 'candles.sql') };
+      mode = 'importer';
+      expect(() => new SQLiteStorage([symbol])).toThrow(`[STORAGE] Cannot open the database ${join(blocked, 'candles.sql')}`);
+    });
   });
 });

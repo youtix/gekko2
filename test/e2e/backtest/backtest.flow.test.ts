@@ -108,7 +108,7 @@ mock.module('@services/configuration/configuration', () => {
       }),
       getStorage: () => ({
         type: 'sqlite',
-        path: ':memory:', // Isolated DB
+        database: ':memory:', // Isolated DB
       }),
       getPlugins: () => {
         const analyzers =

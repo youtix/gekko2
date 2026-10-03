@@ -1,3 +1,4 @@
+import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
@@ -7,22 +8,37 @@ import { pluralize } from '@utils/string/string.utils';
 import { Database, SQLQueryBindings } from 'bun:sqlite';
 import { Interval } from 'date-fns';
 import { each } from 'lodash-es';
+import { mkdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { Storage } from './storage';
 import { CandleDateranges, MissingCandleCount } from './storage.types';
 
+const IN_MEMORY = ':memory:';
+
 export class SQLiteStorage extends Storage {
   db: Database;
+  /**
+   * A backtest only reads, so a mistyped path fails instead of creating an empty database. An in-memory database cannot be
+   * opened read-only and starts empty anyway: it is read-write in every mode (only tests use it).
+   */
+  private readonly readOnly: boolean;
   /** CandleWriter closes the storage when it is finalised, and main() closes it again on its way out */
   private closed = false;
 
   constructor(symbols: TradingPair[]) {
     super();
-    const { database } = config.getStorage() ?? {};
-    this.db = new Database(database);
+    const database = config.getStorage()?.database;
+    if (!database) throw new GekkoError('storage', 'No database to open: set storage.database to the path of the SQLite file.');
+    this.readOnly = config.getWatch().mode === 'backtest' && database !== IN_MEMORY;
+    this.db = this.open(database);
     this.db.run('PRAGMA busy_timeout = 5000;'); // Wait instead of erroring when the DB is locked
-    this.db.run('PRAGMA journal_mode = WAL;');
-    this.db.run('PRAGMA synchronous = NORMAL;');
-    each(symbols, symbol => this.createTable(symbol));
+    if (this.readOnly) {
+      this.checkTables(database, symbols);
+    } else {
+      this.db.run('PRAGMA journal_mode = WAL;');
+      this.db.run('PRAGMA synchronous = NORMAL;');
+      each(symbols, symbol => this.createTable(symbol));
+    }
   }
 
   public insertCandles(symbol: TradingPair): void {
@@ -110,9 +126,32 @@ export class SQLiteStorage extends Storage {
       // Without it, a crash or a stop outside the plugins (main()'s uncaughtException handler) would lose the buffered buckets
       this.flush();
       // Copies the WAL into the database file and empties it, so that the file alone holds every candle (a copy, a backup)
-      this.db.run('PRAGMA wal_checkpoint(TRUNCATE);');
+      if (!this.readOnly) this.db.run('PRAGMA wal_checkpoint(TRUNCATE);');
     } finally {
       this.db.close(false);
+    }
+  }
+
+  private open(database: string) {
+    try {
+      if (this.readOnly) return new Database(database, { readonly: true, create: false });
+      if (database !== IN_MEMORY) mkdirSync(dirname(database), { recursive: true }); // db/ is gitignored: absent from a fresh clone
+      return new Database(database);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const hint = this.readOnly ? ' A backtest reads an existing database: check storage.database, or import the candles first.' : '';
+      throw new GekkoError('storage', `Cannot open the database ${resolve(database)} (${reason}).${hint}`);
+    }
+  }
+
+  /** Read-only, a missing table cannot be created: the pair was never imported into this database. */
+  private checkTables(database: string, symbols: TradingPair[]) {
+    const query = this.db.query<{ name: string }, [string]>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE",
+    );
+    const missingSymbols = symbols.filter(symbol => !query.get(this.getTable(symbol)));
+    if (missingSymbols.length) {
+      throw new GekkoError('storage', `${resolve(database)} holds no candles of ${missingSymbols.join(', ')}: import them first.`);
     }
   }
 
