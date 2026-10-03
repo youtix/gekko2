@@ -123,7 +123,7 @@ describe('E2E: Importer (Synthetic)', () => {
     const storage = inject.storage() as SQLiteStorage;
     cleanDatabase(storage);
     clearLogs();
-    storage.close = () => {}; // Prevent closure so assertions can run
+    storage.close = () => storage['flush'](); // Insert the buffered candles but keep the in-memory database open for the assertions
 
     // Reset MockCCXTExchange static state
     MockCCXTExchange.simulatedGaps = [];
@@ -150,7 +150,7 @@ describe('E2E: Importer (Synthetic)', () => {
     // 1. Run the Pipeline
     // Monkey-patch storage.close to prevent closure before verification
     const storage = inject.storage() as SQLiteStorage;
-    storage.close = () => {};
+    storage.close = () => storage['flush']();
 
     await gekkoPipeline();
 
@@ -367,7 +367,7 @@ describe('E2E: Importer (Synthetic)', () => {
     // Re-initialize storage with new mockPairs
     inject.reset();
     const storage = inject.storage() as SQLiteStorage;
-    storage.close = () => {};
+    storage.close = () => storage['flush']();
     const db = storage['db'];
 
     await gekkoPipeline();
@@ -418,7 +418,7 @@ describe('E2E: Importer (Synthetic)', () => {
     // Re-initialize storage with new mockPairs
     inject.reset();
     const storage = inject.storage() as SQLiteStorage;
-    storage.close = () => {};
+    storage.close = () => storage['flush']();
     const db = storage['db'];
 
     await gekkoPipeline();
