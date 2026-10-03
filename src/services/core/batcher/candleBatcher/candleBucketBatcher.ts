@@ -1,4 +1,3 @@
-import { ONE_MINUTE } from '@constants/time.const';
 import { GekkoError } from '@errors/gekko.error';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
@@ -6,6 +5,12 @@ import { getBucketTimestamp } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
 import { CandleSize } from './candleBatcher.types';
 import { FastCandleBatcher, isTimeframeCandleClose } from './fastCandleBatcher';
+
+/** The start of the minute after `minute` on the UTC calendar, which the timeframe boundaries are computed on too */
+const nextMinute = (minute: EpochTimeStamp) => {
+  const date = new Date(minute);
+  return date.setUTCMinutes(date.getUTCMinutes() + 1);
+};
 
 /**
  * Batches 1-minute CandleBuckets into higher timeframe CandleBuckets.
@@ -71,7 +76,9 @@ export class CandleBucketBatcher {
       }
     }
 
-    if (this.lastTimestamp !== undefined && timestamp !== this.lastTimestamp + ONE_MINUTE) {
+    // A bucket must come after the previous one, and no later than one calendar minute after it: real candles start on whole
+    // minutes, so exactly one minute after it. Not ONE_MINUTE, which the e2e tests shrink to speed their clock up.
+    if (this.lastTimestamp !== undefined && (timestamp! <= this.lastTimestamp || timestamp! > nextMinute(this.lastTimestamp))) {
       throw new GekkoError(
         'core',
         `Received the bucket of ${toISOString(timestamp)} after the one of ${toISOString(this.lastTimestamp)}: buckets must follow each other minute by minute`,
