@@ -2,7 +2,6 @@ import { Candle } from '@models/candle.types';
 import { warning } from '@services/logger';
 import { getCandleTimeOffset } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
-import { addPrecise } from '@utils/math/math.utils';
 import { CandleSize } from './candleBatcher.types';
 
 /** Tells whether the 1-minute candle starting at `start` is the last one of a timeframe candle of `candleSize` minutes. */
@@ -36,6 +35,10 @@ const isMonthEnd = (date: Date): boolean => {
   return date.getUTCDate() === lastDay && date.getUTCHours() === 23 && date.getUTCMinutes() === 59;
 };
 
+/** Most decimals a volume is summed with: beyond, the scaled sum would exceed the integers a double holds exactly */
+const MAX_VOLUME_DECIMALS = 15;
+const MAX_VOLUME_FACTOR = 10 ** MAX_VOLUME_DECIMALS;
+
 /**
  * Optimized candle batcher that mutates in-place to minimize allocations.
  * For internal use by CandleBucketBatcher only.
@@ -47,6 +50,12 @@ export class FastCandleBatcher {
   private hasStarted = false;
   private skippedMinutes = 0;
   private firstSkippedStart?: EpochTimeStamp;
+  /**
+   * The volume of the timeframe candle in progress, summed exactly (0.1 + 0.2 = 0.3) as an integer: each volume times
+   * `volumeFactor`, the power of ten that leaves no decimal to any volume added so far.
+   */
+  private scaledVolume = 0;
+  private volumeFactor = 1;
 
   constructor(candleSize: CandleSize) {
     this.candleSize = candleSize;
@@ -64,7 +73,10 @@ export class FastCandleBatcher {
   /** Returns the timeframe candle in progress, if any, and starts a new one. */
   flush(): Candle | null {
     const result = this.accumulator;
+    if (result) result.volume = this.scaledVolume / this.volumeFactor;
     this.accumulator = null;
+    this.scaledVolume = 0;
+    this.volumeFactor = 1;
     return result;
   }
 
@@ -80,15 +92,27 @@ export class FastCandleBatcher {
         high: candle.high,
         low: candle.low,
         close: candle.close,
-        volume: candle.volume,
+        volume: 0, // Set by flush
       };
     } else {
       // Aggregate in-place
       this.accumulator.high = Math.max(this.accumulator.high, candle.high);
       this.accumulator.low = Math.min(this.accumulator.low, candle.low);
       this.accumulator.close = candle.close;
-      this.accumulator.volume = addPrecise(this.accumulator.volume, candle.volume);
     }
+    this.addVolume(candle.volume);
+  }
+
+  private addVolume(volume: number) {
+    // Raise the factor until the volume has no decimal left once scaled. Volumes keep the precision of their pair, so this
+    // loops only on the first candles of a timeframe candle, without the cost of counting decimals through toString.
+    let factor = this.volumeFactor;
+    while (Number.isFinite(volume) && Math.round(volume * factor) / factor !== volume && factor < MAX_VOLUME_FACTOR) factor *= 10;
+    if (factor !== this.volumeFactor) {
+      this.scaledVolume *= factor / this.volumeFactor;
+      this.volumeFactor = factor;
+    }
+    this.scaledVolume += Math.round(volume * factor);
   }
 
   /**

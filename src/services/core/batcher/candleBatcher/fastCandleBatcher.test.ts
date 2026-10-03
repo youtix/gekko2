@@ -62,6 +62,41 @@ describe('FastCandleBatcher', () => {
     });
   });
 
+  describe('volume', () => {
+    // A batcher of as many minutes as volumes, fed from a boundary, returns the timeframe candle on the last one
+    const sumVolumes = (volumes: number[]) =>
+      feed(
+        volumes.length as CandleSize,
+        volumes.map((volume, minute) => candleAt(minute, { volume })),
+      ).at(-1)?.volume;
+
+    it.each`
+      volumes                                        | expected
+      ${[0.1, 0.2]}                                  | ${0.3}
+      ${[1.5, 0.25, 0.125]}                          | ${1.875}
+      ${[12.34567891, 0.00012345, 3.1]}              | ${15.44580236}
+      ${[0.1, 0.2, 0.30000000000000004, 1e-20, 2.4]} | ${3}
+      ${[1e-7, 2e-7, 3e-7, 4e-7, 5e-7]}              | ${1.5e-6}
+      ${[3, 0, 0, 1, 2]}                             | ${6}
+    `('should sum $volumes to exactly $expected', ({ volumes, expected }) => {
+      expect(sumVolumes(volumes)).toBe(expected);
+    });
+
+    it('should sum to NaN when a volume is not a number', () => {
+      expect(sumVolumes([1.5, NaN])).toBeNaN();
+    });
+
+    it('should sum the volumes of the next timeframe candle from scratch', () => {
+      const volumes = [0.12345678, 0.1, 1, 2];
+      expect(
+        feed(
+          2,
+          volumes.map((volume, minute) => candleAt(minute, { volume })),
+        )[3]?.volume,
+      ).toBe(3);
+    });
+  });
+
   describe('first candle off a timeframe boundary', () => {
     // 1h timeframe fed from 00:57: the minutes before 01:00 cannot make up a whole hour
     const fromMinute57 = range(57, 120).map(minute => candleAt(minute));
