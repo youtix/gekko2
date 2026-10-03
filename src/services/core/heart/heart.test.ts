@@ -211,6 +211,16 @@ describe('Heart', () => {
       vi.advanceTimersByTime(0);
       expect(ticks).toEqual([start]);
     });
+
+    it('should defer the first tick again when pumped after ticking', () => {
+      heart.pump();
+      vi.advanceTimersByTime(0);
+      heart.stop();
+      vi.advanceTimersByTime(100);
+      heart.pump();
+      vi.advanceTimersByTime(0);
+      expect(ticks).toEqual([start, start + 100]);
+    });
   });
 
   describe('isHeartBeating', () => {
