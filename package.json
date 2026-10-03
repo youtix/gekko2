@@ -28,6 +28,9 @@
   "license": "MIT",
   "main": "gekko2.js",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build:exec": "bun build src/gekko2.ts --compile --outfile dist/gekko2",
     "build:js": "bun build ./src/gekko2.ts --outdir ./dist --target bun --minify --sourcemap",
