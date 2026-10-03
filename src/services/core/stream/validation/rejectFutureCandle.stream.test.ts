@@ -17,6 +17,10 @@ const run = async (bucket: CandleBucket) => {
   return (await stream.toArray()) as CandleBucket[];
 };
 
+const throwUnreadable = () => {
+  throw new Error('unreadable');
+};
+
 describe('RejectFutureCandleStream', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -61,16 +65,9 @@ describe('RejectFutureCandleStream', () => {
   });
 
   it('should forward an error thrown while reading a bucket', async () => {
-    const unreadable = new Map([
-      [
-        'BTC/USDT',
-        {
-          get start(): number {
-            throw new Error('unreadable');
-          },
-        },
-      ],
-    ]) as unknown as CandleBucket;
+    const unreadable: CandleBucket = new Map([
+      ['BTC/USDT', Object.defineProperty(bucketStarting(NOW).get('BTC/USDT')!, 'start', { get: throwUnreadable })],
+    ]);
     await expect(run(unreadable)).rejects.toThrow('unreadable');
   });
 });

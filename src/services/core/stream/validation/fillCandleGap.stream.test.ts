@@ -36,6 +36,10 @@ const run = async (buckets: CandleBucket[], options?: FillCandleGapOptions, pair
   return (await stream.toArray()) as CandleBucket[];
 };
 
+const throwUnreadable = () => {
+  throw new Error('unreadable');
+};
+
 describe('FillCandleGapStream', () => {
   describe('complete buckets', () => {
     it('should push complete consecutive buckets as they are', async () => {
@@ -204,16 +208,7 @@ describe('FillCandleGapStream', () => {
 
   describe('errors', () => {
     it('should forward an error thrown while reading a bucket', async () => {
-      const unreadable = new Map([
-        [
-          ETH,
-          {
-            get start(): number {
-              throw new Error('unreadable');
-            },
-          },
-        ],
-      ]) as unknown as CandleBucket;
+      const unreadable: CandleBucket = new Map([[ETH, Object.defineProperty(candleAt(0), 'start', { get: throwUnreadable })]]);
       await expect(run([unreadable])).rejects.toThrow('unreadable');
     });
   });

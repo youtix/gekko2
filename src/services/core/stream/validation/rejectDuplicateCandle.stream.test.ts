@@ -22,6 +22,10 @@ const run = async (buckets: CandleBucket[]) => {
   return output.map(bucket => (bucket.get('BTC/USDT')!.start - T0) / ONE_MINUTE);
 };
 
+const throwUnreadable = () => {
+  throw new Error('unreadable');
+};
+
 describe('RejectDuplicateCandleStream', () => {
   it.each`
     input           | expected
@@ -56,16 +60,9 @@ describe('RejectDuplicateCandleStream', () => {
   });
 
   it('should forward an error thrown while reading a bucket', async () => {
-    const unreadable = new Map([
-      [
-        'BTC/USDT',
-        {
-          get start(): number {
-            throw new Error('unreadable');
-          },
-        },
-      ],
-    ]) as unknown as CandleBucket;
+    const unreadable: CandleBucket = new Map([
+      ['BTC/USDT', Object.defineProperty(bucketAt(0).get('BTC/USDT')!, 'start', { get: throwUnreadable })],
+    ]);
     await expect(run([unreadable])).rejects.toThrow('unreadable');
   });
 });
