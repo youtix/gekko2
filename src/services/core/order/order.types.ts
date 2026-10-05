@@ -18,7 +18,8 @@ export type OrderSummary = {
   amount: number;
   price: number;
   side: OrderSide;
-  feePercent: number;
+  /** Fee rate in % (0.1 for 0.1 %), weighted by the amounts of the trades whose rate is known; undefined when none is */
+  feePercent?: number;
   orderExecutionDate: EpochTimeStamp;
 };
 export type OrderCancelDetails = {

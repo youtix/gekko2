@@ -6,9 +6,11 @@ import {
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
 } from '@constants/event.const';
+import { GekkoError } from '@errors/gekko.error';
 import { OrderState } from '@models/order.types';
-import { toTimestamp } from '@utils/date/date.utils';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ExchangeNetworkError, OrderNotFound } from '@services/exchange/exchange.error';
+import * as logger from '@services/logger';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Order } from './order';
 
 vi.mock('@services/logger', () => ({
@@ -53,13 +55,6 @@ class TestOrder extends Order {
 }
 
 describe('order', () => {
-  const defaultOrder: OrderState = {
-    id: 'tx1',
-    status: 'open',
-    filled: 0,
-    price: 100,
-    timestamp: toTimestamp('2025'),
-  };
   let testOrder: TestOrder;
 
   beforeEach(() => {
@@ -71,6 +66,10 @@ describe('order', () => {
 
   it('should have status "initializing" upon creation', () => {
     expect(testOrder['getStatus']()).toBe('initializing');
+  });
+
+  it('should return the id the strategy gave the order', () => {
+    expect(testOrder.getGekkoOrderId()).toBe('ee21e130-48bc-405f-be0c-46e9bf17b52e');
   });
 
   describe('setStatus', () => {
@@ -85,6 +84,31 @@ describe('order', () => {
       expect(spy).toHaveBeenCalledWith(ORDER_STATUS_CHANGED_EVENT, {
         status: 'open',
         reason: undefined,
+      });
+    });
+
+    // Whichever path ends the order, it is polled no more
+    describe('with an interval polling the order', () => {
+      beforeEach(() => {
+        vi.useFakeTimers();
+        testOrder['interval'] = setInterval(() => undefined, 1000);
+      });
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it.each`
+        status            | outcome             | timers
+        ${'initializing'} | ${'still polled'}   | ${1}
+        ${'open'}         | ${'still polled'}   | ${1}
+        ${'filled'}       | ${'polled no more'} | ${0}
+        ${'canceled'}     | ${'polled no more'} | ${0}
+        ${'rejected'}     | ${'polled no more'} | ${0}
+        ${'error'}        | ${'polled no more'} | ${0}
+      `('is $outcome once its status is $status', ({ status, timers }) => {
+        testOrder['setStatus'](status);
+        expect(vi.getTimerCount()).toBe(timers);
       });
     });
   });
@@ -118,25 +142,8 @@ describe('order', () => {
   describe('orderPartiallyFilled', () => {
     it('should emit ORDER_PARTIALLY_FILLED_EVENT with filled amount on orderPartiallyFilled', () => {
       const spy = vi.spyOn(testOrder, 'emit');
-      testOrder['transactions'].set(defaultOrder.id!, {
-        id: defaultOrder.id!,
-        status: 'open',
-        timestamp: defaultOrder.timestamp!,
-        filled: 0,
-      });
-      testOrder['orderPartiallyFilled']('tx1', 10);
+      testOrder['orderPartiallyFilled'](10);
       expect(spy).toHaveBeenCalledWith(ORDER_PARTIALLY_FILLED_EVENT, 10);
-    });
-
-    it('should update the transaction filled amount in orderPartiallyFilled', () => {
-      testOrder['transactions'].set(defaultOrder.id!, {
-        id: defaultOrder.id!,
-        status: 'open',
-        timestamp: defaultOrder.timestamp!,
-        filled: 0,
-      });
-      testOrder['orderPartiallyFilled']('tx1', 10);
-      expect(testOrder['transactions'].get('tx1')?.filled).toBe(10);
     });
   });
 
@@ -161,6 +168,274 @@ describe('order', () => {
     });
   });
 
+  describe('isOrderCompleted', () => {
+    it.each`
+      status            | expected
+      ${'initializing'} | ${false}
+      ${'open'}         | ${false}
+      ${'filled'}       | ${true}
+      ${'canceled'}     | ${true}
+      ${'rejected'}     | ${true}
+      ${'error'}        | ${true}
+    `('returns $expected when the status is $status', ({ status, expected }) => {
+      testOrder['setStatus'](status);
+      expect(testOrder['isOrderCompleted']()).toBe(expected);
+    });
+  });
+
+  // A state reported after the end of the order (the simulated exchange settling it, a late answer) is ignored
+  describe('isLateUpdate', () => {
+    it.each`
+      status            | expected
+      ${'initializing'} | ${false}
+      ${'open'}         | ${false}
+      ${'filled'}       | ${true}
+      ${'canceled'}     | ${true}
+      ${'rejected'}     | ${true}
+      ${'error'}        | ${true}
+    `('returns $expected when the order is $status', ({ status, expected }) => {
+      testOrder['setStatus'](status);
+      expect(testOrder['isLateUpdate']({ id: 'tx1', status: 'closed' })).toBe(expected);
+    });
+
+    it('logs the update ignored and the status the order keeps', () => {
+      testOrder['setStatus']('canceled');
+      testOrder['isLateUpdate']({ id: 'tx1', status: 'closed' });
+      expect(logger.debug).toHaveBeenCalledWith(
+        'order',
+        '[ee21e130-48bc-405f-be0c-46e9bf17b52e] BUY STICKY order update ignored (transaction tx1 closed), the order is already canceled',
+      );
+    });
+
+    it('logs nothing for an order that is not over', () => {
+      testOrder['setStatus']('open');
+      testOrder['isLateUpdate']({ id: 'tx1', status: 'closed' });
+      expect(logger.debug).not.toHaveBeenCalledWith('order', expect.stringContaining('update ignored'));
+    });
+  });
+
+  // Every state the exchange reports for the order (creation, poll, cancelation, settlement in backtest) is recorded on its transaction
+  describe('recordOrderUpdate', () => {
+    const state: OrderState = { id: 'tx1', status: 'open', filled: 2, remaining: 8, price: 100, timestamp: 1000 };
+    const record = (update: Partial<OrderState> = {}) => testOrder['recordOrderUpdate']({ ...state, ...update });
+    const getTransaction = () => testOrder['transactions'].get('tx1');
+
+    // A state without an id cannot be followed, and an order that is over stays so
+    describe.each`
+      kind                                    | update               | setup
+      ${'a state without an id'}              | ${{ id: undefined }} | ${() => undefined}
+      ${'a state after the end of the order'} | ${{}}                | ${() => testOrder['setStatus']('canceled')}
+    `('given $kind', ({ update, setup }) => {
+      beforeEach(() => {
+        setup();
+      });
+
+      it('returns false', () => {
+        expect(record(update)).toBe(false);
+      });
+
+      it('records nothing', () => {
+        record(update);
+        expect(testOrder['transactions'].size).toBe(0);
+      });
+
+      it('emits nothing', () => {
+        const spy = vi.spyOn(testOrder, 'emit');
+        record(update);
+        expect(spy).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('given the first state of a transaction', () => {
+      it('returns true', () => {
+        expect(record()).toBe(true);
+      });
+
+      it('records the transaction', () => {
+        record();
+        expect(getTransaction()).toEqual({ id: 'tx1', status: 'open', filled: 2, timestamp: 1000 });
+      });
+
+      it('makes it the transaction of the order', () => {
+        record();
+        expect(testOrder['id']).toBe('tx1');
+      });
+
+      it('records a fill of 0 when the state reports none', () => {
+        record({ filled: undefined });
+        expect(getTransaction()?.filled).toBe(0);
+      });
+
+      it.each`
+        kind             | filled       | outcome       | calls
+        ${'a fill of 2'} | ${2}         | ${'the fill'} | ${[[2]]}
+        ${'a fill of 0'} | ${0}         | ${'nothing'}  | ${[]}
+        ${'no fill'}     | ${undefined} | ${'nothing'}  | ${[]}
+      `('emits $outcome with ORDER_PARTIALLY_FILLED_EVENT when the state reports $kind', ({ filled, calls }) => {
+        const listener = vi.fn();
+        testOrder.on(ORDER_PARTIALLY_FILLED_EVENT, listener);
+        record({ filled });
+        expect(listener.mock.calls).toEqual(calls);
+      });
+
+      it('logs the state at debug level', () => {
+        record();
+        expect(logger.debug).toHaveBeenCalledWith(
+          'order',
+          expect.stringContaining('BUY STICKY order update: transaction tx1 open, filled: 2, remaining: 8, price: 100, at '),
+        );
+      });
+    });
+
+    // The fill of a transaction is cumulative, and its first timestamp the bound its trades are fetched from (createOrderSummary)
+    describe('given a later state of the transaction', () => {
+      beforeEach(() => {
+        record();
+      });
+
+      it('keeps the first timestamp', () => {
+        record({ timestamp: 5000 });
+        expect(getTransaction()?.timestamp).toBe(1000);
+      });
+
+      it('records the new status', () => {
+        record({ status: 'canceled' });
+        expect(getTransaction()?.status).toBe('canceled');
+      });
+
+      it.each`
+        kind                | filled       | recorded
+        ${'a larger fill'}  | ${5}         | ${5}
+        ${'the same fill'}  | ${2}         | ${2}
+        ${'a smaller fill'} | ${1}         | ${2}
+        ${'no fill'}        | ${undefined} | ${2}
+      `('records a fill of $recorded given $kind', ({ filled, recorded }) => {
+        record({ filled });
+        expect(getTransaction()?.filled).toBe(recorded);
+      });
+
+      it.each`
+        kind                | filled       | outcome           | calls
+        ${'a larger fill'}  | ${5}         | ${'the new fill'} | ${[[5]]}
+        ${'the same fill'}  | ${2}         | ${'nothing'}      | ${[]}
+        ${'a smaller fill'} | ${1}         | ${'nothing'}      | ${[]}
+        ${'no fill'}        | ${undefined} | ${'nothing'}      | ${[]}
+      `('emits $outcome with ORDER_PARTIALLY_FILLED_EVENT given $kind', ({ filled, calls }) => {
+        const listener = vi.fn();
+        testOrder.on(ORDER_PARTIALLY_FILLED_EVENT, listener);
+        record({ filled });
+        expect(listener.mock.calls).toEqual(calls);
+      });
+    });
+  });
+
+  // The state recorded, the order follows its transaction: filled, canceled or open
+  describe('applyOrderUpdate', () => {
+    const state: OrderState = { id: 'tx1', status: 'open', filled: 2, remaining: 8, price: 100, timestamp: 1000 };
+    const apply = (update: Partial<OrderState> = {}) => testOrder['applyOrderUpdate']({ ...state, ...update });
+    const listen = (event: string) => {
+      const listener = vi.fn();
+      testOrder.on(event, listener);
+      return listener;
+    };
+
+    it.each`
+      status        | expected
+      ${'closed'}   | ${'filled'}
+      ${'canceled'} | ${'canceled'}
+      ${'open'}     | ${'open'}
+    `('sets the order $expected when the transaction is $status', ({ status, expected }) => {
+      apply({ status });
+      expect(testOrder['getStatus']()).toBe(expected);
+    });
+
+    it('emits ORDER_COMPLETED_EVENT when the transaction is closed', () => {
+      const listener = listen(ORDER_COMPLETED_EVENT);
+      apply({ status: 'closed' });
+      expect(listener.mock.calls).toEqual([[{ status: 'filled', filled: true }]]);
+    });
+
+    // The same payload for every type of order: what the transaction filled, what is left, its price when known, and the time
+    it.each`
+      kind                       | update                                         | payload
+      ${'with all its details'}  | ${{}}                                          | ${{ status: 'canceled', filled: 2, remaining: 8, price: 100, timestamp: 1000 }}
+      ${'without fill nor rest'} | ${{ filled: undefined, remaining: undefined }} | ${{ status: 'canceled', filled: 0, remaining: 0, price: 100, timestamp: 1000 }}
+      ${'without its price'}     | ${{ price: undefined }}                        | ${{ status: 'canceled', filled: 2, remaining: 8, timestamp: 1000 }}
+    `('emits ORDER_CANCELED_EVENT when the transaction is canceled $kind', ({ update, payload }) => {
+      const listener = listen(ORDER_CANCELED_EVENT);
+      apply({ status: 'canceled', ...update });
+      expect(listener.mock.calls).toEqual([[payload]]);
+    });
+
+    // Reported once per transaction: a poll of a transaction that stays open changes nothing
+    it.each`
+      kind                                       | updates                      | changes
+      ${'a first state open'}                    | ${[{}]}                      | ${1}
+      ${'a later state of the transaction open'} | ${[{}, { timestamp: 2000 }]} | ${1}
+      ${'the first state of another one open'}   | ${[{}, { id: 'tx2' }]}       | ${2}
+    `('emits ORDER_STATUS_CHANGED_EVENT $changes time(s) given $kind', ({ updates, changes }) => {
+      const listener = listen(ORDER_STATUS_CHANGED_EVENT);
+      updates.forEach((update: Partial<OrderState>) => apply(update));
+      expect(listener).toHaveBeenCalledTimes(changes);
+    });
+
+    it('leaves the order as it is given a state to ignore', () => {
+      apply({ id: undefined, status: 'closed' });
+      expect(testOrder['getStatus']()).toBe('initializing');
+    });
+  });
+
+  // An ExchangeNetworkError says nothing of the order: a poll or a cancelation that fails so leaves it as it was
+  describe('isTransientFailure', () => {
+    it.each`
+      kind                         | failure                                    | expected
+      ${'an ExchangeNetworkError'} | ${new ExchangeNetworkError('timeout')}     | ${true}
+      ${'an OrderNotFound'}        | ${new OrderNotFound('unknown order')}      | ${false}
+      ${'a GekkoError'}            | ${new GekkoError('exchange', 'no ticker')} | ${false}
+      ${'an Error'}                | ${new Error('Invalid API key')}            | ${false}
+      ${'a non-Error value'}       | ${'Invalid API key'}                       | ${false}
+    `('returns $expected for $kind', ({ failure, expected }) => {
+      expect(testOrder['isTransientFailure'](failure, 'poll')).toBe(expected);
+    });
+
+    it('logs a warning naming the action and the status the order keeps for an ExchangeNetworkError', () => {
+      testOrder['setStatus']('open');
+      testOrder['isTransientFailure'](new ExchangeNetworkError('timeout'), 'cancelation');
+      expect(logger.warning).toHaveBeenCalledWith(
+        'order',
+        '[ee21e130-48bc-405f-be0c-46e9bf17b52e] BUY STICKY order cancelation failed on the network, it stays open: [EXCHANGE] timeout',
+      );
+    });
+
+    it('logs no warning for any other failure', () => {
+      testOrder['isTransientFailure'](new Error('Invalid API key'), 'poll');
+      expect(logger.warning).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('toCreationError', () => {
+    it('says the outcome of a creation that failed on the network is unknown', () => {
+      const creationError = testOrder['toCreationError'](new ExchangeNetworkError('timeout'));
+      expect(creationError.message).toBe(
+        'Outcome unknown: the order may be live on the exchange, check it before placing it again ([EXCHANGE] timeout)',
+      );
+    });
+
+    it('keeps the network failure as the cause', () => {
+      const networkError = new ExchangeNetworkError('timeout');
+      expect(testOrder['toCreationError'](networkError).cause).toBe(networkError);
+    });
+
+    it('returns any other Error as it is', () => {
+      const failure = new Error('Invalid API key');
+      expect(testOrder['toCreationError'](failure)).toBe(failure);
+    });
+
+    it('wraps a non-Error value in an Error', () => {
+      expect(testOrder['toCreationError']('Invalid API key')).toEqual(new Error('Invalid API key'));
+    });
+  });
+
   describe('createLimitOrder', () => {
     it('should call exchange.createLimitOrder and then handleCreateOrderSuccess on success', async () => {
       const orderResponse = { id: 'order1', status: 'open', filled: 0, price: 100 };
@@ -174,6 +449,27 @@ describe('order', () => {
       fakeExchange.createLimitOrder.mockRejectedValue(error);
       await testOrder['createLimitOrder']('BUY', 10, 100);
       expect(testOrder.handleCreateOrderError).toHaveBeenCalledWith(error);
+    });
+
+    // In backtest the simulated exchange reports the fill through the callback given at the creation
+    describe('with an onSettled callback', () => {
+      const onSettled = vi.fn();
+
+      beforeEach(async () => {
+        fakeExchange.createLimitOrder.mockResolvedValue({ id: 'order1', status: 'open', filled: 0, price: 99 });
+        await testOrder['createLimitOrder']('BUY', 10, 99, onSettled);
+      });
+
+      it('should pass the callback to exchange.createLimitOrder', () => {
+        expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BTC/USDT', 'BUY', 10, 99, onSettled);
+      });
+
+      it('should log the creation of the order', () => {
+        expect(logger.info).toHaveBeenCalledWith(
+          'order',
+          '[ee21e130-48bc-405f-be0c-46e9bf17b52e] Creating BUY limit order with amount: 10 and price 99',
+        );
+      });
     });
   });
 
@@ -191,6 +487,12 @@ describe('order', () => {
       await testOrder['createMarketOrder']('BUY', 10);
       expect(testOrder.handleCreateOrderError).toHaveBeenCalledWith(error);
     });
+
+    it('should log the creation of the order', async () => {
+      fakeExchange.createMarketOrder.mockResolvedValue({ id: 'order1', status: 'closed', filled: 10, price: 100 });
+      await testOrder['createMarketOrder']('BUY', 10);
+      expect(logger.info).toHaveBeenCalledWith('order', '[ee21e130-48bc-405f-be0c-46e9bf17b52e] Creating BUY market order with amount: 10');
+    });
   });
 
   describe('cancelOrder', () => {
@@ -206,6 +508,12 @@ describe('order', () => {
       fakeExchange.cancelOrder.mockRejectedValue(error);
       await testOrder['cancelOrder']('order1');
       expect(testOrder.handleCancelOrderError).toHaveBeenCalledWith(error);
+    });
+
+    // Nobody awaits cancel(): a failure goes to handleCancelOrderError, it never rejects
+    it('should resolve instead of rejecting when the cancelation failed', async () => {
+      fakeExchange.cancelOrder.mockRejectedValue(new ExchangeNetworkError('timeout'));
+      await expect(testOrder['cancelOrder']('order1')).resolves.toBeUndefined();
     });
   });
 
