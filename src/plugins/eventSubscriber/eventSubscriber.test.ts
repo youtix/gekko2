@@ -225,6 +225,22 @@ describe('EventSubscriber', () => {
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Filled amount: 1 / 2 BTC'));
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested limit price: 999 USD'));
     });
+
+    // An unknown fee rate (undefined since createOrderSummary averages only the rates the trades report, never defaulted to 0) must
+    // not read as a 0% fee; a known rate, 0 included, is shown as a percentage
+    it.each`
+      feePercent   | expected
+      ${0.1}       | ${'0.1%'}
+      ${0}         | ${'0%'}
+      ${undefined} | ${'unknown'}
+      ${null}      | ${'unknown'}
+      ${NaN}       | ${'unknown'}
+      ${Infinity}  | ${'unknown'}
+    `('reports a fee percent of $feePercent as $expected when an order completes', async ({ feePercent, expected }) => {
+      plugin['handleCommand']('/sub_order_complete');
+      await onOrderCompleted(plugin, { order: { feePercent } });
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining(`\nFee percent: ${expected}\n`));
+    });
   });
 
   describe('commands', () => {

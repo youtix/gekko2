@@ -181,7 +181,7 @@ export class EventSubscriber extends Plugin {
           `${side} ${type} order completed (${id}) for ${symbol}`,
           `Amount: ${amount} ${asset}`,
           `Price: ${effectivePrice} ${currency}`,
-          `Fee percent: ${feePercent ?? '0'}%`,
+          `Fee percent: ${Number.isFinite(feePercent) ? `${feePercent}%` : 'unknown'}`,
           `Fee: ${fee} ${currency}`,
           `At time: ${toISOString(orderExecutionDate)}`,
           `Current portfolio: ${assetBalance.total} ${asset} / ${currencyBalance.total} ${currency}`,
