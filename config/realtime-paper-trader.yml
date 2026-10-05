@@ -28,7 +28,7 @@ plugins:
 
   - name: 'Trader'
 
-  - name: 'RoundtripAnalyzer'
+  - name: 'RoundTripAnalyzer'
     enableConsoleTable: true
 
   - name: EventSubscriber

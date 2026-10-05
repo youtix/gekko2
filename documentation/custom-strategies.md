@@ -79,15 +79,41 @@ Create a YAML configuration file (e.g., `config.yaml`):
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: backtest
   timeframe: 1h
   warmup:
     candleCount: 100
+  daterange:
+    start: 2024-01-01
+    end: 2024-12-31
 
 exchange:
   name: dummy-cex
+  marketData:
+    - symbol: BTC/USDT
+      marketData:
+        price:
+          min: 0.01
+          max: 1000000
+        amount:
+          min: 0.00001
+          max: 9000
+        cost:
+          min: 5
+          max: 9000000
+        precision:
+          price: 8
+          amount: 8
+        fee:
+          maker: 0.0004
+          taker: 0.0007
+  simulationBalance:
+    - assetName: BTC
+      balance: 0
+    - assetName: USDT
+      balance: 1000
 
 storage:
   type: sqlite
@@ -105,7 +131,7 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     enableConsoleTable: true
 ```
 
@@ -296,11 +322,11 @@ Use `tools.createOrder()` to place trades:
 
 ### Order Types
 
-| Type       | Description                                                   |
-|------------|---------------------------------------------------------------|
-| `STICKY`   | Limit order that follows price, converts to market at timeout |
-| `MARKET`   | Immediate market order                                        |
-| `LIMIT`    | Standard limit order at specified price                       |
+| Type       | Description                                                                                                                                                                   |
+|------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `STICKY`   | Limit order `price.min` inside the best bid/ask, re-placed every `orderSynchInterval` once the market moves past it (realtime only); no timeout, never becomes a market order |
+| `MARKET`   | Immediate market order                                                                                                                                                        |
+| `LIMIT`    | Standard limit order at specified price                                                                                                                                       |
 
 ### Order Parameters
 
@@ -468,18 +494,41 @@ export class EMACrossover implements Strategy<EMACrossoverParams> {
 showLogo: false
 
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: backtest
   timeframe: 1h
   warmup:
     candleCount: 200
-  dateRange:
+  daterange:
     start: 2024-01-01
     end: 2024-12-31
 
 exchange:
   name: dummy-cex
+  marketData:
+    - symbol: BTC/USDT
+      marketData:
+        price:
+          min: 0.01
+          max: 1000000
+        amount:
+          min: 0.00001
+          max: 9000
+        cost:
+          min: 5
+          max: 9000000
+        precision:
+          price: 8
+          amount: 8
+        fee:
+          maker: 0.0004
+          taker: 0.0007
+  simulationBalance:
+    - assetName: BTC
+      balance: 0
+    - assetName: USDT
+      balance: 1000
 
 storage:
   type: sqlite
@@ -498,7 +547,7 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     enableConsoleTable: true
 ```
 

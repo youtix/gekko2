@@ -36,7 +36,7 @@ Gekko 2 operates in three distinct modes, each designed for a specific stage of 
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: importer
   tickrate: 500              # Milliseconds between API requests (rate limiting)
@@ -59,7 +59,7 @@ plugins:
 
 | Option             | Description                  | Example Values       |
 |--------------------|------------------------------|----------------------|
-| `asset`            | The base asset to import     | `BTC`, `ETH`, `SOL`  |
+| `assets`           | The base assets to import    | `[BTC, ETH, SOL]`    |
 | `currency`         | The quote currency           | `USDT`, `EUR`, `BTC` |
 | `tickrate`         | Delay between API calls (ms) | `500` (recommended)  |
 | `daterange.start`  | Start date for import        | ISO 8601 format      |
@@ -103,7 +103,7 @@ plugins:
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: backtest
   timeframe: 1h              # Candle timeframe for strategy
@@ -115,6 +115,29 @@ watch:
 
 exchange:
   name: dummy-cex            # Simulated exchange for backtesting
+  marketData:                # Fees and order limits, one entry per watched pair
+    - symbol: BTC/USDT
+      marketData:
+        price:
+          min: 0.01
+          max: 1000000
+        amount:
+          min: 0.00001
+          max: 9000
+        cost:
+          min: 5
+          max: 9000000
+        precision:
+          price: 8
+          amount: 8
+        fee:
+          maker: 0.0004
+          taker: 0.0007
+  simulationBalance:         # Starting balances
+    - assetName: BTC
+      balance: 0
+    - assetName: USDT
+      balance: 1000
 
 storage:
   type: sqlite
@@ -135,7 +158,7 @@ plugins:
 
   - name: Trader             # Executes simulated orders
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     enableConsoleTable: true # Display results in terminal table
 ```
 
@@ -165,17 +188,17 @@ plugins:
 |-------------------------|-----------------------------------------------------|
 | **TradingAdvisor**      | Runs your strategy and generates buy/sell signals   |
 | **Trader**              | Executes orders on the dummy exchange               |
-| **PerformanceAnalyzer** | Calculates returns, drawdown, Sharpe ratio, etc.    |
+| **RoundTripAnalyzer**   | Calculates returns, win rate, Sharpe ratio, etc.    |
 
 ### Performance Metrics
 
-The PerformanceAnalyzer provides:
+The analyzers provide (configure `RoundTripAnalyzer` or `PortfolioAnalyzer`, not both):
 - **Total Return** — Overall profit/loss percentage
-- **Max Drawdown** — Largest peak-to-trough decline
-- **Longest Drawdown** — Duration of the longest drawdown period
+- **Max Drawdown** — Largest peak-to-trough decline (`PortfolioAnalyzer`)
+- **Longest Drawdown** — Duration of the longest drawdown period (`PortfolioAnalyzer`)
 - **Sharpe Ratio** — Risk-adjusted return
-- **Win Rate** — Percentage of profitable trades
-- **Trade Count** — Total number of executed trades
+- **Win Rate** — Percentage of profitable trades (`RoundTripAnalyzer`)
+- **Trade Count** — Total number of executed trades (`RoundTripAnalyzer`)
 
 ---
 
@@ -208,7 +231,7 @@ Monitor markets and receive Telegram alerts when your strategy emit signals.
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 4h
@@ -219,6 +242,11 @@ watch:
 # and use real unauthenticated data (fetchCandles, etc.)
 exchange:
   name: paper-binance
+  simulationBalance:             # Simulated balances, required by paper-binance
+    - assetName: BTC
+      balance: 1
+    - assetName: USDT
+      balance: 10000
 
 strategy:
   name: RSI
@@ -226,6 +254,7 @@ strategy:
   thresholds:
     high: 70
     low: 30
+    persistence: 0
 
 plugins:
   - name: TradingAdvisor
@@ -244,7 +273,7 @@ Test strategies with fake money on exchange testnets. Real orders are placed, bu
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1d
@@ -254,7 +283,7 @@ watch:
 exchange:
   name: binance
   sandbox: true                  # Use testnet
-  key: YOUR_SANDBOX_API_KEY
+  apiKey: YOUR_SANDBOX_API_KEY
   secret: YOUR_SANDBOX_API_SECRET
 
 strategy:
@@ -270,7 +299,7 @@ plugins:
 
   - name: Trader                 # Executes orders on sandbox
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     riskFreeReturn: 5
 ```
 
@@ -283,7 +312,7 @@ Trade with simulated money using **real market data** from Binance, but with ord
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1h
@@ -293,8 +322,10 @@ watch:
 exchange:
   name: paper-binance            # Uses real Binance data, simulates orders locally
   simulationBalance:
-    asset: 1                     # Starting BTC balance
-    currency: 10000              # Starting USDT balance
+    - assetName: BTC
+      balance: 1                 # Starting BTC balance
+    - assetName: USDT
+      balance: 10000             # Starting USDT balance
   # feeOverride:                 # Optional: override exchange fees
   #   maker: 0.001
   #   taker: 0.002
@@ -312,7 +343,7 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     enableConsoleTable: true
 ```
 
@@ -334,7 +365,7 @@ plugins:
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1h
@@ -343,7 +374,7 @@ watch:
 
 exchange:
   name: binance
-  key: YOUR_LIVE_API_KEY
+  apiKey: YOUR_LIVE_API_KEY
   secret: YOUR_LIVE_API_SECRET
 
 strategy:
@@ -359,7 +390,7 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     riskFreeReturn: 5
 
   - name: EventSubscriber        # Get Telegram notifications
@@ -389,7 +420,7 @@ plugins:
 | Option             | Description                        | Values                              |
 |--------------------|------------------------------------|-------------------------------------|
 | `exchange.sandbox` | Use testnet instead of mainnet     | `true`, `false`                     |
-| `exchange.key`     | API key for authenticated requests | Your API key                        |
+| `exchange.apiKey`  | API key for authenticated requests | Your API key                        |
 | `exchange.secret`  | API secret for signing requests    | Your API secret                     |
 | `timeframe`        | Live candle period                 | `1m`, `5m`, `15m`, `1h`, `4h`, `1d` |
 
@@ -407,7 +438,7 @@ plugins:
 |-------------------------|---------------------------------------------------------|
 | **TradingAdvisor**      | Runs strategy and generates signals                     |
 | **Trader**              | Executes orders on the exchange                         |
-| **PerformanceAnalyzer** | Tracks live performance metrics                         |
+| **RoundTripAnalyzer**   | Tracks live performance metrics                         |
 | **EventSubscriber**     | Sends trading events to Telegram                        |
 | **Supervision**         | System monitoring and Telegram bot commands             |
 

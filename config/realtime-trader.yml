@@ -25,7 +25,7 @@ plugins:
 
   - name: 'Trader'
 
-  - name: 'PerformanceAnalyzer'
+  - name: 'RoundTripAnalyzer'
     riskFreeReturn: 5
 
   - name: EventSubscriber

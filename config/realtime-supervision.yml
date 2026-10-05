@@ -8,8 +8,10 @@ watch:
 exchange:
   name: paper-binance
   simulationBalance:
-    asset: 100
-    currency: 300000
+    - assetName: BTC
+      balance: 100
+    - assetName: USDT
+      balance: 300000
 
 strategy:
   name: DebugAdvice

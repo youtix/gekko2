@@ -148,7 +148,7 @@ An indicator extends `Indicator<Name>` (`onNewCandle`, `getResult`) and declares
 
 ## Stale docs and example configs
 
-`README.md` and `documentation/*.md` predate the multi-asset refactor. Trust the zod schemas (`configuration.schema.ts`, `src/plugins/**/*.schema.ts`, `src/services/exchange/**/*.schema.ts`) and `strategy.types.ts` instead. The usual traps when copying from the docs:
+`README.md` and `documentation/*.md` predate the multi-asset refactor; the YAML examples of `modes.md` and `custom-strategies.md` have been brought up to date, the rest (`plugins.md`, the TypeScript examples of `custom-strategies.md`) has not. Trust the zod schemas (`configuration.schema.ts`, `src/plugins/**/*.schema.ts`, `src/services/exchange/**/*.schema.ts`) and `strategy.types.ts` instead. The usual traps when copying from the docs:
 
 - `watch.asset` is now `watch.assets: [...]`, and `exchange.key` is `apiKey`.
 - `simulationBalance` is a list of `{ assetName, balance }`.
@@ -156,6 +156,6 @@ An indicator extends `Indicator<Name>` (`onNewCandle`, `getResult`) and declares
 - The `PerformanceAnalyzer` plugin no longer exists; use `PortfolioAnalyzer` or `RoundTripAnalyzer`.
 - `addIndicator` takes `(name, symbol, params)`.
 - `watch`, `watch.warmup` and `watch.daterange` refuse unknown keys, so a retired or misspelt one (`asset`, `fillGaps`, `tickRate`) is an error, not a silent default. `tickrate` and `warmup.tickrate` are integers of at least 100 ms.
-- The docs' dummy-cex examples have no `exchange.marketData`; a backtest needs one entry per watched pair (`config/backtest.yml` has a complete block).
+- A dummy-cex example without `exchange.marketData` is incomplete: a backtest needs one entry per watched pair (`config/backtest.yml` and `documentation/modes.md` have complete blocks).
 
-In `config/`, `backtest.yml`, `importer.yml` and `realtime-writer.yml` validate as they are. The other `realtime-*.yml` files need credentials filled in, and some still carry stale plugin names (`RoundtripAnalyzer`, `PerformanceAnalyzer`) or the old `simulationBalance` shape.
+In `config/`, `backtest.yml`, `importer.yml` and `realtime-writer.yml` validate as they are. The other `realtime-*.yml` files validate once their credentials are filled in.
