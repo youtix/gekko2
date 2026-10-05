@@ -1,7 +1,7 @@
 import type { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import * as originalDateFns from 'date-fns';
-import { MockCCXTExchange } from '../../mocks/ccxt.mock';
+import { createCcxtModuleMock, MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
 import { MockFetcherService } from '../../mocks/fetcher.mock';
 import { MockHeart } from '../../mocks/heart.mock';
@@ -83,6 +83,11 @@ mock.module('@services/configuration/configuration', () => {
           ['ETH', 100],
           ['USDT', 300000],
         ]),
+        // Set here because this mock bypasses the schema and its defaults: setInterval(fn, undefined) would fire every millisecond.
+        // The trader synchronizes at start and on order events only, as in the other flows. The orders are polled every 20 ms, the
+        // 20 s default at the clock of this file (ONE_SECOND = 1 ms): the paper exchange does not notify a fill, the polls find it.
+        exchangeSynchInterval: 10 * 60 * 1000,
+        orderSynchInterval: 20,
       }),
       getStorage: () => ({
         type: 'sqlite',
@@ -99,17 +104,7 @@ mock.module('@services/configuration/configuration', () => {
 });
 
 // 5. Mock CCXT Library
-class MockNetworkError extends Error {}
-mock.module('ccxt', () => {
-  return {
-    default: {
-      binance: MockCCXTExchange,
-      NetworkError: MockNetworkError,
-    },
-    binance: MockCCXTExchange,
-    NetworkError: MockNetworkError,
-  };
-});
+mock.module('ccxt', () => createCcxtModuleMock());
 
 // 6. Mock date-fns
 mock.module('date-fns', () => {

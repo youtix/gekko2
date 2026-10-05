@@ -113,6 +113,15 @@ export class MockCCXTExchange {
     return this.markets;
   }
 
+  /** ccxt options bag, read and written by CCXTExchange.loadMarkets (Hyperliquid's learned spotCurrencyMapping) */
+  public options: Record<string, unknown> = {};
+
+  /** ccxt shares the loaded catalogue of another client instead of downloading it again (CCXTExchange.loadMarkets) */
+  setMarketsFromExchange(source: MockCCXTExchange) {
+    this.markets = source.markets;
+    return this;
+  }
+
   market(symbol: string) {
     if (!this.markets[symbol]) {
       // Return default if not found
@@ -322,3 +331,32 @@ export class MockCCXTExchange {
     return [];
   }
 }
+
+/**
+ * ccxt's error classes, with ccxt's own inheritance (OrderNotFound extends InvalidOrder, BadSymbol extends BadRequest), so that
+ * translateCcxtError (src/services/exchange/exchange.utils.ts) can run its instanceof checks against the mocked module.
+ */
+export class MockNetworkError extends Error {}
+export class MockExchangeError extends Error {}
+export class MockInvalidOrder extends MockExchangeError {}
+export class MockOrderNotFound extends MockInvalidOrder {}
+export class MockInsufficientFunds extends MockExchangeError {}
+export class MockBadRequest extends MockExchangeError {}
+export class MockBadSymbol extends MockBadRequest {}
+
+const mockCcxtErrorClasses = {
+  NetworkError: MockNetworkError,
+  ExchangeError: MockExchangeError,
+  InvalidOrder: MockInvalidOrder,
+  OrderNotFound: MockOrderNotFound,
+  InsufficientFunds: MockInsufficientFunds,
+  BadRequest: MockBadRequest,
+  BadSymbol: MockBadSymbol,
+};
+
+/** The module to hand to `mock.module('ccxt', ...)`: the exchange class and the error classes, as default and named exports */
+export const createCcxtModuleMock = () => ({
+  default: { binance: MockCCXTExchange, ...mockCcxtErrorClasses },
+  binance: MockCCXTExchange,
+  ...mockCcxtErrorClasses,
+});

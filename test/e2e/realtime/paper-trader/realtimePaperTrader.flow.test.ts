@@ -2,7 +2,7 @@ import type { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import * as originalDateFns from 'date-fns';
 import { cleanDatabase } from '../../helpers/database.helper';
-import { MockCCXTExchange } from '../../mocks/ccxt.mock';
+import { createCcxtModuleMock, MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
 import { MockFetcherService } from '../../mocks/fetcher.mock';
 import { MockHeart } from '../../mocks/heart.mock';
@@ -89,18 +89,8 @@ mock.module('@services/configuration/configuration', () => {
 });
 
 // 5. Mock CCXT Library
-class MockNetworkError extends Error {}
 
-mock.module('ccxt', () => {
-  return {
-    default: {
-      binance: MockCCXTExchange,
-      NetworkError: MockNetworkError,
-    },
-    binance: MockCCXTExchange,
-    NetworkError: MockNetworkError,
-  };
-});
+mock.module('ccxt', () => createCcxtModuleMock());
 
 // 6. Mock date-fns
 mock.module('date-fns', () => {

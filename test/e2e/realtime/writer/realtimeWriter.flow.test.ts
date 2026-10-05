@@ -4,7 +4,7 @@ import * as originalDateFns from 'date-fns';
 import { first } from 'lodash-es';
 import { generateSyntheticCandle } from '../../fixtures/syntheticData';
 import { cleanDatabase } from '../../helpers/database.helper';
-import { MockCCXTExchange } from '../../mocks/ccxt.mock';
+import { createCcxtModuleMock, MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
 import { MockHeart } from '../../mocks/heart.mock';
 import { MockWinston, clearLogs, logStore } from '../../mocks/winston.mock';
@@ -71,18 +71,8 @@ mock.module('@services/configuration/configuration', () => {
 });
 
 // 4. Mock CCXT Library
-class MockNetworkError extends Error {}
 
-mock.module('ccxt', () => {
-  return {
-    default: {
-      binance: MockCCXTExchange,
-      NetworkError: MockNetworkError,
-    },
-    binance: MockCCXTExchange,
-    NetworkError: MockNetworkError,
-  };
-});
+mock.module('ccxt', () => createCcxtModuleMock());
 
 // 5. Mock Heart
 mock.module('@services/core/heart/heart', () => ({

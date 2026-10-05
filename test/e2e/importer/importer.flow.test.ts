@@ -3,7 +3,7 @@ import type { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 import { first, last } from 'lodash-es';
 import { generateSyntheticCandle } from '../fixtures/syntheticData';
-import { MockCCXTExchange } from '../mocks/ccxt.mock';
+import { createCcxtModuleMock, MockCCXTExchange } from '../mocks/ccxt.mock';
 import { MockWinston, clearLogs, logStore } from '../mocks/winston.mock';
 
 // --------------------------------------------------------------------------
@@ -93,19 +93,7 @@ mock.module('@services/configuration/configuration', () => {
 });
 
 // 2. Mock CCXT Library
-class MockNetworkError extends Error {}
-mock.module('ccxt', () => {
-  return {
-    // Default export required for some import styles
-    default: {
-      binance: MockCCXTExchange,
-      NetworkError: MockNetworkError,
-    },
-    // Named export if used
-    binance: MockCCXTExchange,
-    NetworkError: MockNetworkError,
-  };
-});
+mock.module('ccxt', () => createCcxtModuleMock());
 
 import { cleanDatabase } from '../helpers/database.helper';
 

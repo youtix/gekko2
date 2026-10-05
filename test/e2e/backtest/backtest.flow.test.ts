@@ -2,7 +2,7 @@ import type { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { beforeEach, describe, expect, it, mock } from 'bun:test';
 
 import { cleanDatabase, seedDatabaseWithCandles } from '../helpers/database.helper';
-import { MockCCXTExchange } from '../mocks/ccxt.mock';
+import { createCcxtModuleMock, MockCCXTExchange } from '../mocks/ccxt.mock';
 
 import { MockFetcherService } from '../mocks/fetcher.mock';
 import { MockHeart } from '../mocks/heart.mock';
@@ -123,18 +123,8 @@ mock.module('@services/configuration/configuration', () => {
 });
 
 // 5. Mock CCXT Library
-class MockNetworkError extends Error {}
 
-mock.module('ccxt', () => {
-  return {
-    default: {
-      binance: MockCCXTExchange,
-      NetworkError: MockNetworkError,
-    },
-    binance: MockCCXTExchange,
-    NetworkError: MockNetworkError,
-  };
-});
+mock.module('ccxt', () => createCcxtModuleMock());
 
 // 7. Mock Heart
 mock.module('@services/core/heart/heart', () => ({
