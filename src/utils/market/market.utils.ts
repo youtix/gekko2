@@ -1,11 +1,25 @@
+import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
+import { Tag } from '@models/tag.types';
 import { MarketData, MarketValidationResult } from '@services/exchange/exchange.types';
 import { isNil } from 'lodash-es';
 
-/** Checks if the order price is within the market data */
+/** NaN, ±Infinity, zero and negative numbers are never a valid order price, amount or cost, whatever the market limits */
+const isFinitePositive = (value: number) => Number.isFinite(value) && value > 0;
+
+/**
+ * A market limit that is not a finite number above 0 sets no bound. Binance disables a filter bound by setting it to 0, and ccxt
+ * copies the PRICE_FILTER maxPrice of 0 into limits.price.max, where it would refuse every price. A minimum of 0 or below bounds
+ * nothing anyway, since the value itself must be above 0. The invalid results report these normalized bounds.
+ */
+const toBound = (limit?: number) => (!isNil(limit) && isFinitePositive(limit) ? limit : undefined);
+
+/** Checks if the order price is a finite positive number within the market data */
 export const checkOrderPrice = (price: number, marketData: MarketData): MarketValidationResult<number> => {
   const priceLimits = marketData?.price;
-  const minimalPrice = priceLimits?.min;
-  const maximalPrice = priceLimits?.max;
+  const minimalPrice = toBound(priceLimits?.min);
+  const maximalPrice = toBound(priceLimits?.max);
+
+  if (!isFinitePositive(price)) return { isValid: false, reason: 'price', min: minimalPrice, max: maximalPrice };
 
   if (isNil(minimalPrice) && isNil(maximalPrice)) return { isValid: true, value: price };
 
@@ -20,11 +34,13 @@ export const checkOrderPrice = (price: number, marketData: MarketData): MarketVa
   return { isValid: true, value: price };
 };
 
-/** Checks if the order amount is within the market data */
+/** Checks if the order amount is a finite positive number within the market data */
 export const checkOrderAmount = (amount: number, marketData: MarketData): MarketValidationResult<number> => {
   const amountLimits = marketData?.amount;
-  const minimalAmount = amountLimits?.min;
-  const maximalAmount = amountLimits?.max;
+  const minimalAmount = toBound(amountLimits?.min);
+  const maximalAmount = toBound(amountLimits?.max);
+
+  if (!isFinitePositive(amount)) return { isValid: false, reason: 'amount', min: minimalAmount, max: maximalAmount };
 
   if (isNil(minimalAmount) && isNil(maximalAmount)) return { isValid: true, value: amount };
 
@@ -39,13 +55,15 @@ export const checkOrderAmount = (amount: number, marketData: MarketData): Market
   return { isValid: true, value: amount };
 };
 
-/** Checks if the order cost is within the market data */
+/** Checks if the order cost (amount × price) is a finite positive number within the market data */
 export const checkOrderCost = (amount: number, price: number, marketData: MarketData): MarketValidationResult<number> => {
   const costLimits = marketData?.cost;
-  const minimalCost = costLimits?.min;
-  const maximalCost = costLimits?.max;
+  const minimalCost = toBound(costLimits?.min);
+  const maximalCost = toBound(costLimits?.max);
 
   const cost = amount * price;
+
+  if (!isFinitePositive(cost)) return { isValid: false, reason: 'cost', min: minimalCost, max: maximalCost };
 
   if (isNil(minimalCost) && isNil(maximalCost)) return { isValid: true, value: cost };
 
@@ -58,4 +76,32 @@ export const checkOrderCost = (amount: number, price: number, marketData: Market
   }
 
   return { isValid: true, value: cost };
+};
+
+/**
+ * Checks the price, then the amount, then the cost of an order against the market limits.
+ * Throws an OrderOutOfRangeError for the first invalid value, returns the validated values otherwise.
+ */
+export const assertOrderWithinLimits = ({
+  tag,
+  amount,
+  price,
+  marketData,
+}: {
+  tag: Tag;
+  amount: number;
+  price: number;
+  marketData: MarketData;
+}): { amount: number; price: number; cost: number } => {
+  const priceResult = checkOrderPrice(price, marketData);
+  if (!priceResult.isValid) throw new OrderOutOfRangeError(tag, priceResult.reason, price, priceResult.min, priceResult.max);
+
+  const amountResult = checkOrderAmount(amount, marketData);
+  if (!amountResult.isValid) throw new OrderOutOfRangeError(tag, amountResult.reason, amount, amountResult.min, amountResult.max);
+
+  const costResult = checkOrderCost(amountResult.value, priceResult.value, marketData);
+  if (!costResult.isValid)
+    throw new OrderOutOfRangeError(tag, costResult.reason, amountResult.value * priceResult.value, costResult.min, costResult.max);
+
+  return { amount: amountResult.value, price: priceResult.value, cost: costResult.value };
 };
