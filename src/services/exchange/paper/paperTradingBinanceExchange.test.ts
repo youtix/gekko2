@@ -3,6 +3,7 @@ import { config } from '@services/configuration/configuration';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { CCXTExchange } from '../ccxtExchange';
 import { DummyCentralizedExchange } from '../dummy/dummyCentralizedExchange';
+import { MarketData } from '../exchange.types';
 import { PaperTradingBinanceExchange } from './paperTradingBinanceExchange';
 
 vi.mock('@services/configuration/configuration', () => ({
@@ -15,13 +16,8 @@ vi.mock('../ccxtExchange', () => {
   MockCCXT.prototype.loadMarkets = vi.fn().mockResolvedValue(undefined);
   MockCCXT.prototype.fetchTicker = vi.fn().mockResolvedValue({ ask: 100, bid: 99 });
   MockCCXT.prototype.fetchOHLCV = vi.fn().mockResolvedValue([]);
-  MockCCXT.prototype.getMarketData = vi.fn().mockReturnValue({
-    amount: {},
-    price: {},
-    cost: {},
-    precision: {},
-    fee: { maker: 0.001, taker: 0.002 },
-  });
+  MockCCXT.prototype.fetchTickers = vi.fn();
+  MockCCXT.prototype.getMarketData = vi.fn();
   MockCCXT.prototype.onNewCandle = vi.fn().mockReturnValue(() => {});
   return { CCXTExchange: MockCCXT };
 });
@@ -49,10 +45,21 @@ const mockExchangeConfig = {
   exchangeSynchInterval: 10000,
   orderSynchInterval: 5000,
 };
+const REAL_MARKET_DATA: MarketData = {
+  amount: { min: 0.00001, max: 9000 },
+  price: { min: 0.01, max: 1000000 },
+  cost: { min: 5, max: 9000000 },
+  precision: { price: 0.01, amount: 0.00001 },
+  fee: { maker: 0.001, taker: 0.002 },
+};
+const simulatorMarketData = () => vi.mocked(DummyCentralizedExchange).mock.calls[0][0].marketData;
+const realExchangeConfig = () => vi.mocked(CCXTExchange).mock.calls[0][0];
 
 describe('PaperTradingBinanceExchange', () => {
   beforeEach(() => {
     (config.getWatch as Mock).mockReturnValue(mockWatchConfig);
+    // A fresh object per call, as CCXTExchange builds one
+    vi.mocked(CCXTExchange.prototype.getMarketData).mockImplementation(() => structuredClone(REAL_MARKET_DATA));
   });
 
   describe('Constructor', () => {
@@ -63,6 +70,16 @@ describe('PaperTradingBinanceExchange', () => {
     it('creates CCXTExchange with binance config', () => {
       new PaperTradingBinanceExchange(mockExchangeConfig);
       expect(CCXTExchange).toHaveBeenCalledWith(expect.objectContaining({ name: 'binance' }));
+    });
+
+    it.each`
+      proxy
+      ${'socks5://127.0.0.1:1080'}
+      ${'http://127.0.0.1:3128'}
+      ${undefined}
+    `('creates the CCXTExchange that reads the market data with the proxy $proxy of the config', ({ proxy }) => {
+      new PaperTradingBinanceExchange({ ...mockExchangeConfig, proxy });
+      expect(realExchangeConfig().proxy).toBe(proxy);
     });
   });
 
@@ -81,11 +98,48 @@ describe('PaperTradingBinanceExchange', () => {
       );
     });
 
-    it('applies fee override when provided', async () => {
-      const configWithFee = { ...mockExchangeConfig, feeOverride: { maker: 0.0005, taker: 0.001 } };
-      const exchange = new PaperTradingBinanceExchange(configWithFee);
+    it.each`
+      feeOverride                        | fee
+      ${undefined}                       | ${{ maker: 0.001, taker: 0.002 }}
+      ${{}}                              | ${{ maker: 0.001, taker: 0.002 }}
+      ${{ maker: 0.0008 }}               | ${{ maker: 0.0008, taker: 0.002 }}
+      ${{ taker: 0.003 }}                | ${{ maker: 0.001, taker: 0.003 }}
+      ${{ maker: 0.0005, taker: 0.001 }} | ${{ maker: 0.0005, taker: 0.001 }}
+      ${{ maker: 0, taker: 0 }}          | ${{ maker: 0, taker: 0 }}
+    `('gives the simulator the real market data with the fees $fee when feeOverride is $feeOverride', async ({ feeOverride, fee }) => {
+      const exchange = new PaperTradingBinanceExchange({ ...mockExchangeConfig, feeOverride });
       await exchange.loadMarkets();
-      expect(DummyCentralizedExchange).toHaveBeenCalledWith(expect.objectContaining({ marketData: expect.any(Map) }));
+      expect(simulatorMarketData().get('BTC/USDT')).toEqual({ ...REAL_MARKET_DATA, fee });
+    });
+  });
+
+  describe('getMarketData', () => {
+    it('returns the real market data before loadMarkets', () => {
+      const exchange = new PaperTradingBinanceExchange({ ...mockExchangeConfig, feeOverride: { maker: 0.0008 } });
+      expect(exchange.getMarketData('BTC/USDT')).toEqual(REAL_MARKET_DATA);
+    });
+
+    it.each`
+      feeOverride          | fee
+      ${undefined}         | ${{ maker: 0.001, taker: 0.002 }}
+      ${{ maker: 0.0008 }} | ${{ maker: 0.0008, taker: 0.002 }}
+      ${{ taker: 0.003 }}  | ${{ maker: 0.001, taker: 0.003 }}
+    `('returns the fees $fee the simulator charges after loadMarkets when feeOverride is $feeOverride', async ({ feeOverride, fee }) => {
+      const exchange = new PaperTradingBinanceExchange({ ...mockExchangeConfig, feeOverride });
+      await exchange.loadMarkets();
+      expect(exchange.getMarketData('BTC/USDT').fee).toEqual(fee);
+    });
+
+    it('returns the very market data the simulator was given once markets are loaded', async () => {
+      const exchange = new PaperTradingBinanceExchange({ ...mockExchangeConfig, feeOverride: { maker: 0.0008 } });
+      await exchange.loadMarkets();
+      expect(exchange.getMarketData('BTC/USDT')).toBe(simulatorMarketData().get('BTC/USDT'));
+    });
+
+    it('returns the real market data of a pair that is not watched', async () => {
+      const exchange = new PaperTradingBinanceExchange({ ...mockExchangeConfig, feeOverride: { maker: 0.0008 } });
+      await exchange.loadMarkets();
+      expect(exchange.getMarketData('ETH/USDT')).toEqual(REAL_MARKET_DATA);
     });
   });
 
@@ -107,9 +161,9 @@ describe('PaperTradingBinanceExchange', () => {
       expect(CCXTExchange.prototype.fetchTicker).toHaveBeenCalledWith('BTC/USDT');
     });
 
-    it('getMarketData delegates to real exchange', () => {
-      exchange.getMarketData('BTC/USDT');
-      expect(CCXTExchange.prototype.getMarketData).toHaveBeenCalledWith('BTC/USDT');
+    it('fetchTickers delegates to real exchange', async () => {
+      await exchange.fetchTickers(['BTC/USDT']);
+      expect(CCXTExchange.prototype.fetchTickers).toHaveBeenCalledWith(['BTC/USDT']);
     });
   });
 

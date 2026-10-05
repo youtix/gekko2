@@ -24,6 +24,8 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
   private readonly realExchange: CCXTExchange;
   private readonly exchangeConfig: PaperTradingBinanceExchangeConfig;
   private simulatedExchange!: DummyCentralizedExchange;
+  /** Set by loadMarkets: the market data the simulator trades with, fee override included */
+  private simulatedMarketData?: Map<TradingPair, MarketData>;
 
   constructor(exchangeConfig: PaperTradingBinanceExchangeConfig) {
     // Use CCXTExchange for read operations (public endpoints only, no auth required)
@@ -33,6 +35,7 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
       sandbox: false,
       exchangeSynchInterval: exchangeConfig.exchangeSynchInterval,
       orderSynchInterval: exchangeConfig.orderSynchInterval,
+      proxy: exchangeConfig.proxy, // routes the public client, hence all the market data traffic, through the configured proxy
     });
     this.exchangeConfig = exchangeConfig;
   }
@@ -62,16 +65,17 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
       exchangeSynchInterval: this.exchangeConfig.exchangeSynchInterval,
       orderSynchInterval: this.exchangeConfig.orderSynchInterval,
     });
+    this.simulatedMarketData = marketData;
 
     info('exchange', '🔶 PAPER TRADING MODE - Using simulated orders with real market data');
     info('exchange', `Initial portfolio: ${JSON.stringify(this.exchangeConfig.simulationBalance)}`);
   }
 
+  /** The override is merged into the real fees, not substituted: a fee it leaves out (maker or taker) keeps its Binance value */
   private buildMarketData(symbol: TradingPair): MarketData {
-    return {
-      ...this.realExchange.getMarketData(symbol),
-      ...(this.exchangeConfig.feeOverride && { fee: this.exchangeConfig.feeOverride }),
-    };
+    const marketData = this.realExchange.getMarketData(symbol);
+    const { feeOverride } = this.exchangeConfig;
+    return feeOverride ? { ...marketData, fee: { ...marketData.fee, ...feeOverride } } : marketData;
   }
 
   /* -------------------------------------------------------------------------- */
@@ -90,8 +94,9 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
     return this.realExchange.fetchTicker(symbol);
   }
 
+  /** Once loadMarkets has run, a watched pair gets what the simulator charges (fee override included), not Binance's own fees */
   public getMarketData(symbol: TradingPair): MarketData {
-    return this.realExchange.getMarketData(symbol);
+    return this.simulatedMarketData?.get(symbol) ?? this.realExchange.getMarketData(symbol);
   }
 
   /* -------------------------------------------------------------------------- */
