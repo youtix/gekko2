@@ -1,10 +1,10 @@
-import { exchangeSchema, proxySchema, simulationBalanceSchema } from '@services/exchange/exchange.schema';
+import { exchangeSchema, feeRateSchema, proxySchema, simulationBalanceSchema } from '@services/exchange/exchange.schema';
 import z from 'zod';
 
 const feeOverrideSchema = z
   .object({
-    maker: z.number().optional(),
-    taker: z.number().optional(),
+    maker: feeRateSchema('feeOverride.maker').optional(),
+    taker: feeRateSchema('feeOverride.taker').optional(),
   })
   .optional();
 
