@@ -1,8 +1,26 @@
 import { addMinutes, startOfMinute, subMilliseconds } from 'date-fns';
 import { describe, expect, it } from 'vitest';
-import { isDaterangeValid, splitIntervals } from './date.utils';
+import { isDaterangeValid, splitIntervals, toISOString } from './date.utils';
 
 describe('', () => {
+  describe('toISOString', () => {
+    // Date.prototype.toISOString throws a RangeError on a date that is not one: a message or a report built with it must not throw
+    it.each`
+      description                                  | timestamp        | expected
+      ${'a timestamp'}                             | ${1704346468838} | ${'2024-01-04T05:34:28.838Z'}
+      ${'the epoch'}                               | ${0}             | ${'1970-01-01T00:00:00.000Z'}
+      ${'the last date there is'}                  | ${8.64e15}       | ${'+275760-09-13T00:00:00.000Z'}
+      ${'no timestamp'}                            | ${undefined}     | ${'Unknown Date'}
+      ${'null'}                                    | ${null}          | ${'Unknown Date'}
+      ${'NaN'}                                     | ${Number.NaN}    | ${'Unknown Date'}
+      ${'Infinity'}                                | ${Infinity}      | ${'Unknown Date'}
+      ${'-Infinity'}                               | ${-Infinity}     | ${'Unknown Date'}
+      ${'a timestamp past the last date there is'} | ${8.64e15 + 1}   | ${'Unknown Date'}
+    `('returns $expected for $description', ({ timestamp, expected }) => {
+      expect(toISOString(timestamp)).toBe(expected);
+    });
+  });
+
   describe('isDaterangeValid', () => {
     it.each`
       startDate                           | endDate                             | expected

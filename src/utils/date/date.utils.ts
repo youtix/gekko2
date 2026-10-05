@@ -1,7 +1,15 @@
 import { addMinutes, differenceInMinutes, isBefore, isValid, startOfMinute, subMilliseconds } from 'date-fns';
 import { isNil } from 'lodash-es';
 
-export const toISOString = (timestamp?: EpochTimeStamp): string => (!isNil(timestamp) ? new Date(timestamp).toISOString() : 'Unknown Date');
+/**
+ * A timestamp in ISO 8601, for messages and reports, which must not throw: 'Unknown Date' without one, or for one that is not a
+ * date (NaN, ±Infinity, beyond ±8.64e15 ms), on which Date.prototype.toISOString throws a RangeError.
+ */
+export const toISOString = (timestamp?: EpochTimeStamp): string => {
+  if (isNil(timestamp)) return 'Unknown Date';
+  const date = new Date(timestamp);
+  return isValid(date) ? date.toISOString() : 'Unknown Date';
+};
 
 export const toTimestamp = (iso8601String?: string): EpochTimeStamp => new Date(iso8601String ?? 0).getTime();
 
