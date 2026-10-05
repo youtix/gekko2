@@ -1,15 +1,35 @@
 import { GekkoError } from '@errors/gekko.error';
 
+/**
+ * The exchange refused the order: amount, price or cost out of its rules, insufficient funds, malformed request. Sent again, it
+ * would be refused again, so the order ends rejected.
+ */
 export class InvalidOrder extends GekkoError {
-  constructor(message: string) {
+  constructor(message: string, options?: ErrorOptions) {
     super('exchange', message);
     this.name = 'InvalidOrder';
+    if (options?.cause !== undefined) this.cause = options.cause;
   }
 }
 
+/** The exchange does not know the order: it was never placed, or it is already filled or canceled. */
 export class OrderNotFound extends GekkoError {
-  constructor(message: string) {
+  constructor(message: string, options?: ErrorOptions) {
     super('exchange', message);
     this.name = 'OrderNotFound';
+    if (options?.cause !== undefined) this.cause = options.cause;
+  }
+}
+
+/**
+ * A transport-level failure (timeout, 5xx, rate limit, DNS...) that outlived the retries, or that hit a call which is never
+ * retried (order creation, order cancelation). The exchange may or may not have processed the request: the caller decides
+ * whether the outcome can be learned later (polling) or must be reported as unknown.
+ */
+export class ExchangeNetworkError extends GekkoError {
+  constructor(message: string, options?: ErrorOptions) {
+    super('exchange', message);
+    this.name = 'ExchangeNetworkError';
+    if (options?.cause !== undefined) this.cause = options.cause;
   }
 }

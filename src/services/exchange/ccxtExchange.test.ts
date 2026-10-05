@@ -1,39 +1,41 @@
 import { GekkoError } from '@errors/gekko.error';
+import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { config } from '@services/configuration/configuration';
-import { checkOrderAmount, checkOrderCost, checkOrderPrice } from '@utils/market/market.utils';
+import * as logger from '@services/logger';
+import { assertOrderWithinLimits } from '@utils/market/market.utils';
 import ccxt from 'ccxt';
-import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { CCXTExchange } from './ccxtExchange';
-import {
-  checkMandatoryFeatures,
-  createExchange,
-  mapCcxtOrderToOrder,
-  mapCcxtTradeToTrade,
-  mapOhlcvToCandles,
-  retry,
-} from './exchange.utils';
+import { BROKER_MAX_RETRIES_ON_FAILURE, LIMITS, MAX_MY_TRADES_PAGES } from './exchange.const';
+import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from './exchange.error';
+import { checkMandatoryFeatures, createExchange, mapCcxtOrderToOrder, mapCcxtTradeToTrade, mapOhlcvToCandles } from './exchange.utils';
 
 vi.mock('@services/configuration/configuration', () => ({
   config: { getWatch: vi.fn(), getExchange: vi.fn() },
 }));
 vi.mock('@services/core/heart/heart');
-vi.mock('@utils/market/market.utils', () => ({
-  checkOrderAmount: vi.fn(),
-  checkOrderPrice: vi.fn(),
-  checkOrderCost: vi.fn(),
-}));
+// The real validation runs (vi.fn(impl) survives mockReset), spied to check how the exchange calls it
+vi.mock('@utils/market/market.utils', async importOriginal => {
+  const actual = await importOriginal<typeof import('@utils/market/market.utils')>();
+  return { ...actual, assertOrderWithinLimits: vi.fn(actual.assertOrderWithinLimits) };
+});
 
-vi.mock('./exchange.utils', () => ({
+// retry, translateErrors and the translation of the ccxt errors are the real ones: the tests see the errors CCXTExchange throws
+vi.mock('./exchange.utils', async importOriginal => ({
+  ...(await importOriginal<typeof import('./exchange.utils')>()),
   createExchange: vi.fn(),
-  retry: vi.fn(),
   checkMandatoryFeatures: vi.fn(),
   mapCcxtOrderToOrder: vi.fn(),
   mapCcxtTradeToTrade: vi.fn(),
   mapOhlcvToCandles: vi.fn(),
 }));
-vi.mock('@services/logger', () => ({ error: vi.fn(), debug: vi.fn() }));
+vi.mock('@services/logger', () => ({ error: vi.fn(), warning: vi.fn(), debug: vi.fn() }));
+// retry waits between its attempts, the tests do not
+vi.mock('@utils/process/process.utils', () => ({ wait: vi.fn() }));
 
-vi.mock('ccxt', () => {
+// The exchanges are mocked, the error classes are the real ones, and so are the pure rounding functions and constants of ccxt
+vi.mock('ccxt', async importOriginal => {
+  const { errors, functions } = await importOriginal<typeof import('ccxt')>();
   const has = {
     fetchOHLCV: true,
     fetchTicker: true,
@@ -52,7 +54,9 @@ vi.mock('ccxt', () => {
   MockExchange.prototype.has = has;
   MockExchange.prototype.setSandboxMode = vi.fn();
   MockExchange.prototype.loadMarkets = vi.fn();
+  MockExchange.prototype.setMarketsFromExchange = vi.fn();
   MockExchange.prototype.fetchTicker = vi.fn();
+  MockExchange.prototype.fetchTickers = vi.fn();
   MockExchange.prototype.fetchOHLCV = vi.fn();
   MockExchange.prototype.fetchMyTrades = vi.fn();
   MockExchange.prototype.fetchOrder = vi.fn();
@@ -60,9 +64,16 @@ vi.mock('ccxt', () => {
   MockExchange.prototype.createOrder = vi.fn();
   MockExchange.prototype.cancelOrder = vi.fn();
   MockExchange.prototype.market = vi.fn();
+  MockExchange.prototype.amountToPrecision = vi.fn();
+  MockExchange.prototype.priceToPrecision = vi.fn();
+  // As ccxt sets them on every exchange instance, with the precision mode of Binance and Hyperliquid
+  MockExchange.prototype.decimalToPrecision = vi.fn(functions.decimalToPrecision);
+  MockExchange.prototype.numberToString = vi.fn(functions.numberToString);
+  MockExchange.prototype.precisionMode = functions.TICK_SIZE;
+  MockExchange.prototype.paddingMode = functions.NO_PADDING;
   MockExchange.prototype.options = {};
 
-  return { default: { binance: MockExchange, hyperliquid: MockExchange } };
+  return { ...errors, default: { ...errors, TRUNCATE: functions.TRUNCATE, binance: MockExchange, hyperliquid: MockExchange } };
 });
 
 const mockWatchConfig = { pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }] };
@@ -79,6 +90,7 @@ const hyperliquidConfig = {
   name: 'hyperliquid' as const,
   privateKey: 'pk',
   walletAddress: 'addr',
+  sandbox: false,
   verbose: false,
   exchangeSynchInterval: 10000,
   orderSynchInterval: 5000,
@@ -87,10 +99,6 @@ const hyperliquidConfig = {
 describe('CCXTExchange', () => {
   beforeEach(() => {
     (config.getWatch as Mock).mockReturnValue(mockWatchConfig);
-    (retry as Mock).mockImplementation(async fn => fn());
-    (checkOrderAmount as Mock).mockReturnValue({ isValid: true, value: 1 });
-    (checkOrderPrice as Mock).mockReturnValue({ isValid: true, value: 100 });
-    (checkOrderCost as Mock).mockReturnValue({ isValid: true, value: 100 });
 
     // Mock createExchange to return both publicClient and privateClient
     (createExchange as Mock).mockImplementation(config => {
@@ -128,6 +136,65 @@ describe('CCXTExchange', () => {
     });
   });
 
+  describe('loadMarkets', () => {
+    const markets = { 'BTC/USDT': { symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' } };
+    // ccxt's built-in mapping of Hyperliquid's wrapped spot tokens, then the same completed by fetchCurrencies from the token list of
+    // the exchange while the markets load: a token the built-in mapping lacks (UZZZ), one it maps otherwise (UPUMP)
+    const builtInMapping = { UBTC: 'BTC', UPUMP: 'PUMP' };
+    const learnedMapping = { UBTC: 'BTC', UPUMP: 'PMP', UZZZ: 'ZZZ' };
+    let exchange: CCXTExchange;
+    let publicInstance: any;
+    let privateInstance: any;
+
+    describe.each`
+      exchangeName     | exchangeConfig       | mapping           | privateOptions
+      ${'binance'}     | ${binanceConfig}     | ${undefined}      | ${{}}
+      ${'hyperliquid'} | ${hyperliquidConfig} | ${builtInMapping} | ${{ spotCurrencyMapping: learnedMapping }}
+    `('on $exchangeName', ({ exchangeConfig, mapping, privateOptions }) => {
+      beforeEach(() => {
+        exchange = new CCXTExchange(exchangeConfig);
+        // createExchange creates the public client first. Each client gets spies and options of its own: the mocked ccxt shares
+        // those of its prototype between instances
+        [publicInstance, privateInstance] = (ccxt as any)[exchangeConfig.name].mock.instances.slice(-2);
+        publicInstance.options = mapping ? { spotCurrencyMapping: { ...mapping } } : {};
+        privateInstance.options = mapping ? { spotCurrencyMapping: { ...mapping } } : {};
+        // As in ccxt, the public client sets its markets, and completes Hyperliquid's mapping, once the exchange has answered
+        publicInstance.loadMarkets = vi.fn(async () => {
+          await Promise.resolve();
+          if (mapping) publicInstance.options.spotCurrencyMapping = { ...learnedMapping };
+          publicInstance.markets = markets;
+          return markets;
+        });
+        privateInstance.loadMarkets = vi.fn();
+        privateInstance.setMarketsFromExchange = vi.fn((source: any) => {
+          privateInstance.markets = source.markets;
+          return privateInstance;
+        });
+      });
+
+      it('downloads the markets once, with the public client', async () => {
+        await exchange.loadMarkets();
+        expect(publicInstance.loadMarkets).toHaveBeenCalledOnce();
+      });
+
+      it('does not download the markets with the private client', async () => {
+        await exchange.loadMarkets();
+        expect(privateInstance.loadMarkets).not.toHaveBeenCalled();
+      });
+
+      it('hands the private client the markets the public client loaded', async () => {
+        await exchange.loadMarkets();
+        expect(privateInstance.markets).toBe(markets);
+      });
+
+      // Hyperliquid's private client resolves a symbol written with the token name and keys its spot balance with that mapping
+      it('gives the private client the spot currency mapping of the public client once loaded, if it has one', async () => {
+        await exchange.loadMarkets();
+        expect(privateInstance.options).toStrictEqual(privateOptions);
+      });
+    });
+  });
+
   describe('Market Operations', () => {
     let exchange: CCXTExchange;
     let instance: any;
@@ -135,11 +202,6 @@ describe('CCXTExchange', () => {
     beforeEach(() => {
       exchange = new CCXTExchange(binanceConfig);
       instance = (ccxt as any).binance.mock.instances.at(-1);
-    });
-
-    it('loadMarkets calls client loadMarkets', async () => {
-      await exchange.loadMarkets();
-      expect(instance.loadMarkets).toHaveBeenCalled();
     });
 
     it('getMarketData returns market limits and fees (using first configured pair)', () => {
@@ -197,13 +259,180 @@ describe('CCXTExchange', () => {
   });
 
   describe('fetchMyTrades', () => {
-    it('fetches and maps trades', async () => {
-      const exchange = new CCXTExchange(binanceConfig);
-      const instance = (ccxt as any).binance.mock.instances.at(-1);
-      instance.fetchMyTrades.mockResolvedValue([{ id: '1' }]);
+    type TradeFixture = { id?: string; order: string; symbol: string; timestamp?: number; amount: number; price: number };
+    const market = { symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' };
+    const trade = {
+      id: '1',
+      order: 'ord1',
+      symbol: 'BTC/USDT',
+      timestamp: 1000,
+      amount: 1,
+      price: 60000,
+      fee: { cost: 60, currency: 'USDT' },
+    };
+    const { trades: limit } = LIMITS.binance;
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    /** A ccxt trade on BTC/USDT, a fill of the order ord1, unless overridden */
+    const makeTrade = (id: string | undefined, timestamp: number | undefined, overrides: Partial<TradeFixture> = {}): TradeFixture => ({
+      id,
+      order: 'ord1',
+      symbol: 'BTC/USDT',
+      timestamp,
+      amount: 1,
+      price: 60000,
+      ...overrides,
+    });
+    /** `count` trades of ids `${prefix}0`, `${prefix}1`..., each made at the time `time` gives its index */
+    const makeTrades = (count: number, time: (index: number) => number, prefix = '', overrides: Partial<TradeFixture> = {}) =>
+      Array.from({ length: count }, (_, index) => makeTrade(`${prefix}${index}`, time(index), overrides));
+    /**
+     * A trade history, oldest first, served a page a call as ccxt 4.5.39 returns it: the first `pageLimit` trades made at or after
+     * `since`, the latest ones without it. Binance pages the trades of the symbol asked for. Given allMarketsPage, the exchange pages the
+     * trades of every market, that many an answer, which ccxt then filters by the symbol asked for: Hyperliquid, 2000 fills an answer.
+     */
+    const serveHistory =
+      (history: TradeFixture[], allMarketsPage?: number) =>
+      async (symbol: string | undefined, since: number | undefined, pageLimit: number) => {
+        const ofSymbol = (trades: TradeFixture[]) => (symbol === undefined ? trades : trades.filter(fill => fill.symbol === symbol));
+        if (since === undefined) return ofSymbol(history).slice(-pageLimit);
+        const fromSince = history.filter(({ timestamp }) => timestamp !== undefined && timestamp >= since);
+        return ofSymbol(allMarketsPage ? fromSince.slice(0, allMarketsPage) : fromSince).slice(0, pageLimit);
+      };
+    const getSinceOfEachCall = () => instance.fetchMyTrades.mock.calls.map(([, since]: unknown[]) => since);
+
+    // Two trades a millisecond from 1000: full pages from 1000 (trades 0 to 999) and 1499 (998 to 1997), then from 1998 (1996 to 2499)
+    const threePages = makeTrades(2500, index => 1000 + Math.floor(index / 2));
+    // More trades than a page holds, all made in the millisecond 1000
+    const crowdedMillisecond = makeTrades(limit + 500, () => 1000);
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(binanceConfig);
+      instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.market.mockImplementation((symbol: string) => (symbol === market.symbol ? market : undefined));
+      instance.fetchMyTrades.mockResolvedValue([trade]);
       (mapCcxtTradeToTrade as Mock).mockImplementation(t => t);
-      expect(await exchange.fetchMyTrades('BTC/USDT', 1000)).toEqual([{ id: '1' }]);
+    });
+
+    it('fetches and maps trades', async () => {
+      expect(await exchange.fetchMyTrades('BTC/USDT', 1000)).toEqual([trade]);
+    });
+
+    it('fetches the trades of the symbol since the date given', async () => {
+      await exchange.fetchMyTrades('BTC/USDT', 1000);
       expect(instance.fetchMyTrades).toHaveBeenCalledWith('BTC/USDT', 1000, expect.anything());
+    });
+
+    // The mapper derives the fee rate of a trade from the currency of its fee, base or quote of the market
+    it('maps each trade with the market of the symbol', async () => {
+      await exchange.fetchMyTrades('BTC/USDT', 1000);
+      expect(mapCcxtTradeToTrade).toHaveBeenCalledWith(trade, market);
+    });
+
+    it.each`
+      description                                    | history                                         | from         | pages
+      ${'a page that is not full'}                   | ${makeTrades(3, index => 1000 + index)}         | ${1000}      | ${1}
+      ${'a full page, without a date to fetch from'} | ${makeTrades(limit + 1, index => 1000 + index)} | ${undefined} | ${1}
+      ${'two full pages and one that is not'}        | ${threePages}                                   | ${1000}      | ${3}
+      ${'a full page that brings no new trade'}      | ${crowdedMillisecond}                           | ${1000}      | ${2}
+    `('fetches $pages page(s) for $description', async ({ history, from, pages }) => {
+      instance.fetchMyTrades.mockImplementation(serveHistory(history));
+      await exchange.fetchMyTrades('BTC/USDT', from);
+      expect(instance.fetchMyTrades).toHaveBeenCalledTimes(pages);
+    });
+
+    describe('with trades beyond a full page', () => {
+      beforeEach(() => {
+        instance.fetchMyTrades.mockImplementation(serveHistory(threePages));
+      });
+
+      it('fetches each next page from the time of the last trade of the full page before', async () => {
+        await exchange.fetchMyTrades('BTC/USDT', 1000);
+        expect(getSinceOfEachCall()).toEqual([1000, 1499, 1998]);
+      });
+
+      it('returns each trade once, oldest first', async () => {
+        expect(await exchange.fetchMyTrades('BTC/USDT', 1000)).toEqual(threePages);
+      });
+
+      it('does not warn', async () => {
+        await exchange.fetchMyTrades('BTC/USDT', 1000);
+        expect(logger.warning).not.toHaveBeenCalled();
+      });
+    });
+
+    it('warns that the later trades are missing when a full page brings no new trade', async () => {
+      instance.fetchMyTrades.mockImplementation(serveHistory(crowdedMillisecond));
+      await exchange.fetchMyTrades('BTC/USDT', 1000);
+      expect(logger.warning).toHaveBeenCalledWith('exchange', expect.stringContaining('cannot page past that time'));
+    });
+
+    // Pages of 2 trades, which keep MAX_MY_TRADES_PAGES pages cheap to fetch
+    describe('with more trades than MAX_MY_TRADES_PAGES pages hold', () => {
+      // A trade a millisecond: each page brings one new trade, its first one being the last one of the page before
+      const longHistory = makeTrades(2 * MAX_MY_TRADES_PAGES + 2, index => 1000 + index);
+
+      beforeEach(() => {
+        LIMITS.binance.trades = 2;
+        instance.fetchMyTrades.mockImplementation(serveHistory(longHistory));
+      });
+
+      afterEach(() => {
+        LIMITS.binance.trades = limit;
+      });
+
+      it('fetches MAX_MY_TRADES_PAGES pages', async () => {
+        await exchange.fetchMyTrades('BTC/USDT', 1000);
+        expect(instance.fetchMyTrades).toHaveBeenCalledTimes(MAX_MY_TRADES_PAGES);
+      });
+
+      it('warns that the later trades are missing', async () => {
+        await exchange.fetchMyTrades('BTC/USDT', 1000);
+        expect(logger.warning).toHaveBeenCalledWith('exchange', expect.stringContaining(`stopped after ${MAX_MY_TRADES_PAGES} pages`));
+      });
+    });
+
+    it('fetches the next page from the same time when the last trade of a full page has no time', async () => {
+      instance.fetchMyTrades.mockResolvedValue([...makeTrades(limit - 1, index => 1000 + index), makeTrade('untimed', undefined)]);
+      await exchange.fetchMyTrades('BTC/USDT', 1000);
+      expect(getSinceOfEachCall()).toEqual([1000, 1000]);
+    });
+
+    it('keeps both sides of a self-trade, which share the id of the trade', async () => {
+      instance.fetchMyTrades.mockResolvedValue([makeTrade('7', 1000, { order: 'buy' }), makeTrade('7', 1000, { order: 'sell' })]);
+      expect(await exchange.fetchMyTrades('BTC/USDT', 1000)).toHaveLength(2);
+    });
+
+    // Two trades without an id, made in the same millisecond, end the first page and start the second one
+    it('keeps once each trade without an id fetched on two pages', async () => {
+      const idless = [makeTrade(undefined, 1998, { amount: 1 }), makeTrade(undefined, 1998, { amount: 2 })];
+      const history = [...makeTrades(limit - 2, index => 1000 + index), ...idless, ...makeTrades(5, index => 1999 + index, 'tail')];
+      instance.fetchMyTrades.mockImplementation(serveHistory(history));
+      expect(await exchange.fetchMyTrades('BTC/USDT', 1000)).toHaveLength(limit + 5);
+    });
+
+    describe('on hyperliquid, whose pages hold the fills of every market', () => {
+      const fillsPerAnswer = 2000;
+      // A full answer of fills of a perpetual (1000 to 2999), then three fills of the symbol (3000 to 3002)
+      const fillsOfSymbol = makeTrades(3, index => 3000 + index, 'btc', { symbol: 'BTC/USDC' });
+      const history = [...makeTrades(fillsPerAnswer, index => 1000 + index, 'eth', { symbol: 'ETH/USDC:USDC' }), ...fillsOfSymbol];
+
+      beforeEach(() => {
+        exchange = new CCXTExchange(hyperliquidConfig);
+        instance = (ccxt as any).hyperliquid.mock.instances.at(-1);
+        instance.market.mockReturnValue({ symbol: 'BTC/USDC', base: 'BTC', quote: 'USDC' });
+        instance.fetchMyTrades.mockImplementation(serveHistory(history, fillsPerAnswer));
+      });
+
+      it('fetches the fills of every market, 2000 a page', async () => {
+        await exchange.fetchMyTrades('BTC/USDC', 1000);
+        expect(instance.fetchMyTrades).toHaveBeenCalledWith(undefined, 1000, fillsPerAnswer);
+      });
+
+      it('finds the fills of the symbol beyond a full page of fills of other markets', async () => {
+        expect(await exchange.fetchMyTrades('BTC/USDC', 1000)).toEqual(fillsOfSymbol);
+      });
     });
   });
 
@@ -219,59 +448,609 @@ describe('CCXTExchange', () => {
   });
 
   describe('fetchBalance', () => {
-    it('extracts asset and currency balances from first pair', async () => {
-      const exchange = new CCXTExchange(binanceConfig);
-      const instance = (ccxt as any).binance.mock.instances.at(-1);
-      instance.fetchBalance.mockResolvedValue({ BTC: { free: 1.5 }, USDT: { free: 1000 } });
-      instance.market.mockReturnValue({ baseName: 'BTC', quote: 'USDT' });
-      const balance = await exchange.fetchBalance();
-      expect(balance.get('BTC')).toEqual({ free: 1.5, used: 0, total: 0 });
-      expect(balance.get('USDT')).toEqual({ free: 1000, used: 0, total: 0 });
-      expect(instance.market).toHaveBeenCalledWith('BTC/USDT');
+    const btc = { free: 0.5, used: 0.1, total: 0.6 };
+    const usd = { free: 1000, used: 200, total: 1200 };
+    const other = { free: 12, used: 3, total: 15 };
+    const zero = { free: 0, used: 0, total: 0 };
+
+    describe('on binance, whose markets have no baseName', () => {
+      let exchange: CCXTExchange;
+      let instance: any;
+
+      beforeEach(() => {
+        exchange = new CCXTExchange(binanceConfig);
+        instance = (ccxt as any).binance.mock.instances.at(-1);
+        instance.market.mockReturnValue({ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' });
+      });
+
+      it.each`
+        description                                                      | balance                    | expected
+        ${'keys the balances by the asset and the currency of the pair'} | ${{ BTC: btc, USDT: usd }} | ${{ BTC: btc, USDT: usd }}
+        ${'zeroes an asset absent from the balance'}                     | ${{ USDT: usd }}           | ${{ BTC: zero, USDT: usd }}
+        ${'zeroes a currency absent from the balance'}                   | ${{ BTC: btc }}            | ${{ BTC: btc, USDT: zero }}
+      `('$description', async ({ balance, expected }) => {
+        instance.fetchBalance.mockResolvedValue(balance);
+        expect(Object.fromEntries(await exchange.fetchBalance())).toEqual(expected);
+      });
+
+      it('looks the market up by the configured symbol', async () => {
+        instance.fetchBalance.mockResolvedValue({ BTC: btc, USDT: usd });
+        await exchange.fetchBalance();
+        expect(instance.market).toHaveBeenCalledWith('BTC/USDT');
+      });
+
+      it('keys the balances of every watched pair', async () => {
+        (config.getWatch as Mock).mockReturnValue({ pairs: [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }] });
+        instance.market.mockImplementation((symbol: string) => ({ symbol, base: symbol.split('/')[0], quote: 'USDT' }));
+        instance.fetchBalance.mockResolvedValue({ BTC: btc, ETH: other, USDT: usd });
+        expect(Object.fromEntries(await exchange.fetchBalance())).toEqual({ BTC: btc, ETH: other, USDT: usd });
+      });
+    });
+
+    describe('on hyperliquid, a wrapped spot token', () => {
+      // As ccxt 4.5.39 builds them: the wrapped spot tokens (UBTC, UETH, USOL...) are listed under the coins they wrap, UBTC as
+      // BTC/USDC (base BTC, baseName UBTC), their spot balance is keyed by those coins ({ USDC, BTC, HYPE }), and the symbol written
+      // with the token name, UBTC/USDC, resolves to the same market
+      let exchange: CCXTExchange;
+      let instance: any;
+
+      beforeEach(() => {
+        (config.getWatch as Mock).mockReturnValue({ pairs: [{ symbol: 'BTC/USDC' }] });
+        exchange = new CCXTExchange(hyperliquidConfig);
+        instance = (ccxt as any).hyperliquid.mock.instances.at(-1);
+        instance.market.mockReturnValue({ symbol: 'BTC/USDC', base: 'BTC', baseName: 'UBTC', quote: 'USDC' });
+      });
+
+      it.each`
+        description                                                   | symbol         | balance                                 | expected
+        ${'reads the asset under the base of the market'}             | ${'BTC/USDC'}  | ${{ USDC: usd, BTC: btc, HYPE: other }} | ${{ BTC: btc, USDC: usd }}
+        ${'keys a pair configured with the token name by that name'}  | ${'UBTC/USDC'} | ${{ USDC: usd, BTC: btc, HYPE: other }} | ${{ UBTC: btc, USDC: usd }}
+        ${'reads the asset under baseName when the base has nothing'} | ${'BTC/USDC'}  | ${{ USDC: usd, UBTC: btc }}             | ${{ BTC: btc, USDC: usd }}
+        ${'reads the asset under the base when both have a balance'}  | ${'BTC/USDC'}  | ${{ USDC: usd, BTC: btc, UBTC: other }} | ${{ BTC: btc, USDC: usd }}
+        ${'zeroes an asset under neither the base nor baseName'}      | ${'BTC/USDC'}  | ${{ USDC: usd, HYPE: other }}           | ${{ BTC: zero, USDC: usd }}
+      `('$description', async ({ symbol, balance, expected }) => {
+        (config.getWatch as Mock).mockReturnValue({ pairs: [{ symbol }] });
+        instance.fetchBalance.mockResolvedValue(balance);
+        expect(Object.fromEntries(await exchange.fetchBalance())).toEqual(expected);
+      });
+
+      it('does not read the balance under a baseName left unset', async () => {
+        instance.market.mockReturnValue({ symbol: 'BTC/USDC', base: 'BTC', baseName: undefined, quote: 'USDC' });
+        // What balance[baseName] would read if it were not checked first
+        instance.fetchBalance.mockResolvedValue({ USDC: usd, undefined: other });
+        expect(Object.fromEntries(await exchange.fetchBalance())).toEqual({ BTC: zero, USDC: usd });
+      });
     });
   });
 
   describe('createLimitOrder', () => {
+    const limits = { amount: { min: 0.1, max: 10 }, price: { min: 1, max: 1000 }, cost: { min: 10 } };
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(binanceConfig);
+      instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits });
+      instance.createOrder.mockResolvedValue({ id: '1', status: 'open' });
+      (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
+    });
+
     it.each`
       side
       ${'BUY'}
       ${'SELL'}
     `('creates $side limit order with validation', async ({ side }) => {
-      const exchange = new CCXTExchange(binanceConfig);
-      const instance = (ccxt as any).binance.mock.instances.at(-1);
-      instance.market.mockReturnValue({ limits: {} });
-      instance.createOrder.mockResolvedValue({ id: '1' });
-      (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
       await exchange.createLimitOrder('BTC/USDT', side, 1, 100);
       expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'limit', side, 1, 100);
+    });
+
+    it('validates the order against the limits of the market', async () => {
+      await exchange.createLimitOrder('BTC/USDT', 'BUY', 1, 100);
+      expect(assertOrderWithinLimits).toHaveBeenCalledWith({ tag: 'exchange', amount: 1, price: 100, marketData: limits });
+    });
+
+    it('sends the amount and the price returned by the validation', async () => {
+      (assertOrderWithinLimits as Mock).mockReturnValueOnce({ amount: 0.5, price: 99, cost: 49.5 });
+      await exchange.createLimitOrder('BTC/USDT', 'BUY', 1, 100);
+      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'limit', 'BUY', 0.5, 99);
+    });
+
+    it.each`
+      amount | price  | description
+      ${NaN} | ${100} | ${'a NaN amount'}
+      ${0}   | ${100} | ${'a zero amount'}
+      ${1}   | ${NaN} | ${'a NaN price'}
+      ${20}  | ${100} | ${'an amount above the market maximum'}
+    `('rejects $description with an OrderOutOfRangeError', async ({ amount, price }) => {
+      await expect(exchange.createLimitOrder('BTC/USDT', 'BUY', amount, price)).rejects.toThrow(OrderOutOfRangeError);
+    });
+
+    it('does not send an order out of the market limits to the exchange', async () => {
+      await exchange.createLimitOrder('BTC/USDT', 'BUY', NaN, 100).catch(() => undefined);
+      expect(instance.createOrder).not.toHaveBeenCalled();
     });
   });
 
   describe('createMarketOrder', () => {
+    const limits = { amount: { min: 0.1, max: 10 }, cost: { min: 10 } };
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(binanceConfig);
+      instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits });
+      instance.fetchTicker.mockResolvedValue({ ask: 101, bid: 100, last: 100.5 });
+      instance.createOrder.mockResolvedValue({ id: '1', status: 'closed' });
+      (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
+    });
+
+    // Hyperliquid refuses a market order without a price, from which ccxt derives the worst price accepted (5% slippage)
     it.each`
       side      | tickerPrice
       ${'BUY'}  | ${101}
       ${'SELL'} | ${100}
-    `('creates $side market order', async ({ side }) => {
-      const exchange = new CCXTExchange(binanceConfig);
-      const instance = (ccxt as any).binance.mock.instances.at(-1);
-      instance.market.mockReturnValue({ limits: {} });
-      instance.fetchTicker.mockResolvedValue({ ask: 101, bid: 100, last: 100.5 });
-      instance.createOrder.mockResolvedValue({ id: '1' });
-      (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
+    `('creates $side market order with the ticker price $tickerPrice', async ({ side, tickerPrice }) => {
       await exchange.createMarketOrder('BTC/USDT', side, 1);
-      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'market', side, 1);
+      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'market', side, 1, tickerPrice);
+    });
+
+    it.each`
+      side      | tickerPrice
+      ${'BUY'}  | ${101}
+      ${'SELL'} | ${100}
+    `('validates the $side order against the limits of the market at the ticker price $tickerPrice', async ({ side, tickerPrice }) => {
+      await exchange.createMarketOrder('BTC/USDT', side, 1);
+      expect(assertOrderWithinLimits).toHaveBeenCalledWith({ tag: 'exchange', amount: 1, price: tickerPrice, marketData: limits });
+    });
+
+    it('sends the amount and the price returned by the validation', async () => {
+      (assertOrderWithinLimits as Mock).mockReturnValueOnce({ amount: 0.5, price: 99, cost: 49.5 });
+      await exchange.createMarketOrder('BTC/USDT', 'BUY', 1);
+      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'market', 'BUY', 0.5, 99);
+    });
+
+    it.each`
+      amount  | description
+      ${NaN}  | ${'a NaN amount'}
+      ${0}    | ${'a zero amount'}
+      ${0.05} | ${'an amount below the market minimum'}
+    `('rejects $description with an OrderOutOfRangeError', async ({ amount }) => {
+      await expect(exchange.createMarketOrder('BTC/USDT', 'SELL', amount)).rejects.toThrow(OrderOutOfRangeError);
+    });
+
+    it('does not send an order out of the market limits to the exchange', async () => {
+      await exchange.createMarketOrder('BTC/USDT', 'SELL', NaN).catch(() => undefined);
+      expect(instance.createOrder).not.toHaveBeenCalled();
+    });
+
+    it('rejects an order whose ticker failed with a value that is not an Error with a GekkoError carrying that value', async () => {
+      instance.fetchTicker.mockRejectedValue('socket hang up');
+      await expect(exchange.createMarketOrder('BTC/USDT', 'BUY', 1)).rejects.toThrow(
+        '[EXCHANGE] Market order not sent: ticker unavailable (socket hang up)',
+      );
+    });
+
+    // fetchTicker throws a GekkoError, tagged as well, for a ticker without a last price
+    it('rejects an order whose ticker has no last price with a GekkoError carrying its message without its tag', async () => {
+      instance.fetchTicker.mockResolvedValue({ ask: null, bid: null, last: null });
+      await expect(exchange.createMarketOrder('BTC/USDT', 'BUY', 1)).rejects.toThrow(
+        '[EXCHANGE] Market order not sent: ticker unavailable (Fetch ticker failed to return data for BTC/USDT)',
+      );
+    });
+  });
+
+  // The price of a limit order is the one given, that of a market order the ask of the ticker for a BUY
+  const createLimitBuy = (exchange: CCXTExchange, _instance: any, amount: number, price: number) =>
+    exchange.createLimitOrder('BTC/USDT', 'BUY', amount, price);
+  const createMarketBuy = (exchange: CCXTExchange, instance: any, amount: number, price: number) => {
+    instance.fetchTicker.mockResolvedValue({ ask: price, bid: price, last: price });
+    return exchange.createMarketOrder('BTC/USDT', 'BUY', amount);
+  };
+  // What ccxt's base Exchange, which Binance uses, throws for a price rounded to 0
+  const refusePriceRoundedToZero = () => {
+    throw new ccxt.InvalidOrder('binance price of BTC/USDT must be greater than minimum price precision of 0.01');
+  };
+
+  describe.each`
+    method                 | type        | create
+    ${'createLimitOrder'}  | ${'limit'}  | ${createLimitBuy}
+    ${'createMarketOrder'} | ${'market'} | ${createMarketBuy}
+  `('$method, the precision of the market', ({ type, create }) => {
+    // BTC/USDT on Binance: a lot step of 0.00001 BTC, a tick of 0.01 USDT and a minimum notional of 5 USDT
+    const limits = { amount: { min: 0.00001, max: 9000 }, price: { min: 0.01, max: 1000000 }, cost: { min: 5 } };
+    const precision = { amount: 0.00001, price: 0.01 };
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(binanceConfig);
+      instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits, precision });
+      // The price rounded to the tick, as ccxt rounds it for Binance; the amount is truncated by ccxt's own decimalToPrecision
+      instance.priceToPrecision.mockImplementation((_symbol: string, price: number) => price.toFixed(2));
+      instance.createOrder.mockResolvedValue({ id: '1', status: 'open' });
+      (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
+    });
+
+    // 0.0000560556 BTC at 99990 USDT cost 5.605 USDT, but ccxt sends 0.00005 BTC: 4.9995 USDT, which Binance refuses (-1013)
+    it('rejects an order under the minimum cost once its amount is truncated with an OrderOutOfRangeError', async () => {
+      await expect(create(exchange, instance, 0.0000560556, 99990)).rejects.toThrow(OrderOutOfRangeError);
+    });
+
+    it('does not send to the exchange an order under the minimum cost once its amount is truncated', async () => {
+      await create(exchange, instance, 0.0000560556, 99990).catch(() => undefined);
+      expect(instance.createOrder).not.toHaveBeenCalled();
+    });
+
+    it('validates the amount and the price rounded to the precision of the market', async () => {
+      await create(exchange, instance, 1.234567, 100.456);
+      expect(assertOrderWithinLimits).toHaveBeenCalledWith({ tag: 'exchange', amount: 1.23456, price: 100.46, marketData: limits });
+    });
+
+    it('sends the amount and the price rounded to the precision of the market', async () => {
+      await create(exchange, instance, 1.234567, 100.456);
+      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', type, 'BUY', 1.23456, 100.46);
+    });
+
+    // ccxt would throw a plain Error for a NaN price, where the validation refuses it with its own message
+    it.each`
+      description             | amount      | price  | rounding
+      ${'a NaN amount'}       | ${NaN}      | ${100} | ${'decimalToPrecision'}
+      ${'an infinite amount'} | ${Infinity} | ${100} | ${'decimalToPrecision'}
+      ${'a zero amount'}      | ${0}        | ${100} | ${'decimalToPrecision'}
+      ${'a negative amount'}  | ${-1}       | ${100} | ${'decimalToPrecision'}
+      ${'a NaN price'}        | ${1}        | ${NaN} | ${'priceToPrecision'}
+      ${'a zero price'}       | ${1}        | ${0}   | ${'priceToPrecision'}
+    `('leaves $description to the validation without rounding it', async ({ amount, price, rounding }) => {
+      await create(exchange, instance, amount, price).catch(() => undefined);
+      expect(instance[rounding]).not.toHaveBeenCalled();
+    });
+
+    // Hyperliquid's amountToPrecision rounds half up: an all-in order on a balance of 0.000059958 BTC would be sent as 0.00006
+    it('sends the amount truncated to the step of the market to hyperliquid', async () => {
+      exchange = new CCXTExchange(hyperliquidConfig);
+      instance = (ccxt as any).hyperliquid.mock.instances.at(-1);
+      await create(exchange, instance, 0.000059958, 120000);
+      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', type, 'BUY', 0.00005, 120000);
+    });
+
+    it('does not round the amount with the amountToPrecision of the exchange', async () => {
+      await create(exchange, instance, 0.000059958, 120000);
+      expect(instance.amountToPrecision).not.toHaveBeenCalled();
+    });
+
+    it('refuses an amount truncated to nothing with an OrderOutOfRangeError on its amount of 0', async () => {
+      await expect(create(exchange, instance, 0.000004, 100)).rejects.toStrictEqual(new OrderOutOfRangeError('exchange', 'amount', 0));
+    });
+
+    it.each`
+      description                                             | rounding
+      ${'throws an InvalidOrder for, as it does for Binance'} | ${refusePriceRoundedToZero}
+      ${'rounds to 0, as it does for Hyperliquid'}            | ${() => '0'}
+    `('refuses a price ccxt $description with an OrderOutOfRangeError on its price of 0', async ({ rounding }) => {
+      instance.priceToPrecision.mockImplementation(rounding);
+      await expect(create(exchange, instance, 1, 0.004)).rejects.toStrictEqual(new OrderOutOfRangeError('exchange', 'price', 0));
+    });
+
+    it('rejects with any other failure of the rounding', async () => {
+      const failure = new Error('numPrecisionDigits has an invalid number');
+      instance.decimalToPrecision.mockImplementation(() => {
+        throw failure;
+      });
+      await expect(create(exchange, instance, 1, 100)).rejects.toBe(failure);
+    });
+
+    // As Binance's createOrder does, where ccxt's rounding would throw
+    it.each`
+      description | marketPrecision        | amount      | price
+      ${'amount'} | ${{ price: 0.01 }}     | ${1.234567} | ${100.46}
+      ${'price'}  | ${{ amount: 0.00001 }} | ${1.23456}  | ${100.456}
+    `('sends the $description of a market without precision for it as it is', async ({ marketPrecision, amount, price }) => {
+      instance.market.mockReturnValue({ limits, precision: marketPrecision });
+      await create(exchange, instance, 1.234567, 100.456);
+      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', type, 'BUY', amount, price);
     });
   });
 
   describe('cancelOrder', () => {
-    it('cancels and returns mapped order', async () => {
-      const exchange = new CCXTExchange(binanceConfig);
-      const instance = (ccxt as any).binance.mock.instances.at(-1);
-      instance.cancelOrder.mockResolvedValue({ id: '1', status: 'canceled' });
-      (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1', status: 'canceled' });
-      expect(await exchange.cancelOrder('BTC/USDT', '1')).toEqual({ id: '1', status: 'canceled' });
-      expect(instance.cancelOrder).toHaveBeenCalledWith('1', 'BTC/USDT');
+    // What ccxt 4.5.39 returns for the answer of Hyperliquid to a cancelation, { status: 'ok', response: { type: 'cancel', data:
+    // { statuses: ['success'] } } }: an order built from the status alone, with neither id nor fill (hyperliquid.js cancelOrders)
+    const hyperliquidAcknowledgement = { info: 'success', status: 'success', id: undefined, filled: undefined, remaining: undefined };
+    // What fetchOrder parses from Hyperliquid for that order afterwards: canceled after a partial fill
+    const orderReadBack = { id: '6195281425', status: 'canceled', amount: 1, filled: 0.4, remaining: 0.6, timestamp: 1704346468838 };
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      (mapCcxtOrderToOrder as Mock).mockImplementation(({ id, status, filled, remaining }) => ({ id, status, filled, remaining }));
+    });
+
+    describe('on binance, answered with the order canceled', () => {
+      // What ccxt parses from the answer of Binance to DELETE /api/v3/order: the order itself, with its status and its fill
+      const answer = { id: '1', status: 'canceled', amount: 1, filled: 0.4, remaining: 0.6, timestamp: 1704346468838 };
+
+      beforeEach(() => {
+        exchange = new CCXTExchange(binanceConfig);
+        instance = (ccxt as any).binance.mock.instances.at(-1);
+        instance.cancelOrder.mockResolvedValue(answer);
+      });
+
+      it('sends the cancelation of the order by its id', async () => {
+        await exchange.cancelOrder('BTC/USDT', '1');
+        expect(instance.cancelOrder).toHaveBeenCalledWith('1', 'BTC/USDT');
+      });
+
+      it('does not read the order back', async () => {
+        await exchange.cancelOrder('BTC/USDT', '1');
+        expect(instance.fetchOrder).not.toHaveBeenCalled();
+      });
+
+      it('returns the state of the answer', async () => {
+        expect(await exchange.cancelOrder('BTC/USDT', '1')).toEqual({ id: '1', status: 'canceled', filled: 0.4, remaining: 0.6 });
+      });
+    });
+
+    describe.each`
+      description                                 | answer
+      ${'the acknowledgement of Hyperliquid'}     | ${hyperliquidAcknowledgement}
+      ${'the id of the order without its status'} | ${{ id: '6195281425', status: undefined, filled: 0.4 }}
+      ${'the status of the order without its id'} | ${{ id: undefined, status: 'canceled', filled: 0.4 }}
+      ${'no order at all'}                        | ${undefined}
+    `('answered with $description', ({ answer }) => {
+      beforeEach(() => {
+        exchange = new CCXTExchange(hyperliquidConfig);
+        instance = (ccxt as any).hyperliquid.mock.instances.at(-1);
+        instance.cancelOrder.mockResolvedValue(answer);
+        instance.fetchOrder.mockResolvedValue(orderReadBack);
+      });
+
+      it('reads the order back by the id the cancelation was sent for', async () => {
+        await exchange.cancelOrder('BTC/USDC', '6195281425');
+        expect(instance.fetchOrder).toHaveBeenCalledWith('6195281425', 'BTC/USDC');
+      });
+
+      it('returns the state of the order read back', async () => {
+        expect(await exchange.cancelOrder('BTC/USDC', '6195281425')).toEqual({
+          id: '6195281425',
+          status: 'canceled',
+          filled: 0.4,
+          remaining: 0.6,
+        });
+      });
+    });
+
+    describe('answered with the acknowledgement of Hyperliquid, read back with a timeout on every attempt', () => {
+      beforeEach(() => {
+        exchange = new CCXTExchange(hyperliquidConfig);
+        instance = (ccxt as any).hyperliquid.mock.instances.at(-1);
+        instance.cancelOrder.mockResolvedValue(hyperliquidAcknowledgement);
+        instance.fetchOrder.mockRejectedValue(
+          new ccxt.RequestTimeout('hyperliquid POST https://api.hyperliquid.xyz/info request timed out'),
+        );
+      });
+
+      it('has sent the cancelation to the exchange only once', async () => {
+        await exchange.cancelOrder('BTC/USDC', '6195281425').catch(() => undefined);
+        expect(instance.cancelOrder).toHaveBeenCalledOnce();
+      });
+
+      it('logs that the cancelation of the order was accepted', async () => {
+        await exchange.cancelOrder('BTC/USDC', '6195281425').catch(() => undefined);
+        expect(logger.error).toHaveBeenCalledWith('exchange', expect.stringContaining('accepted the cancelation of order 6195281425'));
+      });
+
+      it('rejects with the error of the read', async () => {
+        await expect(exchange.cancelOrder('BTC/USDC', '6195281425')).rejects.toBeInstanceOf(ExchangeNetworkError);
+      });
+    });
+  });
+
+  describe.each`
+    method                 | call
+    ${'createLimitOrder'}  | ${(e: CCXTExchange) => e.createLimitOrder('BTC/USDT', 'BUY', 1, 100)}
+    ${'createMarketOrder'} | ${(e: CCXTExchange) => e.createMarketOrder('BTC/USDT', 'BUY', 1)}
+  `('$method, the state of the order created', ({ call }) => {
+    const limits = { amount: { min: 0.1, max: 10 }, price: { min: 1, max: 1000 }, cost: { min: 10 } };
+    // What ccxt parses from the answer of Hyperliquid to the creation of an order executed at once,
+    // { filled: { totalSz: '1', avgPx: '100.5', oid: 6195281425 } }: an id, but neither a status nor a timestamp
+    const answerWithoutStatus = { id: '6195281425', amount: 1, filled: 1, average: 100.5, status: undefined, timestamp: undefined };
+    const orderReadBack = { id: '6195281425', amount: 1, filled: 1, remaining: 0, status: 'closed', timestamp: 1704346468838 };
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(hyperliquidConfig);
+      instance = (ccxt as any).hyperliquid.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits });
+      instance.fetchTicker.mockResolvedValue({ ask: 101, bid: 100, last: 100.5 });
+      instance.fetchOrder.mockResolvedValue(orderReadBack);
+      (mapCcxtOrderToOrder as Mock).mockImplementation(({ id, status }) => ({ id, status }));
+    });
+
+    describe('answered with the status of the order', () => {
+      beforeEach(() => {
+        instance.createOrder.mockResolvedValue({ id: '6195281425', status: 'open', timestamp: 1704346468838 });
+      });
+
+      it('does not read the order back', async () => {
+        await call(exchange);
+        expect(instance.fetchOrder).not.toHaveBeenCalled();
+      });
+
+      it('returns the state of the answer', async () => {
+        expect(await call(exchange)).toEqual({ id: '6195281425', status: 'open' });
+      });
+    });
+
+    describe('answered without the status of the order', () => {
+      beforeEach(() => {
+        instance.createOrder.mockResolvedValue(answerWithoutStatus);
+      });
+
+      it('reads the order back by its id', async () => {
+        await call(exchange);
+        expect(instance.fetchOrder).toHaveBeenCalledWith('6195281425', 'BTC/USDT');
+      });
+
+      it('returns the state of the order read back', async () => {
+        expect(await call(exchange)).toEqual({ id: '6195281425', status: 'closed' });
+      });
+    });
+
+    describe('answered without the status of the order, read back with a timeout on every attempt', () => {
+      beforeEach(() => {
+        instance.createOrder.mockResolvedValue(answerWithoutStatus);
+        instance.fetchOrder.mockRejectedValue(
+          new ccxt.RequestTimeout('hyperliquid POST https://api.hyperliquid.xyz/info request timed out'),
+        );
+      });
+
+      it('has sent the creation to the exchange only once', async () => {
+        await call(exchange).catch(() => undefined);
+        expect(instance.createOrder).toHaveBeenCalledOnce();
+      });
+
+      it('logs the id of the order created', async () => {
+        await call(exchange).catch(() => undefined);
+        expect(logger.error).toHaveBeenCalledWith('exchange', expect.stringContaining('6195281425'));
+      });
+
+      it('rejects with the error of the read', async () => {
+        await expect(call(exchange)).rejects.toBeInstanceOf(ExchangeNetworkError);
+      });
+    });
+
+    it.each`
+      description                                   | answer
+      ${'an order with neither a status nor an id'} | ${{ info: { status: 'ok' } }}
+      ${'no order at all'}                          | ${undefined}
+    `('rejects a creation answered with $description with a GekkoError', async ({ answer }) => {
+      instance.createOrder.mockResolvedValue(answer);
+      await expect(call(exchange)).rejects.toThrow(GekkoError);
+    });
+  });
+
+  describe('ccxt errors', () => {
+    const limits = { amount: { min: 0.1, max: 10 }, price: { min: 1, max: 1000 }, cost: { min: 10 } };
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(binanceConfig);
+      instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits, base: 'BTC', quote: 'USDT' });
+      instance.fetchTicker.mockResolvedValue({ ask: 101, bid: 100, last: 100.5 });
+    });
+
+    it('rejects the cancelation of an order unknown to the exchange with the OrderNotFound of Gekko', async () => {
+      instance.cancelOrder.mockRejectedValue(new ccxt.OrderNotFound('binance {"code":-2011,"msg":"Unknown order sent."}'));
+      await expect(exchange.cancelOrder('BTC/USDT', '1')).rejects.toBeInstanceOf(OrderNotFound);
+    });
+
+    it('rejects a limit order refused for insufficient funds with the InvalidOrder of Gekko', async () => {
+      instance.createOrder.mockRejectedValue(new ccxt.InsufficientFunds('binance Account has insufficient balance for requested action.'));
+      await expect(exchange.createLimitOrder('BTC/USDT', 'BUY', 1, 100)).rejects.toBeInstanceOf(InvalidOrder);
+    });
+
+    it.each`
+      method                 | clientMethod       | call
+      ${'fetchTickers'}      | ${'fetchTickers'}  | ${(e: CCXTExchange) => e.fetchTickers(['BTC/USDT'])}
+      ${'fetchTicker'}       | ${'fetchTicker'}   | ${(e: CCXTExchange) => e.fetchTicker('BTC/USDT')}
+      ${'fetchOHLCV'}        | ${'fetchOHLCV'}    | ${(e: CCXTExchange) => e.fetchOHLCV('BTC/USDT')}
+      ${'fetchMyTrades'}     | ${'fetchMyTrades'} | ${(e: CCXTExchange) => e.fetchMyTrades('BTC/USDT')}
+      ${'fetchOrder'}        | ${'fetchOrder'}    | ${(e: CCXTExchange) => e.fetchOrder('BTC/USDT', '1')}
+      ${'fetchBalance'}      | ${'fetchBalance'}  | ${(e: CCXTExchange) => e.fetchBalance()}
+      ${'createLimitOrder'}  | ${'createOrder'}   | ${(e: CCXTExchange) => e.createLimitOrder('BTC/USDT', 'BUY', 1, 100)}
+      ${'createMarketOrder'} | ${'createOrder'}   | ${(e: CCXTExchange) => e.createMarketOrder('BTC/USDT', 'BUY', 1)}
+      ${'cancelOrder'}       | ${'cancelOrder'}   | ${(e: CCXTExchange) => e.cancelOrder('BTC/USDT', '1')}
+    `('$method rejects with the error of Gekko translated from the ccxt one', async ({ clientMethod, call }) => {
+      instance[clientMethod].mockRejectedValue(new ccxt.BadSymbol('binance {"code":-1121,"msg":"Invalid symbol."}'));
+      await expect(call(exchange)).rejects.toBeInstanceOf(InvalidOrder);
+    });
+  });
+
+  describe('network errors', () => {
+    const limits = { amount: { min: 0.1, max: 10 }, price: { min: 1, max: 1000 }, cost: { min: 10 } };
+    // A NetworkError: the exchange may have executed the request, only its response is lost
+    const timeout = new ccxt.RequestTimeout('binance POST https://api.binance.com/api/v3/order request timed out (10000 ms)');
+    // What the exchange answers a write sent again after it executed the first one: a second order (ccxt gives it a new client
+    // order id) is refused for lack of funds, the first one holding them, and a second cancelation finds no order to cancel
+    const insufficientFunds = new ccxt.InsufficientFunds(
+      'binance {"code":-2010,"msg":"Account has insufficient balance for requested action."}',
+    );
+    const unknownOrder = new ccxt.OrderNotFound('binance {"code":-2011,"msg":"Unknown order sent."}');
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(binanceConfig);
+      instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits });
+      instance.fetchTicker.mockResolvedValue({ ask: 101, bid: 100, last: 100.5 });
+      instance.fetchOrder.mockRejectedValue(timeout);
+    });
+
+    describe.each`
+      method                 | clientMethod     | replayError          | call
+      ${'createLimitOrder'}  | ${'createOrder'} | ${insufficientFunds} | ${(e: CCXTExchange) => e.createLimitOrder('BTC/USDT', 'BUY', 1, 100)}
+      ${'createMarketOrder'} | ${'createOrder'} | ${insufficientFunds} | ${(e: CCXTExchange) => e.createMarketOrder('BTC/USDT', 'BUY', 1)}
+      ${'cancelOrder'}       | ${'cancelOrder'} | ${unknownOrder}      | ${(e: CCXTExchange) => e.cancelOrder('BTC/USDT', '1')}
+    `('$method, a write executed by the exchange whose response timed out', ({ clientMethod, replayError, call }) => {
+      beforeEach(() => {
+        instance[clientMethod].mockRejectedValueOnce(timeout).mockRejectedValue(replayError);
+      });
+
+      it('has sent the request to the exchange only once', async () => {
+        await call(exchange).catch(() => undefined);
+        expect(instance[clientMethod]).toHaveBeenCalledOnce();
+      });
+
+      it('rejects with an ExchangeNetworkError', async () => {
+        await expect(call(exchange)).rejects.toBeInstanceOf(ExchangeNetworkError);
+      });
+
+      it('rejects with the ccxt error as the cause', async () => {
+        await expect(call(exchange)).rejects.toHaveProperty('cause', timeout);
+      });
+    });
+
+    it('sends a read (fetchOrder) again after a timeout, up to BROKER_MAX_RETRIES_ON_FAILURE times', async () => {
+      await exchange.fetchOrder('BTC/USDT', '1').catch(() => undefined);
+      expect(instance.fetchOrder).toHaveBeenCalledTimes(BROKER_MAX_RETRIES_ON_FAILURE + 1);
+    });
+
+    describe('createMarketOrder with a ticker timing out on every attempt', () => {
+      beforeEach(() => {
+        instance.fetchTicker.mockRejectedValue(timeout);
+      });
+
+      it('fetches the ticker in a single series of attempts', async () => {
+        await exchange.createMarketOrder('BTC/USDT', 'BUY', 1).catch(() => undefined);
+        expect(instance.fetchTicker).toHaveBeenCalledTimes(BROKER_MAX_RETRIES_ON_FAILURE + 1);
+      });
+
+      it('sends no order to the exchange', async () => {
+        await exchange.createMarketOrder('BTC/USDT', 'BUY', 1).catch(() => undefined);
+        expect(instance.createOrder).not.toHaveBeenCalled();
+      });
+
+      // Nothing was sent: from a creation, an ExchangeNetworkError tells the order that its outcome is unknown, the order maybe live
+      it('rejects with an error that is not an ExchangeNetworkError', async () => {
+        await expect(exchange.createMarketOrder('BTC/USDT', 'BUY', 1)).rejects.not.toBeInstanceOf(ExchangeNetworkError);
+      });
+
+      // The message of the ExchangeNetworkError, without its [EXCHANGE] tag
+      it('rejects with a GekkoError saying that the order was not sent', async () => {
+        await expect(exchange.createMarketOrder('BTC/USDT', 'BUY', 1)).rejects.toThrow(
+          `[EXCHANGE] Market order not sent: ticker unavailable (${timeout.message})`,
+        );
+      });
+
+      it('rejects with the ExchangeNetworkError of the ticker as the cause', async () => {
+        await expect(exchange.createMarketOrder('BTC/USDT', 'BUY', 1)).rejects.toHaveProperty('cause', expect.any(ExchangeNetworkError));
+      });
     });
   });
 });

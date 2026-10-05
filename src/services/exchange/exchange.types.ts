@@ -69,6 +69,12 @@ export interface Exchange {
     onSettled?: OrderSettledCallback,
   ): Promise<OrderState>;
   createMarketOrder(symbol: TradingPair, side: OrderSide, amount: number): Promise<OrderState>;
+  /**
+   * Resolves with the state of the order once the exchange has accepted the cancelation, its id included: 'canceled' with the amount
+   * filled until then, 'closed' if it was executed in full first, or 'open' if the exchange has not completed the cancelation yet,
+   * an order still to be polled. Rejects with OrderNotFound for an order the exchange does not know, which a real exchange also
+   * answers for an order already executed or canceled.
+   */
   cancelOrder(symbol: TradingPair, id: string): Promise<OrderState>;
   loadMarkets(): Promise<void>;
   fetchOrder(symbol: TradingPair, id: string): Promise<OrderState>;

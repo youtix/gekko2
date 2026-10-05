@@ -1,11 +1,16 @@
+import { GekkoError } from '@errors/gekko.error';
 import * as logger from '@services/logger';
-import { NetworkError } from 'ccxt';
+import ccxt, { binance, NetworkError } from 'ccxt';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import { pick } from 'lodash-es';
 import { SocksProxyAgent } from 'socks-proxy-agent';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { BROKER_MAX_RETRIES_ON_FAILURE } from './exchange.const';
+import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from './exchange.error';
 import * as utils from './exchange.utils';
 
 vi.mock('@services/logger', () => ({
+  debug: vi.fn(),
   error: vi.fn(),
   warning: vi.fn(),
 }));
@@ -34,7 +39,7 @@ describe('Exchange Utils', () => {
 
     it('should throw after max retries', async () => {
       const fn = vi.fn().mockRejectedValue(new NetworkError('fail'));
-      await expect(utils.retry(fn, 1, 2)).rejects.toThrow(NetworkError);
+      await expect(utils.retry(fn, 1, 2)).rejects.toThrow(ExchangeNetworkError);
     });
 
     it('should throw non-NetworkError immediately', async () => {
@@ -47,42 +52,276 @@ describe('Exchange Utils', () => {
       await expect(utils.retry(fn)).rejects.toThrow();
       expect(logger.error).toHaveBeenCalledWith('exchange', expect.stringContaining('Fatal'));
     });
+
+    it('calls again after a NetworkError up to BROKER_MAX_RETRIES_ON_FAILURE times', async () => {
+      const fn = vi.fn().mockRejectedValue(new ccxt.RequestTimeout('binance GET https://api.binance.com/api/v3/order request timed out'));
+      await utils.retry(fn).catch(() => undefined);
+      expect(fn).toHaveBeenCalledTimes(BROKER_MAX_RETRIES_ON_FAILURE + 1);
+    });
+
+    it('rejects with an ExchangeNetworkError once the retries are exhausted', async () => {
+      const fn = vi.fn().mockRejectedValue(new ccxt.RequestTimeout('binance GET https://api.binance.com/api/v3/order request timed out'));
+      await expect(utils.retry(fn)).rejects.toBeInstanceOf(ExchangeNetworkError);
+    });
+
+    it('keeps the last NetworkError as the cause once the retries are exhausted', async () => {
+      const lastError = new ccxt.ExchangeNotAvailable('binance 503 Service Unavailable');
+      const fn = vi.fn().mockRejectedValueOnce(new ccxt.RequestTimeout('binance request timed out')).mockRejectedValue(lastError);
+      await expect(utils.retry(fn, 1, 1)).rejects.toHaveProperty('cause', lastError);
+    });
+
+    it.each`
+      error
+      ${new ccxt.InvalidOrder('binance {"code":-2010,"msg":"Duplicate order sent."}')}
+      ${new ccxt.OrderNotFound('binance {"code":-2011,"msg":"Unknown order sent."}')}
+      ${new ccxt.AuthenticationError('binance {"code":-2015,"msg":"Invalid API-key, IP, or permissions for action."}')}
+    `('does not call again after $error.name', async ({ error }) => {
+      const fn = vi.fn().mockRejectedValue(error);
+      await utils.retry(fn).catch(() => undefined);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not call again after an ExchangeNetworkError, which a nested retry already gave up on', async () => {
+      const fn = vi.fn().mockRejectedValue(new ExchangeNetworkError('binance GET https://api.binance.com/api/v3/ticker request timed out'));
+      await utils.retry(fn).catch(() => undefined);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a value which is not an Error unchanged', async () => {
+      const fn = vi.fn().mockRejectedValue('Fatal');
+      await expect(utils.retry(fn)).rejects.toBe('Fatal');
+    });
+
+    it.each`
+      error                                                                                           | expected
+      ${new ccxt.OrderNotFound('binance {"code":-2011,"msg":"Unknown order sent."}')}                 | ${OrderNotFound}
+      ${new ccxt.BadRequest('binance {"code":-1013,"msg":"Filter failure: NOTIONAL"}')}               | ${InvalidOrder}
+      ${new ccxt.InsufficientFunds('binance Account has insufficient balance for requested action.')} | ${InvalidOrder}
+    `('rejects the ccxt $error.name at once with the $expected.name of Gekko', async ({ error, expected }) => {
+      const fn = vi.fn().mockRejectedValue(error);
+      await expect(utils.retry(fn)).rejects.toBeInstanceOf(expected);
+    });
+  });
+
+  describe('translateCcxtError', () => {
+    const message = 'binance {"code":-2010,"msg":"Account has insufficient balance for requested action."}';
+
+    it.each`
+      ccxtError                 | expected
+      ${ccxt.OrderNotFound}     | ${OrderNotFound}
+      ${ccxt.InvalidOrder}      | ${InvalidOrder}
+      ${ccxt.InsufficientFunds} | ${InvalidOrder}
+      ${ccxt.BadRequest}        | ${InvalidOrder}
+      ${ccxt.BadSymbol}         | ${InvalidOrder}
+      ${ccxt.NetworkError}      | ${ExchangeNetworkError}
+      ${ccxt.RequestTimeout}    | ${ExchangeNetworkError}
+      ${ccxt.RateLimitExceeded} | ${ExchangeNetworkError}
+      ${ccxt.OnMaintenance}     | ${ExchangeNetworkError}
+    `('translates the ccxt $ccxtError.name into the $expected.name of Gekko', ({ ccxtError, expected }) => {
+      expect(utils.translateCcxtError(new ccxtError(message))).toBeInstanceOf(expected);
+    });
+
+    it.each`
+      ccxtError
+      ${ccxt.OrderNotFound}
+      ${ccxt.InsufficientFunds}
+      ${ccxt.RequestTimeout}
+    `('keeps the message of the ccxt $ccxtError.name', ({ ccxtError }) => {
+      expect(utils.translateCcxtError(new ccxtError(message))).toHaveProperty('message', expect.stringContaining(message));
+    });
+
+    it.each`
+      ccxtError
+      ${ccxt.OrderNotFound}
+      ${ccxt.InsufficientFunds}
+      ${ccxt.RequestTimeout}
+    `('keeps the ccxt $ccxtError.name as the cause', ({ ccxtError }) => {
+      const ccxtErrorInstance = new ccxtError(message);
+      expect(utils.translateCcxtError(ccxtErrorInstance)).toHaveProperty('cause', ccxtErrorInstance);
+    });
+
+    it.each`
+      description                        | value
+      ${'a ccxt AuthenticationError'}    | ${new ccxt.AuthenticationError(message)}
+      ${'a ccxt ArgumentsRequired'}      | ${new ccxt.ArgumentsRequired(message)}
+      ${'a generic ccxt ExchangeError'}  | ${new ccxt.ExchangeError(message)}
+      ${'a ccxt OperationFailed'}        | ${new ccxt.OperationFailed(message)}
+      ${'a GekkoError'}                  | ${new GekkoError('exchange', message)}
+      ${'an Error'}                      | ${new Error(message)}
+      ${'a value which is not an Error'} | ${message}
+    `('returns $description unchanged', ({ value }) => {
+      expect(utils.translateCcxtError(value)).toBe(value);
+    });
+  });
+
+  describe('translateErrors', () => {
+    it('returns the result of the call', async () => {
+      expect(await utils.translateErrors(() => Promise.resolve('order'))).toBe('order');
+    });
+
+    it('rejects with the translated error', async () => {
+      const fn = () => Promise.reject(new ccxt.InsufficientFunds('binance Account has insufficient balance for requested action.'));
+      await expect(utils.translateErrors(fn)).rejects.toBeInstanceOf(InvalidOrder);
+    });
+
+    it('rejects a NetworkError at once with an ExchangeNetworkError', async () => {
+      const fn = () => Promise.reject(new ccxt.RequestTimeout('binance POST https://api.binance.com/api/v3/order request timed out'));
+      await expect(utils.translateErrors(fn)).rejects.toBeInstanceOf(ExchangeNetworkError);
+    });
+
+    it('does not call again after a NetworkError', async () => {
+      const fn = vi.fn().mockRejectedValue(new ccxt.RequestTimeout('binance POST https://api.binance.com/api/v3/order request timed out'));
+      await utils.translateErrors(fn).catch(() => undefined);
+      expect(fn).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('mapCcxtTradeToTrade', () => {
     const timestamp = 1600000000000;
-    it('should map valid trade', () => {
-      const input: any = { id: '1', order: 'ord1', amount: 10, price: 100, timestamp, fee: { rate: 0.001 } };
-      expect(utils.mapCcxtTradeToTrade(input)).toEqual({
+    // As ccxt 4.5.39 builds them: binance's BTC/USDT, whose fees ccxt names by unified codes; hyperliquid's market of its wrapped
+    // token UBTC, listed as BTC/USDC with the token as baseName, and a market quoted in USDT0, listed in USDT with the token as
+    // quoteId: hyperliquid's fees are named by token (feeToken)
+    const binanceMarket: any = { symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT', baseId: 'BTC', quoteId: 'USDT' };
+    const hyperliquidMarket: any = { symbol: 'BTC/USDC', base: 'BTC', baseName: 'UBTC', quote: 'USDC', baseId: '10142', quoteId: 'USDC' };
+    const hyperliquidUsdt0Market: any = { symbol: 'HYPE/USDT', base: 'HYPE', baseName: 'HYPE', quote: 'USDT', quoteId: 'USDT0' };
+
+    it('maps a trade, keeping the cost and the currency of its fee', () => {
+      const trade: any = { id: '1', order: 'ord1', amount: 1, price: 60000, timestamp, fee: { cost: 60, currency: 'USDT' } };
+      expect(utils.mapCcxtTradeToTrade(trade, binanceMarket)).toEqual({
         id: 'ord1',
-        amount: 10,
-        price: 100,
+        amount: 1,
+        price: 60000,
         timestamp,
-        fee: { rate: 0.001 },
+        fee: { rate: 0.1, cost: 60, currency: 'USDT' },
       });
     });
 
-    it('should handle missing fields', () => {
-      const input: any = {};
-      const result = utils.mapCcxtTradeToTrade(input);
-      expect(result).toMatchObject({ id: '', amount: 0, price: 0, fee: { rate: 0 } });
+    it('maps a trade without fields', () => {
+      expect(utils.mapCcxtTradeToTrade({} as any, binanceMarket)).toMatchObject({ id: '', amount: 0, price: 0 });
+    });
+
+    // Trade.fee.rate is in % (0.1 for 0.1 %), and undefined when it cannot be known: never 0, which would be a trade without fees
+    it.each`
+      description                                                              | market                    | amount       | price    | fee                                                   | expected
+      ${'converts the rate given by ccxt, a fraction, to a percentage'}        | ${binanceMarket}          | ${1}         | ${60000} | ${{ rate: 0.001 }}                                    | ${0.1}
+      ${'prefers the rate given by ccxt to the one derived from the cost'}     | ${binanceMarket}          | ${1}         | ${60000} | ${{ rate: 0.002, cost: 60, currency: 'USDT' }}        | ${0.2}
+      ${'derives the rate of a fee in the quote from the cost of the trade'}   | ${binanceMarket}          | ${1}         | ${60000} | ${{ cost: 60, currency: 'USDT' }}                     | ${0.1}
+      ${'derives the rate of a fee in the base from the amount of the trade'}  | ${binanceMarket}          | ${1}         | ${60000} | ${{ cost: 0.001, currency: 'BTC' }}                   | ${0.1}
+      ${'derives the rate of a fee in the token of the base (baseName)'}       | ${hyperliquidMarket}      | ${1}         | ${60000} | ${{ cost: 0.001, currency: 'UBTC', rate: undefined }} | ${0.1}
+      ${'derives the rate of a fee in the quote of hyperliquid'}               | ${hyperliquidMarket}      | ${1}         | ${60000} | ${{ cost: 60, currency: 'USDC', rate: undefined }}    | ${0.1}
+      ${'derives the rate of a fee in the token of the quote (quoteId)'}       | ${hyperliquidUsdt0Market} | ${1}         | ${40}    | ${{ cost: 0.04, currency: 'USDT0', rate: undefined }} | ${0.1}
+      ${'derives a rate of 0 from a fee that cost nothing'}                    | ${binanceMarket}          | ${1}         | ${60000} | ${{ cost: 0, currency: 'USDT' }}                      | ${0}
+      ${'derives the rate when the rate given by ccxt is not finite'}          | ${binanceMarket}          | ${1}         | ${60000} | ${{ rate: Number.NaN, cost: 60, currency: 'USDT' }}   | ${0.1}
+      ${'leaves the rate of a fee in another currency (BNB discount) unknown'} | ${binanceMarket}          | ${1}         | ${60000} | ${{ cost: 0.0001, currency: 'BNB' }}                  | ${undefined}
+      ${'leaves the rate of a trade without fee unknown'}                      | ${binanceMarket}          | ${1}         | ${60000} | ${undefined}                                          | ${undefined}
+      ${'leaves the rate of a fee with neither cost nor currency unknown'}     | ${binanceMarket}          | ${1}         | ${60000} | ${{ cost: undefined, currency: undefined }}           | ${undefined}
+      ${'leaves the rate of a fee without cost unknown'}                       | ${binanceMarket}          | ${1}         | ${60000} | ${{ currency: 'USDT' }}                               | ${undefined}
+      ${'leaves the rate of a fee without currency unknown'}                   | ${binanceMarket}          | ${1}         | ${60000} | ${{ cost: 60 }}                                       | ${undefined}
+      ${'leaves the rate of a trade of no amount unknown'}                     | ${binanceMarket}          | ${0}         | ${60000} | ${{ cost: 60, currency: 'USDT' }}                     | ${undefined}
+      ${'leaves the rate of a trade without amount unknown'}                   | ${binanceMarket}          | ${undefined} | ${60000} | ${{ cost: 0.001, currency: 'BTC' }}                   | ${undefined}
+      ${'leaves the rate of a trade at no price unknown'}                      | ${binanceMarket}          | ${1}         | ${0}     | ${{ cost: 60, currency: 'USDT' }}                     | ${undefined}
+    `('$description', ({ market, amount, price, fee, expected }) => {
+      const trade: any = { id: '1', order: 'ord1', amount, price, timestamp, fee };
+      expect(utils.mapCcxtTradeToTrade(trade, market).fee.rate).toBe(expected);
     });
   });
 
   describe('mapCcxtOrderToOrder', () => {
+    const now = 1704346500000;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Only a status that ends the order is final. Any other one, which ccxt passes on as the exchange wrote it (Binance's
+    // PENDING_CANCEL as canceling, PENDING_NEW, Hyperliquid's acknowledgement of a cancelation as success), is not known to have
+    // ended: open, not a fill
     it.each`
-      status        | expected
-      ${'open'}     | ${'open'}
-      ${'model'}    | ${'closed'}
-      ${undefined}  | ${'open'}
-      ${'canceled'} | ${'canceled'}
-      ${'rejected'} | ${'canceled'}
-      ${'expired'}  | ${'canceled'}
-      ${'closed'}   | ${'closed'}
-      ${'other'}    | ${'closed'}
-    `('should map status $status to $expected', ({ status, expected }) => {
+      status               | expected
+      ${undefined}         | ${'open'}
+      ${''}                | ${'open'}
+      ${'open'}            | ${'open'}
+      ${'closed'}          | ${'closed'}
+      ${'canceled'}        | ${'canceled'}
+      ${'rejected'}        | ${'canceled'}
+      ${'expired'}         | ${'canceled'}
+      ${'scheduledCancel'} | ${'canceled'}
+      ${'canceling'}       | ${'open'}
+      ${'PENDING_NEW'}     | ${'open'}
+      ${'success'}         | ${'open'}
+      ${'whatever'}        | ${'open'}
+    `('maps the status $status to $expected', ({ status, expected }) => {
       const order: any = { id: '1', status, filled: 5, remaining: 5, price: 100, timestamp: 1000 };
       expect(utils.mapCcxtOrderToOrder(order)).toMatchObject({ status: expected });
+    });
+
+    it.each`
+      status
+      ${'canceling'}
+      ${'success'}
+      ${'whatever'}
+    `('logs the unknown status $status at debug level', ({ status }) => {
+      utils.mapCcxtOrderToOrder({ id: '1', status } as any);
+      expect(logger.debug).toHaveBeenCalledWith('exchange', expect.stringContaining(status));
+    });
+
+    it.each`
+      status
+      ${undefined}
+      ${'open'}
+      ${'closed'}
+      ${'expired'}
+      ${'scheduledCancel'}
+    `('does not log the status $status', ({ status }) => {
+      utils.mapCcxtOrderToOrder({ id: '1', status } as any);
+      expect(logger.debug).not.toHaveBeenCalled();
+    });
+
+    it('maps the acknowledgement of a cancelation by Hyperliquid, an order without id, fill or date, to an open order dated now', () => {
+      // What ccxt 4.5.39 returns for { status: 'ok', response: { type: 'cancel', data: { statuses: ['success'] } } }
+      const acknowledgement: any = { info: 'success', status: 'success', id: undefined, filled: undefined, remaining: undefined };
+      expect(utils.mapCcxtOrderToOrder(acknowledgement)).toEqual({
+        id: undefined,
+        status: 'open',
+        filled: undefined,
+        remaining: undefined,
+        price: undefined,
+        timestamp: now,
+      });
+    });
+
+    // ccxt 4.5.39 leaves the timestamp undefined when the exchange gives none, but createOrderSummary fetches the trades of the order
+    // from it: undefined made that bound NaN, and logging it threw
+    it.each`
+      description                                                      | timestamp        | lastUpdateTimestamp | expected
+      ${'keeps the timestamp given by the exchange'}                   | ${1704346468838} | ${1704346470000}    | ${1704346468838}
+      ${'falls back on the last update of an order without timestamp'} | ${undefined}     | ${1704346470000}    | ${1704346470000}
+      ${'falls back on now without timestamp or last update'}          | ${undefined}     | ${undefined}        | ${now}
+      ${'falls back on now when neither date is a finite number'}      | ${Number.NaN}    | ${Infinity}         | ${now}
+    `('$description', ({ timestamp, lastUpdateTimestamp, expected }) => {
+      const order: any = { id: '1', status: 'open', amount: 2, filled: 0, remaining: 2, price: 100, timestamp, lastUpdateTimestamp };
+      expect(utils.mapCcxtOrderToOrder(order).timestamp).toBe(expected);
+    });
+
+    // ccxt 4.5.39 leaves the fill or the remaining amount undefined when the exchange gives neither it nor what to derive it from
+    it.each`
+      description                                                         | amount       | filled        | remaining    | expected
+      ${'keeps the fill and the remaining amount given'}                  | ${2}         | ${0.5}        | ${1.5}       | ${{ filled: 0.5, remaining: 1.5 }}
+      ${'derives the fill from the amount and the remaining amount'}      | ${2}         | ${undefined}  | ${1.5}       | ${{ filled: 0.5, remaining: 1.5 }}
+      ${'derives the remaining amount from the amount and the fill'}      | ${2}         | ${0.5}        | ${undefined} | ${{ filled: 0.5, remaining: 1.5 }}
+      ${'derives a fill of 0 from a remaining amount beyond the amount'}  | ${2}         | ${undefined}  | ${2.5}       | ${{ filled: 0, remaining: 2.5 }}
+      ${'derives a remaining amount of 0 from a fill beyond the amount'}  | ${2}         | ${2.5}        | ${undefined} | ${{ filled: 2.5, remaining: 0 }}
+      ${'derives the fill in place of one that is not a finite number'}   | ${2}         | ${Number.NaN} | ${1.5}       | ${{ filled: 0.5, remaining: 1.5 }}
+      ${'derives nothing without the amount'}                             | ${undefined} | ${0.5}        | ${undefined} | ${{ filled: 0.5, remaining: undefined }}
+      ${'derives nothing from neither the fill nor the remaining amount'} | ${2}         | ${undefined}  | ${undefined} | ${{ filled: undefined, remaining: undefined }}
+    `('$description', ({ amount, filled, remaining, expected }) => {
+      const order: any = { id: '1', status: 'open', amount, filled, remaining, price: 100, timestamp: 1704346468838 };
+      expect(pick(utils.mapCcxtOrderToOrder(order), ['filled', 'remaining'])).toEqual(expected);
     });
   });
 
@@ -155,6 +394,54 @@ describe('Exchange Utils', () => {
     it('should configure sandbox', () => {
       const result = utils.createExchange({ ...baseConfig, sandbox: true });
       expect(result.publicClient).toHaveProperty('sandbox', true);
+    });
+
+    it.each`
+      client
+      ${'publicClient'}
+      ${'privateClient'}
+    `('turns off the quoteOrderQty option of the binance $client', ({ client }) => {
+      const clients = utils.createExchange(baseConfig);
+      expect(clients[client as keyof typeof clients].options).toHaveProperty('quoteOrderQty', false);
+    });
+
+    // CCXTExchange.createMarketOrder sends the ticker price along with a market order. With quoteOrderQty on (ccxt's default),
+    // binance would send an amount of quote currency, amount × price, instead of the amount asked.
+    describe('binance market order sent with a price', () => {
+      // A spot market as ccxt parses it from binance, enough to build an order request without loading the markets
+      const market = {
+        id: 'BTCUSDT',
+        symbol: 'BTC/USDT',
+        base: 'BTC',
+        quote: 'USDT',
+        baseId: 'BTC',
+        quoteId: 'USDT',
+        type: 'spot',
+        spot: true,
+        contract: false,
+        precision: { amount: 0.00001, price: 0.01 },
+        limits: { amount: { min: 0.00001, max: 9000 }, price: { min: 0.01, max: 1000000 }, cost: { min: 5 } },
+        info: { orderTypes: ['LIMIT', 'LIMIT_MAKER', 'MARKET'] },
+      };
+      let request: Record<string, unknown>;
+
+      beforeEach(() => {
+        const privateClient = utils.createExchange(baseConfig).privateClient as binance;
+        privateClient.setMarkets([market]);
+        request = privateClient.createOrderRequest('BTC/USDT', 'market', 'SELL', 0.5, 60000);
+      });
+
+      it('sends the amount as the quantity', () => {
+        expect(request).toHaveProperty('quantity', '0.5');
+      });
+
+      it.each`
+        field
+        ${'quoteOrderQty'}
+        ${'price'}
+      `('sends no $field', ({ field }) => {
+        expect(request).not.toHaveProperty(field);
+      });
     });
   });
 

@@ -2,14 +2,15 @@ import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { OrderState } from '@models/order.types';
 import { Trade } from '@models/trade.types';
-import { error, warning } from '@services/logger';
+import { debug, error, warning } from '@services/logger';
 import { getRetryDelay } from '@utils/fetch/fetch.utils';
 import { wait } from '@utils/process/process.utils';
-import ccxt, { Order as CCXTOrder, Trade as CCXTTrade, ConstructorArgs, Exchange, NetworkError, OHLCV } from 'ccxt';
+import ccxt, { Order as CCXTOrder, Trade as CCXTTrade, ConstructorArgs, Exchange, MarketInterface, OHLCV } from 'ccxt';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { CCXTExchangeConfig } from './ccxtExchange';
 import { BROKER_MANDATORY_FEATURES, BROKER_MAX_RETRIES_ON_FAILURE } from './exchange.const';
+import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from './exchange.error';
 import { DummyExchange } from './exchange.types';
 
 const selectAgent = (proxy: string) => {
@@ -42,7 +43,12 @@ export const createExchange = (config: CCXTExchangeConfig) => {
     }
     default: {
       const { apiKey, secret } = config;
-      const options = { maxRetriesOnFailure: 0 }; // we handle it manualy
+      // maxRetriesOnFailure: we handle it manualy.
+      // quoteOrderQty: CCXTExchange.createMarketOrder sends the ticker price along with a market order, as Hyperliquid requires it.
+      // Given a price, ccxt's binance turns a spot market order into a quoteOrderQty of amount × price, an amount of quote currency:
+      // a SELL then sells whatever base amount it takes to receive it, more than the amount asked if the price fell, beyond the
+      // balance for an all-in exit or a trailing stop. Off, binance sends the amount as the quantity and ignores the price.
+      const options = { maxRetriesOnFailure: 0, quoteOrderQty: false };
       const publicClient = new ccxt[name]({ ...commonConfig, agent, options });
       const privateClient = new ccxt[name]({ ...commonConfig, options, apiKey, secret });
       return { publicClient, privateClient };
@@ -68,34 +74,121 @@ export const isDummyExchange = (exchange: unknown): exchange is DummyExchange =>
     typeof exchange.processOneMinuteBucket === 'function'
   );
 
+/**
+ * Translates a ccxt error into the Gekko error the orders handle, the one the simulated exchange throws. Despite their names, the
+ * ccxt classes are unrelated to Gekko's, so untranslated an order never recognises a rejection or an unknown order.
+ * - OrderNotFound becomes OrderNotFound. It is tested first: in ccxt it extends InvalidOrder.
+ * - InvalidOrder, InsufficientFunds and BadRequest (BadSymbol included) become InvalidOrder: the exchange refused the request and
+ *   would refuse it again.
+ * - NetworkError (timeout, rate limit, maintenance, nonce...) becomes ExchangeNetworkError.
+ * The message is kept and the ccxt error becomes the cause. Anything else, other ccxt errors included, is returned unchanged.
+ */
+export const translateCcxtError = (err: unknown): unknown => {
+  if (err instanceof ccxt.OrderNotFound) return new OrderNotFound(err.message, { cause: err });
+  if (err instanceof ccxt.InvalidOrder || err instanceof ccxt.InsufficientFunds || err instanceof ccxt.BadRequest)
+    return new InvalidOrder(err.message, { cause: err });
+  if (err instanceof ccxt.NetworkError) return new ExchangeNetworkError(err.message, { cause: err });
+  return err;
+};
+
+/**
+ * Calls the exchange once and throws its failure translated by translateCcxtError. For the calls that must never be replayed, such
+ * as an order creation or cancelation, which retry would send again after a timeout.
+ */
+export const translateErrors = async <T>(fn: () => Promise<T>): Promise<T> => {
+  try {
+    return await fn();
+  } catch (err) {
+    throw translateCcxtError(err);
+  }
+};
+
+/**
+ * Calls the exchange, and calls it again after a ccxt NetworkError, up to maxRetries more times. The error it gives up on, or any
+ * other error at once, is thrown translated by translateCcxtError.
+ */
 export const retry = async <T>(fn: () => Promise<T>, currRetry = 1, maxRetries = BROKER_MAX_RETRIES_ON_FAILURE): Promise<T> => {
   try {
     return await fn();
   } catch (err) {
-    const isRetryableError = err instanceof NetworkError;
+    const isRetryableError = err instanceof ccxt.NetworkError;
     if (err instanceof Error) error('exchange', `Call to exchange failed due to ${err.message}`);
-    if (!isRetryableError || currRetry > maxRetries) throw err;
+    if (!isRetryableError || currRetry > maxRetries) throw translateCcxtError(err);
     await wait(getRetryDelay(currRetry));
     warning('exchange', `Retrying to fetch (attempt ${currRetry})`);
     return retry(fn, currRetry + 1, maxRetries);
   }
 };
 
-export const mapCcxtTradeToTrade = (trade: CCXTTrade): Trade => ({
+const isFiniteNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+/**
+ * The fee rate of a ccxt trade in %, the unit of Trade.fee.rate and of the simulated exchange (0.1 for 0.1 %), or undefined when it
+ * cannot be known. Never 0 by default: 0 is a trade without fees, and only an unknown rate makes the Trader warn about it.
+ * - A rate given by ccxt is a fraction (0.001 for 0.1 %): it is multiplied by 100. ccxt 4.5.39 gives none for binance or hyperliquid.
+ * - Otherwise the rate is derived from the cost and the currency of the fee, which both drivers give. A fee paid in the quote
+ *   currency is that share of the cost of the trade (amount × price), a fee paid in the base currency that share of its amount.
+ *   Hyperliquid names the fee currency by its token (feeToken, which ccxt does not unify), while the market is named after the coins
+ *   ccxt maps the tokens to: the token is also matched with the baseName of the market (UBTC for BTC/USDC) and its quoteId (USDT0 for
+ *   a market quoted in USDT).
+ * - A fee paid in any other currency, such as BNB with Binance's fee discount, is not converted: its rate is unknown.
+ */
+const getFeePercent = (trade: CCXTTrade, market: MarketInterface): number | undefined => {
+  const rate = trade.fee?.rate;
+  if (isFiniteNumber(rate)) return rate * 100;
+
+  const cost = trade.fee?.cost;
+  const currency = trade.fee?.currency;
+  const amount = trade.amount ?? 0;
+  const price = trade.price ?? 0;
+  if (!isFiniteNumber(cost) || !currency || !(amount > 0) || !(price > 0)) return undefined;
+
+  const baseName = 'baseName' in market && typeof market.baseName === 'string' ? market.baseName : undefined;
+  if (currency === market.quote || currency === market.quoteId) return (cost * 100) / (amount * price);
+  if (currency === market.base || currency === baseName) return (cost * 100) / amount;
+  return undefined;
+};
+
+/**
+ * Maps a ccxt trade of the market given onto a Gekko trade. Its fee rate is in % (see getFeePercent); the cost and the currency of
+ * the fee are kept as ccxt gives them, for information.
+ */
+export const mapCcxtTradeToTrade = (trade: CCXTTrade, market: MarketInterface): Trade => ({
   id: trade.order ?? '',
   amount: trade.amount ?? 0,
   price: trade.price ?? 0,
   timestamp: trade.timestamp ?? Date.now(),
-  fee: { rate: trade.fee?.rate ?? 0 },
+  fee: { rate: getFeePercent(trade, market), cost: trade.fee?.cost, currency: trade.fee?.currency },
 });
 
+/**
+ * The fill and the remaining amount of a ccxt order, each a finite number or undefined: unknown, not 0. ccxt 4.5.39 leaves them
+ * undefined when the exchange gives too little (an acknowledgement, an answer with the id alone). One missing, or not a finite
+ * number, is the amount of the order less the other, never below 0. ccxt's safeOrder derives them so already (without the floor):
+ * this covers an answer that did not go through it.
+ */
+const getFill = ({ amount, filled, remaining }: CCXTOrder): Pick<OrderState, 'filled' | 'remaining'> => {
+  const amountLess = (part: unknown) => (isFiniteNumber(amount) && isFiniteNumber(part) ? Math.max(amount - part, 0) : undefined);
+  return {
+    filled: isFiniteNumber(filled) ? filled : amountLess(remaining),
+    remaining: isFiniteNumber(remaining) ? remaining : amountLess(filled),
+  };
+};
+
+/**
+ * Maps a ccxt order onto the state of a Gekko order, its fill and remaining amount completed by getFill. Its timestamp is never left
+ * undefined, as ccxt 4.5.39 leaves it when the exchange gives none: createOrderSummary fetches the trades of the order from it
+ * (fetchMyTrades), and undefined made that bound NaN, so that no trade was found and logging the bound threw. It falls back on the
+ * last update of the order, then on now, the time the state is read. Now is the safest bound left: the order exists by then, so the
+ * bound does not reach back into the trades of older orders, which could crowd its own out of the page fetched, though it may miss
+ * a fill made before the state was read.
+ */
 export const mapCcxtOrderToOrder = (order: CCXTOrder): OrderState => ({
   id: order.id,
   status: processStatus(order.status),
-  filled: order.filled,
-  remaining: order.remaining,
+  ...getFill(order),
   price: order.price,
-  timestamp: order.timestamp,
+  timestamp: [order.timestamp, order.lastUpdateTimestamp].find(isFiniteNumber) ?? Date.now(),
 });
 
 export const mapOhlcvToCandles = (ohlcvList: OHLCV[]): Candle[] =>
@@ -108,8 +201,20 @@ export const mapOhlcvToCandles = (ohlcvList: OHLCV[]): Candle[] =>
     volume: ohlcv[5] ?? 0,
   }));
 
+/**
+ * Maps the status of a ccxt order onto those of Gekko. Only a status that ends the order is final:
+ * - 'closed', an order executed in full, is closed: a fill.
+ * - 'canceled', 'rejected' and 'expired' are canceled, and so is Hyperliquid's 'scheduledCancel', an order canceled by the dead
+ *   man's switch (scheduleCancel), which ccxt passes on as is: its parseOrderStatus only maps the statuses ending in Canceled or
+ *   Rejected.
+ * - Anything else is open: no status, 'open', and whatever ccxt passes on as the exchange wrote it, such as 'canceling' (Binance's
+ *   PENDING_CANCEL), 'PENDING_NEW', or 'success' (ccxt's order for Hyperliquid's acknowledgement of a cancelation, with neither id nor
+ *   fill). Such an order is not known to have ended: taken as closed, it would be reported filled, a fill that may never have
+ *   happened; open, it is only read again by the orders that poll.
+ */
 const processStatus = (status?: string): OrderState['status'] => {
-  if (!status || status === 'open') return 'open';
-  if (status === 'canceled' || status === 'rejected' || status === 'expired') return 'canceled';
-  return 'closed';
+  if (status === 'closed') return 'closed';
+  if (status === 'canceled' || status === 'rejected' || status === 'expired' || status === 'scheduledCancel') return 'canceled';
+  if (status && status !== 'open') debug('exchange', `Unknown order status ${status}, taken as open: the order is not known to have ended`);
+  return 'open';
 };
