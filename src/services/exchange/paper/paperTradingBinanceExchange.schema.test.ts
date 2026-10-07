@@ -40,4 +40,14 @@ describe('paperBinanceExchangeSchema', () => {
     const result = paperBinanceExchangeSchema.safeParse({ ...createConfig(), exchangeSynchInterval: 0 });
     expect(result.error?.issues).toMatchObject([{ path: ['exchangeSynchInterval'] }]);
   });
+
+  // Dropped, a misspelt override would leave the Binance fees in place
+  it.each`
+    scenario                            | config                                             | path               | keys
+    ${'a misspelt feeOverride'}         | ${{ ...createConfig(), feeOveride: { maker: 0 } }} | ${[]}              | ${['feeOveride']}
+    ${'a misspelt fee in the override'} | ${createConfig({ makr: 0 })}                       | ${['feeOverride']} | ${['makr']}
+  `('refuses $scenario instead of dropping it', ({ config, path, keys }) => {
+    const result = paperBinanceExchangeSchema.safeParse(config);
+    expect(result.error?.issues).toMatchObject([{ code: 'unrecognized_keys', path, keys }]);
+  });
 });

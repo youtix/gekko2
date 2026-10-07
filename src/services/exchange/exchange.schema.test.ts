@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { exchangeSchema, feeRateSchema } from './exchange.schema';
+import { exchangeSchema, feeRateSchema, simulationBalanceSchema } from './exchange.schema';
 
 const intervalMessage = (field: string) => `${field} must be an integer number of milliseconds between 1000 and 2147483647`;
 
@@ -42,6 +42,19 @@ describe('exchangeSchema', () => {
       const result = exchangeSchema.parse({ name: 'binance', [field]: value });
       expect(result[field as 'exchangeSynchInterval' | 'orderSynchInterval']).toBe(value);
     });
+  });
+
+  // Dropped, a misspelt interval would leave the default polling period in place
+  it('refuses an unknown key instead of dropping it', () => {
+    const result = exchangeSchema.safeParse({ name: 'binance', orderSyncInterval: 5000 });
+    expect(result.error?.issues).toMatchObject([{ code: 'unrecognized_keys', path: [], keys: ['orderSyncInterval'] }]);
+  });
+});
+
+describe('simulationBalanceSchema', () => {
+  it('refuses an unknown key in an entry instead of dropping it', () => {
+    const result = simulationBalanceSchema.safeParse([{ assetName: 'USDT', balance: 1000, locked: 100 }]);
+    expect(result.error?.issues).toMatchObject([{ code: 'unrecognized_keys', path: [0], keys: ['locked'] }]);
   });
 });
 

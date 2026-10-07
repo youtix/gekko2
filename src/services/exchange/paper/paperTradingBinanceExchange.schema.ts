@@ -2,7 +2,7 @@ import { exchangeSchema, feeRateSchema, proxySchema, simulationBalanceSchema } f
 import z from 'zod';
 
 const feeOverrideSchema = z
-  .object({
+  .strictObject({
     maker: feeRateSchema('feeOverride.maker').optional(),
     taker: feeRateSchema('feeOverride.taker').optional(),
   })

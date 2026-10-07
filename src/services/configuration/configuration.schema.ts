@@ -83,14 +83,27 @@ export const watchSchema = z
     }
   });
 
-export const storageSchema = z.object({
+// Storage holds the candles until it has insertThreshold minutes of them (about 1.6 KB a minute for 5 pairs), then writes them in
+// one synchronous transaction per pair, which stalls the event loop (measured with 5 pairs: 0.1 s for a day, 0.6 to 1.2 s for a
+// week). A day is the most, close to the importer's default of 1000: the Heart of a history download fails after a 0.2 s stall at
+// the shortest tickrate, and a run stopped without finalising its plugins (Ctrl-C) loses all that Storage holds. Storage would
+// read 0 as left out (1 in realtime, 1000 in the importer), hence the minimum of 1.
+const MAX_INSERT_THRESHOLD = 1440;
+const insertThresholdMessage = `insertThreshold must be an integer number of minutes between 1 and ${MAX_INSERT_THRESHOLD}`;
+
+export const storageSchema = z.strictObject({
   type: z.literal('sqlite'),
   database: z.string(),
-  insertThreshold: z.number().optional(),
+  insertThreshold: z
+    .number(insertThresholdMessage)
+    .int(insertThresholdMessage)
+    .min(1, insertThresholdMessage)
+    .max(MAX_INSERT_THRESHOLD, insertThresholdMessage)
+    .optional(),
 });
 
 export const configurationSchema = z
-  .object({
+  .strictObject({
     showLogo: z.boolean().default(true),
     watch: watchSchema,
     exchange: z.discriminatedUnion('name', [
@@ -100,6 +113,8 @@ export const configurationSchema = z
       paperBinanceExchangeSchema,
     ]),
     storage: storageSchema.nullable().optional().default(null),
+    // Loose on purpose, unlike the rest of the configuration: the pipeline parses each plugin entry again with the strict schema
+    // of the plugin its name selects, and the strategy block is handed whole to the strategy, whose parameters are its own.
     plugins: z.array(z.looseObject({ name: z.string() })),
     strategy: z.looseObject({ name: z.string() }).optional(),
     [disclaimerField]: z.boolean().nullable().default(null),

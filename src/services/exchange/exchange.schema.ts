@@ -26,7 +26,7 @@ export const proxySchema = z
 
 export const simulationBalanceSchema = z
   .array(
-    z.object({
+    z.strictObject({
       assetName: z.string(),
       balance: z.number().nonnegative(),
     }),
@@ -34,7 +34,8 @@ export const simulationBalanceSchema = z
   .min(1)
   .transform(balance => new Map<Asset, number>(balance.map(b => [b.assetName, b.balance])));
 
-export const exchangeSchema = z.object({
+/** Its strictness carries over to every exchange schema extending it: a misspelt key (sandobx: true) is refused, not dropped */
+export const exchangeSchema = z.strictObject({
   name: z.string(),
   exchangeSynchInterval: synchIntervalSchema('exchangeSynchInterval').default(10 * 60 * 1000),
   orderSynchInterval: synchIntervalSchema('orderSynchInterval').default(20 * 1000),

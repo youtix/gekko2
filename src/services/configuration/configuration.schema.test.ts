@@ -422,6 +422,40 @@ describe('configurationSchema', () => {
     expect(result.error?.issues).toMatchObject([{ path: ['storage', 'type'], code: 'invalid_value' }]);
   });
 
+  describe('storage insertThreshold', () => {
+    const createStorage = (insertThreshold?: unknown) => ({
+      type: 'sqlite',
+      database: 'gekko.db',
+      ...(insertThreshold !== undefined && { insertThreshold }),
+    });
+
+    // Storage would read 0 as left out and apply its default, write every minute as it comes for a negative count, round a fraction up
+    it.each`
+      scenario                        | insertThreshold
+      ${'0'}                          | ${0}
+      ${'a negative count'}           | ${-5}
+      ${'a fractional count'}         | ${2.5}
+      ${'more than a day (1441)'}     | ${1441}
+      ${'a number given as a string'} | ${'100'}
+    `('refuses $scenario', ({ insertThreshold }) => {
+      const result = configurationSchema.safeParse({ ...createBaseConfig(), storage: createStorage(insertThreshold) });
+      expect(result.error?.issues).toMatchObject([
+        { path: ['storage', 'insertThreshold'], message: 'insertThreshold must be an integer number of minutes between 1 and 1440' },
+      ]);
+    });
+
+    // Left out, it stays absent and Storage applies the default of the mode
+    it.each`
+      scenario                   | insertThreshold
+      ${'1, the fewest'}         | ${1}
+      ${'1440, a day, the most'} | ${1440}
+      ${'no value'}              | ${undefined}
+    `('accepts $scenario', ({ insertThreshold }) => {
+      const { storage } = configurationSchema.parse({ ...createBaseConfig(), storage: createStorage(insertThreshold) });
+      expect(storage).toStrictEqual(createStorage(insertThreshold));
+    });
+  });
+
   const traderPlugin = [{ name: 'Trader' }];
   const OtherPlugin = [{ name: 'Other' }];
   const binanceExchange = { name: 'binance', apiKey: 'test', secret: 'test' };
@@ -455,6 +489,39 @@ describe('configurationSchema', () => {
         path: [DISCLAIMER_FIELD],
       });
     }
+  });
+
+  describe('unknown keys', () => {
+    const storage = { type: 'sqlite', database: 'gekko.db', insertTreshold: 100 };
+    const binance = { ...binanceExchange, sandobx: true };
+    const hyperliquid = { name: 'hyperliquid', privateKey: '0x01', walletAddress: '0x02', sandobx: true };
+
+    // A dropped key would leave its default in place: with the disclaimer accepted, a misspelt sandbox flag would trade live
+    it.each`
+      scenario                                    | overrides                           | path            | keys
+      ${'a misspelt strategy block (strategies)'} | ${{ strategies: { name: 'DEMA' } }} | ${[]}           | ${['strategies']}
+      ${'a misspelt storage option'}              | ${{ storage }}                      | ${['storage']}  | ${['insertTreshold']}
+      ${'a misspelt sandbox flag on binance'}     | ${{ exchange: binance }}            | ${['exchange']} | ${['sandobx']}
+      ${'a misspelt sandbox flag on hyperliquid'} | ${{ exchange: hyperliquid }}        | ${['exchange']} | ${['sandobx']}
+    `('refuses $scenario instead of dropping it', ({ overrides, path, keys }) => {
+      const result = configurationSchema.safeParse({
+        ...createBaseConfig(),
+        plugins: traderPlugin,
+        [DISCLAIMER_FIELD]: true,
+        ...overrides,
+      });
+      expect(result.error?.issues).toMatchObject([{ code: 'unrecognized_keys', path, keys }]);
+    });
+
+    // The strategy block is handed whole to the strategy, and the pipeline parses each plugin entry with its plugin's schema
+    it.each`
+      scenario                                 | overrides                                                                          | path
+      ${'the parameters of the strategy'}      | ${{ strategy: { name: 'DEMA', period: 12, thresholds: { up: 100 } } }}             | ${['strategy']}
+      ${'the options of a plugin, left to it'} | ${{ plugins: [{ name: 'Trader', portfolioUpdates: { threshold: 1, dust: 10 } }] }} | ${['plugins', 0]}
+    `('keeps $scenario as written', ({ overrides, path }) => {
+      const result = configurationSchema.parse({ ...createBaseConfig(), ...overrides });
+      expect(get(result, path)).toEqual(get(overrides, path));
+    });
   });
 
   describe('exchange allowed in each mode', () => {
