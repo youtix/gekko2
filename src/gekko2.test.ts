@@ -78,6 +78,39 @@ describe('main', () => {
     });
   });
 
+  describe('when the configuration cannot be loaded', () => {
+    beforeEach(async () => {
+      // The real module, which builds `config` when it is evaluated: without a file to read, its evaluation throws a GekkoError
+      vi.doUnmock('@services/configuration/configuration');
+      vi.stubEnv('GEKKO_CONFIG_FILE_PATH', undefined);
+      await import('./gekko2');
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      vi.doMock('@services/configuration/configuration', () => ({ config }));
+    });
+
+    it('logs its one-line message at error level', () => {
+      expect(error).toHaveBeenCalledWith('gekko', '[CONFIGURATION] Missing GEKKO_CONFIG_FILE_PATH environment variable');
+    });
+
+    it('logs its stack at debug level', () => {
+      expect(debug).toHaveBeenCalledWith(
+        'gekko',
+        expect.stringMatching(/^GekkoError: \[CONFIGURATION\] Missing GEKKO_CONFIG_FILE_PATH environment variable\n\s+at /),
+      );
+    });
+
+    it('exits with code 1', () => {
+      expect(process.exit).toHaveBeenCalledExactlyOnceWith(1);
+    });
+
+    it('does not start the pipeline', () => {
+      expect(gekkoPipeline).not.toHaveBeenCalled();
+    });
+  });
+
   describe('when the pipeline stops with an ApplicationStopError', () => {
     beforeEach(async () => {
       // Imported after vi.resetModules(), so that it is the class gekko2.ts checks against

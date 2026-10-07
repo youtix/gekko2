@@ -1,6 +1,8 @@
+import { GekkoError } from '@errors/gekko.error';
 import { readFileSync } from 'fs';
 import { dump } from 'js-yaml';
 import JSON5 from 'json5';
+import { omit } from 'lodash-es';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('fs', () => ({
@@ -112,9 +114,24 @@ describe('Configuration Service', () => {
       expect(config.getWatch()).toEqual(parsedWatch);
     });
 
-    it('should throw validation error for invalid config', () => {
-      setConfigFile('config.json', { ...mockConfig, watch: 'invalid' });
-      expect(() => new Configuration()).toThrow();
+    describe.each`
+      problem                        | content                                                                              | issues
+      ${'a misspelt key'}            | ${{ ...mockConfig, watch: { ...omit(mockConfig.watch, 'assets'), asset: ['BTC'] } }} | ${'✖ Unrecognized key: "asset"\n  → at watch\n✖ Invalid input: expected array, received undefined\n  → at watch.assets'}
+      ${'a value of the wrong type'} | ${{ ...mockConfig, showLogo: 'yes' }}                                                | ${'✖ Invalid input: expected boolean, received string\n  → at showLogo'}
+    `('when the configuration file has $problem', ({ content, issues }) => {
+      beforeEach(() => {
+        setConfigFile('./config/gekko.json', content);
+      });
+
+      it('should throw a GekkoError', () => {
+        expect(() => new Configuration()).toThrow(GekkoError);
+      });
+
+      it('should name the file, then give each problem on its own line with the path of the option at fault', () => {
+        expect(() => new Configuration()).toThrow(
+          expect.objectContaining({ message: `[CONFIGURATION] Invalid configuration file ./config/gekko.json:\n${issues}` }),
+        );
+      });
     });
 
     it('should throw error for empty content', () => {

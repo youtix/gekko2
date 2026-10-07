@@ -5,6 +5,7 @@ import { load } from 'js-yaml';
 import JSON5 from 'json5';
 import { find, isNil } from 'lodash-es';
 import { extname } from 'path';
+import { z } from 'zod';
 import { Configuration as ConfigurationModel } from '../../models/configuration.types';
 import { configurationSchema } from './configuration.schema';
 
@@ -21,7 +22,12 @@ export class Configuration {
     const data = readFileSync(configFilePath, 'utf8');
     const content = isJson ? JSON5.parse(data) : load(data);
     if (isNil(content)) throw new GekkoError('configuration', `Empty configuration file: ${configFilePath}`);
-    this.configuration = configurationSchema.parse(content);
+    const result = configurationSchema.safeParse(content);
+    // Not the ZodError itself, whose message, the JSON of its issues, names no file: a GekkoError, which the fatal error report
+    // prints as its message alone, here one issue per line with the path of the option at fault
+    if (!result.success)
+      throw new GekkoError('configuration', `Invalid configuration file ${configFilePath}:\n${z.prettifyError(result.error)}`);
+    this.configuration = result.data;
   }
 
   public showLogo() {

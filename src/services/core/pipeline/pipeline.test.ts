@@ -1,8 +1,10 @@
+import { GekkoError } from '@errors/gekko.error';
 import { config } from '@services/configuration/configuration';
 import * as injecter from '@services/injecter/injecter';
 import { CandleDateranges } from '@services/storage/storage.types';
 import { SequentialEventEmitter } from '@utils/event/sequentialEventEmitter';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { PipelineContext } from '../../../models/pipeline.types';
 import * as allPlugin from '../../../plugins/index';
 import { MissingCandlesError } from '../stream/backtest/backtest.error';
@@ -237,7 +239,9 @@ describe('Pipeline Service', () => {
   });
 
   describe('validatePluginsSchema', () => {
-    const schemaOf = (name: string) => ({ parse: (entry: object) => ({ ...entry, parsedBy: name }) }) as any;
+    // Strict, like every plugin schema
+    const schemaOf = (name: string) =>
+      z.strictObject({ name: z.string(), threshold: z.number() }).transform(entry => ({ ...entry, parsedBy: name }));
     const sender = { name: 'Sender', schema: schemaOf('Sender') };
     const receiver = { name: 'Receiver', schema: schemaOf('Receiver') };
 
@@ -253,6 +257,50 @@ describe('Pipeline Service', () => {
         { ...sender, parameters: { name: 'Sender', threshold: 1, parsedBy: 'Sender' } },
         { ...receiver, parameters: { name: 'Receiver', threshold: 2, parsedBy: 'Receiver' } },
       ]);
+    });
+
+    it('should leave the parameters of a plugin without schema undefined', async () => {
+      await expect(pipelineModule.validatePluginsSchema([{ name: 'Sender' }, receiver])).resolves.toEqual([
+        { name: 'Sender', parameters: undefined },
+        { ...receiver, parameters: { name: 'Receiver', threshold: 2, parsedBy: 'Receiver' } },
+      ]);
+    });
+
+    describe.each`
+      problem                          | receiverEntry                                        | issues
+      ${'an unknown key'}              | ${{ name: 'Receiver', threshold: 2, treshold: 3 }}   | ${'✖ Unrecognized key: "treshold"'}
+      ${'an option of the wrong type'} | ${{ name: 'Receiver', threshold: '2' }}              | ${'✖ Invalid input: expected number, received string\n  → at threshold'}
+      ${'several problems'}            | ${{ name: 'Receiver', threshold: '2', treshold: 3 }} | ${'✖ Unrecognized key: "treshold"\n✖ Invalid input: expected number, received string\n  → at threshold'}
+    `('when the entry of a plugin has $problem', ({ receiverEntry, issues }) => {
+      beforeEach(() => {
+        vi.mocked(config.getPlugins).mockReturnValue([{ name: 'Sender', threshold: 1 }, receiverEntry]);
+      });
+
+      it('should reject with a GekkoError', async () => {
+        await expect(pipelineModule.validatePluginsSchema([sender, receiver])).rejects.toBeInstanceOf(GekkoError);
+      });
+
+      it('should name the plugin and its entry, then give each problem with the path of its option', async () => {
+        await expect(pipelineModule.validatePluginsSchema([sender, receiver])).rejects.toHaveProperty(
+          'message',
+          `[PIPELINE] Invalid options for plugin Receiver (plugins[1]):\n${issues}`,
+        );
+      });
+    });
+
+    describe('when a plugin is configured twice', () => {
+      beforeEach(() => {
+        vi.mocked(config.getPlugins).mockReturnValue([
+          { name: 'Sender', threshold: 1 },
+          { name: 'Sender', threshold: '2' },
+        ] as any);
+      });
+
+      it('should name the invalid entry by its index', async () => {
+        await expect(pipelineModule.validatePluginsSchema([sender, sender])).rejects.toThrow(
+          /^\[PIPELINE\] Invalid options for plugin Sender \(plugins\[1\]\):\n/,
+        );
+      });
     });
   });
 
@@ -450,15 +498,19 @@ describe('Pipeline Service', () => {
       },
     };
     const exchange = { getExchangeName: () => 'binance', loadMarkets: vi.fn() };
+    // Journals valid entries only: zod skips the transform of an invalid one
     const schemaOf = (name: string) =>
-      ({
-        parse: (entry: object) => {
-          journal.push(`validatePluginsSchema: ${name}`);
-          return { ...entry, parsedBy: name };
-        },
-      }) as any;
+      z.strictObject({ name: z.string(), threshold: z.number() }).transform(entry => {
+        journal.push(`validatePluginsSchema: ${name}`);
+        return { ...entry, parsedBy: name };
+      });
     let staticConfigurations: Record<string, PipelineContext[number]>;
     const changeReceiver = (change: Partial<PipelineContext[number]>) => () => Object.assign(staticConfigurations.Receiver, change);
+    const changeReceiverEntry = (change: object) => () =>
+      vi.mocked(config.getPlugins).mockReturnValue([
+        { name: 'Sender', threshold: 1 },
+        { name: 'Receiver', threshold: 2, ...change },
+      ]);
 
     class StubPlugin extends SequentialEventEmitter {
       readonly services: Record<string, unknown> = {};
@@ -598,6 +650,7 @@ describe('Pipeline Service', () => {
     describe.each`
       failure                                   | breakIt                                                                                   | error                                                                  | lastStep
       ${'a plugin does not support the mode'}   | ${changeReceiver({ modes: ['realtime'] })}                                                | ${'Plugin Receiver does not support backtest mode.'}                   | ${'getPluginsStaticConfiguration: Receiver'}
+      ${'the entry of a plugin is invalid'}     | ${changeReceiverEntry({ threshold: '2' })}                                                | ${'Invalid options for plugin Receiver (plugins[1]):'}                 | ${'validatePluginsSchema: Sender'}
       ${'a dependency is missing'}              | ${changeReceiver({ dependencies: ['non-existent-dep-xyz'] })}                             | ${'Dependency non-existent-dep-xyz not installed for plugin Receiver'} | ${'validatePluginsSchema: Receiver'}
       ${'two plugins emit the same event'}      | ${changeReceiver({ eventsEmitted: ['myEvent'] })}                                         | ${PluginsEmitSameEventError}                                           | ${'validatePluginsSchema: Receiver'}
       ${'dependency and duplicate checks fail'} | ${changeReceiver({ dependencies: ['non-existent-dep-xyz'], eventsEmitted: ['myEvent'] })} | ${'Dependency non-existent-dep-xyz not installed for plugin Receiver'} | ${'validatePluginsSchema: Receiver'}

@@ -16,18 +16,12 @@
 
 import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
-import { config } from '@services/configuration/configuration';
-import { gekkoPipeline } from '@services/core/pipeline/pipeline';
-import { inject } from '@services/injecter/injecter';
 import { debug, error, info } from '@services/logger';
 import { logVersion } from '@utils/process/process.utils';
 import { isNil, isString } from 'lodash-es';
 import { inspect } from 'node:util';
 
-export const main = async () => {
-  if (config.showLogo()) {
-    // eslint-disable-next-line no-console
-    console.log(`
+const LOGO = `
   ______   ________  __    __  __    __   ______          ______  
  /      \\ /        |/  |  /  |/  |  /  | /      \\        /      \\ 
 /$$$$$$  |$$$$$$$$/ $$ | /$$/ $$ | /$$/ /$$$$$$  |      /$$$$$$  |
@@ -37,12 +31,24 @@ $$ |$$$$ |$$$$$/    $$$$$  \\  $$$$$  \\  $$ |  $$ |      /$$$$$$/
 $$ \\__$$ |$$ |_____ $$ |$$  \\ $$ |$$  \\ $$ \\__$$ |      $$ |_____ 
 $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
  $$$$$$/  $$$$$$$$/ $$/   $$/ $$/   $$/  $$$$$$/        $$$$$$$$/ 
-`);
-  }
+`;
 
+/** Closes the storage if one was created. A no-op until main() has loaded the injecter, before which none can be. */
+let closeStorage = () => {};
+
+export const main = async () => {
   let exitCode: number | undefined; // undefined: the run ended normally
   try {
+    // Not imported statically, and neither are the injecter and the pipeline, which import it: `config` is built when its module
+    // is evaluated and throws on an invalid configuration file. From a static import, that error would be thrown before the
+    // process handlers are registered and printed raw by Bun, instead of being reported below like any other failure.
+    const { config } = await import('@services/configuration/configuration');
+    // eslint-disable-next-line no-console
+    if (config.showLogo()) console.log(LOGO);
     info('gekko', logVersion());
+    const { inject } = await import('@services/injecter/injecter');
+    closeStorage = () => inject.closeStorage();
+    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
     await gekkoPipeline(); // Launch bot
   } catch (e) {
     if (e instanceof ApplicationStopError) {
@@ -56,7 +62,7 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
       exitCode = 1;
     }
   } finally {
-    inject.closeStorage();
+    closeStorage();
   }
   // A stopped or failed run exits explicitly, after the cleanup: in realtime mode, timers (order polling, hearts) would keep it alive
   if (exitCode !== undefined) process.exit(exitCode);
@@ -97,7 +103,7 @@ const logFailure = (failure: unknown, prefix = '') => {
 const onUncaughtException = (e: unknown) => {
   logFailure(e, 'Uncaught exception: ');
   try {
-    inject.closeStorage();
+    closeStorage();
   } catch {
     // Nothing may keep the process from exiting
   }

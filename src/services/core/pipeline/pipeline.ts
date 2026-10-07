@@ -9,6 +9,7 @@ import { keepDuplicates } from '@utils/collection/array.utils';
 import { toCamelCase } from '@utils/string/string.utils';
 import { startOfMinute } from 'date-fns';
 import { compact, each, filter, flatMap, map } from 'lodash-es';
+import { z } from 'zod';
 import { MissingCandlesError } from '../stream/backtest/backtest.error';
 import { PluginsEmitSameEventError } from './pipeline.error';
 import { streamPipelines } from './pipeline.utils';
@@ -92,10 +93,14 @@ export const checkPluginsDependencies = async (context: PipelineContext) => {
 
 export const validatePluginsSchema = async (context: PipelineContext) => {
   const parameters = config.getPlugins();
-  return map(context, (plugin, i) => ({
-    ...plugin,
-    parameters: plugin.schema?.parse(parameters[i]),
-  }));
+  return map(context, (plugin, i) => {
+    const result = plugin.schema?.safeParse(parameters[i]);
+    // Not the ZodError itself: it names neither the plugin nor its entry (a plugin can be configured twice), and its message, the
+    // JSON of its issues, would be printed twice by the fatal error report (message, then the stack that repeats it)
+    if (result?.error)
+      throw new GekkoError('pipeline', `Invalid options for plugin ${plugin.name} (plugins[${i}]):\n${z.prettifyError(result.error)}`);
+    return { ...plugin, parameters: result?.data };
+  });
 };
 
 export const checkPluginsModesCompatibility = async (context: PipelineContext) =>
