@@ -18,7 +18,7 @@ Plugins are the modular components that extend Gekko 2's functionality. Each plu
 | **Supervision**         | System monitoring and Telegram bot commands          | Realtime                    |
 
 > [!IMPORTANT]
-> Each entry under `plugins:` may only hold the options listed for its plugin below. An option the plugin does not know, misspelt (`maxConsecutiveError`) or meant for another plugin, stops Gekko at start-up with an `Unrecognized key` error naming it, instead of being ignored while the default applies.
+> Each entry under `plugins:` may only hold the options listed for its plugin below. An option the plugin does not know, misspelt (`maxConsecutiveError`) or meant for another plugin, stops Gekko at start-up with an `Unrecognized key` error naming it, instead of being ignored while the default applies. The top level of the file and its `watch`, `exchange` and `storage` sections refuse unknown keys the same way; only the `strategy` block is free-form, handed whole to the strategy, so a misspelt strategy parameter is not reported and is simply `undefined`.
 
 ---
 

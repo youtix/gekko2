@@ -39,6 +39,7 @@ Create a new TypeScript file anywhere on your system (e.g., `./strategies/myStra
 
 ```typescript
 import {
+  IndicatorResults,
   InitParams,
   OnCandleEventParams,
   OnOrderCanceledEventParams,
@@ -59,16 +60,16 @@ export class MyStrategy implements Strategy<MyStrategyParams> {
     // Initialize indicators here
   }
 
-  onTimeframeCandleAfterWarmup(params: OnCandleEventParams<MyStrategyParams>, ...indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup(params: OnCandleEventParams<MyStrategyParams>, ...indicators: IndicatorResults[]): void {
     // Your main trading logic goes here
   }
 
-  // Required methods (can be empty if unused)
-  onEachTimeframeCandle(params: OnCandleEventParams<MyStrategyParams>, ...indicators: unknown[]): void {}
-  log(params: OnCandleEventParams<MyStrategyParams>, ...indicators: unknown[]): void {}
-  onOrderCompleted(params: OnOrderCompletedEventParams<MyStrategyParams>, ...indicators: unknown[]): void {}
-  onOrderCanceled(params: OnOrderCanceledEventParams<MyStrategyParams>, ...indicators: unknown[]): void {}
-  onOrderErrored(params: OnOrderErroredEventParams<MyStrategyParams>, ...indicators: unknown[]): void {}
+  // Every hook is optional, the two above included: keep only the ones you use
+  onEachTimeframeCandle(params: OnCandleEventParams<MyStrategyParams>, ...indicators: IndicatorResults[]): void {}
+  log(params: OnCandleEventParams<MyStrategyParams>, ...indicators: IndicatorResults[]): void {}
+  onOrderCompleted(params: OnOrderCompletedEventParams<MyStrategyParams>, ...indicators: IndicatorResults[]): void {}
+  onOrderCanceled(params: OnOrderCanceledEventParams<MyStrategyParams>, ...indicators: IndicatorResults[]): void {}
+  onOrderErrored(params: OnOrderErroredEventParams<MyStrategyParams>, ...indicators: IndicatorResults[]): void {}
   end(): void {}
 }
 ```
@@ -103,7 +104,7 @@ exchange:
         cost:
           min: 5
           max: 9000000
-        precision:
+        precision: # Decimals of a price and of an amount, a whole number (8 = steps of 0.00000001), not a step like 0.01
           price: 8
           amount: 8
         fee:
@@ -139,7 +140,7 @@ plugins:
 
 ```bash
 # Using the compiled executable
-GEKKO_CONFIG_FILE_PATH=./config.yml ./dist/gekko2
+GEKKO_CONFIG_FILE_PATH=./config.yaml ./dist/gekko2
 ```
 
 ---
@@ -149,15 +150,22 @@ GEKKO_CONFIG_FILE_PATH=./config.yml ./dist/gekko2
 Every custom strategy must implement the `Strategy<T>` interface, where `T` is your parameters type:
 
 ```typescript
+// Every hook is optional. candle is a Map holding the candle of every watched pair, and each indicator arrives as an
+// IndicatorResults, { results: unknown; symbol: TradingPair }, in the order of the addIndicator calls.
+// TrailingStopState comes from '@strategies/trailingStopManager.types', UUID from 'node:crypto'.
 interface Strategy<T> {
-  init(params: InitParams<T>): void;
-  onEachTimeframeCandle(params: OnCandleEventParams<T>, ...indicators: unknown[]): void;
-  onTimeframeCandleAfterWarmup(params: OnCandleEventParams<T>, ...indicators: unknown[]): void;
-  log(params: OnCandleEventParams<T>, ...indicators: unknown[]): void;
-  onOrderCompleted(params: OnOrderCompletedEventParams<T>, ...indicators: unknown[]): void;
-  onOrderCanceled(params: OnOrderCanceledEventParams<T>, ...indicators: unknown[]): void;
-  onOrderErrored(params: OnOrderErroredEventParams<T>, ...indicators: unknown[]): void;
-  end(): void;
+  init?(params: InitParams<T>): void;
+  onEachTimeframeCandle?(params: OnCandleEventParams<T>, ...indicators: IndicatorResults[]): void;
+  onTimeframeCandleAfterWarmup?(params: OnCandleEventParams<T>, ...indicators: IndicatorResults[]): void;
+  log?(params: OnCandleEventParams<T>, ...indicators: IndicatorResults[]): void;
+  onOrderCompleted?(params: OnOrderCompletedEventParams<T>, ...indicators: IndicatorResults[]): void;
+  onOrderCanceled?(params: OnOrderCanceledEventParams<T>, ...indicators: IndicatorResults[]): void;
+  onOrderErrored?(params: OnOrderErroredEventParams<T>, ...indicators: IndicatorResults[]): void;
+  // The price reached the trigger of a trailing stop (see Creating Orders), or, without a trigger, the stop was just armed: trailing starts
+  onTrailingStopActivated?(state: TrailingStopState): void;
+  // A trailing stop was hit: orderId is the MARKET SELL Gekko has just created for it, whose outcome arrives like any order's
+  onTrailingStopTriggered?(orderId: UUID, state: TrailingStopState): void;
+  end?(): void;
 }
 ```
 
@@ -167,18 +175,21 @@ interface Strategy<T> {
 
 ### `init` — Strategy Initialization
 
-Called **once** when the first candle arrives. Use this to register indicators.
+Called **once** when the first candle arrives. Use this to register indicators: `addIndicator(name, symbol, params)` is only available here.
 
 ```typescript
-init({ tools, addIndicator }: InitParams<MyParams>): void {
+init({ candle, tools, addIndicator }: InitParams<MyParams>): void {
+  // candle holds one candle per watched pair: pick the pair to follow, and keep it for the other hooks
+  const [pair] = candle.keys();
+  this.pair = pair;
   // Register indicators (they'll be updated automatically)
-  addIndicator('EMA', { period: tools.strategyParams.short });
-  addIndicator('EMA', { period: tools.strategyParams.long });
+  addIndicator('EMA', pair, { period: tools.strategyParams.short });
+  addIndicator('EMA', pair, { period: tools.strategyParams.long });
 }
 ```
 
 > [!IMPORTANT]
-> Indicators are passed to other methods in the **same order** you register them in `init`.
+> Indicators are passed to other methods in the **same order** you register them in `init`, each as a `{ results, symbol }` object.
 
 ---
 
@@ -187,9 +198,10 @@ init({ tools, addIndicator }: InitParams<MyParams>): void {
 Called on **every** timeframe candle from the very beginning, including during warmup.
 
 ```typescript
-onEachTimeframeCandle({ candle, portfolio, tools }: OnCandleEventParams<MyParams>, ...indicators: unknown[]): void {
-  // Track data even during warmup
-  this.priceHistory.push(candle.close);
+onEachTimeframeCandle({ candle, portfolio, tools }: OnCandleEventParams<MyParams>, ...indicators: IndicatorResults[]): void {
+  // Track data even during warmup (candle is a Map: one candle per watched pair)
+  const current = this.pair ? candle.get(this.pair) : undefined;
+  if (current) this.priceHistory.push(current.close);
 }
 ```
 
@@ -200,13 +212,15 @@ onEachTimeframeCandle({ candle, portfolio, tools }: OnCandleEventParams<MyParams
 Called on each timeframe candle **after** the warmup period completes. **This is where your main trading logic belongs.**
 
 ```typescript
-onTimeframeCandleAfterWarmup({ candle, portfolio, tools }: OnCandleEventParams<MyParams>, ...indicators: unknown[]): void {
+onTimeframeCandleAfterWarmup({ candle, portfolio, tools }: OnCandleEventParams<MyParams>, ...indicators: IndicatorResults[]): void {
   const { createOrder, log, strategyParams } = tools;
-  const [shortEma, longEma] = indicators as [number, number];
+  const [shortEma, longEma] = indicators;
+  // results is unknown, and null until the indicator has seen enough candles
+  if (!this.pair || typeof shortEma.results !== 'number' || typeof longEma.results !== 'number') return;
 
-  if (shortEma > longEma && this.position !== 'long') {
+  if (shortEma.results > longEma.results && this.position !== 'long') {
     log('info', 'EMA crossover detected — going LONG');
-    createOrder({ type: 'STICKY', side: 'BUY' });
+    createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
     this.position = 'long';
   }
 }
@@ -216,12 +230,13 @@ onTimeframeCandleAfterWarmup({ candle, portfolio, tools }: OnCandleEventParams<M
 
 ### `log` — Logging Hook
 
-Called after each candle (post-warmup) to log indicator values and debug info.
+Called on each timeframe candle after warmup, just before `onTimeframeCandleAfterWarmup`, to log indicator values and debug info.
 
 ```typescript
-log({ candle, tools }: OnCandleEventParams<MyParams>, ...indicators: unknown[]): void {
-  const [shortEma, longEma] = indicators as [number, number];
-  tools.log('debug', `EMA Short: ${shortEma?.toFixed(2)} | Long: ${longEma?.toFixed(2)}`);
+log({ candle, tools }: OnCandleEventParams<MyParams>, ...indicators: IndicatorResults[]): void {
+  const [shortEma, longEma] = indicators;
+  if (typeof shortEma.results !== 'number' || typeof longEma.results !== 'number') return;
+  tools.log('debug', `EMA Short: ${shortEma.results.toFixed(2)} | Long: ${longEma.results.toFixed(2)}`);
 }
 ```
 
@@ -257,7 +272,8 @@ Called when an order fails or is rejected by the exchange.
 
 ```typescript
 onOrderErrored({ order, tools }: OnOrderErroredEventParams<MyParams>): void {
-  tools.log('error', `Order ${order.id} failed`);
+  // Not 'error': tools.log('error', …) throws, and stops the bot
+  tools.log('warn', `Order ${order.id} failed: ${order.reason}`);
   // Implement retry logic if needed
 }
 ```
@@ -266,7 +282,7 @@ onOrderErrored({ order, tools }: OnOrderErroredEventParams<MyParams>): void {
 
 ### `end` — Strategy Cleanup
 
-Called when the strategy ends (backtest completes or bot stops).
+Called when the strategy ends (backtest completes, or the bot stops on an error or on its circuit breaker; Ctrl-C skips it).
 
 ```typescript
 end(): void {
@@ -278,35 +294,40 @@ end(): void {
 
 ## Tools Available
 
-Every lifecycle method receives a `tools` object with utilities:
+Every lifecycle method but `end` and the trailing-stop hooks receives a `tools` object with utilities:
 
-| Tool              | Type                   | Description                                     |
-|-------------------|------------------------|-------------------------------------------------|
-| `strategyParams`  | `T` (your params type) | Your strategy parameters from config            |
-| `marketData`      | `MarketData`           | Current market information                      |
-| `log`             | `(level, msg) => void` | Log messages (`debug`, `info`, `warn`, `error`) |
-| `createOrder`     | `(order) => UUID`      | Create a new order                              |
-| `cancelOrder`     | `(orderId) => void`    | Cancel an existing order                        |
+| Tool                  | Type                           | Description                                                                                                                        |
+|-----------------------|--------------------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| `strategyParams`      | `T` (your params type)         | Your strategy parameters from config                                                                                               |
+| `marketData`          | `Map<TradingPair, MarketData>` | Order limits, precision (as steps: 0.01) and fees of each watched pair, plus the narrower `market` limits of MARKET orders if any  |
+| `log`                 | `(level, msg) => void`         | Log messages (`debug`, `info`, `warn`, `error`); `error` also throws a `GekkoError`, which stops the bot                           |
+| `createOrder`         | `(order) => UUID`              | Create a new order: returns its id at once, the outcome arrives later in `onOrderCompleted`, `onOrderCanceled` or `onOrderErrored` |
+| `cancelOrder`         | `(orderId) => void`            | Cancel an existing order                                                                                                           |
+| `cancelTrailingOrder` | `(orderId) => void`            | Drop the trailing stop of a BUY order (given the BUY's id), before or after the BUY completes                                      |
 
 ---
 
 ## Using Indicators
 
-Register indicators in `init` and receive their values in candle handlers:
+Register indicators in `init` with `addIndicator(name, symbol, params)` and receive their values in candle handlers:
 
 ```typescript
-init({ addIndicator, tools }: InitParams<MyParams>): void {
-  // Indicators are calculated automatically on each candle
-  addIndicator('SMA', { period: 20 });
-  addIndicator('RSI', { period: 14 });
-  addIndicator('MACD', { short: 12, long: 26, signal: 9 });
+init({ candle, addIndicator }: InitParams<MyParams>): void {
+  const [pair] = candle.keys();
+  // Indicators are calculated automatically on each candle of the pair they follow
+  addIndicator('SMA', pair, { period: 20 });
+  addIndicator('RSI', pair, { period: 14 });
+  addIndicator('MACD', pair, { short: 12, long: 26, signal: 9 });
 }
 
-onTimeframeCandleAfterWarmup(params: OnCandleEventParams<MyParams>, ...indicators: unknown[]): void {
-  // Access in the same order you registered them
-  const [sma, rsi, macd] = indicators as [number, number, { macd: number; signal: number; hist: number }];
-  
-  if (rsi < 30 && params.candle.close > sma) {
+onTimeframeCandleAfterWarmup(params: OnCandleEventParams<MyParams>, ...indicators: IndicatorResults[]): void {
+  // Access in the same order you registered them, each as { results, symbol }: results is unknown, and null until the
+  // indicator has seen enough candles (macd.results is an object, { macd, signal, hist }, whose values start as null)
+  const [sma, rsi, macd] = indicators;
+  const price = params.candle.get(sma.symbol)?.close;
+  if (price === undefined || typeof sma.results !== 'number' || typeof rsi.results !== 'number') return;
+
+  if (rsi.results < 30 && price > sma.results) {
     // Buy signal logic
   }
 }
@@ -331,25 +352,38 @@ Use `tools.createOrder()` to place trades:
 ### Order Parameters
 
 ```typescript
-createOrder({
-  type: 'STICKY' | 'MARKET' | 'LIMIT',
-  side: 'BUY' | 'SELL',
-  amount?: number,      // Optional: specific amount (defaults to full balance)
-  price?: number,       // Required for LIMIT orders
-});
+// tools.createOrder(order: StrategyOrder): UUID returns the order id at once. The outcome arrives later, in
+// onOrderCompleted, onOrderCanceled or onOrderErrored, whose order.id is that id.
+type StrategyOrder = {
+  symbol: TradingPair;                  // The watched pair to trade, e.g. 'BTC/USDT'
+  type: 'STICKY' | 'MARKET' | 'LIMIT';
+  side: 'BUY' | 'SELL';
+  amount?: number;                      // Optional: specific amount (defaults to full balance)
+  price?: number;                       // LIMIT orders: the limit price (the last close when omitted)
+  // Optional, BUY orders only (ignored on a SELL): a trailing stop armed when the BUY completes, which then sells the
+  // amount bought with a MARKET order
+  trailing?: {
+    percentage: number;                 // Distance of the stop below the highest price since activation, above 0 and below 100 (2.5 for 2.5%)
+    trigger?: number;                   // Price above 0 that activates it (active at once when omitted); other values are refused at arming
+  };
+};
 ```
 
 ### Examples
 
 ```typescript
 // Full position market buy
-createOrder({ type: 'MARKET', side: 'BUY' });
+createOrder({ symbol: 'BTC/USDT', type: 'MARKET', side: 'BUY' });
 
 // Specific amount sticky sell
-createOrder({ type: 'STICKY', side: 'SELL', amount: 0.5 });
+createOrder({ symbol: 'BTC/USDT', type: 'STICKY', side: 'SELL', amount: 0.5 });
 
 // Limit order at specific price
-createOrder({ type: 'LIMIT', side: 'BUY', price: 42000, amount: 0.1 });
+createOrder({ symbol: 'BTC/USDT', type: 'LIMIT', side: 'BUY', price: 42000, amount: 0.1 });
+
+// Full position market buy, then a stop trailing 2.5% below the highest price once the price reaches 45000.
+// Keep the id: tools.cancelTrailingOrder(orderId) drops the stop.
+const orderId = createOrder({ symbol: 'BTC/USDT', type: 'MARKET', side: 'BUY', trailing: { percentage: 2.5, trigger: 45000 } });
 ```
 
 ---
@@ -358,13 +392,13 @@ createOrder({ type: 'LIMIT', side: 'BUY', price: 42000, amount: 0.1 });
 
 ### TradingAdvisor Plugin Configuration
 
-The key configuration for custom strategies is in the `TradingAdvisor` plugin:
+The key configuration for custom strategies is in the `TradingAdvisor` plugin, here for the [Complete Example](#complete-example) below:
 
 ```yaml
 plugins:
   - name: TradingAdvisor
-    strategyName: CustomStrategy    # Must match your exported class name
-    strategyPath: ./strategies/mia2.strategy.ts  # Path to your strategy file
+    strategyName: EMACrossover    # Must match your exported class name
+    strategyPath: ./strategies/emaCrossover.strategy.ts  # Path to your strategy file
 ```
 
 | Parameter      | Type   | Required | Description                              |
@@ -374,18 +408,14 @@ plugins:
 
 ### Strategy Parameters
 
-All properties under `strategy:` (except `name`) are passed to your strategy via `tools.strategyParams`:
+The whole `strategy:` block, `name` included, is passed to your strategy as `tools.strategyParams` (Gekko only validates `name`, so a misspelt parameter is simply `undefined`). For the [Complete Example](#complete-example), whose `EMACrossoverParams` declares `src`, `shortPeriod` and `longPeriod`:
 
 ```yaml
 strategy:
-  name: CustomStrategy     # Used for identification
+  name: EMACrossover       # Must equal the TradingAdvisor strategyName; labels the run
   src: close               # Accessible via tools.strategyParams.src
-  short: 425               # Accessible via tools.strategyParams.short
-  long: 2520               # Accessible via tools.strategyParams.long
-  signal: 2750             # Accessible via tools.strategyParams.signal
-  bullRibbon:              # Nested objects work too
-    count: 13
-    start: 2500
+  shortPeriod: 12          # Accessible via tools.strategyParams.shortPeriod
+  longPeriod: 26           # Accessible via tools.strategyParams.longPeriod
 ```
 
 ---
@@ -425,7 +455,9 @@ Here's a complete EMA crossover strategy with proper structure:
 ### Strategy File: `./strategies/emaCrossover.strategy.ts`
 
 ```typescript
+import { TradingPair } from '@models/utility.types';
 import {
+  IndicatorResults,
   InitParams,
   OnCandleEventParams,
   OnOrderCanceledEventParams,
@@ -433,6 +465,7 @@ import {
   OnOrderErroredEventParams,
   Strategy,
 } from '@strategies/strategy.types';
+import { UUID } from 'node:crypto';
 
 interface EMACrossoverParams {
   src: 'close' | 'open' | 'high' | 'low';
@@ -441,52 +474,72 @@ interface EMACrossoverParams {
 }
 
 export class EMACrossover implements Strategy<EMACrossoverParams> {
-  private position: 'long' | 'short' | 'none' = 'none';
+  // createOrder only returns the order's id: its outcome arrives later, through the order hooks, so the position is only known
+  // then. Until then the order is pending, and no other one is sent.
+  private position: 'long' | 'none' = 'none';
+  private pendingOrderId?: UUID;
+  private pair?: TradingPair;
 
-  init({ addIndicator, tools }: InitParams<EMACrossoverParams>): void {
-    const { shortPeriod, longPeriod } = tools.strategyParams;
-    addIndicator('EMA', { period: shortPeriod });
-    addIndicator('EMA', { period: longPeriod });
+  init({ candle, addIndicator, tools }: InitParams<EMACrossoverParams>): void {
+    const { src, shortPeriod, longPeriod } = tools.strategyParams;
+    // candle holds one candle per watched pair: this strategy trades the first one
+    const [pair] = candle.keys();
+    this.pair = pair;
+    addIndicator('EMA', pair, { period: shortPeriod, src });
+    addIndicator('EMA', pair, { period: longPeriod, src });
   }
 
   onTimeframeCandleAfterWarmup(
     { candle, tools }: OnCandleEventParams<EMACrossoverParams>,
-    ...indicators: unknown[]
+    ...indicators: IndicatorResults[]
   ): void {
     const { log, createOrder } = tools;
-    const [shortEma, longEma] = indicators as [number, number];
+    const [shortEma, longEma] = indicators;
 
-    if (!shortEma || !longEma) return;
+    if (!this.pair || this.pendingOrderId) return;
+    const current = candle.get(this.pair);
+    // results is unknown, and null until the EMA has seen enough candles
+    if (!current || typeof shortEma.results !== 'number' || typeof longEma.results !== 'number') return;
 
-    // Golden cross: short EMA crosses above long EMA
-    if (shortEma > longEma && this.position !== 'long') {
-      log('info', `Golden cross at ${candle.close} — BUY signal`);
-      createOrder({ type: 'STICKY', side: 'BUY' });
-      this.position = 'long';
+    // Golden cross: short EMA crosses above long EMA, and nothing is held
+    if (shortEma.results > longEma.results && this.position === 'none') {
+      log('info', `Golden cross at ${current.close} — BUY signal`);
+      this.pendingOrderId = createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
     }
-    // Death cross: short EMA crosses below long EMA
-    else if (shortEma < longEma && this.position !== 'short') {
-      log('info', `Death cross at ${candle.close} — SELL signal`);
-      createOrder({ type: 'STICKY', side: 'SELL' });
-      this.position = 'short';
-    }
-  }
-
-  log({ tools }: OnCandleEventParams<EMACrossoverParams>, ...indicators: unknown[]): void {
-    const [shortEma, longEma] = indicators as [number, number];
-    if (shortEma && longEma) {
-      tools.log('debug', `EMA(short): ${shortEma.toFixed(2)} | EMA(long): ${longEma.toFixed(2)}`);
+    // Death cross: short EMA crosses below long EMA, and the BUY has completed
+    else if (shortEma.results < longEma.results && this.position === 'long') {
+      log('info', `Death cross at ${current.close} — SELL signal`);
+      this.pendingOrderId = createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
     }
   }
 
-  // Empty implementations for unused methods
-  onEachTimeframeCandle(): void {}
-  onOrderCompleted(): void {}
-  onOrderCanceled(): void {}
-  onOrderErrored(): void {}
-  end(): void {}
+  log({ tools }: OnCandleEventParams<EMACrossoverParams>, ...indicators: IndicatorResults[]): void {
+    const [shortEma, longEma] = indicators;
+    if (typeof shortEma.results === 'number' && typeof longEma.results === 'number') {
+      tools.log('debug', `EMA(short): ${shortEma.results.toFixed(2)} | EMA(long): ${longEma.results.toFixed(2)}`);
+    }
+  }
+
+  onOrderCompleted({ order }: OnOrderCompletedEventParams<EMACrossoverParams>): void {
+    if (order.id !== this.pendingOrderId) return;
+    this.pendingOrderId = undefined;
+    this.position = order.side === 'BUY' ? 'long' : 'none';
+  }
+
+  // Canceled or errored: the position stays as it was, and a later candle may send the order again
+  onOrderCanceled({ order }: OnOrderCanceledEventParams<EMACrossoverParams>): void {
+    if (order.id === this.pendingOrderId) this.pendingOrderId = undefined;
+  }
+
+  onOrderErrored({ order }: OnOrderErroredEventParams<EMACrossoverParams>): void {
+    if (order.id === this.pendingOrderId) this.pendingOrderId = undefined;
+  }
+
+  // The other hooks are optional, and left out
 }
 ```
+
+`createOrder` returns before the exchange has seen the order: `onOrderCompleted`, `onOrderCanceled` or `onOrderErrored` tells later what became of it, with the id `createOrder` returned. This is why the example keeps that id, and only moves `position` once the order has completed.
 
 ### Configuration File: `ema-crossover-config.yaml`
 
@@ -518,7 +571,7 @@ exchange:
         cost:
           min: 5
           max: 9000000
-        precision:
+        precision: # Decimals of a price and of an amount, a whole number (8 = steps of 0.00000001), not a step like 0.01
           price: 8
           amount: 8
         fee:
@@ -579,11 +632,11 @@ interface MyParams {
 
 ### 2. Validate Indicator Values
 
-Indicators may return `null` during warmup edge cases:
+An indicator's `results` is typed `unknown` and stays `null` until the indicator has seen enough candles, after warmup too if the warmup is shorter than the indicator needs:
 
 ```typescript
-const [ema] = indicators as [number | null];
-if (!ema || !Number.isFinite(ema)) return;
+const [ema] = indicators;
+if (typeof ema.results !== 'number' || !Number.isFinite(ema.results)) return;
 ```
 
 ### 3. Track State Properly
@@ -593,29 +646,36 @@ Use class properties to track position state and avoid duplicate signals:
 ```typescript
 private currentTrend?: 'up' | 'down';
 
-// Only act on trend changes
-if (signal === 'up' && this.currentTrend !== 'up') {
-  this.currentTrend = 'up';
-  createOrder({ type: 'STICKY', side: 'BUY' });
+onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<MyParams>, ...indicators: IndicatorResults[]): void {
+  const [shortEma, longEma] = indicators;
+  if (typeof shortEma.results !== 'number' || typeof longEma.results !== 'number') return;
+  const signal = shortEma.results > longEma.results ? 'up' : 'down';
+
+  // Only act on trend changes
+  if (signal === 'up' && this.currentTrend !== 'up') {
+    this.currentTrend = 'up';
+    tools.createOrder({ type: 'STICKY', side: 'BUY', symbol: shortEma.symbol });
+  }
 }
 ```
 
 ### 4. Use Appropriate Log Levels
 
-| Level   | Use For                                      |
-|---------|----------------------------------------------|
-| `debug` | Indicator values, calculation details        |
-| `info`  | Trade signals, important state changes       |
-| `warn`  | Recoverable issues, edge cases               |
-| `error` | Failures that need attention                 |
+| Level   | Use For                                                            |
+|---------|--------------------------------------------------------------------|
+| `debug` | Indicator values, calculation details                              |
+| `info`  | Trade signals, important state changes                             |
+| `warn`  | Recoverable issues, edge cases                                     |
+| `error` | Fatal failures only: it throws a `GekkoError`, which stops the bot |
 
 ### 5. Set Adequate Warmup
 
 Your warmup period should be at least as long as your longest indicator period:
 
 ```yaml
-warmup:
-  candleCount: 100  # If using SMA(50), use at least 50
+watch:
+  warmup:
+    candleCount: 100  # If using SMA(50), use at least 50
 ```
 
 > [!WARNING]
@@ -625,11 +685,18 @@ warmup:
 
 ## Troubleshooting
 
-### "Cannot find external strategy"
+### "Cannot find module" or "Cannot find external … strategy"
 
-- Verify `strategyPath` points to the correct file
-- Ensure `strategyName` matches your exported class name exactly (case-sensitive)
-- Check that your class is exported with `export class`
+Gekko loads the strategy as it starts: it imports the file at `strategyPath` (a relative path is resolved against the directory Gekko is started from, not against the config file), then takes the export named `strategyName` from it. A failure stops Gekko with exit code 1, and the log says which step failed:
+
+- `Cannot find module '/home/user/strategies/myStrategy.strategy.ts' from '…'`: there is no file at that path (`strategyPath` once resolved).
+  - Verify `strategyPath` points to the correct file
+  - For a relative `strategyPath`, check the directory Gekko is started from, or use an absolute path
+- `[TRADING ADVISOR] Cannot find external MyStrategy strategy in /home/user/strategies/myStrategy.strategy.ts`: the file was loaded, but exports nothing under the name `strategyName`.
+  - Ensure `strategyName` matches your exported class name exactly (case-sensitive)
+  - Check that your class is exported with `export class` (an `export default` class is not found)
+- `[TRADING ADVISOR] Cannot find internal MyStrategy strategy`: `strategyPath` is missing, so Gekko looked for a built-in strategy of that name.
+- A parse error that names no file, such as `BuildMessage: Expected ")" but found end of file`: the strategy file has a syntax error.
 
 ### Indicators returning null
 

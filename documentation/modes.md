@@ -50,6 +50,7 @@ exchange:
 storage:
   type: sqlite
   database: ./db/binance-BTC_USDT.sql
+  # insertThreshold: 1000    # Optional: minutes of candles buffered before each write
 
 plugins:
   - name: CandleWriter       # Required: saves candles to database
@@ -57,13 +58,14 @@ plugins:
 
 ### Key Configuration Options
 
-| Option             | Description                  | Example Values       |
-|--------------------|------------------------------|----------------------|
-| `assets`           | The base assets to import    | `[BTC, ETH, SOL]`    |
-| `currency`         | The quote currency           | `USDT`, `EUR`, `BTC` |
-| `tickrate`         | Delay between API calls (ms) | `500` (recommended)  |
-| `daterange.start`  | Start date for import        | ISO 8601 format      |
-| `daterange.end`    | End date for import          | ISO 8601 format      |
+| Option                    | Description                                             | Example Values                                         |
+|---------------------------|---------------------------------------------------------|--------------------------------------------------------|
+| `assets`                  | The base assets to import                               | `[BTC, ETH, SOL]`                                      |
+| `currency`                | The quote currency                                      | `USDT`, `EUR`, `BTC`                                   |
+| `tickrate`                | Delay between API calls (ms)                            | `500` (recommended)                                    |
+| `daterange.start`         | Start date for import                                   | ISO 8601 format                                        |
+| `daterange.end`           | End date for import                                     | ISO 8601 format                                        |
+| `storage.insertThreshold` | Optional: minutes of candles buffered before each write | `1` to `1440` (a day); default `1000`, `1` in realtime |
 
 ### Important Notes
 
@@ -72,6 +74,12 @@ plugins:
 
 > [!NOTE]
 > Import duration depends on the date range and exchange. Large ranges (multiple years) can take several minutes.
+
+> [!NOTE]
+> An import overwrites whatever the database already holds for its date range, while a realtime run never overwrites a stored minute. Re-importing therefore repairs the flat, zero-volume candles that a realtime run with `CandleWriter` stores for the minutes it missed: re-import the ranges named by its `Total gap detected` and `Partial gap detected` warnings.
+
+> [!NOTE]
+> On `hyperliquid` (importer or realtime), write a Unit-wrapped spot token by its token name in `watch.assets` (`UBTC`, `UETH`, `USOL`, `UPUMP`...), not by the coin it wraps: ccxt resolves the token name to its spot market, while a coin name only works when ccxt happens to name the market after it (`BTC/USDC` resolves, `PUMP/USDC` does not).
 
 ### Required Plugin
 
@@ -127,7 +135,7 @@ exchange:
         cost:
           min: 5
           max: 9000000
-        precision:
+        precision:           # Decimals of a price and of an amount, a whole number (8 = steps of 0.00000001), not a step like 0.01
           price: 8
           amount: 8
         fee:
@@ -430,7 +438,7 @@ plugins:
 ### Important Notes
 
 > [!WARNING]
-> The line `[I understand that Gekko only automates MY OWN trading strategies]: true` is **required** for any configuration that executes real trades (sandbox or live). This confirms you understand that Gekko automates your strategy — it does not provide trading advice.
+> The line `[I understand that Gekko only automates MY OWN trading strategies]: true` is **required** for any configuration that runs a `Trader` on a real exchange (`binance` or `hyperliquid` without `sandbox: true`), where orders spend real money: Gekko refuses to start without it. This confirms you understand that Gekko automates your strategy — it does not provide trading advice. Sandbox (`sandbox: true`), `paper-binance` and `dummy-cex` configurations do not need it.
 
 > [!IMPORTANT]
 > Never share your API keys. Use environment variables or a secure secrets manager in production.

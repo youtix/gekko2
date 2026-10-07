@@ -56,7 +56,7 @@ Before backtesting, you need historical candle data from an exchange.
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: importer
   daterange:
@@ -92,7 +92,7 @@ Test your strategy on historical data without risking real money.
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: backtest
   timeframe: 1h
@@ -104,6 +104,29 @@ watch:
 
 exchange:
   name: dummy-cex
+  marketData:                # Fees and order limits, one entry per watched pair
+    - symbol: BTC/USDT
+      marketData:
+        price:
+          min: 0.01
+          max: 1000000
+        amount:
+          min: 0.00001
+          max: 9000
+        cost:
+          min: 5
+          max: 9000000
+        precision:           # Decimals of a price and of an amount, a whole number (8 = steps of 0.00000001), not a step like 0.01
+          price: 8
+          amount: 8
+        fee:
+          maker: 0.0004
+          taker: 0.0007
+  simulationBalance:         # Starting balances
+    - assetName: BTC
+      balance: 0
+    - assetName: USDT
+      balance: 1000
 
 storage:
   type: sqlite
@@ -132,19 +155,19 @@ plugins:
 GEKKO_CONFIG_FILE_PATH=./config/backtest.yml ./dist/gekko2
 ```
 
-You'll see trade history and performance metrics (profit/loss, drawdown, Sharpe ratio, etc).
+You'll see trade history and performance metrics (profit/loss, win rate, Sharpe ratio, etc).
 
 ---
 
 ## 🔔 4. Screener (Realtime Alerts)
 
-Monitor the market and receive Telegram alerts when your strategy signals.
+Monitor the market and receive Telegram alerts when your strategy signals. No API key is needed: the `paper-binance` exchange reads Binance's public market data and simulates the orders locally.
 
 **Create** `config/screener.yml`:
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 4h
@@ -152,7 +175,12 @@ watch:
     candleCount: 365
 
 exchange:
-  name: binance
+  name: paper-binance        # Real Binance prices, simulated orders: no API key
+  simulationBalance:         # Simulated balances, required by paper-binance
+    - assetName: BTC
+      balance: 1
+    - assetName: USDT
+      balance: 10000
 
 strategy:
   name: RSI
@@ -167,6 +195,8 @@ plugins:
   - name: TradingAdvisor
     strategyName: RSI
 
+  - name: Trader             # Fills the orders on paper: some strategies wait for their outcome before signalling again
+
   - name: EventSubscriber
     token: YOUR_TELEGRAM_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
@@ -179,11 +209,11 @@ plugins:
 GEKKO_CONFIG_FILE_PATH=./config/screener.yml ./dist/gekko2
 ```
 
-Gekko watches the market and sends Telegram messages when buy/sell signals trigger. No trades are executed—just alerts.
+Gekko watches the market and sends Telegram messages when buy/sell signals trigger. No real trades are executed: the orders are only simulated, on the `simulationBalance` portfolio.
 
 ---
 
-## 🧪 5. Sandbox Trading (Paper Trading)
+## 🧪 5. Sandbox Trading (Testnet)
 
 Test your strategy with fake money on an exchange's testnet.
 
@@ -191,7 +221,7 @@ Test your strategy with fake money on an exchange's testnet.
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1h
@@ -201,7 +231,7 @@ watch:
 exchange:
   name: binance
   sandbox: true
-  key: YOUR_SANDBOX_API_KEY
+  apiKey: YOUR_SANDBOX_API_KEY
   secret: YOUR_SANDBOX_API_SECRET
 
 strategy:
@@ -219,8 +249,6 @@ plugins:
 
   - name: RoundTripAnalyzer
     riskFreeReturn: 5
-
-[I understand that Gekko only automates MY OWN trading strategies]: true
 ```
 
 **Get sandbox API keys:**
@@ -244,7 +272,7 @@ Real orders are placed on the testnet with fake funds. Perfect for validating yo
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1h
@@ -253,7 +281,7 @@ watch:
 
 exchange:
   name: binance
-  key: YOUR_LIVE_API_KEY
+  apiKey: YOUR_LIVE_API_KEY
   secret: YOUR_LIVE_API_SECRET
 
 strategy:
@@ -279,6 +307,8 @@ plugins:
 
 [I understand that Gekko only automates MY OWN trading strategies]: true
 ```
+
+The last line is the disclaimer that takes you live: Gekko refuses to start a `Trader` on a real exchange until you set it to `true` yourself, confirming that it only automates your own strategy. The sandbox and screener configurations above risk no real money and do not need it.
 
 **Run live trading:**
 
