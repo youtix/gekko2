@@ -1,14 +1,28 @@
+import { UUID } from 'node:crypto';
 import { bench, describe } from 'vitest';
 import { SMACrossover } from './smaCrossover.strategy';
 
 const symbol = 'BTC/USDT';
 
-const createMockTools = () => ({
-  strategyParams: { period: 20, src: 'close' as const },
-  createOrder: () => '00000000-0000-0000-0000-000000000000' as `${string}-${string}-${string}-${string}-${string}`,
-  cancelOrder: () => {},
-  log: () => {},
-});
+const createMockTools = () => {
+  const pending: UUID[] = [];
+  let count = 0;
+  return {
+    strategyParams: { period: 20, src: 'close' as const },
+    createOrder: () => {
+      const id = `00000000-0000-0000-0000-${String(++count).padStart(12, '0')}` as UUID;
+      pending.push(id);
+      return id;
+    },
+    cancelOrder: () => {},
+    log: () => {},
+    // The strategy skips a crossover while its own order is pending: completing every order once the candle is processed keeps the
+    // oscillating benchmarks measuring crossovers
+    completeOrders: (strategy: SMACrossover) => {
+      for (const id of pending.splice(0)) strategy.onOrderCompleted({ order: { id } } as any);
+    },
+  };
+};
 
 const createCandle = (close: number) => ({
   close,
@@ -47,6 +61,7 @@ describe('SMACrossover Strategy Performance', () => {
 
       for (const candle of candles) {
         strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, ...makeIndicator(100));
+        tools.completeOrders(strategy);
       }
     });
 
@@ -59,6 +74,7 @@ describe('SMACrossover Strategy Performance', () => {
 
       for (const candle of candles) {
         strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, ...makeIndicator(100));
+        tools.completeOrders(strategy);
       }
     });
 
@@ -71,6 +87,7 @@ describe('SMACrossover Strategy Performance', () => {
 
       for (const candle of candles) {
         strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, ...makeIndicator(100));
+        tools.completeOrders(strategy);
       }
     });
 
@@ -83,6 +100,7 @@ describe('SMACrossover Strategy Performance', () => {
 
       for (const candle of candles) {
         strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, ...makeIndicator(50)); // SMA always below price
+        tools.completeOrders(strategy);
       }
     });
   });

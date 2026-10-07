@@ -1,7 +1,13 @@
 import type { AdviceOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
+import {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+} from '@strategies/strategy.types';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SMACrossover } from './smaCrossover.strategy';
@@ -9,10 +15,14 @@ import { SMACrossoverStrategyParams } from './smaCrossover.types';
 
 const symbol = 'BTC/USDT';
 const makeIndicator = (res: any) => [{ results: res, symbol }] as any;
+// The close of each step of the scenarios played below, against an SMA of 100. The first candle only records where the price is.
+const PRICES = { above: 110, below: 90 } as const;
+const UNKNOWN_ORDER_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 describe('SMACrossover Strategy', () => {
   let strategy: SMACrossover;
   let advices: AdviceOrder[];
+  let orderIds: UUID[];
   let logs: { level: LogLevel; message: string }[];
   let tools: any;
   let bucket: CandleBucket;
@@ -24,15 +34,42 @@ describe('SMACrossover Strategy', () => {
     bucket.set(symbol, createCandle(price));
   };
 
+  /**
+   * Plays the steps, separated by spaces: a price (above, below the SMA) is a candle, '<outcome>:<n>' relays the outcome (completed,
+   * canceled, errored) of the n-th order created, '<outcome>:unknown' that of an order the strategy did not create.
+   */
+  const play = (steps: string) => {
+    for (const step of steps.split(' ')) {
+      const [kind, order] = step.split(':');
+      if (!order) {
+        setBucket(PRICES[kind as keyof typeof PRICES]);
+        strategy.onTimeframeCandleAfterWarmup(
+          { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
+          ...makeIndicator(100),
+        );
+        continue;
+      }
+      const id = order === 'unknown' ? UNKNOWN_ORDER_ID : orderIds[Number(order) - 1];
+      const params = { order: { id } } as unknown;
+      if (kind === 'completed') strategy.onOrderCompleted(params as OnOrderCompletedEventParams<SMACrossoverStrategyParams>);
+      if (kind === 'canceled') strategy.onOrderCanceled(params as OnOrderCanceledEventParams<SMACrossoverStrategyParams>);
+      if (kind === 'errored') strategy.onOrderErrored(params as OnOrderErroredEventParams<SMACrossoverStrategyParams>);
+    }
+  };
+  const sides = () => advices.map(({ side }) => side);
+
   beforeEach(() => {
     strategy = new SMACrossover();
     advices = [];
+    orderIds = [];
     logs = [];
     addIndicator = vi.fn();
 
     const createOrder = vi.fn((order: AdviceOrder) => {
       advices.push({ ...order, amount: order.amount ?? 1 });
-      return '00000000-0000-0000-0000-000000000000' as UUID;
+      const id = `00000000-0000-0000-0000-${String(advices.length).padStart(12, '0')}` as UUID;
+      orderIds.push(id);
+      return id;
     });
 
     tools = {
@@ -98,28 +135,15 @@ describe('SMACrossover Strategy', () => {
       expect(logs).toContainEqual(expect.objectContaining({ message: expect.stringContaining('Initial state') }));
     });
 
-    it.each`
-      candle1Price | candle2Price | sma    | expectedSide
-      ${90}        | ${110}       | ${100} | ${'BUY'}
-      ${110}       | ${90}        | ${100} | ${'SELL'}
-    `(
-      'should emit $expectedSide when crossing SMA=$sma (C1=$candle1Price, C2=$candle2Price)',
-      ({ candle1Price, candle2Price, sma, expectedSide }) => {
-        setBucket(candle1Price);
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-          ...makeIndicator(sma),
-        );
+    it('should emit a MARKET BUY when the price crosses above the SMA and flat', () => {
+      play('below above');
+      expect(advices).toEqual([{ type: 'MARKET', side: 'BUY', amount: 1, symbol }]);
+    });
 
-        setBucket(candle2Price);
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-          ...makeIndicator(sma),
-        );
-
-        expect(advices).toEqual([{ type: 'MARKET', side: expectedSide, amount: 1, symbol }]);
-      },
-    );
+    it('should emit a MARKET SELL when the price crosses below the SMA and long', () => {
+      play('below above completed:1 below');
+      expect(advices[1]).toEqual({ type: 'MARKET', side: 'SELL', amount: 1, symbol });
+    });
 
     it.each`
       prices             | sma    | description
@@ -138,22 +162,16 @@ describe('SMACrossover Strategy', () => {
     });
 
     it.each`
-      prices                     | sma    | expectedSides
-      ${[90, 110, 90, 110]}      | ${100} | ${['BUY', 'SELL', 'BUY']}
-      ${[110, 90, 110, 90, 110]} | ${100} | ${['SELL', 'BUY', 'SELL', 'BUY']}
-    `('should handle crossovers correctly: $expectedSides', ({ prices, sma, expectedSides }) => {
-      for (const price of prices) {
-        setBucket(price);
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-          ...makeIndicator(sma),
-        );
-      }
-
-      expect(advices).toHaveLength(expectedSides.length);
-      for (let i = 0; i < expectedSides.length; i++) {
-        expect(advices[i]).toEqual({ type: 'MARKET', side: expectedSides[i], amount: 1, symbol });
-      }
+      case                                            | steps                                                | expectedSides
+      ${'crossovers once each order filled'}          | ${'below above completed:1 below completed:2 above'} | ${['BUY', 'SELL', 'BUY']}
+      ${'a cross below when flat'}                    | ${'above below above'}                               | ${['BUY']}
+      ${'a cross below while the BUY pends'}          | ${'below above below above'}                         | ${['BUY']}
+      ${'a cross below skipped, then the BUY filled'} | ${'below above below completed:1 below'}             | ${['BUY']}
+      ${'a cross above while long'}                   | ${'below above completed:1 below errored:2 above'}   | ${['BUY', 'SELL']}
+      ${'a cross above while the SELL pends'}         | ${'below above completed:1 below above'}             | ${['BUY', 'SELL']}
+    `('should advise once per position change on $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
 
     it('should always use MARKET order type', () => {
@@ -170,6 +188,24 @@ describe('SMACrossover Strategy', () => {
       );
 
       expect(advices[0].type).toBe('MARKET');
+    });
+  });
+
+  describe('order outcomes', () => {
+    it.each`
+      case                                                         | steps                                                     | expectedSides
+      ${'a BUY completed: long, it sells on the next cross below'} | ${'below above completed:1 below'}                        | ${['BUY', 'SELL']}
+      ${'a BUY canceled: flat, it buys on the next cross above'}   | ${'below above canceled:1 below above'}                   | ${['BUY', 'BUY']}
+      ${'a BUY errored: flat, it buys on the next cross above'}    | ${'below above errored:1 below above'}                    | ${['BUY', 'BUY']}
+      ${'a SELL completed: flat, it buys on the next cross above'} | ${'below above completed:1 below completed:2 above'}      | ${['BUY', 'SELL', 'BUY']}
+      ${'a SELL canceled: long, it sells on the next cross below'} | ${'below above completed:1 below canceled:2 above below'} | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored: long, it sells on the next cross below'}  | ${'below above completed:1 below errored:2 above below'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'another order completed: still pending'}                  | ${'below above completed:unknown below above'}            | ${['BUY']}
+      ${'another order canceled: still pending'}                   | ${'below above canceled:unknown below above'}             | ${['BUY']}
+      ${'another order errored: still pending'}                    | ${'below above errored:unknown below above'}              | ${['BUY']}
+    `('should track $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
   });
 

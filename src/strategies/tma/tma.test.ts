@@ -1,7 +1,14 @@
 import type { AdviceOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
+import {
+  IndicatorResults,
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+} from '@strategies/strategy.types';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TMA } from './tma.strategy';
@@ -14,24 +21,60 @@ vi.mock('@services/configuration/configuration', () => {
 });
 
 const symbol = 'BTC/USDT';
+// The short, medium and long SMAs of each alignment
+const ALIGNMENTS = {
+  up: [10, 5, 2],
+  down: [3, 5, 2],
+  bearish: [2, 5, 10],
+} as const;
+const UNKNOWN_ORDER_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 describe('TMA Strategy', () => {
   let strategy: TMA;
   let advices: AdviceOrder[];
+  let orderIds: UUID[];
   let logs: { level: LogLevel; message: string }[];
   let tools: any;
   let bucket: CandleBucket;
   let addIndicator: any;
 
+  // The short, medium and long SMA results of a candle, in that order
+  const onCandle = (...smas: unknown[]) =>
+    strategy.onTimeframeCandleAfterWarmup(
+      { candle: bucket, tools } as unknown as OnCandleEventParams<TMAStrategyParams>,
+      ...smas.map((results): IndicatorResults<number | null> => ({ results: results as number | null, symbol })),
+    );
+
+  /**
+   * Plays the steps, separated by spaces: an alignment (up, down, bearish) is a candle, '<outcome>:<n>' relays the outcome (completed,
+   * canceled, errored) of the n-th order created, '<outcome>:unknown' that of an order the strategy did not create.
+   */
+  const play = (steps: string) => {
+    for (const step of steps.split(' ')) {
+      const [kind, order] = step.split(':');
+      if (!order) {
+        onCandle(...ALIGNMENTS[kind as keyof typeof ALIGNMENTS]);
+        continue;
+      }
+      const id = order === 'unknown' ? UNKNOWN_ORDER_ID : orderIds[Number(order) - 1];
+      if (kind === 'completed') strategy.onOrderCompleted({ order: { id } } as unknown as OnOrderCompletedEventParams<TMAStrategyParams>);
+      if (kind === 'canceled') strategy.onOrderCanceled({ order: { id } } as unknown as OnOrderCanceledEventParams<TMAStrategyParams>);
+      if (kind === 'errored') strategy.onOrderErrored({ order: { id } } as unknown as OnOrderErroredEventParams<TMAStrategyParams>);
+    }
+  };
+
   beforeEach(() => {
     strategy = new TMA();
     advices = [];
+    orderIds = [];
     logs = [];
     addIndicator = vi.fn();
 
     const createOrder = vi.fn((order: AdviceOrder) => {
       advices.push({ ...order, amount: order.amount ?? 1 });
-      return '00000000-0000-0000-0000-000000000000' as UUID;
+      const id = `00000000-0000-0000-0000-${String(advices.length).padStart(12, '0')}` as UUID;
+      orderIds.push(id);
+      return id;
     });
 
     tools = {
@@ -49,9 +92,11 @@ describe('TMA Strategy', () => {
 
   describe('init', () => {
     it('should add three SMA indicators with correct periods and src', () => {
-      expect(addIndicator).toHaveBeenNthCalledWith(1, 'SMA', symbol, { period: 3, src: 'close' });
-      expect(addIndicator).toHaveBeenNthCalledWith(2, 'SMA', symbol, { period: 5, src: 'close' });
-      expect(addIndicator).toHaveBeenNthCalledWith(3, 'SMA', symbol, { period: 8, src: 'close' });
+      expect(addIndicator.mock.calls).toEqual([
+        ['SMA', symbol, { period: 3, src: 'close' }],
+        ['SMA', symbol, { period: 5, src: 'close' }],
+        ['SMA', symbol, { period: 8, src: 'close' }],
+      ]);
     });
   });
 
@@ -76,44 +121,88 @@ describe('TMA Strategy', () => {
     `(
       'should do nothing when results are invalid (short: $shortRes, med: $mediumRes, long: $longRes)',
       ({ shortRes, mediumRes, longRes }) => {
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<TMAStrategyParams>,
-          { results: shortRes, symbol },
-          { results: mediumRes, symbol },
-          { results: longRes, symbol },
-        );
+        onCandle(shortRes, mediumRes, longRes);
         expect(advices).toHaveLength(0);
       },
     );
 
+    it('should emit a STICKY BUY advice on an uptrend when flat', () => {
+      play('up');
+      expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1, symbol }]);
+    });
+
+    it('should log the long advice with the three SMAs', () => {
+      play('up');
+      expect(logs).toContainEqual({ level: 'info', message: 'Executing long advice due to detected uptrend: 10/5/2' });
+    });
+
     it.each`
-      shortRes | mediumRes | longRes | expectedSide | expectedLogRegex
-      ${10}    | ${5}      | ${2}    | ${'BUY'}     | ${/long advice due to detected uptrend: 10\/5\/2/}
-      ${3}     | ${5}      | ${2}    | ${'SELL'}    | ${/short advice due to detected downtrend: 3\/5\/2/}
-      ${5}     | ${3}      | ${7}    | ${'SELL'}    | ${/short advice due to detected downtrend: 5\/3\/7/}
+      shortRes | mediumRes | longRes
+      ${3}     | ${5}      | ${2}
+      ${5}     | ${3}      | ${7}
     `(
-      'should emit $expectedSide advice when short=$shortRes, med=$mediumRes, long=$longRes',
-      ({ shortRes, mediumRes, longRes, expectedSide, expectedLogRegex }) => {
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<TMAStrategyParams>,
-          { results: shortRes, symbol },
-          { results: mediumRes, symbol },
-          { results: longRes, symbol },
-        );
-        expect(advices).toEqual([{ type: 'STICKY', side: expectedSide, amount: 1, symbol }]);
-        expect(logs).toContainEqual(expect.objectContaining({ message: expect.stringMatching(expectedLogRegex) }));
+      'should emit a STICKY SELL advice when long and short=$shortRes, med=$mediumRes, long=$longRes',
+      ({ shortRes, mediumRes, longRes }) => {
+        play('up completed:1');
+        onCandle(shortRes, mediumRes, longRes);
+        expect(advices[1]).toEqual({ type: 'STICKY', side: 'SELL', amount: 1, symbol });
       },
     );
 
+    it.each`
+      shortRes | mediumRes | longRes
+      ${3}     | ${5}      | ${2}
+      ${5}     | ${3}      | ${7}
+    `('should log the short advice when short=$shortRes, med=$mediumRes, long=$longRes', ({ shortRes, mediumRes, longRes }) => {
+      play('up completed:1');
+      onCandle(shortRes, mediumRes, longRes);
+      expect(logs).toContainEqual({
+        level: 'info',
+        message: `Executing short advice due to detected downtrend: ${shortRes}/${mediumRes}/${longRes}`,
+      });
+    });
+
+    it.each`
+      case                                  | steps                                     | expectedSides
+      ${'consecutive uptrend candles'}      | ${'up up up'}                             | ${['BUY']}
+      ${'an uptrend while long'}            | ${'up completed:1 up up'}                 | ${['BUY']}
+      ${'consecutive downtrend candles'}    | ${'up completed:1 down down down'}        | ${['BUY', 'SELL']}
+      ${'a downtrend when flat'}            | ${'down down'}                            | ${[]}
+      ${'a downtrend while the BUY pends'}  | ${'up down'}                              | ${['BUY']}
+      ${'an uptrend while the SELL pends'}  | ${'up completed:1 down up'}               | ${['BUY', 'SELL']}
+      ${'a downtrend once the SELL filled'} | ${'up completed:1 down completed:2 down'} | ${['BUY', 'SELL']}
+      ${'a fully bearish alignment'}        | ${'up completed:1 bearish'}               | ${['BUY']}
+    `('should advise once per position change on $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
+    });
+
+    it('should log debug when the alignment is fully bearish', () => {
+      play('bearish');
+      expect(logs).toContainEqual({ level: 'debug', message: 'No clear trend detected: 2/5/10' });
+    });
+
     it('should not emit advice and log debug when no clear trend', () => {
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<TMAStrategyParams>,
-        { results: 5, symbol },
-        { results: 5, symbol },
-        { results: 5, symbol },
-      );
-      expect(advices).toHaveLength(0);
+      onCandle(5, 5, 5);
       expect(logs).toContainEqual({ level: 'debug', message: 'No clear trend detected: 5/5/5' });
+    });
+  });
+
+  describe('order outcomes', () => {
+    it.each`
+      case                                        | steps                                    | expectedSides
+      ${'a BUY completed: long, it sells'}        | ${'up completed:1 down'}                 | ${['BUY', 'SELL']}
+      ${'a BUY canceled: flat, it buys again'}    | ${'up canceled:1 up'}                    | ${['BUY', 'BUY']}
+      ${'a BUY errored: flat, it buys again'}     | ${'up errored:1 up'}                     | ${['BUY', 'BUY']}
+      ${'a SELL completed: flat, it buys again'}  | ${'up completed:1 down completed:2 up'}  | ${['BUY', 'SELL', 'BUY']}
+      ${'a SELL canceled: long, it sells again'}  | ${'up completed:1 down canceled:2 down'} | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored: long, it sells again'}   | ${'up completed:1 down errored:2 down'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'another order completed: still pending'} | ${'up completed:unknown up down'}        | ${['BUY']}
+      ${'another order canceled: still pending'}  | ${'up canceled:unknown up down'}         | ${['BUY']}
+      ${'another order errored: still pending'}   | ${'up errored:unknown up down'}          | ${['BUY']}
+    `('should track $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
     });
   });
 });

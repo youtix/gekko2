@@ -1,6 +1,12 @@
 import type { AdviceOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
-import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
+import {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+} from '@strategies/strategy.types';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RSI } from './rsi.strategy';
@@ -17,22 +23,51 @@ vi.mock('@services/configuration/configuration', () => {
 });
 
 const symbol = 'BTC/USDT';
+// The RSI value (thresholds 70 / 30) of each step of the scenarios played below
+const RSI_VALUES = { high: 75, low: 20, neutral: 50 } as const;
+const UNKNOWN_ORDER_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 describe('RSI Strategy', () => {
   let strategy: RSI;
   let advices: AdviceOrder[];
+  let orderIds: UUID[];
   let tools: any;
   let bucket: CandleBucket;
   let addIndicator: any;
 
+  /**
+   * Plays the steps, separated by spaces: an RSI value (high, low, neutral) is a candle, '<outcome>:<n>' relays the outcome
+   * (completed, canceled, errored) of the n-th order created, '<outcome>:unknown' that of an order the strategy did not create.
+   */
+  const play = (steps: string) => {
+    for (const step of steps.split(' ')) {
+      const [kind, order] = step.split(':');
+      if (!order) {
+        strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
+          results: RSI_VALUES[kind as keyof typeof RSI_VALUES],
+          symbol,
+        });
+        continue;
+      }
+      const id = order === 'unknown' ? UNKNOWN_ORDER_ID : orderIds[Number(order) - 1];
+      if (kind === 'completed') strategy.onOrderCompleted({ order: { id } } as unknown as OnOrderCompletedEventParams<RSIStrategyParams>);
+      if (kind === 'canceled') strategy.onOrderCanceled({ order: { id } } as unknown as OnOrderCanceledEventParams<RSIStrategyParams>);
+      if (kind === 'errored') strategy.onOrderErrored({ order: { id } } as unknown as OnOrderErroredEventParams<RSIStrategyParams>);
+    }
+  };
+  const sides = () => advices.map(({ side }) => side);
+
   beforeEach(() => {
     strategy = new RSI();
     advices = [];
+    orderIds = [];
     addIndicator = vi.fn();
 
     const createOrder = vi.fn((order: AdviceOrder) => {
       advices.push({ ...order, amount: order.amount ?? 1 });
-      return '00000000-0000-0000-0000-000000000000' as UUID;
+      const id = `00000000-0000-0000-0000-${String(advices.length).padStart(12, '0')}` as UUID;
+      orderIds.push(id);
+      return id;
     });
 
     tools = {
@@ -77,105 +112,52 @@ describe('RSI Strategy', () => {
       expect(advices).toHaveLength(0);
     });
 
-    it('should not emit advice before persistence on high trend', () => {
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 75,
-        symbol,
-      });
-      expect(advices).toHaveLength(0);
-    });
-
-    it('should emit short advice after persistence on high trend', () => {
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 75,
-        symbol,
-      });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 75,
-        symbol,
-      });
-      expect(advices).toEqual([{ type: 'STICKY', side: 'SELL', amount: 1, symbol }]);
-    });
-
-    it('should not emit multiple short advices while high trend continues', () => {
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 75,
-        symbol,
-      });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 75,
-        symbol,
-      });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 75,
-        symbol,
-      });
-      expect(advices).toHaveLength(1);
-    });
-
-    it('should emit long advice after persistence on low trend', () => {
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 20,
-        symbol,
-      });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 20,
-        symbol,
-      });
+    it('should emit a STICKY BUY advice after persistence on low trend when flat', () => {
+      play('low low');
       expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1, symbol }]);
     });
 
-    it('should not emit multiple long advices while low trend continues', () => {
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 20,
-        symbol,
-      });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 20,
-        symbol,
-      });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 20,
-        symbol,
-      });
-      expect(advices).toHaveLength(1);
+    it('should emit a STICKY SELL advice after persistence on high trend when long', () => {
+      play('low low completed:1 high high');
+      expect(advices[1]).toEqual({ type: 'STICKY', side: 'SELL', amount: 1, symbol });
     });
 
-    it('should reset trend when switching from high to low', () => {
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 75,
-        symbol,
-      });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 75,
-        symbol,
-      });
-
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 20,
-        symbol,
-      });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 20,
-        symbol,
-      });
-
-      expect(advices).toEqual([
-        { type: 'STICKY', side: 'SELL', amount: 1, symbol },
-        { type: 'STICKY', side: 'BUY', amount: 1, symbol },
-      ]);
+    it.each`
+      case                                        | steps                                                        | expectedSides
+      ${'a low trend before persistence'}         | ${'low'}                                                     | ${[]}
+      ${'a low trend that continues'}             | ${'low low low'}                                             | ${['BUY']}
+      ${'a high trend before persistence'}        | ${'low low completed:1 high'}                                | ${['BUY']}
+      ${'a high trend that continues'}            | ${'low low completed:1 high high high'}                      | ${['BUY', 'SELL']}
+      ${'a switch from low to high and back'}     | ${'low low completed:1 high high completed:2 low low'}       | ${['BUY', 'SELL', 'BUY']}
+      ${'neutral values'}                         | ${'neutral neutral'}                                         | ${[]}
+      ${'a low trend after a shorter high trend'} | ${'low low high low low'}                                    | ${['BUY']}
+      ${'a low trend while long'}                 | ${'low low completed:1 neutral low low'}                     | ${['BUY']}
+      ${'a high trend after a shorter low trend'} | ${'low low completed:1 high high completed:2 low high high'} | ${['BUY', 'SELL']}
+      ${'a high trend when flat'}                 | ${'high high high'}                                          | ${[]}
+      ${'a high trend while the BUY pends'}       | ${'low low high high'}                                       | ${['BUY']}
+      ${'a high trend once the BUY filled'}       | ${'low low high high completed:1 high'}                      | ${['BUY', 'SELL']}
+      ${'a low trend while the SELL pends'}       | ${'low low completed:1 high high low low'}                   | ${['BUY', 'SELL']}
+    `('should advise once per position change on $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
+  });
 
-    it('should handle neutral values by not accumulating duration', () => {
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 50,
-        symbol,
-      });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 50,
-        symbol,
-      });
-      expect(advices).toHaveLength(0);
+  describe('order outcomes', () => {
+    it.each`
+      case                                                   | steps                                                            | expectedSides
+      ${'a BUY completed: long, it sells'}                   | ${'low low completed:1 high high'}                               | ${['BUY', 'SELL']}
+      ${'a BUY canceled: flat, it buys on the next trend'}   | ${'low low canceled:1 low high low low'}                         | ${['BUY', 'BUY']}
+      ${'a BUY errored: flat, it buys on the next trend'}    | ${'low low errored:1 low high low low'}                          | ${['BUY', 'BUY']}
+      ${'a SELL completed: flat, it buys again'}             | ${'low low completed:1 high high completed:2 low low'}           | ${['BUY', 'SELL', 'BUY']}
+      ${'a SELL canceled: long, it sells on the next trend'} | ${'low low completed:1 high high canceled:2 high low high high'} | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored: long, it sells on the next trend'}  | ${'low low completed:1 high high errored:2 high low high high'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'another order completed: still pending'}            | ${'low low completed:unknown low high high'}                     | ${['BUY']}
+      ${'another order canceled: still pending'}             | ${'low low canceled:unknown low high high'}                      | ${['BUY']}
+      ${'another order errored: still pending'}              | ${'low low errored:unknown low high high'}                       | ${['BUY']}
+    `('should track $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
   });
 });
