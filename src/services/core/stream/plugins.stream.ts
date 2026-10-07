@@ -1,4 +1,5 @@
 import { ApplicationStopError } from '@errors/applicationStop.error';
+import { GekkoError } from '@errors/gekko.error';
 import { CandleBucket } from '@models/event.types';
 import { Nullable } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
@@ -6,7 +7,19 @@ import { DummyExchange } from '@services/exchange/exchange.types';
 import { isDummyExchange } from '@services/exchange/exchange.utils';
 import { inject } from '@services/injecter/injecter';
 import { info, error as logError, warning } from '@services/logger';
+import { isString } from 'lodash-es';
 import { Writable } from 'node:stream';
+import { inspect } from 'node:util';
+
+/**
+ * A failure in one line, as main() starts reporting it: a GekkoError's message explains it, any other error is named. Not String()
+ * for a value that is not an error, which gives '[object Object]' for an object and throws for one without a prototype.
+ */
+const describeReason = (reason: unknown) => {
+  if (reason instanceof GekkoError) return reason.message;
+  if (reason instanceof Error) return String(reason); // "<name>: <message>"
+  return isString(reason) ? reason : inspect(reason);
+};
 
 export class PluginsStream extends Writable {
   private readonly plugins: Plugin[];
@@ -53,8 +66,7 @@ export class PluginsStream extends Writable {
       // Tell the stream that we're done
       done();
     } catch (error) {
-      if (error instanceof ApplicationStopError) warning('stream', `Application stopped gracefully: ${error.message}`);
-      else logError('stream', 'Gekko is closing the application due to an error!');
+      this.logCloseReason(error);
 
       // Finalize all plugins before destroying the stream
       await this.finalizeAllPlugins();
@@ -83,6 +95,8 @@ export class PluginsStream extends Writable {
    * stream without calling _final when a stream upstream fails, or _construct does: the plugins are finalised here then.
    */
   public async _destroy(error: Nullable<Error>, callback: (error?: Nullable<Error>) => void) {
+    // A failure upstream or of _construct: a failed _write has said why and finalised the plugins already
+    if (error && !this.finalized) this.logCloseReason(error);
     try {
       await this.finalizeAllPlugins();
     } catch (finalizeError) {
@@ -90,6 +104,15 @@ export class PluginsStream extends Writable {
     }
     // Always the error the stream was destroyed with, never a finalisation failure: the pipeline rejects with it
     callback(error);
+  }
+
+  /**
+   * Says why the application closes, before the plugins are finalised: Supervision's last flush sends it to Telegram then. main()
+   * logs the failure in full (stack, causes) only once they are, too late for that flush, so the console shows its message twice.
+   */
+  private logCloseReason(reason: unknown) {
+    if (reason instanceof ApplicationStopError) warning('stream', `Application stopped gracefully: ${reason.message}`);
+    else logError('stream', `Gekko is closing the application due to an error: ${describeReason(reason)}`);
   }
 
   /**

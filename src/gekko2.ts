@@ -48,8 +48,8 @@ $$    $$/ $$       |$$ | $$  |$$ | $$  |$$    $$/       $$       |
     if (e instanceof ApplicationStopError) {
       // An orderly stop (circuit breaker) is not a crash: exit 0 so that a restart-on-failure supervisor leaves it stopped
       error('gekko', `Application stopped: ${e.message}`);
-      // 0 even if onUnhandledRejection set process.exitCode to 1: a failed order creation also rejects the Trader's un-awaited
-      // launch(), so the flag is usually set when the breaker trips, and exit 1 would get the bot restarted, its counter reset
+      // 0 even if onUnhandledRejection set process.exitCode to 1: a floated timer-driven task (a Telegram send, an order poll) may
+      // have rejected along the way, and exit 1 would get the bot restarted by a restart-on-failure supervisor, its counter reset
       exitCode = 0;
     } else {
       logFailure(e);

@@ -1,70 +1,141 @@
+import { noop } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { SequentialEventEmitter } from './sequentialEventEmitter';
 
+type Delivery = [event: string, payloads: unknown[]];
+
+/** An emitter whose listeners of `events` log every delivery they receive, in the order they receive them */
+const createRecordingEmitter = (events: string[]) => {
+  const emitter = new SequentialEventEmitter('test');
+  const deliveries: Delivery[] = [];
+  for (const event of events) {
+    emitter.on(event, (payloads: unknown[]) => {
+      deliveries.push([event, payloads]);
+    });
+  }
+  return { emitter, deliveries };
+};
+
+/** Broadcasts until nothing is queued, as PluginsStream does after every bucket */
+const broadcastAll = async (emitter: SequentialEventEmitter) => {
+  while (await emitter.broadcastDeferredEmit()) {
+    // Until the queue is empty
+  }
+};
+
 describe('SequentialEventEmitter', () => {
-  it('should execute listeners sequentially and await them', async () => {
-    const emitter = new SequentialEventEmitter('test');
-    const callOrder: string[] = [];
+  describe('emit', () => {
+    it('should execute listeners sequentially and await them', async () => {
+      const emitter = new SequentialEventEmitter('test');
+      const callOrder: string[] = [];
 
-    emitter.on('test', async () => {
-      await new Promise(resolve => setTimeout(resolve, 10));
-      callOrder.push('first');
+      emitter.on('test', async () => {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        callOrder.push('first');
+      });
+
+      emitter.on('test', () => {
+        callOrder.push('second');
+      });
+
+      await emitter.emit('test');
+
+      expect(callOrder).toEqual(['first', 'second']);
     });
 
-    emitter.on('test', () => {
-      callOrder.push('second');
+    it('should resolve when the event has no listener', async () => {
+      await expect(new SequentialEventEmitter('test').emit('unknown', 'payload')).resolves.toBeUndefined();
     });
-
-    await emitter.emit('test');
-
-    expect(callOrder).toEqual(['first', 'second']);
   });
 
-  it('should batch deferred events by name and emit as arrays', async () => {
-    const emitter = new SequentialEventEmitter('test');
-    const receivedPayloads: string[][] = [];
+  describe('off', () => {
+    it('should stop calling the listener removed, and only it', async () => {
+      const emitter = new SequentialEventEmitter('test');
+      const calls: string[] = [];
+      const removed = () => {
+        calls.push('removed');
+      };
+      emitter.on('test', removed);
+      emitter.on('test', () => {
+        calls.push('kept');
+      });
 
-    emitter.on('deferred', (payloads: string[]) => {
-      receivedPayloads.push(payloads);
+      emitter.off('test', removed);
+      await emitter.emit('test');
+
+      expect(calls).toEqual(['kept']);
     });
 
-    emitter.addDeferredEmit('deferred', 'payload1');
-    emitter.addDeferredEmit('deferred', 'payload2');
-    emitter.addDeferredEmit('deferred', 'payload3');
-
-    expect(receivedPayloads).toEqual([]);
-
-    await emitter.broadcastDeferredEmit();
-    expect(receivedPayloads).toEqual([['payload1', 'payload2', 'payload3']]);
+    it('should do nothing for an event without listener', () => {
+      expect(() => new SequentialEventEmitter('test').off('unknown', noop)).not.toThrow();
+    });
   });
 
-  it('should handle multiple different event names separately', async () => {
-    const emitter = new SequentialEventEmitter('test');
-    const eventAPayloads: string[][] = [];
-    const eventBPayloads: string[][] = [];
-
-    emitter.on('eventA', (payloads: string[]) => {
-      eventAPayloads.push(payloads);
-    });
-    emitter.on('eventB', (payloads: string[]) => {
-      eventBPayloads.push(payloads);
+  describe('deferred events', () => {
+    it('should not deliver a deferred event before it is broadcast', () => {
+      const { emitter, deliveries } = createRecordingEmitter(['a']);
+      emitter.addDeferredEmit('a', 'a1');
+      expect(deliveries).toEqual([]);
     });
 
-    emitter.addDeferredEmit('eventA', 'a1');
-    emitter.addDeferredEmit('eventB', 'b1');
-    emitter.addDeferredEmit('eventA', 'a2');
-    emitter.addDeferredEmit('eventB', 'b2');
+    it.each`
+      order                                                     | queued                                                  | delivered
+      ${'the payloads of one event together'}                   | ${[['a', 'a1'], ['a', 'a2'], ['a', 'a3']]}              | ${[['a', ['a1', 'a2', 'a3']]]}
+      ${'the payloads queued in a row under an event together'} | ${[['a', 'a1'], ['a', 'a2'], ['b', 'b1']]}              | ${[['a', ['a1', 'a2']], ['b', ['b1']]]}
+      ${'interleaved events in the order they were queued'}     | ${[['a', 'a1'], ['b', 'b1'], ['a', 'a2'], ['b', 'b2']]} | ${[['a', ['a1']], ['b', ['b1']], ['a', ['a2']], ['b', ['b2']]]}
+    `('should deliver $order', async ({ queued, delivered }: { queued: [string, string][]; delivered: Delivery[] }) => {
+      const { emitter, deliveries } = createRecordingEmitter(['a', 'b']);
+      for (const [event, payload] of queued) emitter.addDeferredEmit(event, payload);
 
-    await emitter.broadcastDeferredEmit();
-    await emitter.broadcastDeferredEmit();
+      await broadcastAll(emitter);
 
-    expect(eventAPayloads).toEqual([['a1', 'a2']]);
-    expect(eventBPayloads).toEqual([['b1', 'b2']]);
-  });
+      expect(deliveries).toEqual(delivered);
+    });
 
-  it('should return false when no deferred events', async () => {
-    const emitter = new SequentialEventEmitter('test');
-    const result = await emitter.broadcastDeferredEmit();
-    expect(result).toBe(false);
+    it('should deliver a payload queued during a delivery afterwards, not with the payloads being delivered', async () => {
+      const { emitter, deliveries } = createRecordingEmitter(['a']);
+      emitter.on('a', (payloads: string[]) => {
+        if (payloads.includes('a1')) emitter.addDeferredEmit('a', 'a2');
+      });
+      emitter.addDeferredEmit('a', 'a1');
+
+      await broadcastAll(emitter);
+
+      expect(deliveries).toEqual([
+        ['a', ['a1']],
+        ['a', ['a2']],
+      ]);
+    });
+
+    it.each`
+      position    | index
+      ${'first'}  | ${0}
+      ${'second'} | ${1}
+    `('should deliver a copy of the $position payload of a group, unchanged by a later change to the original', async ({ index }) => {
+      const { emitter, deliveries } = createRecordingEmitter(['a']);
+      const payloads = [{ value: 1 }, { value: 2 }];
+      for (const payload of payloads) emitter.addDeferredEmit('a', payload);
+
+      payloads[index].value = 0;
+      await broadcastAll(emitter);
+
+      expect(deliveries).toEqual([['a', [{ value: 1 }, { value: 2 }]]]);
+    });
+
+    it('should resolve to true for each group it delivers, then to false', async () => {
+      const { emitter } = createRecordingEmitter(['a', 'b']);
+      emitter.addDeferredEmit('a', 'a1');
+      emitter.addDeferredEmit('b', 'b1');
+
+      const results = [await emitter.broadcastDeferredEmit(), await emitter.broadcastDeferredEmit(), await emitter.broadcastDeferredEmit()];
+
+      expect(results).toEqual([true, true, false]);
+    });
+
+    it('should return false when no deferred events', async () => {
+      const emitter = new SequentialEventEmitter('test');
+      const result = await emitter.broadcastDeferredEmit();
+      expect(result).toBe(false);
+    });
   });
 });

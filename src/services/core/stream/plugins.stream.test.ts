@@ -1,4 +1,5 @@
 import { ApplicationStopError } from '@errors/applicationStop.error';
+import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { Plugin } from '@plugins/plugin';
 import { error, info, warning } from '@services/logger';
@@ -144,31 +145,53 @@ describe('PluginsStream', () => {
     });
 
     describe('error handling', () => {
-      it.each`
-        description                                    | throwValueError                | expectErrorMessage
-        ${'finalizes all plugins before destroying'}   | ${new Error('process-failed')} | ${'process-failed'}
-        ${'logs closing message on error'}             | ${new Error('dummy_err')}      | ${'dummy_err'}
-        ${'converts non-Error thrown values to Error'} | ${'string error'}              | ${'string error'}
-      `('$description', async ({ throwValueError, expectErrorMessage }) => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
+      /** Writes a bucket that the plugin of the stream fails on, throwing `thrown`: gives the plugin and the error the stream emits */
+      const writeFailingBucket = async (thrown: unknown) => {
         const plugin = createPluginStub({
           processInputStream: vi.fn(async () => {
-            throw throwValueError;
+            throw thrown;
           }),
         });
         const stream = new PluginsStream([plugin]);
-
         stream.write(MOCK_CANDLE);
-        const errorResponse = await waitForError(stream);
+        return { plugin, streamError: await waitForError(stream) };
+      };
 
-        // Common Expectations
+      it('finalizes all plugins before destroying', async () => {
+        const { plugin } = await writeFailingBucket(new Error('process-failed'));
         expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+      });
 
-        expect(errorResponse!.message).toBe(expectErrorMessage);
+      it.each`
+        kind               | thrown                         | message
+        ${'an Error'}      | ${new Error('process-failed')} | ${'process-failed'}
+        ${'another value'} | ${'string error'}              | ${'string error'}
+      `('destroys the stream with $kind thrown, as an Error', async ({ thrown, message }) => {
+        const { streamError } = await writeFailingBucket(thrown);
+        expect(streamError.message).toBe(message);
+      });
 
-        if (expectErrorMessage === 'dummy_err') {
-          expect(error).toHaveBeenCalledWith('stream', 'Gekko is closing the application due to an error!');
-        }
+      it.each`
+        kind               | thrown                                    | reason
+        ${'a GekkoError'}  | ${new GekkoError('trader', 'No balance')} | ${'[TRADER] No balance'}
+        ${'an Error'}      | ${new TypeError('fetch failed')}          | ${'TypeError: fetch failed'}
+        ${'a string'}      | ${'string error'}                         | ${'string error'}
+        ${'another value'} | ${{ code: 42 }}                           | ${'{ code: 42 }'}
+      `('logs why the application closes when a plugin throws $kind', async ({ thrown, reason }) => {
+        await writeFailingBucket(thrown);
+        expect(error).toHaveBeenCalledWith('stream', `Gekko is closing the application due to an error: ${reason}`);
+      });
+
+      it('logs why the application closes before finalizing the plugins, for the last flush of Supervision to send it', async () => {
+        const { plugin } = await writeFailingBucket(new Error('process-failed'));
+        const [logCallOrder] = vi.mocked(error).mock.invocationCallOrder;
+        const [finalizeCallOrder] = vi.mocked(plugin.processCloseStream).mock.invocationCallOrder;
+        expect(logCallOrder).toBeLessThan(finalizeCallOrder);
+      });
+
+      it('logs why the application closes once, not again when the stream is destroyed', async () => {
+        await writeFailingBucket(new Error('process-failed'));
+        expect(error).toHaveBeenCalledOnce();
       });
 
       describe('on ApplicationStopError', () => {
@@ -381,6 +404,16 @@ describe('PluginsStream', () => {
         expect(pipelineRejection).toBe(sourceError);
       });
 
+      it('logs why the application closes', () => {
+        expect(error).toHaveBeenCalledWith('stream', 'Gekko is closing the application due to an error: Error: download failed');
+      });
+
+      it('logs why the application closes before finalizing the plugins', () => {
+        const [logCallOrder] = vi.mocked(error).mock.invocationCallOrder;
+        const [finalizeCallOrder] = vi.mocked(plugins[0].processCloseStream).mock.invocationCallOrder;
+        expect(logCallOrder).toBeLessThan(finalizeCallOrder);
+      });
+
       it.each`
         index | plugin
         ${0}  | ${'first'}
@@ -413,6 +446,10 @@ describe('PluginsStream', () => {
         expect(pipelineRejection).toBe(initError);
       });
 
+      it('logs why the application closes', () => {
+        expect(error).toHaveBeenCalledWith('stream', 'Gekko is closing the application due to an error: Error: init failed');
+      });
+
       it.each`
         index | outcome                | plugin                 | calls
         ${0}  | ${'finalizes'}         | ${'initialized'}       | ${1}
@@ -429,6 +466,12 @@ describe('PluginsStream', () => {
       await pipeline(Readable.from([MOCK_CANDLE]), new PluginsStream([plugin]));
 
       expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+    });
+
+    it('logs no error after a normal end', async () => {
+      await pipeline(Readable.from([MOCK_CANDLE]), new PluginsStream([createPluginStub()]));
+
+      expect(error).not.toHaveBeenCalled();
     });
 
     describe('when finalizing the plugins throws', () => {
