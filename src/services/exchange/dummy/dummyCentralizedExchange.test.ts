@@ -31,7 +31,7 @@ const defaultMarketData = {
   price: { min: 1, max: 10_000 },
   amount: { min: 0.1, max: 100 },
   cost: { min: 10, max: 100_000 },
-  precision: { price: 2, amount: 2 },
+  precision: { price: 0.01, amount: 0.01 }, // steps, as the schema hands them on (a configuration states 2 decimals)
   fee: { maker: 0.001, taker: 0.002 },
 };
 
@@ -302,6 +302,32 @@ describe('DummyCentralizedExchange', () => {
       await expect(exchange.createMarketOrder(SYMBOL, side, 1)).rejects.toThrow(
         `[EXCHANGE] Order 'price' with value ${price} is out of range. Expected a value between 1 and 10000.`,
       );
+    });
+
+    // The MARKET_LOT_SIZE of Binance, which paper trading carries from the real market (a dummy-cex configuration has no market range):
+    // amounts up to 5 in a market order, up to 100 in a limit order. The simulator used to fill a market order that Binance refuses.
+    describe('with a market range narrowing the amounts of a market order', () => {
+      const marketData = { ...defaultMarketData, market: { min: 0, max: 5 } };
+
+      it.each`
+        side
+        ${'BUY'}
+        ${'SELL'}
+      `('rejects a market $side order of 8 with an OrderOutOfRangeError naming the narrowed range', async ({ side }) => {
+        await expect(placeOrder('market', side, 8, 100, marketData)).rejects.toStrictEqual(
+          new OrderOutOfRangeError('exchange', 'amount', 8, 0.1, 5),
+        );
+      });
+
+      it.each`
+        type        | side      | amount | status
+        ${'market'} | ${'BUY'}  | ${5}   | ${'closed'}
+        ${'market'} | ${'SELL'} | ${5}   | ${'closed'}
+        ${'limit'}  | ${'BUY'}  | ${8}   | ${'open'}
+        ${'limit'}  | ${'SELL'} | ${8}   | ${'open'}
+      `('accepts a $type $side order of $amount, $status', async ({ type, side, amount, status }) => {
+        await expect(placeOrder(type, side, amount, 100, marketData)).resolves.toMatchObject({ status });
+      });
     });
   });
 

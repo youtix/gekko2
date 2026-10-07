@@ -159,6 +159,42 @@ describe('Market Utils', () => {
     });
   });
 
+  describe('getMarketOrderLimits', () => {
+    // BTCUSDT as ccxt parses it from Binance: LOT_SIZE (amount) up to 9000 BTC, MARKET_LOT_SIZE (market) from 0, no minimum, to 86.27382215
+    const binanceMarketOrderData: MarketData = { ...binanceMarketData, market: { min: 0, max: 86.27382215 } };
+
+    it.each`
+      amount                         | market                                | narrowed                              | description
+      ${{ min: 1, max: 10 }}         | ${undefined}                          | ${{ min: 1, max: 10 }}                | ${'no market range'}
+      ${{ min: 1, max: 10 }}         | ${{ min: 0.5, max: 5 }}               | ${{ min: 1, max: 5 }}                 | ${'a lower market maximum'}
+      ${{ min: 1, max: 10 }}         | ${{ min: 2, max: 50 }}                | ${{ min: 2, max: 10 }}                | ${'a higher market minimum'}
+      ${{ min: 1, max: 10 }}         | ${{ min: 2, max: 5 }}                 | ${{ min: 2, max: 5 }}                 | ${'a market range within the amount range'}
+      ${{ min: 0.00001, max: 9000 }} | ${{ min: 0, max: 86.27382215 }}       | ${{ min: 0.00001, max: 86.27382215 }} | ${'a market minimum of 0, which sets no minimum (Binance MARKET_LOT_SIZE)'}
+      ${{ min: 1, max: 0 }}          | ${{ min: -1, max: 5 }}                | ${{ min: 1, max: 5 }}                 | ${'an amount maximum of 0 and a negative market minimum, which set nothing'}
+      ${{ min: 0, max: 0 }}          | ${{ min: 0, max: 0 }}                 | ${{ min: undefined, max: undefined }} | ${'bounds of 0 only, which set nothing'}
+      ${{ min: 1, max: 10 }}         | ${{ min: NaN, max: Infinity }}        | ${{ min: 1, max: 10 }}                | ${'a NaN market minimum and an infinite market maximum, which set nothing'}
+      ${undefined}                   | ${{ min: 2, max: 5 }}                 | ${{ min: 2, max: 5 }}                 | ${'no amount range'}
+      ${{ min: 1, max: 10 }}         | ${{ min: undefined, max: undefined }} | ${{ min: 1, max: 10 }}                | ${'a market range without bounds, as getMarketData gives it for Hyperliquid'}
+    `('narrows the amount range to the tighter bounds for $description', ({ amount, market, narrowed }) => {
+      expect(utils.getMarketOrderLimits({ amount, market }).amount).toEqual(narrowed);
+    });
+
+    it('leaves the price and the cost limits as they are', () => {
+      expect(utils.getMarketOrderLimits(binanceMarketOrderData)).toMatchObject({
+        price: binanceMarketData.price,
+        cost: binanceMarketData.cost,
+      });
+    });
+
+    // The limits Binance applies to a market order: 100 BTC passes LOT_SIZE, but not MARKET_LOT_SIZE
+    it('makes assertOrderWithinLimits refuse an amount above the market maximum, naming the narrowed range', () => {
+      const marketData = utils.getMarketOrderLimits(binanceMarketOrderData);
+      expect(() => utils.assertOrderWithinLimits({ tag: 'exchange', amount: 100, price: 60000, marketData })).toThrow(
+        new OrderOutOfRangeError('exchange', 'amount', 100, 0.00001, 86.27382215),
+      );
+    });
+  });
+
   describe('assertOrderWithinLimits', () => {
     it.each`
       amount   | price    | data                 | description

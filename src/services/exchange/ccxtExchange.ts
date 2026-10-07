@@ -7,7 +7,7 @@ import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { assertOrderWithinLimits } from '@utils/market/market.utils';
+import { assertOrderWithinLimits, getMarketOrderLimits } from '@utils/market/market.utils';
 import { pluralize } from '@utils/string/string.utils';
 import ccxt, { Exchange as CCXT, Order as CCXTOrder, Trade as CCXTTrade } from 'ccxt';
 import { formatDuration, intervalToDuration } from 'date-fns';
@@ -85,6 +85,11 @@ export class CCXTExchange implements Exchange {
         min: market.limits?.cost?.min,
         max: market.limits?.cost?.max,
       },
+      // Binance's MARKET_LOT_SIZE: the amounts of a market order (see getMarketOrderLimits), which the simulator of paper trading checks
+      market: {
+        min: market.limits?.market?.min,
+        max: market.limits?.market?.max,
+      },
       precision: {
         price: market.precision?.price,
         amount: market.precision?.amount,
@@ -112,8 +117,9 @@ export class CCXTExchange implements Exchange {
    *   otherwise, into the options of the client loading the markets, which setMarketsFromExchange leaves out. The markets are built
    *   with that mapping, and the private client reads it to resolve a symbol written with a token name (UBTC/USDC for BTC/USDC)
    *   and to key its spot balance (fetchBalance): it is copied.
-   * - Hyperliquid's private fetchCurrencies also approved ccxt's builder fee and set its referrer (initializeClient) at start-up:
-   *   createOrder and cancelOrder do it before their first request anyway.
+   * - Hyperliquid's private fetchCurrencies also ran ccxt's initializeClient at start-up, which sets ccxt's referrer and would approve
+   *   ccxt's builder fee but for the builderFee: false that createExchange sets (exchange.utils.ts): createOrder and cancelOrder run
+   *   it before their first request anyway.
    */
   public async loadMarkets() {
     await this.publicClient.loadMarkets();
@@ -274,7 +280,8 @@ export class CCXTExchange implements Exchange {
   /** A write: sent once, never replayed (see the class comment). */
   public async createMarketOrder(symbol: string, side: OrderSide, amount: number) {
     return translateErrors<OrderState>(async () => {
-      const limits = this.publicClient.market(symbol).limits;
+      // Narrowed to the amounts the exchange takes in a market order, Binance's MARKET_LOT_SIZE (see getMarketOrderLimits)
+      const limits = getMarketOrderLimits(this.publicClient.market(symbol).limits);
 
       // A read: fetchTicker retries it on its own. Its failure ends the creation before any order is sent, so it is not thrown as it
       // is: an ExchangeNetworkError thrown by a creation tells the orders that its outcome is unknown, the order maybe live

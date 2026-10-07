@@ -1,7 +1,7 @@
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { Tag } from '@models/tag.types';
 import { MarketData, MarketValidationResult } from '@services/exchange/exchange.types';
-import { isNil } from 'lodash-es';
+import { isNil, max, min } from 'lodash-es';
 
 /** NaN, ±Infinity, zero and negative numbers are never a valid order price, amount or cost, whatever the market limits */
 const isFinitePositive = (value: number) => Number.isFinite(value) && value > 0;
@@ -76,6 +76,24 @@ export const checkOrderCost = (amount: number, price: number, marketData: Market
   }
 
   return { isValid: true, value: cost };
+};
+
+/**
+ * The limits a market order is checked against. Binance applies two lot size filters to a MARKET order: LOT_SIZE, which ccxt maps to
+ * limits.amount, and MARKET_LOT_SIZE, mapped to limits.market, whose maximum is far lower on a liquid pair (tens of BTC on BTCUSDT,
+ * against 9000). Checked against the amount range alone, an order between the two maxima was sent, to be refused by Binance with a
+ * misleading "order amount should be evenly divisible by lot size" (-1013), and filled by the simulator of paper trading.
+ * The amount range is narrowed to the higher of the two minimums and the lower of the two maximums (lodash's max and min skip the
+ * bounds left undefined), a bound that is not a finite number above 0 setting nothing, as in toBound: the MARKET_LOT_SIZE minQty of
+ * 0 on BTCUSDT. Market data without a market range, a dummy-cex configuration for one, is returned as it is.
+ */
+export const getMarketOrderLimits = (marketData: MarketData): MarketData => {
+  const { amount, market } = marketData;
+  if (isNil(market)) return marketData;
+  return {
+    ...marketData,
+    amount: { min: max([toBound(amount?.min), toBound(market.min)]), max: min([toBound(amount?.max), toBound(market.max)]) },
+  };
 };
 
 /**

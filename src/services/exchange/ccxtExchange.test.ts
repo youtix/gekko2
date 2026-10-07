@@ -218,6 +218,12 @@ describe('CCXTExchange', () => {
       expect(instance.market).toHaveBeenCalledWith('BTC/USDT');
     });
 
+    // Binance's MARKET_LOT_SIZE on BTCUSDT, which ccxt parses into limits.market: the simulator of paper trading is built from it
+    it('getMarketData carries the amount limits of a market order', () => {
+      instance.market.mockReturnValue({ limits: { amount: { min: 0.00001, max: 9000 }, market: { min: 0, max: 86.27382215 } } });
+      expect(exchange.getMarketData('BTC/USDT').market).toEqual({ min: 0, max: 86.27382215 });
+    });
+
     it('getExchangeName returns configured name', () => {
       expect(exchange.getExchangeName()).toBe('binance');
     });
@@ -673,6 +679,43 @@ describe('CCXTExchange', () => {
     it('does not send an order out of the market limits to the exchange', async () => {
       await exchange.createMarketOrder('BTC/USDT', 'SELL', NaN).catch(() => undefined);
       expect(instance.createOrder).not.toHaveBeenCalled();
+    });
+
+    // BTCUSDT as ccxt parses it from Binance: LOT_SIZE (amount) up to 9000 BTC and MARKET_LOT_SIZE (market) up to 86.27382215 BTC,
+    // both applied by Binance to a market order. It used to be sent between the two maxima, to be refused by Binance (-1013 "Filter
+    // failure: MARKET_LOT_SIZE", which ccxt reports as "order amount should be evenly divisible by lot size").
+    describe('on a market whose market orders have a lower maximum amount', () => {
+      const binanceLimits = {
+        amount: { min: 0.00001, max: 9000 },
+        price: { min: 0.01, max: 1000000 },
+        cost: { min: 5, max: 9000000 },
+        market: { min: 0, max: 86.27382215 },
+      };
+
+      beforeEach(() => {
+        instance.market.mockReturnValue({ limits: binanceLimits });
+      });
+
+      it('rejects a market order above that maximum with an OrderOutOfRangeError naming the narrowed range', async () => {
+        await expect(exchange.createMarketOrder('BTC/USDT', 'SELL', 100)).rejects.toStrictEqual(
+          new OrderOutOfRangeError('exchange', 'amount', 100, 0.00001, 86.27382215),
+        );
+      });
+
+      it('does not send a market order above that maximum to the exchange', async () => {
+        await exchange.createMarketOrder('BTC/USDT', 'SELL', 100).catch(() => undefined);
+        expect(instance.createOrder).not.toHaveBeenCalled();
+      });
+
+      it('sends a market order within that maximum', async () => {
+        await exchange.createMarketOrder('BTC/USDT', 'SELL', 80);
+        expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'market', 'SELL', 80, 100);
+      });
+
+      it('sends a limit order of the amount refused to a market order, the maximum not applying to it', async () => {
+        await exchange.createLimitOrder('BTC/USDT', 'SELL', 100, 100);
+        expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', 'limit', 'SELL', 100, 100);
+      });
     });
 
     it('rejects an order whose ticker failed with a value that is not an Error with a GekkoError carrying that value', async () => {

@@ -45,10 +45,12 @@ const mockExchangeConfig = {
   exchangeSynchInterval: 10000,
   orderSynchInterval: 5000,
 };
+// BTCUSDT as CCXTExchange reads it from Binance, its MARKET_LOT_SIZE (market) included
 const REAL_MARKET_DATA: MarketData = {
   amount: { min: 0.00001, max: 9000 },
   price: { min: 0.01, max: 1000000 },
   cost: { min: 5, max: 9000000 },
+  market: { min: 0, max: 86.27382215 },
   precision: { price: 0.01, amount: 0.00001 },
   fee: { maker: 0.001, taker: 0.002 },
 };
@@ -111,6 +113,20 @@ describe('PaperTradingBinanceExchange', () => {
       await exchange.loadMarkets();
       expect(simulatorMarketData().get('BTC/USDT')).toEqual({ ...REAL_MARKET_DATA, fee });
     });
+
+    // The simulator narrows the amounts of a market order with it, so that paper trading refuses the market orders Binance refuses
+    it.each`
+      feeOverride
+      ${undefined}
+      ${{ maker: 0.0008 }}
+    `(
+      'gives the simulator the amount limits of a market order of the real market when feeOverride is $feeOverride',
+      async ({ feeOverride }) => {
+        const exchange = new PaperTradingBinanceExchange({ ...mockExchangeConfig, feeOverride });
+        await exchange.loadMarkets();
+        expect(simulatorMarketData().get('BTC/USDT')?.market).toEqual({ min: 0, max: 86.27382215 });
+      },
+    );
   });
 
   describe('getMarketData', () => {

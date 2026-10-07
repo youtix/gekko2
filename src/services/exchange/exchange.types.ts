@@ -41,6 +41,16 @@ export interface MarketData {
   price?: MarketLimitRange;
   amount?: MarketLimitRange;
   cost?: MarketLimitRange;
+  /**
+   * The amount limits of a market order, which narrow the amount range for it (see getMarketOrderLimits): Binance's MARKET_LOT_SIZE
+   * filter, which it applies to a MARKET order on top of LOT_SIZE (the amount range), with a far lower maximum on a liquid pair.
+   */
+  market?: MarketLimitRange;
+  /**
+   * The steps an order's price and amount are multiples of, 0.01 for a price to the cent, as ccxt gives them for Binance and
+   * Hyperliquid (both in its TICK_SIZE precision mode). A dummy-cex configuration states numbers of decimals instead (2 for 0.01),
+   * which its schema turns into these steps.
+   */
   precision?: MarketPrecision;
   fee?: MarketFee;
 }

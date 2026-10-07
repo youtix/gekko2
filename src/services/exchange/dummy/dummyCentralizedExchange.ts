@@ -9,7 +9,7 @@ import { config } from '@services/configuration/configuration';
 import { DUMMY_CANDLE_BUFFER_SIZE, DUMMY_CANDLE_BUFFER_TRIM_MARGIN, LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback, Ticker } from '@services/exchange/exchange.types';
-import { assertOrderWithinLimits } from '@utils/market/market.utils';
+import { assertOrderWithinLimits, getMarketOrderLimits } from '@utils/market/market.utils';
 import { clonePortfolio, initializePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { difference, isNil, sortedIndexBy, sortedLastIndexBy } from 'lodash-es';
@@ -190,7 +190,8 @@ export class DummyCentralizedExchange implements Exchange {
 
   public async createMarketOrder(symbol: TradingPair, side: OrderSide, amount: number): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
-      const marketData = this.getPairMarketData(symbol);
+      // Narrowed to the amounts of a market order, the MARKET_LOT_SIZE of Binance that paper trading carries (see getMarketOrderLimits)
+      const marketData = getMarketOrderLimits(this.getPairMarketData(symbol));
 
       // The limits are checked as CCXTExchange checks them, at the price the order executes at: the ask for a BUY, the bid for a SELL
       const price = side === 'BUY' ? this.ticker.get(symbol)?.ask : this.ticker.get(symbol)?.bid;
