@@ -7,7 +7,7 @@ const MARKET_DATA = {
   price: { min: 0.01, max: 1_000_000 },
   amount: { min: 0.00001, max: 9000 },
   cost: { min: 5, max: 9_000_000 },
-  precision: { price: 0.01, amount: 0.00001 },
+  precision: { price: 2, amount: 5 },
   fee: { maker: 0.0004, taker: 0.0007 },
 };
 
@@ -23,10 +23,13 @@ const withMarketData = (path: string[], value: unknown) => set(createConfig(), [
 const withTicker = (ticker: Record<string, unknown>) => set(createConfig(), ['initialTicker', 0, 'ticker'], ticker);
 
 const feeMessage = (field: string) => `${field} must be a fraction between 0 and 1 (0.001 is a 0.1 % fee)`;
+const precisionMessage = (field: string) => `${field} must be a whole number of decimals of at least 0, not a step (2 for a step of 0.01)`;
 
 describe('dummyExchangeSchema', () => {
-  it('maps each marketData entry to its symbol', () => {
-    expect(dummyExchangeSchema.parse(createConfig()).marketData).toEqual(new Map([['BTC/USDT', MARKET_DATA]]));
+  it('maps each marketData entry to its symbol, its precision turned from decimals into steps', () => {
+    expect(dummyExchangeSchema.parse(createConfig()).marketData).toEqual(
+      new Map([['BTC/USDT', { ...MARKET_DATA, precision: { price: 0.01, amount: 0.00001 } }]]),
+    );
   });
 
   it('maps each initial ticker to its symbol', () => {
@@ -47,25 +50,44 @@ describe('dummyExchangeSchema', () => {
     expect(result.error?.issues).toMatchObject([{ path: ['orderSynchInterval'] }]);
   });
 
+  // Dropped, a misspelt key would leave its default in place: a misspelt max, for one, would leave the range without a maximum
+  it.each`
+    level                       | path                                            | key
+    ${'the exchange'}           | ${[]}                                           | ${'marketdata'}
+    ${'a marketData entry'}     | ${['marketData', 0]}                            | ${'fees'}
+    ${'the market data'}        | ${['marketData', 0, 'marketData']}              | ${'maker'}
+    ${'a limit range'}          | ${['marketData', 0, 'marketData', 'price']}     | ${'maximum'}
+    ${'the precision'}          | ${['marketData', 0, 'marketData', 'precision']} | ${'cost'}
+    ${'the fees'}               | ${['marketData', 0, 'marketData', 'fee']}       | ${'tierBased'}
+    ${'an initialTicker entry'} | ${['initialTicker', 0]}                         | ${'last'}
+    ${'a ticker'}               | ${['initialTicker', 0, 'ticker']}               | ${'last'}
+  `('refuses an unknown key ($key) in $level instead of dropping it', ({ path, key }) => {
+    const result = dummyExchangeSchema.safeParse(set(createConfig(), [...path, key], 1));
+    expect(result.error?.issues).toMatchObject([{ code: 'unrecognized_keys', path, keys: [key] }]);
+  });
+
   describe('marketData', () => {
     // A negative max is reported once: the min ≤ max refinement, which zod still runs after the failed bound, skips it.
     it.each`
-      path                       | value     | message
-      ${['price', 'min']}        | ${-1}     | ${'price.min must be a number of at least 0'}
-      ${['price', 'max']}        | ${-1}     | ${'price.max must be a number of at least 0'}
-      ${['amount', 'min']}       | ${-1}     | ${'amount.min must be a number of at least 0'}
-      ${['amount', 'max']}       | ${-1}     | ${'amount.max must be a number of at least 0'}
-      ${['cost', 'min']}         | ${-1}     | ${'cost.min must be a number of at least 0'}
-      ${['cost', 'max']}         | ${-1}     | ${'cost.max must be a number of at least 0'}
-      ${['cost', 'min']}         | ${'5'}    | ${'cost.min must be a number of at least 0'}
-      ${['price', 'min']}        | ${NaN}    | ${'price.min must be a number of at least 0'}
-      ${['precision', 'price']}  | ${-2}     | ${'precision.price must be a number of at least 0'}
-      ${['precision', 'amount']} | ${-2}     | ${'precision.amount must be a number of at least 0'}
-      ${['fee', 'maker']}        | ${1.5}    | ${feeMessage('fee.maker')}
-      ${['fee', 'maker']}        | ${-0.1}   | ${feeMessage('fee.maker')}
-      ${['fee', 'taker']}        | ${1.5}    | ${feeMessage('fee.taker')}
-      ${['fee', 'taker']}        | ${-0.1}   | ${feeMessage('fee.taker')}
-      ${['fee', 'taker']}        | ${'0.1%'} | ${feeMessage('fee.taker')}
+      path                       | value      | message
+      ${['price', 'min']}        | ${-1}      | ${'price.min must be a number of at least 0'}
+      ${['price', 'max']}        | ${-1}      | ${'price.max must be a number of at least 0'}
+      ${['amount', 'min']}       | ${-1}      | ${'amount.min must be a number of at least 0'}
+      ${['amount', 'max']}       | ${-1}      | ${'amount.max must be a number of at least 0'}
+      ${['cost', 'min']}         | ${-1}      | ${'cost.min must be a number of at least 0'}
+      ${['cost', 'max']}         | ${-1}      | ${'cost.max must be a number of at least 0'}
+      ${['cost', 'min']}         | ${'5'}     | ${'cost.min must be a number of at least 0'}
+      ${['price', 'min']}        | ${NaN}     | ${'price.min must be a number of at least 0'}
+      ${['precision', 'price']}  | ${-2}      | ${precisionMessage('precision.price')}
+      ${['precision', 'amount']} | ${-2}      | ${precisionMessage('precision.amount')}
+      ${['precision', 'price']}  | ${0.01}    | ${precisionMessage('precision.price')}
+      ${['precision', 'amount']} | ${0.00001} | ${precisionMessage('precision.amount')}
+      ${['precision', 'amount']} | ${'8'}     | ${precisionMessage('precision.amount')}
+      ${['fee', 'maker']}        | ${1.5}     | ${feeMessage('fee.maker')}
+      ${['fee', 'maker']}        | ${-0.1}    | ${feeMessage('fee.maker')}
+      ${['fee', 'taker']}        | ${1.5}     | ${feeMessage('fee.taker')}
+      ${['fee', 'taker']}        | ${-0.1}    | ${feeMessage('fee.taker')}
+      ${['fee', 'taker']}        | ${'0.1%'}  | ${feeMessage('fee.taker')}
     `('reports $value at $path as its only issue', ({ path, value, message }) => {
       const result = dummyExchangeSchema.safeParse(withMarketData(path, value));
       expect(result.error?.issues).toMatchObject([{ path: ['marketData', 0, 'marketData', ...path], message }]);
@@ -104,14 +126,26 @@ describe('dummyExchangeSchema', () => {
       });
     });
 
+    // Configured in decimals, a precision is handed on as the step MarketData.precision holds in every mode, as ccxt gives it
     it.each`
-      path                       | value
-      ${['precision', 'price']}  | ${0}
-      ${['precision', 'amount']} | ${0}
-      ${['fee', 'maker']}        | ${0}
-      ${['fee', 'maker']}        | ${1}
-      ${['fee', 'taker']}        | ${0}
-      ${['fee', 'taker']}        | ${1}
+      path                       | decimals | step
+      ${['precision', 'price']}  | ${2}     | ${0.01}
+      ${['precision', 'amount']} | ${5}     | ${0.00001}
+      ${['precision', 'price']}  | ${8}     | ${0.00000001}
+      ${['precision', 'amount']} | ${8}     | ${0.00000001}
+      ${['precision', 'price']}  | ${0}     | ${1}
+      ${['precision', 'amount']} | ${0}     | ${1}
+    `('turns $decimals decimals at $path into a step of $step', ({ path, decimals, step }) => {
+      const result = dummyExchangeSchema.parse(withMarketData(path, decimals));
+      expect(get(result.marketData.get('BTC/USDT'), path)).toBe(step);
+    });
+
+    it.each`
+      path                | value
+      ${['fee', 'maker']} | ${0}
+      ${['fee', 'maker']} | ${1}
+      ${['fee', 'taker']} | ${0}
+      ${['fee', 'taker']} | ${1}
     `('accepts $value at $path, a bound of its range', ({ path, value }) => {
       const result = dummyExchangeSchema.parse(withMarketData(path, value));
       expect(get(result.marketData.get('BTC/USDT'), path)).toBe(value);
@@ -161,12 +195,13 @@ describe('dummyExchangeSchema', () => {
     });
 
     it.each`
-      scenario                 | exchange                                           | path
-      ${'a negative max'}      | ${withMarketData(['price', 'max'], -1)}            | ${['exchange', 'marketData', 0, 'marketData', 'price', 'max']}
-      ${'a min above its max'} | ${withMarketData(['cost'], { min: 10, max: 5 })}   | ${['exchange', 'marketData', 0, 'marketData', 'cost']}
-      ${'a fee of 150 %'}      | ${withMarketData(['fee', 'taker'], 1.5)}           | ${['exchange', 'marketData', 0, 'marketData', 'fee', 'taker']}
-      ${'a bid above the ask'} | ${withTicker({ bid: 101, ask: 100 })}              | ${['exchange', 'initialTicker', 0, 'ticker']}
-      ${'an interval of 0'}    | ${{ ...createConfig(), exchangeSynchInterval: 0 }} | ${['exchange', 'exchangeSynchInterval']}
+      scenario                         | exchange                                           | path
+      ${'a negative max'}              | ${withMarketData(['price', 'max'], -1)}            | ${['exchange', 'marketData', 0, 'marketData', 'price', 'max']}
+      ${'a min above its max'}         | ${withMarketData(['cost'], { min: 10, max: 5 })}   | ${['exchange', 'marketData', 0, 'marketData', 'cost']}
+      ${'a fee of 150 %'}              | ${withMarketData(['fee', 'taker'], 1.5)}           | ${['exchange', 'marketData', 0, 'marketData', 'fee', 'taker']}
+      ${'a precision given as a step'} | ${withMarketData(['precision', 'price'], 0.01)}    | ${['exchange', 'marketData', 0, 'marketData', 'precision', 'price']}
+      ${'a bid above the ask'}         | ${withTicker({ bid: 101, ask: 100 })}              | ${['exchange', 'initialTicker', 0, 'ticker']}
+      ${'an interval of 0'}            | ${{ ...createConfig(), exchangeSynchInterval: 0 }} | ${['exchange', 'exchangeSynchInterval']}
     `('reports $scenario as the only issue', ({ exchange, path }) => {
       const result = configurationSchema.safeParse(createBacktestConfig(exchange));
       expect(result.error?.issues).toMatchObject([{ path }]);

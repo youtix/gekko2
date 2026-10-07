@@ -2,6 +2,7 @@ import type { Candle } from '@models/candle.types';
 import type { CandleBucket } from '@models/event.types';
 import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
+import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
 import type { MarketData } from '@services/exchange/exchange.types';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -463,6 +464,52 @@ describe('GridBot', () => {
 
       expect(buyOrders[0]?.price).toBe(expectedBuyPrice);
       expect(sellOrders[0]?.price).toBe(expectedSellPrice);
+    });
+  });
+
+  // A backtest's market data, parsed by the dummy-cex schema from the configuration of config/backtest.yml and the documentation,
+  // whose precision is 8 decimals. Handed on as steps of 8, it rounded the grid prices to multiples of 8 and these amounts, below
+  // 1 BTC, to 0: GridBot stopped the backtest at its first candle after warmup ('Insufficient portfolio for any grid levels').
+  describe('with the market data of the documented dummy-cex configuration', () => {
+    const { marketData: configuredMarketData } = dummyExchangeSchema.parse({
+      name: 'dummy-cex',
+      simulationBalance: [{ assetName: 'USDT', balance: 1000 }],
+      marketData: [
+        {
+          symbol: 'BTC/USDT',
+          marketData: {
+            price: { min: 0.01, max: 1_000_000 },
+            amount: { min: 0.00001, max: 9000 },
+            cost: { min: 5, max: 9_000_000 },
+            precision: { price: 8, amount: 8 },
+            fee: { maker: 0.0004, taker: 0.0007 },
+          },
+        },
+      ],
+    });
+    const percentGrid = { spacingType: 'percent', spacingValue: 1 } as const;
+
+    beforeEach(() => {
+      tools.marketData = configuredMarketData;
+    });
+
+    it('rebalances the documented portfolio, 1000 USDT and no BTC, with a STICKY BUY of half of it rounded down to 8 decimals', () => {
+      initStrategy(61234.56, { ...percentGrid, buyLevels: 5, sellLevels: 5 }, unbalancedPortfolio);
+
+      expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 0.00816532, symbol: 'BTC/USDT' }]]);
+    });
+
+    it('places a balanced grid 1 % around the close, its prices and amounts to 8 decimals', () => {
+      const portfolio: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0.05, used: 0, total: 0.05 }],
+        ['USDT', { free: 3000, used: 0, total: 3000 }],
+      ]);
+      initStrategy(61234.56, { ...percentGrid, buyLevels: 1, sellLevels: 1 }, portfolio);
+
+      expect(createOrder.mock.calls).toEqual([
+        [{ type: 'LIMIT', side: 'BUY', amount: 0.0494868, price: 60622.2144, symbol: 'BTC/USDT' }],
+        [{ type: 'LIMIT', side: 'SELL', amount: 0.0494868, price: 61846.9056, symbol: 'BTC/USDT' }],
+      ]);
     });
   });
 });

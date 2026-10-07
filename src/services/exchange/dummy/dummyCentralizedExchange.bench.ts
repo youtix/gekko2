@@ -22,7 +22,7 @@ const defaultMarketData = {
   price: { min: 1, max: 10_000 },
   amount: { min: 0.1, max: 100 },
   cost: { min: 10, max: 100_000 },
-  precision: { price: 2, amount: 2 },
+  precision: { price: 0.01, amount: 0.01 },
   fee: { maker: 0.001, taker: 0.002 },
 };
 

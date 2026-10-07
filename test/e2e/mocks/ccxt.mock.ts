@@ -77,7 +77,7 @@ export class MockCCXTExchange {
         amount: { min: 0.0001, max: 1000 },
         cost: { min: 5, max: 1000000 },
       },
-      precision: { price: 2, amount: 6 },
+      precision: { price: 0.01, amount: 0.000001 },
     },
     'ETH/USDT': {
       symbol: 'ETH/USDT',
@@ -89,7 +89,7 @@ export class MockCCXTExchange {
         amount: { min: 0.001, max: 10000 },
         cost: { min: 5, max: 1000000 },
       },
-      precision: { price: 2, amount: 6 },
+      precision: { price: 0.01, amount: 0.000001 },
     },
     'LTC/USDT': {
       symbol: 'LTC/USDT',
@@ -101,7 +101,7 @@ export class MockCCXTExchange {
         amount: { min: 0.001, max: 10000 },
         cost: { min: 5, max: 1000000 },
       },
-      precision: { price: 2, amount: 6 },
+      precision: { price: 0.01, amount: 0.000001 },
     },
   };
 
@@ -131,7 +131,7 @@ export class MockCCXTExchange {
           amount: { min: 0, max: Infinity },
           cost: { min: 0, max: Infinity },
         },
-        precision: { price: 8, amount: 8 },
+        precision: { price: 1e-8, amount: 1e-8 },
       };
     }
     return this.markets[symbol];

@@ -15,13 +15,28 @@ const positiveNumberSchema = (field: string) => {
 };
 
 /**
+ * A precision, configured as a number of decimals (8 for a price or an amount to 0.00000001), handed on as the step that
+ * MarketData.precision holds in every mode, as ccxt gives it for Binance and Hyperliquid (TICK_SIZE precision mode): GridBot rounds
+ * prices to multiples of it, and amounts down to its decimals. Number('1e-5') is the literal 0.00001, where V8 computes 10 ** -5 a
+ * unit below it.
+ */
+const decimalsToStepSchema = (field: string) => {
+  const message = `${field} must be a whole number of decimals of at least 0, not a step (2 for a step of 0.01)`;
+  return z
+    .number(message)
+    .int(message)
+    .min(0, message)
+    .transform(decimals => Number(`1e-${decimals}`));
+};
+
+/**
  * The lowest and highest order price, amount or cost of a pair. A max left out, or set to 0 as Binance reports a disabled
  * filter, sets no maximum (market.utils counts a bound of 0 as absent), so min is only compared with a max above 0.
  * Zod still runs the refinement after a failed bound: a negative max, already reported, is not compared either.
  */
 const limitRangeSchema = (field: string) =>
   z
-    .object({
+    .strictObject({
       min: nonNegativeNumberSchema(`${field}.min`),
       max: nonNegativeNumberSchema(`${field}.max`).optional(),
     })
@@ -34,7 +49,7 @@ const limitRangeSchema = (field: string) =>
  * already reported, is not compared.
  */
 const tickerSchema = z
-  .object({
+  .strictObject({
     bid: positiveNumberSchema('ticker.bid'),
     ask: positiveNumberSchema('ticker.ask'),
   })
@@ -42,17 +57,17 @@ const tickerSchema = z
 
 const marketDataSchema = z
   .array(
-    z.object({
+    z.strictObject({
       symbol: symbolSchema,
-      marketData: z.object({
+      marketData: z.strictObject({
         price: limitRangeSchema('price'),
         amount: limitRangeSchema('amount'),
         cost: limitRangeSchema('cost'),
-        precision: z.object({
-          price: nonNegativeNumberSchema('precision.price'),
-          amount: nonNegativeNumberSchema('precision.amount'),
+        precision: z.strictObject({
+          price: decimalsToStepSchema('precision.price'),
+          amount: decimalsToStepSchema('precision.amount'),
         }),
-        fee: z.object({
+        fee: z.strictObject({
           maker: feeRateSchema('fee.maker'),
           taker: feeRateSchema('fee.taker'),
         }),
@@ -64,7 +79,7 @@ const marketDataSchema = z
 
 const initialTickerSchema = z
   .array(
-    z.object({
+    z.strictObject({
       symbol: symbolSchema,
       ticker: tickerSchema,
     }),
