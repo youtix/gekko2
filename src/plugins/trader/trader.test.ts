@@ -200,9 +200,6 @@ describe('Trader', () => {
     fetchBalance: Mock;
     getMarketLimits: Mock;
   };
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  let setIntervalSpy: ReturnType<typeof vi.spyOn>;
-  let waitSpy: ReturnType<typeof vi.spyOn>;
   const getWatchMock = config.getWatch as unknown as Mock;
   const getExchangeMock = config.getExchange as unknown as Mock;
   const getStrategyMock = config.getStrategy as unknown as Mock;
@@ -242,8 +239,6 @@ describe('Trader', () => {
 
   beforeAll(() => {
     vi.useFakeTimers();
-    setIntervalSpy = vi.spyOn(global, 'setInterval');
-    waitSpy = vi.spyOn(processUtils, 'wait');
   });
 
   afterAll(() => {
@@ -251,7 +246,7 @@ describe('Trader', () => {
   });
 
   beforeEach(() => {
-    waitSpy.mockResolvedValue(undefined);
+    vi.spyOn(processUtils, 'wait').mockResolvedValue(undefined);
     getWatchMock.mockReturnValue(cloneWatch());
     getExchangeMock.mockReturnValue({ name: 'dummy-cex' });
     getStrategyMock.mockReturnValue({});
@@ -710,6 +705,56 @@ describe('Trader', () => {
 
       const metadata = getOrderMetadata(advice.id);
       expect(metadata?.amount).toBeCloseTo(1.2345, 5);
+    });
+
+    // A BUY of 0.5 BTC whose fee (0.1 %) the exchange took from the BTC bought, as Binance does unless the fees are paid in BNB: the
+    // account holds 0.4995 BTC, and the SELL of the 0.5 the BUY filled (its trailing stop) is refused for insufficient balance
+    describe('when a SELL asks for more than the free balance of the asset', () => {
+      const advice = buildAdvice({ side: 'SELL', type: 'MARKET', amount: 0.5 });
+
+      beforeEach(async () => {
+        trader['portfolio'] = new Map<string, BalanceDetail>([
+          ['BTC', { free: 0.4995, used: 0, total: 0.4995 }],
+          ['USDT', { free: 1000, used: 0, total: 1000 }],
+        ]);
+        await trader.onStrategyCreateOrder([advice]);
+      });
+
+      it('places the order for the free balance', () => {
+        expect(getOrderInstance(advice.id)?.amount).toBe(0.4995);
+      });
+
+      it('relays the free balance as the amount of the order', () => {
+        expect(getInitiatedOrder()?.amount).toBe(0.4995);
+      });
+
+      it('warns with the amount asked for and the amount sent', () => {
+        expect(logger.warning).toHaveBeenCalledWith(
+          'trader',
+          `[${advice.id}] SELL MARKET order of 0.5 BTC above the free balance: 0.4995 BTC sent, all that can be sold`,
+        );
+      });
+    });
+
+    // A balance of 0 may be a portfolio not synchronized yet; NaN and Infinity are refused, as before, rather than sold all-in
+    it.each`
+      description                                    | side      | amount      | assetFree
+      ${'a SELL within the free balance'}            | ${'SELL'} | ${0.4}      | ${0.4995}
+      ${'a SELL of the whole free balance'}          | ${'SELL'} | ${0.4995}   | ${0.4995}
+      ${'a SELL while the free balance known is 0'}  | ${'SELL'} | ${0.5}      | ${0}
+      ${'a SELL of NaN'}                             | ${'SELL'} | ${NaN}      | ${0.4995}
+      ${'a SELL of Infinity'}                        | ${'SELL'} | ${Infinity} | ${0.4995}
+      ${'a BUY above the free balance of the asset'} | ${'BUY'}  | ${0.5}      | ${0.4995}
+    `('places $description for the amount asked for', async ({ side, amount, assetFree }) => {
+      trader['portfolio'] = new Map<string, BalanceDetail>([
+        ['BTC', { free: assetFree, used: 0, total: assetFree }],
+        ['USDT', { free: 1000, used: 0, total: 1000 }],
+      ]);
+      const advice = buildAdvice({ side, type: 'MARKET', amount });
+
+      await trader.onStrategyCreateOrder([advice]);
+
+      expect(getOrderInstance(advice.id)?.amount).toBe(amount);
     });
 
     it('creates limit order with requested price', async () => {

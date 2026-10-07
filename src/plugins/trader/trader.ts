@@ -181,6 +181,27 @@ export class Trader extends Plugin {
   /*                             PRIVATE FUNCTIONS                              */
   /* -------------------------------------------------------------------------- */
 
+  /**
+   * The amount a SELL is placed with: never more than the free balance of its asset, which the exchange refuses to exceed. A strategy
+   * may ask for more without knowing it: the amount a BUY filled, which the trailing stop of that BUY sells (see StrategyManager), is
+   * the amount of its trades, and the exchange may have taken the fee of the BUY from the asset bought, as Binance does unless the fees
+   * are paid in BNB. The account then holds that amount less the fee: the SELL of the whole was refused, an error counting towards the
+   * circuit breaker, the position left unprotected. The simulated exchange takes its fees in the currency: a backtest never showed it.
+   * The balance is the one the last synchronization read, which followed the end of the last order (see reportCompleted): the Trader
+   * does not read it again before placing an order. Left as asked for:
+   * - an amount within the balance, or not a finite number (refused as before, rather than turned into the sale of every unit held);
+   * - any amount while the balance is 0: maybe a portfolio not synchronized yet, and a SELL of 0 would be refused anyway.
+   */
+  private capToFreeBalance({ id, type }: AdviceOrder, requestedAmount: number, freeBalance: number, assetName: string) {
+    const isAboveBalance = freeBalance > 0 && Number.isFinite(requestedAmount) && requestedAmount > freeBalance;
+    if (!isAboveBalance) return requestedAmount;
+    warning(
+      'trader',
+      `[${id}] SELL ${type} order of ${requestedAmount} ${assetName} above the free balance: ${freeBalance} ${assetName} sent, all that can be sold`,
+    );
+    return freeBalance;
+  }
+
   private checkOrderSummary({ id, symbol, type, orderCreationDate, summary }: CheckOrderSummaryParams): OrderCompletedEvent {
     const { amount, price, feePercent, side, orderExecutionDate } = summary;
     const { effectivePrice, fee } = computeOrderPricing(side, price, amount, feePercent);
@@ -516,7 +537,8 @@ export class Trader extends Plugin {
         // Price cannot be zero here because we call processOneMinuteBucket before events (plugins stream)
         // We delegate the order validation (notional, lot, amount) to the exchange
         const computedAmount = side === 'BUY' ? (currency.free / price) * (1 - DEFAULT_FEE_BUFFER) : asset.free;
-        const amount = advice.amount ?? computedAmount;
+        const requestedAmount = advice.amount ?? computedAmount;
+        const amount = side === 'SELL' ? this.capToFreeBalance(advice, requestedAmount, asset.free, assetName) : requestedAmount;
 
         // Emit order initiated event
         const orderInitiated = { ...advice, amount, symbol };
