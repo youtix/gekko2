@@ -3,9 +3,9 @@ import { OrderSide, OrderType } from './order.types';
 import { TradingPair } from './utility.types';
 
 export type TrailingConfig = {
-  /** The percent to trail away from the highest peak (e.g., 2.5 for 2.5%) */
+  /** The percent to trail away from the highest peak, above 0 and below 100 (e.g., 2.5 for 2.5%); anything else is refused at arming */
   percentage: number;
-  /** The price to activate the trailing monitoring */
+  /** The price that activates the trailing monitoring, above 0; leave it out for a stop active as soon as it is armed */
   trigger?: number;
 };
 

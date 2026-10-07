@@ -197,15 +197,13 @@ export class StrategyManager extends EventEmitter {
   /*                  FUNCTIONS USED IN TRADER STRATEGIES                       */
   /* -------------------------------------------------------------------------- */
 
-  private addIndicator<T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>) {
+  private addIndicator<T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>): void {
     const Indicator = indicators[name];
     if (!Indicator) throw new GekkoError('strategy', `${name} indicator not found.`);
 
     // @ts-expect-error TODO fix complex typescript error
     const indicator = new Indicator(parameters);
     this.indicators.push({ indicator, symbol });
-
-    return indicator;
   }
 
   private cancelOrder(orderId: UUID): void {

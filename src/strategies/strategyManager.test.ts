@@ -434,6 +434,110 @@ describe('StrategyManager', () => {
         expect(strategy.onTrailingStopTriggered).toHaveBeenCalledWith(expect.any(String), state);
       });
     });
+
+    describe('trailing stop of a BUY, from its creation to its SELL', () => {
+      const symbol = 'BTC/USDT';
+      const orderCreationDate = 61000;
+      const minute = (high: number, low: number): CandleBucket =>
+        new Map([[symbol, { start: 120000, open: high, high, low, close: low, volume: 1 }]]);
+      const completeBuy = (id: UUID, amount: number) =>
+        manager.onOrderCompleted({
+          order: {
+            id,
+            symbol,
+            side: 'BUY',
+            type: 'MARKET',
+            amount,
+            orderCreationDate,
+            orderExecutionDate: 61000,
+            effectivePrice: 50000,
+            fee: 0,
+          },
+          exchange: { price: 50000, portfolio: new Map() },
+        });
+      let strategy: { onTrailingStopActivated: ReturnType<typeof vi.fn>; onTrailingStopTriggered: ReturnType<typeof vi.fn> };
+
+      beforeEach(() => {
+        strategy = { onTrailingStopActivated: vi.fn(), onTrailingStopTriggered: vi.fn() };
+        manager['strategy'] = strategy as any;
+        // The clock createOrder needs
+        manager.onOneMinuteBucket(bucket);
+      });
+
+      it('activates a stop without trigger as soon as its BUY completes', () => {
+        const id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+        completeBuy(id, 0.5);
+        expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith({
+          id,
+          symbol,
+          amount: 0.5,
+          config: { percentage: 2 },
+          status: 'active',
+          highestPeak: 0,
+          stopPrice: 0,
+          activationPrice: undefined,
+          createdAt: orderCreationDate,
+        });
+      });
+
+      it('activates a stop without trigger once, not again when it starts trailing', () => {
+        const id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+        completeBuy(id, 0.5);
+        manager.onOneMinuteBucket(minute(50000, 49500));
+        expect(strategy.onTrailingStopActivated).toHaveBeenCalledOnce();
+      });
+
+      it('does not activate a stop with a trigger when its BUY completes', () => {
+        const id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2, trigger: 51000 } });
+        completeBuy(id, 0.5);
+        expect(strategy.onTrailingStopActivated).not.toHaveBeenCalled();
+      });
+
+      it('activates a stop with a trigger when a candle reaches it', () => {
+        const id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2, trigger: 51000 } });
+        completeBuy(id, 0.5);
+        manager.onOneMinuteBucket(minute(51000, 50500));
+        expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith(
+          expect.objectContaining({ id, status: 'active', highestPeak: 51000, stopPrice: 49980, activationPrice: 51000 }),
+        );
+      });
+
+      it('sells what an all-in BUY filled when its stop triggers', () => {
+        const listener = vi.fn();
+        manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+        const id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+        completeBuy(id, 0.5);
+        manager.onOneMinuteBucket(minute(50000, 48000));
+        expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ symbol, side: 'SELL', type: 'MARKET', amount: 0.5 }));
+      });
+
+      // The strategy cancels the stop as it hears of its activation, then a candle goes below the stop price (49000): with a trigger,
+      // the very candle that activates it; without one, the first candle after its BUY completed, which activated it
+      describe.each`
+        kind                        | trailing
+        ${'a stop with a trigger'}  | ${{ percentage: 2, trigger: 50000 }}
+        ${'a stop without trigger'} | ${{ percentage: 2 }}
+      `('when the strategy cancels $kind from onTrailingStopActivated', ({ trailing }) => {
+        // The orders the strategy creates once its BUY is created
+        const listener = vi.fn();
+
+        beforeEach(() => {
+          strategy.onTrailingStopActivated.mockImplementation(({ id }: { id: UUID }) => manager['tools'].cancelTrailingOrder(id));
+          const id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing });
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+          completeBuy(id, 0.5);
+          manager.onOneMinuteBucket(minute(50000, 48000));
+        });
+
+        it('sends no SELL', () => {
+          expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('does not tell the strategy the stop triggered', () => {
+          expect(strategy.onTrailingStopTriggered).not.toHaveBeenCalled();
+        });
+      });
+    });
   });
 
   describe('setters function', () => {
@@ -472,10 +576,18 @@ describe('StrategyManager', () => {
 
   describe('functions used in trader strategies', () => {
     describe('addIndicator', () => {
-      it('registers indicator instances from the registry', () => {
-        const indicator = manager['addIndicator']('SMA', 'BTC/USDT', { period: 10 });
+      it('creates the indicator of the registry with its parameters', () => {
+        manager['addIndicator']('SMA', 'BTC/USDT', { period: 10 });
         expect(indicatorMocks.IndicatorMock).toHaveBeenCalledWith({ period: 10 });
-        expect(manager['indicators']).toContainEqual({ indicator, symbol: 'BTC/USDT' });
+      });
+
+      it('keeps the indicator with its pair', () => {
+        manager['addIndicator']('SMA', 'BTC/USDT', { period: 10 });
+        expect(manager['indicators']).toEqual([{ indicator: indicatorMocks.IndicatorMock.mock.instances[0], symbol: 'BTC/USDT' }]);
+      });
+
+      it('returns nothing, as AddIndicatorFn says: the indicator stays with the manager', () => {
+        expect(manager['addIndicator']('SMA', 'BTC/USDT', { period: 10 })).toBeUndefined();
       });
 
       it('throws when indicator is unknown', () => {

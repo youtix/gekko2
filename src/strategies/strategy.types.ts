@@ -10,7 +10,12 @@ import { TrailingStopState } from './trailingStopManager.types';
 
 export type IndicatorResults<T = unknown> = { results: T; symbol: TradingPair };
 export type Direction = 'short' | 'long';
+/**
+ * Registers an indicator on a pair. It returns nothing: the StrategyManager keeps the indicator and feeds it, and its results reach
+ * the hooks as their indicator arguments, in the order of the addIndicator calls.
+ */
 export type AddIndicatorFn = <T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>) => void;
+/** Logs a message under the strategy tag. 'error' does not return: it throws a GekkoError, which stops the bot. */
 export type LoggerFn = (level: LogLevel, msg: string) => void;
 export type Tools<T> = {
   strategyParams: T;
@@ -46,13 +51,17 @@ export interface Strategy<T> {
   onTimeframeCandleAfterWarmup?(params: OnCandleEventParams<T>, ...indicators: IndicatorResults[]): void;
   /** Let you log everything you need, called every timeframe candle after warmup */
   log?(params: OnCandleEventParams<T>, ...indicators: IndicatorResults[]): void;
-  /** On each order completed successfuly by exchange */
+  /** On each order completed successfully by the exchange */
   onOrderCompleted?(params: OnOrderCompletedEventParams<T>, ...indicators: IndicatorResults[]): void;
-  /** On each order canceled successfuly by exchange */
+  /** On each order canceled, by the strategy (tools.cancelOrder) or by the exchange (expired, canceled from its interface) */
   onOrderCanceled?(params: OnOrderCanceledEventParams<T>, ...indicators: IndicatorResults[]): void;
-  /** On each order errored/rejected by exchange */
+  /** On each order errored, or rejected by the exchange */
   onOrderErrored?(params: OnOrderErroredEventParams<T>, ...indicators: IndicatorResults[]): void;
-  /** On each trailing stop activated (when activation threshold price is reached) */
+  /**
+   * On each trailing stop activated: when the high of a one-minute candle reaches its trigger, or, for a stop without one, as soon
+   * as it is armed (its BUY completed, right after onOrderCompleted). The latter has not trailed any candle yet: its highestPeak and
+   * stopPrice are still 0.
+   */
   onTrailingStopActivated?(state: TrailingStopState): void;
   /** On each trailing stop triggered (when trailing stop price is reached) */
   onTrailingStopTriggered?(orderId: UUID, state: TrailingStopState): void;

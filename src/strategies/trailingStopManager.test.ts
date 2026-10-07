@@ -1,10 +1,13 @@
 import { TRAILING_STOP_ACTIVATED, TRAILING_STOP_TRIGGERED } from '@constants/event.const';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
+import { warning } from '@services/logger';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TrailingStopManager } from './trailingStopManager';
 import { TrailingStopState } from './trailingStopManager.types';
+
+vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 
 /* -------------------------------------------------------------------------- */
 /*                                Test Helpers                                */
@@ -59,14 +62,99 @@ describe('TrailingStopManager', () => {
       expect(manager.getOrders().size).toBe(0);
     });
 
-    it('adds order if amount is undefined', () => {
-      manager.addOrder({ ...defaultOrder, amount: undefined });
-      expect(manager.getOrders().size).toBe(1);
+    it('keeps the amount the BUY filled', () => {
+      manager.addOrder(defaultOrder);
+      expect(manager.getOrders().get(defaultId)?.amount).toBe(0.5);
+    });
+
+    it.each`
+      amount
+      ${0}
+      ${-1}
+      ${NaN}
+      ${Infinity}
+    `('refuses an amount of $amount', ({ amount }) => {
+      manager.addOrder({ ...defaultOrder, amount });
+      expect(manager.getOrders().size).toBe(0);
     });
 
     it('activates order directly if trigger is undefined', () => {
       manager.addOrder({ ...defaultOrder, trailing: { percentage: 2 } });
       expect(manager.getOrders().get(defaultId)?.status).toBe('active');
+    });
+
+    // Leaving the trigger out is the way to ask for a stop active at once: a trigger given must be a price
+    it.each`
+      trigger      | isArmed
+      ${0}         | ${false}
+      ${NaN}       | ${false}
+      ${-1}        | ${false}
+      ${Infinity}  | ${false}
+      ${undefined} | ${true}
+      ${50000}     | ${true}
+    `('arms a stop whose trigger is $trigger: $isArmed', ({ trigger, isArmed }) => {
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2, trigger } });
+      expect(manager.getOrders().has(defaultId)).toBe(isArmed);
+    });
+
+    it.each`
+      trigger
+      ${0}
+      ${NaN}
+      ${-1}
+      ${Infinity}
+    `('warns that a trigger of $trigger is invalid', ({ trigger }) => {
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2, trigger } });
+      expect(warning).toHaveBeenCalledWith('trailing stop', `Invalid trigger price: ${trigger}. Must be positive.`);
+    });
+
+    // A percentage left undefined (a strategy parameter misspelt) or NaN made a stop price of NaN, which never triggers
+    it.each`
+      percentage   | isArmed
+      ${0}         | ${false}
+      ${100}       | ${false}
+      ${-1}        | ${false}
+      ${NaN}       | ${false}
+      ${undefined} | ${false}
+      ${2}         | ${true}
+    `('arms a stop whose percentage is $percentage: $isArmed', ({ percentage, isArmed }) => {
+      manager.addOrder({ ...defaultOrder, trailing: { percentage, trigger: 50000 } });
+      expect(manager.getOrders().has(defaultId)).toBe(isArmed);
+    });
+
+    it('emits TRAILING_STOP_ACTIVATED with the stop as it adds one without trigger', () => {
+      const listener = vi.fn();
+      manager.on(TRAILING_STOP_ACTIVATED, listener);
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2 } });
+      expect(listener).toHaveBeenCalledWith({
+        id: defaultId,
+        symbol: 'BTC/USDT',
+        amount: 0.5,
+        config: { percentage: 2 },
+        status: 'active',
+        highestPeak: 0,
+        stopPrice: 0,
+        activationPrice: undefined,
+        createdAt: defaultOrder.createdAt,
+      });
+    });
+
+    it('emits a copy of the stop it keeps, not the stop itself', () => {
+      const listener = vi.fn();
+      manager.on(TRAILING_STOP_ACTIVATED, listener);
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2 } });
+      expect(listener.mock.calls[0][0]).not.toBe(manager.getOrders().get(defaultId));
+    });
+
+    it.each`
+      desc                                   | trailing
+      ${'a stop with a trigger'}             | ${{ percentage: 2, trigger: 50000 }}
+      ${'a stop without trigger it refuses'} | ${{ percentage: 100 }}
+    `('does not emit TRAILING_STOP_ACTIVATED as it adds $desc', ({ trailing }) => {
+      const listener = vi.fn();
+      manager.on(TRAILING_STOP_ACTIVATED, listener);
+      manager.addOrder({ ...defaultOrder, trailing });
+      expect(listener).not.toHaveBeenCalled();
     });
   });
 
@@ -113,6 +201,15 @@ describe('TrailingStopManager', () => {
       const listener = vi.fn();
       manager.on(TRAILING_STOP_ACTIVATED, listener);
       manager.update(makeBucket('BTC/USDT', 49999, 49000, 49500));
+      expect(listener).not.toHaveBeenCalled();
+    });
+
+    it('does not trigger a stop a listener of its activation removed, on the candle that activated it', () => {
+      const listener = vi.fn();
+      manager.on(TRAILING_STOP_ACTIVATED, () => manager.removeOrder(defaultId));
+      manager.on(TRAILING_STOP_TRIGGERED, listener);
+      // The high reaches the trigger, the low goes below the stop price (49000)
+      manager.update(makeBucket('BTC/USDT', 50000, 48000, 48000));
       expect(listener).not.toHaveBeenCalled();
     });
 
@@ -200,6 +297,13 @@ describe('TrailingStopManager', () => {
 
       expect(listener).toHaveBeenCalledOnce();
       expect(manager.getOrders().has(defaultId)).toBe(false);
+    });
+
+    it('does not emit TRAILING_STOP_ACTIVATED again on its first candle', () => {
+      const listener = vi.fn();
+      manager.on(TRAILING_STOP_ACTIVATED, listener);
+      manager.update(makeBucket('BTC/USDT', 50000, 49500, 49500));
+      expect(listener).not.toHaveBeenCalled();
     });
   });
 

@@ -7,8 +7,10 @@ import { UUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { TrailingStopState } from './trailingStopManager.types';
 
-type AddOrderParams = Pick<StrategyOrder, 'symbol' | 'amount' | 'trailing'> & {
+type AddOrderParams = Pick<StrategyOrder, 'symbol' | 'trailing'> & {
   id: UUID;
+  /** The amount the BUY filled (see TrailingStopState.amount) */
+  amount: number;
   createdAt: number;
 };
 
@@ -17,23 +19,26 @@ export class TrailingStopManager extends EventEmitter {
 
   public addOrder({ id, symbol, amount, trailing, createdAt }: AddOrderParams): void {
     if (!trailing) return;
-    if (!isNil(amount) && amount <= 0) {
+    if (!Number.isFinite(amount) || amount <= 0) {
       warning('trailing stop', `Cannot create trailing stop without a valid amount, current order amount: ${amount}`);
       return;
     }
-    if (trailing.percentage <= 0 || trailing.percentage >= 100) {
+    // Checked for what it must be rather than against what it must not be: NaN, or a percentage left undefined (a strategy parameter
+    // misspelt), failed both comparisons and passed, arming a stop whose price was NaN, which never triggered.
+    if (!(trailing.percentage > 0 && trailing.percentage < 100)) {
       warning('trailing stop', `Invalid trailing percentage: ${trailing.percentage}%. Must be between 0 and 100 exclusive.`);
       return;
     }
-    if (trailing.trigger && trailing.trigger <= 0) {
+    // Leaving the trigger out asks for a stop active at once. A trigger given must be a price: 0 and NaN, falsy, passed as if left
+    // out, and Infinity armed a stop that never activated.
+    if (!isNil(trailing.trigger) && !(Number.isFinite(trailing.trigger) && trailing.trigger > 0)) {
       warning('trailing stop', `Invalid trigger price: ${trailing.trigger}. Must be positive.`);
       return;
     }
 
     const activationPrice = trailing.trigger;
     const isDirectlyActive = isNil(activationPrice);
-
-    this.orders.set(id, {
+    const order: TrailingStopState = {
       id,
       symbol,
       amount,
@@ -43,7 +48,13 @@ export class TrailingStopManager extends EventEmitter {
       stopPrice: 0,
       activationPrice,
       createdAt,
-    });
+    };
+    this.orders.set(id, order);
+
+    // Without a trigger the stop is active as soon as it is armed: its activation is announced now, as a stop with a trigger has its
+    // own when the price reaches it (see processDormant), else the strategy never hears of it. It trails from the next candle on: its
+    // peak and stop price are still 0.
+    if (isDirectlyActive) this.emit<TrailingStopState>(TRAILING_STOP_ACTIVATED, { ...order });
   }
 
   public update(bucket: CandleBucket): void {
@@ -52,7 +63,9 @@ export class TrailingStopManager extends EventEmitter {
       if (!candle) continue;
 
       if (order.status === 'dormant') this.processDormant(order, candle.high);
-      if (order.status === 'active') this.processActive(id, order, candle.high, candle.low);
+      // The strategy hears of the activation at once, and may cancel the stop then (tools.cancelTrailingOrder): a stop no longer
+      // listed is over, and must not trail the candle that activated it, nor send the SELL of a stop the strategy has just canceled.
+      if (order.status === 'active' && this.orders.has(id)) this.processActive(id, order, candle.high, candle.low);
     }
   }
 
