@@ -1,9 +1,10 @@
 import type { SQLiteStorage } from '@services/storage/sqlite.storage';
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import * as originalDateFns from 'date-fns';
 import { first } from 'lodash-es';
 import { generateSyntheticCandle } from '../../fixtures/syntheticData';
 import { cleanDatabase } from '../../helpers/database.helper';
+import { endRealtimeRun, trackRealtimeRuns } from '../../helpers/realtimeRun.helper';
 import { createCcxtModuleMock, MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
 import { MockHeart } from '../../mocks/heart.mock';
@@ -87,6 +88,9 @@ mock.module('date-fns', () => {
   };
 });
 
+// 7. End each test's run before the next test starts (see realtimeRun.helper)
+trackRealtimeRuns();
+
 describe('E2E: Realtime Writer (Synthetic)', () => {
   // Reset MockCCXTExchange static state and inject singletons before each test
   // This is especially important when running all E2E tests together
@@ -112,6 +116,9 @@ describe('E2E: Realtime Writer (Synthetic)', () => {
     MockCCXTExchange.shouldThrowOnCreateOrder = false;
     MockCCXTExchange.simulateOpenOrders = false;
   });
+
+  // A realtime run never ends by itself: each test ends its own, plugins finalised and orders stopped, before the next one starts
+  afterEach(() => endRealtimeRun());
 
   it('Scenario A: Realtime candle recording to SQLite', async () => {
     // Dynamic imports to ensure mocks are applied first

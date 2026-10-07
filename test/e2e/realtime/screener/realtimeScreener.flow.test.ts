@@ -1,11 +1,12 @@
 import type { SQLiteStorage } from '@services/storage/sqlite.storage';
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import * as originalDateFns from 'date-fns';
+import { endRealtimeRun, trackRealtimeRuns } from '../../helpers/realtimeRun.helper';
 import { createCcxtModuleMock, MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
 import { MockFetcherService } from '../../mocks/fetcher.mock';
 import { MockHeart } from '../../mocks/heart.mock';
-import { MockWinston, clearLogs } from '../../mocks/winston.mock';
+import { MockWinston, clearLogs, logStore } from '../../mocks/winston.mock';
 
 // --------------------------------------------------------------------------
 // MOCKS SETUP
@@ -119,6 +120,9 @@ mock.module('@services/core/heart/heart', () => ({
   Heart: MockHeart,
 }));
 
+// 8. End each test's run before the next test starts (see realtimeRun.helper)
+trackRealtimeRuns();
+
 import { cleanDatabase } from '../../helpers/database.helper';
 
 describe('E2E: Realtime Screener Flow', () => {
@@ -166,6 +170,9 @@ describe('E2E: Realtime Screener Flow', () => {
       { symbol: 'ETH/USDT', base: 'ETH', quote: 'USDT' },
     ];
   });
+
+  // A realtime run never ends by itself: each test ends its own, plugins finalised and orders stopped, before the next one starts
+  afterEach(() => endRealtimeRun());
 
   it('Scenario A: Standard Screener Flow (Buy/Sell Alert)', async () => {
     // Dynamic imports
@@ -278,15 +285,52 @@ describe('E2E: Realtime Screener Flow', () => {
     MockCCXTExchange.simulateOpenOrders = false;
   });
 
+  it('Scenario G: A pair without a candle in the first live minutes', async () => {
+    // The exchange has no ETH candle for the first two minutes of the run, and with no warmup the gap filler has no earlier ETH candle
+    // to fill those buckets with: they are dropped until ETH has one, instead of reaching the TradingAdvisor without ETH, which threw.
+    // Two minutes, so that the gap holds the first live minute even when a minute starts while the run is being built.
+    const firstMinute = Math.floor(Date.now() / FAST_MINUTE) * FAST_MINUTE;
+    MockCCXTExchange.simulatedGaps = { 'ETH/USDT': [{ start: firstMinute, end: firstMinute + 2 * FAST_MINUTE }] };
+
+    const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
+    const { inject } = await import('@services/injecter/injecter');
+    const storage = inject.storage() as SQLiteStorage;
+    storage.close = () => {};
+
+    // Rejected, and so failing the test, if a bucket without ETH reached the TradingAdvisor
+    const pipelinePromise = gekkoPipeline();
+    await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
+
+    // One warning at the first drop (the later drops go to debug), then a summary once the stream starts
+    const dropWarnings = logStore.filter(
+      log => log.level === 'warn' && String(log.message).includes('dropped until every pair has had a candle'),
+    );
+    expect(dropWarnings.length).toBeGreaterThan(0);
+    // The strategy started once both pairs had a candle
+    expect(logStore.some(log => log.message === 'Iteration: 0 for ETH/USDT')).toBe(true);
+  });
+
   it('Scenario F: Order Error Handling', async () => {
-    // Monkey-patch DummyCentralizedExchange to throw error
+    // The exchange refuses every order, and answers before the next candle, as a real one answers within the minute: the creations
+    // asked during a bucket fail when the next bucket reaches the simulated exchange, which happens before the plugins process it.
+    // Nothing on that path waits for a timer, so one turn of the event loop lets the creations of the previous bucket arrive, and
+    // another their failures reach the Trader: each bucket's failures are delivered with the next bucket, whatever the load. Errors
+    // 1-2 are then delivered with bucket 2 and 3-4 with bucket 3, and the strategy logs of each pair go out with the bucket after,
+    // the breaker tripping on the 5th, with bucket 4, after those of 3-4 went out. On a timer instead, the failures raced the buckets:
+    // on a busy machine those of several buckets reached one flush, and the logs queued in the flush where the breaker trips are
+    // dropped as the run stops (PluginsStream).
     const { DummyCentralizedExchange } = await import('@services/exchange/dummy/dummyCentralizedExchange');
-    const originalCreateLimitOrder = DummyCentralizedExchange.prototype.createLimitOrder;
-    DummyCentralizedExchange.prototype.createLimitOrder = async function () {
-      // One round trip, as a real exchange failure takes: thrown at once, the failures of a candle would be heard in the flush of
-      // the next one, and the last two would never reach the EventSubscriber once the run stops
-      await new Promise(resolve => setTimeout(resolve, 1));
-      throw new Error('Simulated Exchange Error');
+    const { createLimitOrder, processOneMinuteBucket } = DummyCentralizedExchange.prototype;
+    const pendingFailures: (() => void)[] = [];
+    const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+    DummyCentralizedExchange.prototype.createLimitOrder = function () {
+      return new Promise<never>((_, reject) => pendingFailures.push(() => reject(new Error('Simulated Exchange Error'))));
+    };
+    DummyCentralizedExchange.prototype.processOneMinuteBucket = async function (bucket) {
+      await nextTurn();
+      for (const fail of pendingFailures.splice(0)) fail();
+      await nextTurn();
+      return processOneMinuteBucket.call(this, bucket);
     };
 
     try {
@@ -296,9 +340,10 @@ describe('E2E: Realtime Screener Flow', () => {
       const storage = inject.storage() as SQLiteStorage;
       storage.close = () => {};
 
+      // The breaker ends the run: waited for rather than raced against a timer, which a slow machine would lose
       const pipelinePromise = gekkoPipeline();
       try {
-        await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
+        await pipelinePromise;
         throw new Error('Pipeline should have thrown an error');
       } catch (err: any) {
         // The pipeline rejects with the ApplicationStopError itself (not a premature close), so main() can exit with 0
@@ -316,8 +361,10 @@ describe('E2E: Realtime Screener Flow', () => {
       const errorCalls = calls.filter(call => call.payload.text.includes('Order Errored'));
       expect(errorCalls.length).toBe(4);
     } finally {
-      // Restore original method
-      DummyCentralizedExchange.prototype.createLimitOrder = originalCreateLimitOrder;
+      // The run ends before the exchange is restored: its orders still pending would otherwise be created after all
+      await endRealtimeRun();
+      DummyCentralizedExchange.prototype.createLimitOrder = createLimitOrder;
+      DummyCentralizedExchange.prototype.processOneMinuteBucket = processOneMinuteBucket;
     }
-  });
+  }, 30000);
 });

@@ -1,7 +1,8 @@
 import type { SQLiteStorage } from '@services/storage/sqlite.storage';
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import * as originalDateFns from 'date-fns';
 import { cleanDatabase } from '../../helpers/database.helper';
+import { endRealtimeRun, trackRealtimeRuns } from '../../helpers/realtimeRun.helper';
 import { createCcxtModuleMock, MockCCXTExchange } from '../../mocks/ccxt.mock';
 import { mockDateFns } from '../../mocks/date-fns.mock';
 import { MockFetcherService } from '../../mocks/fetcher.mock';
@@ -105,6 +106,9 @@ mock.module('@services/core/heart/heart', () => ({
   Heart: MockHeart,
 }));
 
+// 8. End each test's run before the next test starts (see realtimeRun.helper)
+trackRealtimeRuns();
+
 // --------------------------------------------------------------------------
 // TEST SUITE
 // --------------------------------------------------------------------------
@@ -148,6 +152,9 @@ describe('E2E: Realtime Paper Trader Flow', () => {
     mockStrategyName = DEFAULT_MOCK_STRATEGY_NAME;
     mockPairs = [{ symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' }];
   });
+
+  // A realtime run never ends by itself: each test ends its own, plugins finalised and orders stopped, before the next one starts
+  afterEach(() => endRealtimeRun());
 
   it('Scenario A: Intermediary Roundtrip Completion', async () => {
     // Use the debug strategy specifically designed for this scenario (Buy on 0, Sell on 1)
