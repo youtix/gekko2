@@ -1,14 +1,20 @@
 import { AdviceOrder } from '@models/advice.types';
-import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
+import { OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent, RoundTrip } from '@models/event.types';
 import { BalanceDetail } from '@models/portfolio.types';
+import { StrategyInfo } from '@models/strategyInfo.types';
+import { TelegramBot } from '@services/bots/telegram/TelegramBot';
+import { debug, info, warning } from '@services/logger';
+import { range } from 'lodash-es';
 import { UUID } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { toTimestamp } from '../../utils/date/date.utils';
 import { EventSubscriber } from './eventSubscriber';
 import { eventSubscriberSchema } from './eventSubscriber.schema';
 import { EVENT_NAMES } from './eventSubscriber.types';
 
-vi.mock('@services/logger', () => ({ debug: vi.fn() }));
+vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn() }));
+// Only records how the plugin builds its bot: each test then puts fakeBot in its place
+vi.mock('@services/bots/telegram/TelegramBot', () => ({ TelegramBot: vi.fn(function () {}) }));
 vi.mock('@services/configuration/configuration', () => {
   const Configuration = vi.fn(function () {
     return {
@@ -29,12 +35,33 @@ vi.mock('@services/configuration/configuration', () => {
 
 const fakeBot = { sendMessage: vi.fn(), listen: vi.fn(), close: vi.fn() };
 
+/**
+ * Lets every pending promise callback run: by then the notifications have gone out in the background as far as Telegram, here the
+ * mock, answered them, and a send made without waiting for the one before it would have been made
+ */
+const settle = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+
 describe('EventSubscriber', () => {
   let plugin: EventSubscriber;
 
   beforeEach(() => {
     plugin = new EventSubscriber({ name: 'EventSubscriber', botUsername: 'bot_name', token: 't' });
     plugin['bot'] = fakeBot as any;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // The bot handles the commands of that chat only and sends the notifications there; without it, it takes the first chat to
+  // send a command
+  it.each`
+    scenario                  | chatId
+    ${'a configured chat id'} | ${-1001234567890}
+    ${'no chat id'}           | ${undefined}
+  `('builds its bot with $scenario', ({ chatId }) => {
+    const subscriber = new EventSubscriber({ name: 'EventSubscriber', botUsername: 'bot_name', token: 't', chatId });
+    expect(TelegramBot).toHaveBeenLastCalledWith('t', 'bot_name', subscriber['handleCommand'], chatId);
   });
 
   it.each`
@@ -75,16 +102,20 @@ describe('EventSubscriber', () => {
         ['currency', { free: 0, used: 0, total: 0 }],
       ]),
     };
-    const onStrategyInfo = (p: EventSubscriber) =>
-      p.onStrategyInfo([{ timestamp: eventTimestamp, level: 'debug', message: 'M', tag: 'strategy' }]);
+    const makeStrategyInfo = (overrides: Partial<StrategyInfo> = {}): StrategyInfo => ({
+      timestamp: eventTimestamp,
+      level: 'debug',
+      message: 'M',
+      tag: 'strategy',
+      ...overrides,
+    });
+    const makeAdviceOrder = (overrides: Partial<AdviceOrder> = {}): AdviceOrder => ({
+      ...baseOrder,
+      orderCreationDate: eventTimestamp,
+      ...overrides,
+    });
     const onStrategyCreateOrder = (p: EventSubscriber, overrides: Partial<AdviceOrder> = {}) =>
-      p.onStrategyCreateOrder([
-        {
-          ...baseOrder,
-          orderCreationDate: eventTimestamp,
-          ...overrides,
-        },
-      ]);
+      p.onStrategyCreateOrder([makeAdviceOrder(overrides)]);
     const makeOrderInitiatedEvent = (
       overrides: {
         order?: Partial<OrderInitiatedEvent['order']>;
@@ -133,7 +164,6 @@ describe('EventSubscriber', () => {
         exchange: { ...initiated.exchange, ...overrides.exchange },
       };
     };
-    const onOrderErrored = (p: EventSubscriber, overrides = {}) => p.onOrderErrored([makeOrderErroredEvent(overrides)]);
     const makeOrderCompletedEvent = (
       overrides: {
         order?: Partial<OrderCompletedEvent['order']>;
@@ -155,37 +185,596 @@ describe('EventSubscriber', () => {
       };
     };
     const onOrderCompleted = (p: EventSubscriber, overrides = {}) => p.onOrderCompleted([makeOrderCompletedEvent(overrides)]);
-    const onRoundtripCompleted = (p: EventSubscriber) =>
-      p.onRoundtripCompleted([
-        {
-          id: 1,
-          entryAt: 1000,
-          entryPrice: 100,
-          entryEquity: 1000,
-          exitAt: 2000,
-          exitPrice: 110,
-          exitEquity: 1100,
-          duration: 1000,
-          maxAdverseExcursion: 0,
-          profit: 10,
-          pnl: 100,
-        },
-      ]);
+    const makeRoundTrip = (overrides: Partial<RoundTrip> = {}): RoundTrip => ({
+      id: 1,
+      entryAt: 1000,
+      entryPrice: 100,
+      entryEquity: 1000,
+      exitAt: 2000,
+      exitPrice: 110,
+      exitEquity: 1100,
+      duration: 1000,
+      maxAdverseExcursion: 0,
+      profit: 10,
+      pnl: 100,
+      ...overrides,
+    });
+
+    // Two payloads of each event, told apart in their messages by these ids (of their orders, or as the texts of the strategy
+    // logs), or for the round trips, which have none, by their exit times
+    const [firstId, secondId] = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'] as UUID[];
+    const [firstExit, secondExit] = ['2022-01-01T01:00:00.000Z', '2022-01-01T02:00:00.000Z'];
+    const notifyStrategyInfos = (p: EventSubscriber) => p.onStrategyInfo([firstId, secondId].map(message => makeStrategyInfo({ message })));
+    const notifyAdviceOrders = (p: EventSubscriber) => p.onStrategyCreateOrder([firstId, secondId].map(id => makeAdviceOrder({ id })));
+    const notifyCancelRequests = (p: EventSubscriber) => p.onStrategyCancelOrder([firstId, secondId]);
+    const notifyInitiatedOrders = (p: EventSubscriber) =>
+      p.onOrderInitiated([firstId, secondId].map(id => makeOrderInitiatedEvent({ order: { id } })));
+    const notifyCanceledOrders = (p: EventSubscriber) =>
+      p.onOrderCanceled([firstId, secondId].map(id => makeOrderCanceledEvent({ order: { id } })));
+    const notifyErroredOrders = (p: EventSubscriber) =>
+      p.onOrderErrored([firstId, secondId].map(id => makeOrderErroredEvent({ order: { id } })));
+    const notifyCompletedOrders = (p: EventSubscriber) =>
+      p.onOrderCompleted([firstId, secondId].map(id => makeOrderCompletedEvent({ order: { id } })));
+    const notifyRoundTrips = (p: EventSubscriber) =>
+      p.onRoundtripCompleted([firstExit, secondExit].map(exit => makeRoundTrip({ exitAt: toTimestamp(exit) })));
+
+    describe.each`
+      event                   | notifyTwice              | first                      | second
+      ${'strat_info'}         | ${notifyStrategyInfos}   | ${firstId}                 | ${secondId}
+      ${'strat_create'}       | ${notifyAdviceOrders}    | ${firstId}                 | ${secondId}
+      ${'strat_cancel'}       | ${notifyCancelRequests}  | ${firstId}                 | ${secondId}
+      ${'order_init'}         | ${notifyInitiatedOrders} | ${firstId}                 | ${secondId}
+      ${'order_cancel'}       | ${notifyCanceledOrders}  | ${firstId}                 | ${secondId}
+      ${'order_error'}        | ${notifyErroredOrders}   | ${firstId}                 | ${secondId}
+      ${'order_complete'}     | ${notifyCompletedOrders} | ${firstId}                 | ${secondId}
+      ${'roundtrip_complete'} | ${notifyRoundTrips}      | ${`At time: ${firstExit}`} | ${`At time: ${secondExit}`}
+    `('$event notifications', ({ event, notifyTwice, first, second }) => {
+      it('are sent one per payload, in payload order', async () => {
+        plugin['handleCommand'](`/sub_${event}`);
+        notifyTwice(plugin);
+        await settle();
+        expect(fakeBot.sendMessage.mock.calls).toEqual([[expect.stringContaining(first)], [expect.stringContaining(second)]]);
+      });
+
+      // The flush of the deferred events, and so the next bucket (the candles, the orders), waits for the handler: it must not wait
+      // for Telegram
+      it('are sent in the background: the handler returns while Telegram does not answer', async () => {
+        plugin['handleCommand'](`/sub_${event}`);
+        fakeBot.sendMessage.mockReturnValue(new Promise(() => {})); // A black-holed network: no send ever settles
+        const handled = Promise.resolve(notifyTwice(plugin)).then(() => 'returned');
+        const outcome = await Promise.race([handled, settle().then(() => 'still waiting')]);
+        expect(outcome).toBe('returned');
+      });
+
+      it('are sent one at a time, the second once the first is out', async () => {
+        plugin['handleCommand'](`/sub_${event}`);
+        const firstSend = Promise.withResolvers<void>();
+        fakeBot.sendMessage.mockReturnValueOnce(firstSend.promise);
+        notifyTwice(plugin);
+        await settle();
+        const sendsWhileFirstGoesOut = fakeBot.sendMessage.mock.calls.length;
+        firstSend.resolve();
+        await settle();
+        expect(sendsWhileFirstGoesOut).toBe(1);
+      });
+
+      it('that fail are logged as warnings naming their event', async () => {
+        plugin['handleCommand'](`/sub_${event}`);
+        fakeBot.sendMessage.mockRejectedValueOnce(new Error('HTTP 429 Too Many Requests: retry after 5'));
+        notifyTwice(plugin);
+        await settle();
+        expect(warning).toHaveBeenCalledWith(
+          'event subscriber',
+          `The ${event} notification was not sent: HTTP 429 Too Many Requests: retry after 5. ` +
+            'Until a notification goes out again, the next failures are logged at debug level',
+        );
+      });
+
+      it('go on after one that failed', async () => {
+        plugin['handleCommand'](`/sub_${event}`);
+        fakeBot.sendMessage.mockRejectedValueOnce(new Error('HTTP 429 Too Many Requests: retry after 5'));
+        notifyTwice(plugin);
+        await settle();
+        expect(fakeBot.sendMessage).toHaveBeenNthCalledWith(2, expect.stringContaining(second));
+      });
+
+      it('are not sent while the chat is subscribed to every other event only', async () => {
+        EVENT_NAMES.filter(name => name !== event).forEach(name => plugin['handleCommand'](`/sub_${name}`));
+        notifyTwice(plugin);
+        await settle();
+        expect(fakeBot.sendMessage).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('while a message goes out', () => {
+      let firstSend: PromiseWithResolvers<void>;
+
+      beforeEach(() => {
+        plugin['handleCommand']('/subscribe_all');
+        firstSend = Promise.withResolvers<void>();
+        fakeBot.sendMessage.mockReturnValueOnce(firstSend.promise);
+      });
+
+      // In the flush, the handlers of consecutive batches run one after the other, each returning at once: the messages of the
+      // second batch wait for those of the first
+      it('sends the messages of the next batch, of another event, once those of the first are out', async () => {
+        notifyAdviceOrders(plugin);
+        notifyInitiatedOrders(plugin);
+        await settle();
+        const sendsWhileFirstGoesOut = fakeBot.sendMessage.mock.calls.length;
+        firstSend.resolve();
+        await settle();
+        expect(sendsWhileFirstGoesOut).toBe(1);
+      });
+
+      it('sends the messages of consecutive batches in the order they came', async () => {
+        notifyAdviceOrders(plugin);
+        notifyInitiatedOrders(plugin);
+        firstSend.resolve();
+        await settle();
+        expect(fakeBot.sendMessage.mock.calls).toEqual([
+          [expect.stringContaining(`Order Id: ${firstId}`)],
+          [expect.stringContaining(`Order Id: ${secondId}`)],
+          [expect.stringContaining(`order created (${firstId})`)],
+          [expect.stringContaining(`order created (${secondId})`)],
+        ]);
+      });
+
+      // A notification goes out only if the chat is subscribed to its event when the event arrives, and still is when its turn
+      // comes: here /unsubscribe_all arrives while the first message goes out, the second waiting
+      it('drops the waiting notifications of an event the chat unsubscribes from', async () => {
+        notifyAdviceOrders(plugin);
+        plugin['handleCommand']('/unsubscribe_all');
+        firstSend.resolve();
+        await settle();
+        expect(fakeBot.sendMessage).toHaveBeenCalledTimes(1);
+      });
+
+      it('does not send an event that arrived before the chat subscribed to it', async () => {
+        plugin['handleCommand']('/sub_strat_cancel'); // A toggle: unsubscribes
+        notifyAdviceOrders(plugin);
+        notifyCancelRequests(plugin);
+        plugin['handleCommand']('/sub_strat_cancel');
+        firstSend.resolve();
+        await settle();
+        expect(fakeBot.sendMessage).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    // Strategy logs told apart by their texts, n0, n1..., which are the second lines of their messages
+    const strategyInfos = (from: number, to: number) => range(from, to).map(i => makeStrategyInfo({ message: `n${i}` }));
+    const messages = (...ranges: [number, number][]) => ranges.flatMap(([from, to]) => range(from, to).map(i => `n${i}`));
+    const sentMessages = () => fakeBot.sendMessage.mock.calls.map(([text]) => text.split('\n')[1]);
+    const dropped = 'The strat_info notification was dropped: the queue of 1000 notifications waiting for Telegram is full';
+    const droppedFirst =
+      `${dropped} (a burst, or Telegram not answering). ` + 'Until it empties, each new one drops the oldest, logged at debug level';
+
+    // Telegram slow or unreachable (each send then takes every attempt of the fetcher, about two minutes), the notifications pile up
+    describe('when notifications pile up', () => {
+      let firstSend: PromiseWithResolvers<void>;
+
+      // n0 goes out and Telegram does not answer yet: n1 to n1000 wait, which fills the queue
+      beforeEach(() => {
+        plugin['handleCommand']('/sub_strat_info');
+        firstSend = Promise.withResolvers<void>();
+        fakeBot.sendMessage.mockReturnValueOnce(firstSend.promise);
+        plugin.onStrategyInfo(strategyInfos(0, 1001));
+      });
+
+      it.each`
+        newOnes | sent
+        ${0}    | ${messages([0, 1001])}
+        ${1}    | ${messages([0, 1], [2, 1002])}
+        ${3}    | ${messages([0, 1], [4, 1004])}
+      `('drops the oldest waiting notification for each of $newOnes new ones', async ({ newOnes, sent }) => {
+        plugin.onStrategyInfo(strategyInfos(1001, 1001 + newOnes));
+        firstSend.resolve();
+        await settle();
+        expect(sentMessages()).toEqual(sent);
+      });
+
+      // Once per backlog: the warnings go to Telegram too, in Supervision's log batches, and a long outage would flood them
+      it.each`
+        newOnes | level        | drops
+        ${0}    | ${'warning'} | ${0}
+        ${3}    | ${'warning'} | ${1}
+        ${3}    | ${'debug'}   | ${2}
+      `('logs $drops drops at $level level for $newOnes new ones', ({ newOnes, level, drops }) => {
+        plugin.onStrategyInfo(strategyInfos(1001, 1001 + newOnes));
+        expect({ warning, debug }[level as 'warning' | 'debug']).toHaveBeenCalledTimes(drops);
+      });
+
+      it('warns of the first drop that the queue is full', () => {
+        plugin.onStrategyInfo(strategyInfos(1001, 1002));
+        expect(warning).toHaveBeenCalledWith('event subscriber', droppedFirst);
+      });
+
+      it('logs the next drops at debug level', () => {
+        plugin.onStrategyInfo(strategyInfos(1001, 1003));
+        expect(debug).toHaveBeenCalledWith('event subscriber', dropped);
+      });
+
+      // Telegram answers, but falls behind again before the queue is empty: the same backlog
+      it('logs the drops at debug level until the queue has been emptied', async () => {
+        plugin.onStrategyInfo(strategyInfos(1001, 1002)); // Drops n1
+        fakeBot.sendMessage.mockReturnValueOnce(new Promise(() => {}));
+        firstSend.resolve(); // n2 goes out and Telegram does not answer: n3 to n1001 wait
+        await settle();
+        plugin.onStrategyInfo(strategyInfos(1002, 1004)); // n1003 drops n3
+        expect(warning).toHaveBeenCalledTimes(1);
+      });
+
+      it('warns again when the queue overflows once it has been emptied', async () => {
+        plugin.onStrategyInfo(strategyInfos(1001, 1002)); // Drops n1
+        firstSend.resolve();
+        await settle();
+        fakeBot.sendMessage.mockReturnValueOnce(new Promise(() => {}));
+        // n2000 goes out and Telegram does not answer: n2001 to n3000 wait, n3001 drops n2001
+        plugin.onStrategyInfo(strategyInfos(2000, 3002));
+        expect(warning).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    // A grid strategy placing its orders in one loop queues their notifications in one flush, during which no send ends (no handler
+    // waits on the network): Telegram answers, but not before the whole burst is queued
+    describe('when 1001 notifications come in one call while another one goes out', () => {
+      let firstSend: PromiseWithResolvers<void>;
+
+      beforeEach(() => {
+        plugin['handleCommand']('/sub_strat_info');
+        firstSend = Promise.withResolvers<void>();
+        fakeBot.sendMessage.mockReturnValueOnce(firstSend.promise);
+        plugin.onStrategyInfo([makeStrategyInfo({ message: 'before' })]);
+        plugin.onStrategyInfo(strategyInfos(0, 1001)); // n1000 drops n0
+      });
+
+      it('drops exactly the oldest of them', async () => {
+        firstSend.resolve();
+        await settle();
+        expect(sentMessages()).toEqual(['before', ...messages([1, 1001])]);
+      });
+
+      it.each`
+        level        | drops
+        ${'warning'} | ${1}
+        ${'debug'}   | ${0}
+      `('logs $drops drops at $level level', ({ level, drops }) => {
+        expect({ warning, debug }[level as 'warning' | 'debug']).toHaveBeenCalledTimes(drops);
+      });
+
+      it('warns of the drop that the queue is full', () => {
+        expect(warning).toHaveBeenCalledWith('event subscriber', droppedFirst);
+      });
+    });
+
+    // A failure that will not pass (a 403 for a blocked bot, a 400 for a chat not found, a 429 asking to wait more than a minute) is
+    // thrown by the fetcher at once, and every notification queued then fails in turn, instantly: one warning per streak of failures,
+    // since the warnings go to Telegram too, in Supervision's log batches
+    describe('when sends fail in a row', () => {
+      const blocked = 'HTTP 403 Forbidden: Forbidden: bot was blocked by the user';
+      const notSent = `The strat_cancel notification was not sent: ${blocked}`;
+      const failNextSends = (count: number) => range(count).forEach(() => fakeBot.sendMessage.mockRejectedValueOnce(new Error(blocked)));
+      const requestCancels = (count: number) => plugin.onStrategyCancelOrder(range(count).map(() => firstId));
+
+      beforeEach(() => {
+        plugin['handleCommand']('/sub_strat_cancel');
+      });
+
+      it.each`
+        level        | failures
+        ${'warning'} | ${1}
+        ${'debug'}   | ${2}
+      `('logs $failures of 3 failures in a row at $level level', async ({ level, failures }) => {
+        failNextSends(3);
+        requestCancels(3);
+        await settle();
+        expect({ warning, debug }[level as 'warning' | 'debug']).toHaveBeenCalledTimes(failures);
+      });
+
+      it('warns of the first failure that the next ones are logged at debug level', async () => {
+        failNextSends(3);
+        requestCancels(3);
+        await settle();
+        expect(warning).toHaveBeenCalledWith(
+          'event subscriber',
+          `${notSent}. Until a notification goes out again, the next failures are logged at debug level`,
+        );
+      });
+
+      it('logs the next failures at debug level', async () => {
+        failNextSends(3);
+        requestCancels(3);
+        await settle();
+        expect(debug).toHaveBeenCalledWith('event subscriber', notSent);
+      });
+
+      // Not once the queue is empty: a bot blocked for hours would warn of every notification, however far apart
+      it('logs at debug level a failure after the queue emptied, while no send has gone through since the last one', async () => {
+        failNextSends(2);
+        requestCancels(1);
+        await settle();
+        requestCancels(1);
+        await settle();
+        expect(debug).toHaveBeenCalledTimes(1);
+      });
+
+      it.each`
+        failures | line
+        ${1}     | ${'Notifications go out again, after 1 failure'}
+        ${3}     | ${'Notifications go out again, after 3 failures'}
+      `('logs at info level, once one goes out, that the $failures before it failed', async ({ failures, line }) => {
+        failNextSends(failures);
+        requestCancels(failures + 1);
+        await settle();
+        expect(info).toHaveBeenCalledWith('event subscriber', line);
+      });
+
+      it('logs nothing at info level while no send fails', async () => {
+        requestCancels(2);
+        await settle();
+        expect(info).not.toHaveBeenCalled();
+      });
+
+      it('warns again of a failure once a send has gone through', async () => {
+        failNextSends(3);
+        requestCancels(4); // The fourth goes through
+        await settle();
+        failNextSends(1);
+        requestCancels(1);
+        await settle();
+        expect(warning).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    describe('at the end of the run', () => {
+      beforeEach(() => {
+        vi.useFakeTimers();
+      });
+
+      it('is over at once when no notification is pending', async () => {
+        let isFinalized = false;
+        plugin['processFinalize']().then(() => (isFinalized = true));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(isFinalized).toBe(true);
+      });
+
+      describe('with notifications pending', () => {
+        let firstSend: PromiseWithResolvers<void>;
+        let finalization: Promise<void>;
+        let isFinalized: boolean;
+
+        // The first goes out and Telegram does not answer yet: the second waits
+        beforeEach(() => {
+          plugin['handleCommand']('/sub_strat_create');
+          firstSend = Promise.withResolvers<void>();
+          fakeBot.sendMessage.mockReturnValueOnce(firstSend.promise);
+          notifyAdviceOrders(plugin);
+          isFinalized = false;
+          finalization = plugin['processFinalize']().then(() => {
+            isFinalized = true;
+          });
+        });
+
+        it.each`
+          outcome      | answer
+          ${'sent'}    | ${(s: PromiseWithResolvers<void>) => s.resolve()}
+          ${'refused'} | ${(s: PromiseWithResolvers<void>) => s.reject(new Error('HTTP 403 Forbidden: bot was blocked by the user'))}
+        `('is over once they are out, the first one $outcome', async ({ answer }) => {
+          answer(firstSend);
+          await vi.advanceTimersByTimeAsync(0);
+          expect(isFinalized).toBe(true);
+        });
+
+        it.each`
+          elapsed  | finalization       | expected
+          ${14999} | ${'still waiting'} | ${false}
+          ${15000} | ${'over'}          | ${true}
+        `('is $finalization $elapsed ms after it started while Telegram does not answer', async ({ elapsed, expected }) => {
+          await vi.advanceTimersByTimeAsync(elapsed);
+          expect(isFinalized).toBe(expected);
+        });
+
+        it('sends the waiting notifications before it is over', async () => {
+          firstSend.resolve();
+          await finalization;
+          expect(fakeBot.sendMessage).toHaveBeenCalledTimes(2);
+        });
+
+        it('leaves no timer behind once they are out', async () => {
+          firstSend.resolve();
+          await finalization;
+          expect(vi.getTimerCount()).toBe(0);
+        });
+
+        it('logs a warning when it gives them up', async () => {
+          await vi.advanceTimersByTimeAsync(15000);
+          expect(warning).toHaveBeenCalledWith('event subscriber', '2 notifications given up: not sent within 15 s');
+        });
+
+        // Until the process exits: Telegram may still answer
+        it('lets the ones it gave up go out in the background', async () => {
+          await vi.advanceTimersByTimeAsync(15000);
+          firstSend.resolve();
+          await vi.advanceTimersByTimeAsync(0);
+          expect(fakeBot.sendMessage).toHaveBeenCalledTimes(2);
+        });
+      });
+
+      it('names a single notification given up in the singular', async () => {
+        plugin['handleCommand']('/sub_strat_cancel');
+        fakeBot.sendMessage.mockReturnValueOnce(new Promise(() => {}));
+        plugin.onStrategyCancelOrder([firstId]);
+        plugin['processFinalize']();
+        await vi.advanceTimersByTimeAsync(15000);
+        expect(warning).toHaveBeenCalledWith('event subscriber', '1 notification given up: not sent within 15 s');
+      });
+
+      // Events can still arrive once it has started (on a failure upstream, PluginsStream._destroy finalises the plugins while a flush
+      // may still run): a notification queued while no loop runs starts another one, with its own promise
+      describe('with a notification queued once it has started', () => {
+        let finalization: Promise<void>;
+        let isFinalized: boolean;
+        const finalize = () => {
+          isFinalized = false;
+          finalization = plugin['processFinalize']().then(() => {
+            isFinalized = true;
+          });
+        };
+        // Queues a cancel request as the loop sending the first one ends, before the wait looks again: registered before the wait, on
+        // the promise of that loop, its callback runs first
+        const requestCancelAsTheLoopEnds = () => plugin['sending'].then(() => plugin.onStrategyCancelOrder([secondId]));
+
+        beforeEach(() => {
+          plugin['handleCommand']('/sub_strat_cancel');
+        });
+
+        it('waits for one queued right after it started, while none was being sent', async () => {
+          fakeBot.sendMessage.mockReturnValueOnce(new Promise(() => {}));
+          finalize();
+          plugin.onStrategyCancelOrder([firstId]);
+          await vi.advanceTimersByTimeAsync(0);
+          expect(isFinalized).toBe(false);
+        });
+
+        it('waits for one queued as the loop it was waiting for ended', async () => {
+          const firstSend = Promise.withResolvers<void>();
+          fakeBot.sendMessage.mockReturnValueOnce(firstSend.promise).mockReturnValueOnce(new Promise(() => {}));
+          plugin.onStrategyCancelOrder([firstId]);
+          requestCancelAsTheLoopEnds();
+          finalize();
+          firstSend.resolve();
+          await vi.advanceTimersByTimeAsync(0);
+          expect(isFinalized).toBe(false);
+        });
+
+        // One deadline for the whole wait, not one per loop: the first send is answered after 10 s, the next one never
+        it.each`
+          elapsed  | finalization       | expected
+          ${14999} | ${'still waiting'} | ${false}
+          ${15000} | ${'over'}          | ${true}
+        `('is $finalization $elapsed ms after it started, when the loop it waited for ended at 10 s', async ({ elapsed, expected }) => {
+          fakeBot.sendMessage
+            .mockReturnValueOnce(new Promise<void>(resolve => setTimeout(resolve, 10000)))
+            .mockReturnValueOnce(new Promise(() => {}));
+          plugin.onStrategyCancelOrder([firstId]);
+          requestCancelAsTheLoopEnds();
+          finalize();
+          await vi.advanceTimersByTimeAsync(elapsed);
+          expect(isFinalized).toBe(expected);
+        });
+
+        it('gives up the one queued as the loop it was waiting for ended', async () => {
+          fakeBot.sendMessage.mockReturnValueOnce(Promise.resolve()).mockReturnValueOnce(new Promise(() => {}));
+          plugin.onStrategyCancelOrder([firstId]);
+          requestCancelAsTheLoopEnds();
+          finalize();
+          await vi.advanceTimersByTimeAsync(15000);
+          expect(warning).toHaveBeenCalledWith('event subscriber', '1 notification given up: not sent within 15 s');
+        });
+
+        it('leaves no timer behind once the one queued meanwhile is out', async () => {
+          const firstSend = Promise.withResolvers<void>();
+          fakeBot.sendMessage.mockReturnValueOnce(firstSend.promise);
+          plugin.onStrategyCancelOrder([firstId]);
+          requestCancelAsTheLoopEnds();
+          finalize();
+          firstSend.resolve();
+          await finalization;
+          expect(vi.getTimerCount()).toBe(0);
+        });
+      });
+
+      // The loop never rejects (sendPending catches every failure), but whatever ends the wait, its timer must not be left pending: it
+      // would keep a process that ends normally alive until it fires
+      it('leaves no timer behind when the loop it waits for rejects', async () => {
+        plugin['isSending'] = true;
+        plugin['sending'] = Promise.reject(new Error('Unexpected'));
+        await plugin['processFinalize']().catch(() => {});
+        expect(vi.getTimerCount()).toBe(0);
+      });
+    });
+
+    // inspect(), not String(), which throws for a value without a prototype: the warning would fail and the loop reject
+    it('logs a notification not sent for a rejection that is not an Error', async () => {
+      plugin['handleCommand']('/sub_strat_cancel');
+      fakeBot.sendMessage.mockRejectedValueOnce(Object.assign(Object.create(null), { status: 503 }));
+      notifyCancelRequests(plugin);
+      await settle();
+      expect(warning).toHaveBeenCalledWith(
+        'event subscriber',
+        'The strat_cancel notification was not sent: [Object: null prototype] { status: 503 }. ' +
+          'Until a notification goes out again, the next failures are logged at debug level',
+      );
+    });
+
+    // Its message is built from its payload when it arrives: a payload that cannot be read is a notification not sent, not a handler
+    // that throws, which would end the run
+    describe('with a payload that cannot be read', () => {
+      const notifyUnreadableFirst = (p: EventSubscriber) =>
+        p.onOrderInitiated([
+          makeOrderInitiatedEvent({ order: { symbol: undefined } }),
+          makeOrderInitiatedEvent({ order: { id: secondId } }),
+        ]);
+
+      beforeEach(() => {
+        plugin['handleCommand']('/sub_order_init');
+      });
+
+      it('does not throw', () => {
+        expect(() => notifyUnreadableFirst(plugin)).not.toThrow();
+      });
+
+      it('logs its notification as not sent', () => {
+        notifyUnreadableFirst(plugin);
+        expect(warning).toHaveBeenCalledWith('event subscriber', expect.stringMatching(/^The order_init notification was not sent: /));
+      });
+
+      it('sends the other notifications of its batch', async () => {
+        notifyUnreadableFirst(plugin);
+        await settle();
+        expect(fakeBot.sendMessage.mock.calls).toEqual([[expect.stringContaining(secondId)]]);
+      });
+    });
+
+    // The second message goes out once the first is, here 5 s later: it still shows when the requests arrived
+    it('shows when the cancel requests arrived', async () => {
+      vi.useFakeTimers({ toFake: ['Date'], now: eventTimestamp });
+      plugin['handleCommand']('/sub_strat_cancel');
+      const firstSend = Promise.withResolvers<void>();
+      fakeBot.sendMessage.mockReturnValueOnce(firstSend.promise);
+      notifyCancelRequests(plugin);
+      vi.setSystemTime(eventTimestamp + 5000);
+      firstSend.resolve();
+      await settle();
+      expect(fakeBot.sendMessage).toHaveBeenLastCalledWith(
+        ['Strategy requested order cancellation', `Order Id: ${secondId}`, 'At time: 2022-01-01T00:00:00.000Z'].join('\n'),
+      );
+    });
+
+    // The Trader places an advice of any type at its price, or without one (none given, or an indicator still null) at the market
+    // price (advice.price ?? the last close): a LIMIT advice with a price requests it as its limit, any other targets that price
     it.each`
-      name                    | handler
-      ${'strat_info'}         | ${onStrategyInfo}
-      ${'strat_create'}       | ${onStrategyCreateOrder}
-      ${'order_init'}         | ${onOrderInitiated}
-      ${'order_cancel'}       | ${onOrderCanceled}
-      ${'order_error'}        | ${onOrderErrored}
-      ${'order_complete'}     | ${onOrderCompleted}
-      ${'roundtrip_complete'} | ${onRoundtripCompleted}
-    `('sends message only when subscribed for $name', ({ name, handler }) => {
-      fakeBot.sendMessage.mockReset();
-      handler(plugin);
-      plugin['handleCommand'](`/sub_${name}`);
-      handler(plugin);
-      expect(fakeBot.sendMessage).toHaveBeenCalledTimes(1);
+      type        | price        | line
+      ${'LIMIT'}  | ${123}       | ${'Requested limit price: 123 USD'}
+      ${'LIMIT'}  | ${undefined} | ${'Target price: 42 USD'}
+      ${'LIMIT'}  | ${null}      | ${'Target price: 42 USD'}
+      ${'STICKY'} | ${123}       | ${'Target price: 123 USD'}
+      ${'STICKY'} | ${undefined} | ${'Target price: 42 USD'}
+      ${'MARKET'} | ${123}       | ${'Target price: 123 USD'}
+      ${'MARKET'} | ${undefined} | ${'Target price: 42 USD'}
+    `('reports $line for a $type advice with a price of $price', async ({ type, price, line }) => {
+      plugin['processOneMinuteBucket'](new Map([[symbol, { close: 42 }]]) as any);
+      plugin['handleCommand']('/sub_strat_create');
+      onStrategyCreateOrder(plugin, { type, price });
+      await settle();
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining(`\n${line}\n`));
+    });
+
+    it('reports an unknown target price for an advice without a price, before any price of its pair is known', async () => {
+      plugin['handleCommand']('/sub_strat_create');
+      onStrategyCreateOrder(plugin, { type: 'MARKET', price: undefined });
+      await settle();
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('\nTarget price: unknown USD\n'));
     });
 
     it('formats strategy advice message with order metadata', () => {
@@ -238,8 +827,28 @@ describe('EventSubscriber', () => {
       ${Infinity}  | ${'unknown'}
     `('reports a fee percent of $feePercent as $expected when an order completes', async ({ feePercent, expected }) => {
       plugin['handleCommand']('/sub_order_complete');
-      await onOrderCompleted(plugin, { order: { feePercent } });
+      onOrderCompleted(plugin, { order: { feePercent } });
+      await settle();
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining(`\nFee percent: ${expected}\n`));
+    });
+
+    // Without a fee rate the Trader assumes no fee (computeOrderPricing) and sends a fee of 0 with the bare trade price: the fee must
+    // not read as 0 nor the price as fee included; a known rate, 0 included, keeps the fee and the effective price as they are
+    it.each`
+      feePercent   | effectivePrice | fee    | line
+      ${0.1}       | ${100.1}       | ${0.1} | ${'Price: 100.1 USD'}
+      ${0.1}       | ${100.1}       | ${0.1} | ${'Fee: 0.1 USD'}
+      ${0}         | ${100}         | ${0}   | ${'Price: 100 USD'}
+      ${0}         | ${100}         | ${0}   | ${'Fee: 0 USD'}
+      ${undefined} | ${100}         | ${0}   | ${'Price (excluding fee): 100 USD'}
+      ${undefined} | ${100}         | ${0}   | ${'Fee: unknown'}
+      ${NaN}       | ${100}         | ${0}   | ${'Price (excluding fee): 100 USD'}
+      ${NaN}       | ${100}         | ${0}   | ${'Fee: unknown'}
+    `('reports $line when an order completes with a fee percent of $feePercent', async ({ feePercent, effectivePrice, fee, line }) => {
+      plugin['handleCommand']('/sub_order_complete');
+      onOrderCompleted(plugin, { order: { feePercent, effectivePrice, fee } });
+      await settle();
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining(`\n${line}\n`));
     });
   });
 
@@ -295,18 +904,6 @@ subscribe_all - Subscribe to all notifications
 unsubscribe_all - Unsubscribe from all notifications
 subscriptions - View current subscriptions
 help - Show help information`);
-    });
-
-    it('sends message only when subscribed for strat_cancel', () => {
-      fakeBot.sendMessage.mockReset();
-      const orderId = 'ee21e130-48bc-405f-be0c-46e9bf17b52e' as UUID;
-      plugin.onStrategyCancelOrder([orderId]);
-      expect(fakeBot.sendMessage).not.toHaveBeenCalled();
-      plugin['handleCommand']('/sub_strat_cancel');
-      plugin.onStrategyCancelOrder([orderId]);
-      expect(fakeBot.sendMessage).toHaveBeenCalledTimes(1);
-      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Strategy requested order cancellation'));
-      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining(orderId));
     });
   });
 

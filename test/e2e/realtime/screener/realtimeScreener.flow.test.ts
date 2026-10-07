@@ -138,9 +138,11 @@ describe('E2E: Realtime Screener Flow', () => {
     // Reset mocks
     MockFetcherService.reset();
 
-    // Configure Telegram subscription response (only once)
+    // Configure Telegram subscription response (only once, with the first poll)
     let getCallCount = 0;
-    MockFetcherService.when('getUpdates').thenReturn(() => {
+    MockFetcherService.when('getUpdates').thenReturn((url: string) => {
+      // An unbound bot first drops what was queued before start-up (offset=-1): nothing is queued here
+      if (url.includes('offset=-1')) return { ok: true, result: [] };
       getCallCount++;
       if (getCallCount === 1) {
         return subscriptionResponse;
@@ -281,6 +283,9 @@ describe('E2E: Realtime Screener Flow', () => {
     const { DummyCentralizedExchange } = await import('@services/exchange/dummy/dummyCentralizedExchange');
     const originalCreateLimitOrder = DummyCentralizedExchange.prototype.createLimitOrder;
     DummyCentralizedExchange.prototype.createLimitOrder = async function () {
+      // One round trip, as a real exchange failure takes: thrown at once, the failures of a candle would be heard in the flush of
+      // the next one, and the last two would never reach the EventSubscriber once the run stops
+      await new Promise(resolve => setTimeout(resolve, 1));
       throw new Error('Simulated Exchange Error');
     };
 
