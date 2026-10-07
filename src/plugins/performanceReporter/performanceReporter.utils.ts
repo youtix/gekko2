@@ -1,12 +1,9 @@
 export const depthFirstSearch = (node: unknown, callback: (value: string | number | boolean) => void): void => {
   if (isNative(node)) return callback(node);
-  if (node === null) return;
-  if (Array.isArray(node)) for (const item of node) depthFirstSearch(item, callback);
-  if (['object'].includes(typeof node)) {
-    for (const key of Object.keys(node as Record<string, unknown>)) {
-      depthFirstSearch((node as Record<string, unknown>)[key], callback);
-    }
-  }
+  if (typeof node !== 'object' || node === null) return;
+  // An array is an object too: this one loop visits its items in index order, as it visits the values of an object, so
+  // that every primitive is reached exactly once.
+  for (const child of Object.values(node)) depthFirstSearch(child, callback);
 };
 
 export const collectPrimitives = (value: unknown): string[] => {
@@ -20,3 +17,12 @@ export const generateStrategyId = (input: unknown): string => {
 };
 
 export const isNative = (node: unknown): node is string | number | boolean => ['string', 'number', 'boolean'].includes(typeof node);
+
+/**
+ * Writes a value as a cell of the CSV file. A value holding the ';' separator, a double quote or a line break (a strategy
+ * parameter, for example) would split or break its row, so it is enclosed in double quotes, its own double quotes doubled.
+ */
+export const toCsvCell = (value: string | number): string => {
+  const cell = String(value);
+  return /[;"\r\n]/.test(cell) ? `"${cell.replaceAll('"', '""')}"` : cell;
+};

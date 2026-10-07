@@ -1,4 +1,3 @@
-import { Report } from '@models/event.types';
 import { PortfolioReport } from '@plugins/analyzers/portfolioAnalyzer/portfolioAnalyzer.types';
 import { TradingReport } from '@plugins/analyzers/roundTripAnalyzer/roundTrip.types';
 import { Plugin } from '@plugins/plugin';
@@ -7,31 +6,94 @@ import { Fs } from '@services/fs/fs.types';
 import { error } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { round } from '@utils/math/round.utils';
-import { formatRatio } from '@utils/string/string.utils';
+import { formatRatio, toPlainNumber } from '@utils/string/string.utils';
 import { formatDuration, intervalToDuration } from 'date-fns';
-import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from 'fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readSync, statSync, writeFileSync } from 'fs';
+import { random } from 'lodash-es';
 import path from 'path';
 import { performanceReporterSchema } from './performanceReporter.schema';
-import { PerformanceReporterConfig } from './performanceReporter.types';
-import { generateStrategyId } from './performanceReporter.utils';
+import { CsvColumn, PerformanceReport, PerformanceReporterConfig } from './performanceReporter.types';
+import { generateStrategyId, toCsvCell } from './performanceReporter.utils';
+
+/** Written at the start of a UTF-8 file by the spreadsheets that save it back on Windows (Excel, LibreOffice). */
+const BYTE_ORDER_MARK = '\uFEFF';
+
+/** The value of the `report type` column, for each report this plugin writes. */
+const REPORT_TYPES: Record<PerformanceReport['id'], string> = {
+  'PORTFOLIO PROFIT REPORT': 'Portfolio',
+  'TRADING REPORT': 'Trading',
+};
+
+const portfolioOnly =
+  (value: (report: PortfolioReport) => string | number) =>
+  (report: PerformanceReport): string | number =>
+    report.id === 'PORTFOLIO PROFIT REPORT' ? value(report) : '';
+
+const tradingOnly =
+  (value: (report: TradingReport) => string | number) =>
+  (report: PerformanceReport): string | number =>
+    report.id === 'TRADING REPORT' ? value(report) : '';
 
 export class PerformanceReporter extends Plugin {
-  private readonly formater: Intl.NumberFormat;
   private readonly filePath: string;
   private fs: Fs = { lockSync: defaultLockSync };
 
-  private readonly portfolioHeader =
-    'id;pair;net profit;total return;yearly profit;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;start time;end time;duration;exposure;original balance;current balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset\n';
+  // Both analyzers write to the same file by default, so both report types share one header, and the header and the rows
+  // are built from this one list: a metric that a report type does not have leaves its column empty.
+  private readonly columns: CsvColumn[] = [
+    { header: 'id', value: () => generateStrategyId(this.strategySettings) },
+    { header: 'report type', value: report => REPORT_TYPES[report.id] },
+    // Without the pair and the timeframe, runs of the same strategy on other pairs or timeframes could not be told apart.
+    // A PortfolioAnalyzer run can watch several pairs: they share the cell, separated by a space as ';' separates the columns.
+    { header: 'pair', value: () => this.pairs.join(' ') },
+    // The schema only leaves the timeframe out in importer mode, which this plugin does not run in.
+    { header: 'timeframe', value: () => this.timeframe ?? '' },
+    // The amounts and the prices are written for a program to read, the same whatever the locale of the machine (see toPlainNumber).
+    { header: 'net profit', value: report => toPlainNumber(report.netProfit) },
+    { header: 'total return', value: report => `${round(report.totalReturnPct, 2, 'down')}%` },
+    {
+      header: 'yearly profit',
+      value: report => `${toPlainNumber(report.annualizedNetProfit)} (${round(report.annualizedReturnPct, 2, 'down')}%)`,
+    },
+    { header: 'win rate', value: tradingOnly(({ winRate }) => (winRate !== null ? `${round(winRate, 2, 'halfEven')}%` : 'N/A')) },
+    { header: 'market', value: report => `${round(report.marketReturnPct, 2, 'down')}%` },
+    { header: 'alpha', value: report => `${round(report.alpha, 2, 'down')}%` },
+    { header: 'sharpe ratio', value: report => formatRatio(report.sharpeRatio) },
+    { header: 'sortino ratio', value: report => formatRatio(report.sortinoRatio) },
+    { header: 'max drawdown', value: portfolioOnly(({ maxDrawdownPct }) => `${round(maxDrawdownPct, 2, 'down')}%`) },
+    { header: 'total changes', value: portfolioOnly(({ portfolioChangeCount }) => portfolioChangeCount) },
+    { header: 'trade count', value: tradingOnly(({ tradeCount }) => tradeCount) },
+    { header: 'start time', value: report => toISOString(report.periodStartAt) },
+    { header: 'end time', value: report => toISOString(report.periodEndAt) },
+    { header: 'duration', value: report => report.formattedDuration },
+    { header: 'exposure', value: report => `${round(report.exposurePct, 2, 'halfEven')}%` },
+    {
+      header: 'start balance',
+      value: report => toPlainNumber(report.id === 'PORTFOLIO PROFIT REPORT' ? report.startEquity : report.startBalance),
+    },
+    {
+      header: 'final balance',
+      value: report => toPlainNumber(report.id === 'PORTFOLIO PROFIT REPORT' ? report.endEquity : report.finalBalance),
+    },
+    { header: 'start price', value: report => toPlainNumber(report.startPrice) },
+    { header: 'end price', value: report => toPlainNumber(report.endPrice) },
+    { header: 'standard deviation', value: report => formatRatio(report.volatility) },
+    { header: 'downside deviation', value: report => formatRatio(report.downsideDeviation) },
+    {
+      header: 'longest drawdown duration',
+      value: portfolioOnly(({ longestDrawdownMs }) =>
+        longestDrawdownMs > 0 ? formatDuration(intervalToDuration({ start: 0, end: longestDrawdownMs })) : '0',
+      ),
+    },
+    { header: 'benchmark asset', value: portfolioOnly(({ benchmarkAsset }) => benchmarkAsset) },
+    { header: 'top maes', value: tradingOnly(({ topMAEs }) => JSON.stringify(topMAEs)) },
+  ];
 
-  private readonly tradingHeader =
-    'id;pair;net profit;total return;annualized return;win rate;market;alpha;sharpe ratio;sortino ratio;trade count;start time;end time;duration;exposure;start balance;final balance;start price;end price;standard deviation;downside deviation;top maes\n';
+  private readonly header = this.columns.map(({ header }) => header).join(';');
 
   constructor({ name, filePath, fileName }: PerformanceReporterConfig) {
     super(name);
-    // Use user provided fileName or default to performanceReporter.csv
-    const actualFileName = fileName || 'performanceReporter.csv';
-    this.filePath = path.join(filePath, actualFileName);
-    this.formater = new Intl.NumberFormat();
+    this.filePath = path.join(filePath, fileName);
   }
 
   public setFs(fs: Fs) {
@@ -40,122 +102,59 @@ export class PerformanceReporter extends Plugin {
 
   // Here the payload is not an array because onPerformanceReport use emit function directly.
   // It is not using the sequentialEmitter because it is emitted in processFinalize() of plugin lifecycle hooks
-  public onPerformanceReport(report: PortfolioReport | TradingReport) {
-    // Check if we need to write a header (lazy initialization)
-    this.ensureHeader(report);
+  public onPerformanceReport(report: PerformanceReport) {
+    if (!Object.hasOwn(REPORT_TYPES, report.id)) return;
 
-    let csvLine = '';
-
-    if (report.id === 'PORTFOLIO PROFIT REPORT') {
-      csvLine = this.handlePortfolioReport(report);
-    } else if (report.id === 'TRADING REPORT') {
-      csvLine = this.handleTradingReport(report);
-    }
-
-    if (csvLine) {
-      try {
-        // Acquire an exclusive lock, append, then release.
-        const release = this.fs.lockSync(this.filePath, { retries: 5 });
-        try {
-          appendFileSync(this.filePath, csvLine, 'utf8');
-        } finally {
-          release();
-        }
-      } catch (err) {
-        error('performance reporter', `write error: ${err}`);
-      }
-    }
-  }
-
-  private ensureHeader(firstReport: Report) {
+    const row = `${this.columns.map(({ value }) => toCsvCell(value(report))).join(';')}\n`;
+    let release: () => void;
     try {
-      const needsHeader = !existsSync(this.filePath) || statSync(this.filePath).size === 0;
-
-      if (needsHeader) {
-        const release = this.fs.lockSync(this.filePath, { retries: 3 });
-        try {
-          // Double-check inside lock
-          if (!existsSync(this.filePath) || statSync(this.filePath).size === 0) {
-            let headerToWrite = '';
-            if (firstReport.id === 'PORTFOLIO PROFIT REPORT') {
-              headerToWrite = this.portfolioHeader;
-            } else if (firstReport.id === 'TRADING REPORT') {
-              headerToWrite = this.tradingHeader;
-            }
-
-            if (headerToWrite) {
-              writeFileSync(this.filePath, headerToWrite, 'utf8');
-            }
-          }
-        } finally {
-          release();
-        }
+      // The backtests of a parameter sweep can end together and write the same file: one lock covers writing the header,
+      // checking it and appending the row, so that no other run writes in between. The delay between attempts is random: with
+      // the same delay, the runs that miss the lock together would retry together, and only a few would get it each time.
+      release = this.fs.lockSync(this.filePath, { retries: 5, retryDelayMs: random(25, 75) });
+    } catch (err) {
+      // Not thrown: an exception in a plugin ends the run with exit code 1.
+      error('performance reporter', `report lost: ${report.id} not written, ${this.filePath} could not be locked (${err})`);
+      return;
+    }
+    try {
+      if (this.isMissingOrEmpty()) writeFileSync(this.filePath, `${this.header}\n`, 'utf8');
+      if (this.startsWithHeader()) {
+        appendFileSync(this.filePath, row, 'utf8');
+      } else {
+        // A row appended under another header would sit under columns that mean something else.
+        error(
+          'performance reporter',
+          `report not written: the first line of ${this.filePath} is not the expected header (another column layout or an older version of this plugin): move or rename it`,
+        );
       }
     } catch (err) {
-      error('performance reporter', `header check error: ${err}`);
+      error('performance reporter', `write error: ${err}`);
+    } finally {
+      release();
     }
   }
 
-  private handlePortfolioReport(report: PortfolioReport): string {
-    const formattedDrawdownDuration =
-      report.longestDrawdownMs > 0 ? formatDuration(intervalToDuration({ start: 0, end: report.longestDrawdownMs })) : '0';
-
-    return (
-      [
-        generateStrategyId(this.strategySettings),
-        'Portfolio',
-        `${this.formater.format(report.netProfit)}`,
-        `${round(report.totalReturnPct, 2, 'down')}%`,
-        `${this.formater.format(report.annualizedNetProfit)} (${round(report.annualizedReturnPct, 2, 'down')}%)`,
-        `${round(report.marketReturnPct, 2, 'down')}%`,
-        `${round(report.alpha, 2, 'down')}%`,
-        formatRatio(report.sharpeRatio),
-        formatRatio(report.sortinoRatio),
-        `${round(report.maxDrawdownPct, 2, 'down')}%`,
-        report.portfolioChangeCount,
-        toISOString(report.periodStartAt),
-        toISOString(report.periodEndAt),
-        report.formattedDuration,
-        `${round(report.exposurePct, 2, 'halfEven')}%`,
-        `${this.formater.format(report.startEquity)}`,
-        `${this.formater.format(report.endEquity)}`,
-        `${this.formater.format(report.startPrice)}`,
-        `${this.formater.format(report.endPrice)}`,
-        formatRatio(report.volatility),
-        formatRatio(report.downsideDeviation),
-        formattedDrawdownDuration,
-        report.benchmarkAsset,
-      ].join(';') + '\n'
-    );
+  private isMissingOrEmpty() {
+    return !existsSync(this.filePath) || statSync(this.filePath).size === 0;
   }
 
-  private handleTradingReport(report: TradingReport): string {
-    return (
-      [
-        generateStrategyId(this.strategySettings),
-        'Trading',
-        `${this.formater.format(report.netProfit)}`,
-        `${round(report.totalReturnPct, 2, 'down')}%`,
-        `${this.formater.format(report.annualizedNetProfit)} (${round(report.annualizedReturnPct, 2, 'down')}%)`,
-        report.winRate !== null ? `${round(report.winRate, 2, 'halfEven')}%` : 'N/A',
-        `${round(report.marketReturnPct, 2, 'down')}%`,
-        `${round(report.alpha, 2, 'down')}%`,
-        formatRatio(report.sharpeRatio),
-        formatRatio(report.sortinoRatio),
-        report.tradeCount,
-        toISOString(report.periodStartAt),
-        toISOString(report.periodEndAt),
-        report.formattedDuration,
-        `${round(report.exposurePct, 2, 'halfEven')}%`,
-        `${this.formater.format(report.startBalance)}`,
-        `${this.formater.format(report.finalBalance)}`,
-        `${this.formater.format(report.startPrice)}`,
-        `${this.formater.format(report.endPrice)}`,
-        formatRatio(report.volatility),
-        formatRatio(report.downsideDeviation),
-        JSON.stringify(report.topMAEs),
-      ].join(';') + '\n'
-    );
+  /**
+   * Reads only the length of the header line: the file gains a row with every run. A spreadsheet that saves the file back
+   * (Excel or LibreOffice on Windows) can start it with a byte order mark and end its lines with '\r\n': the header is the
+   * same, so it is accepted. A header without its line break is not, as the row appended to it would continue that line.
+   */
+  private startsWithHeader() {
+    const firstBytes = Buffer.alloc(Buffer.byteLength(`${BYTE_ORDER_MARK}${this.header}\r\n`));
+    const fd = openSync(this.filePath, 'r');
+    let length: number;
+    try {
+      length = readSync(fd, firstBytes, 0, firstBytes.length, 0);
+    } finally {
+      closeSync(fd);
+    }
+    const start = firstBytes.toString('utf8', 0, length).replace(/^\uFEFF/, '');
+    return start.startsWith(`${this.header}\n`) || start.startsWith(`${this.header}\r\n`);
   }
 
   // --------------------------------------------------------------------------
