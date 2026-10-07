@@ -1,11 +1,14 @@
 import type { SQLiteStorage as ISQLiteStorage } from '@services/storage/sqlite.storage';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, mock } from 'bun:test';
 
+// The storage reads the mode when it is built: it decides whether a write replaces the candle stored for its minute
+let mode = 'backtest';
+
 // Mocks for configuration must be defined before imports that evaluate them
 mock.module('@services/configuration/configuration', () => ({
   config: {
     getStorage: () => ({ type: 'sqlite', database: ':memory:', insertThreshold: 1 }),
-    getWatch: () => ({ mode: 'backtest' }),
+    getWatch: () => ({ mode }),
   },
 }));
 
@@ -71,5 +74,33 @@ describe('SQLiteStorage - table names', () => {
     storage.upsertTable('btc/usdt');
     expect(storage.getCandles('btc/usdt', { start, end })).toEqual([{ id: 1, ...candles[0] }]);
     storage.close();
+  });
+});
+
+describe('SQLiteStorage - a minute written twice', () => {
+  // The exchange's candle, and the one FillCandleGap makes up for a minute that a run missed: flat, without volume
+  const fetched = { start, open: 10.5, high: 12, low: 9, close: 11, volume: 3 };
+  const madeUp = { start, open: 10, high: 10, low: 10, close: 10, volume: 0 };
+  let SQLiteStorage: typeof ISQLiteStorage;
+
+  beforeAll(async () => {
+    ({ SQLiteStorage } = await import('@services/storage/sqlite.storage'));
+  });
+
+  afterEach(() => {
+    mode = 'backtest';
+  });
+
+  it.each([
+    ['an import replaces the stored candle, one a realtime run made up, and keeps its row', 'importer', madeUp, fetched],
+    ['a realtime run keeps the stored candle, an imported one', 'realtime', fetched, madeUp],
+  ] as const)('%s', (_, runMode, stored, written) => {
+    mode = runMode;
+    const storage = new SQLiteStorage(['BTC/USDT']);
+    storage.addCandle(new Map([['BTC/USDT', stored]]));
+    storage.addCandle(new Map([['BTC/USDT', written]]));
+    const kept = storage.getCandles('BTC/USDT', { start, end: start });
+    storage.close();
+    expect(kept).toEqual([{ id: 1, ...fetched }]);
   });
 });

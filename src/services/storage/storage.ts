@@ -10,6 +10,8 @@ import { CandleDateranges, MissingCandleCount } from './storage.types';
 export abstract class Storage {
   protected buffer: CandleBucket[];
   protected insertThreshold: number;
+  /** Whether a candle written for a minute already stored replaces the stored one, rather than being dropped */
+  protected readonly replaceStoredCandles: boolean;
 
   constructor() {
     const { mode } = config.getWatch();
@@ -18,6 +20,10 @@ export abstract class Storage {
     if (storage?.insertThreshold) this.insertThreshold = storage.insertThreshold;
     else if (mode === 'realtime') this.insertThreshold = 1;
     else this.insertThreshold = INSERT_THRESHOLD;
+    // An import has the last word: it reads the exchange's history, so it replaces the candles that FillCandleGap made up (flat,
+    // without volume) for minutes an earlier run missed, such as those of a network blip in realtime. A realtime run keeps what
+    // is stored: its own candle for a minute can be such a stand-in, which must never overwrite an imported one.
+    this.replaceStoredCandles = mode === 'importer';
   }
 
   public addCandle(bucket: CandleBucket) {

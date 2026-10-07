@@ -65,6 +65,16 @@ describe('SQLiteStorage', () => {
     expect(statement.run.mock.calls).toEqual([[null, 1, 2, 3, 4, 5, 6]]);
   });
 
+  it.each`
+    mode          | clause
+    ${'importer'} | ${'ON CONFLICT(start) DO UPDATE'}
+    ${'realtime'} | ${'INSERT OR IGNORE'}
+  `('writes the candles in $mode mode with $clause', ({ mode, clause }) => {
+    mockConfig.getWatch.mockReturnValue({ mode });
+    new SQLiteStorage([]).insertCandles('BTC/USDT');
+    expect(mockDb.prepare.mock.lastCall?.[0]).toContain(clause);
+  });
+
   it('closes the database', () => {
     storage.close();
     expect(mockDb.close).toHaveBeenCalledWith(false);

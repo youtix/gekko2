@@ -37,6 +37,16 @@ describe('Storage', () => {
       mockConfig.getStorage.mockReturnValue(storage);
       expect(new TestStorage()['insertThreshold']).toBe(expected);
     });
+
+    it.each`
+      mode          | expected
+      ${'importer'} | ${true}
+      ${'realtime'} | ${false}
+      ${'backtest'} | ${false}
+    `('replaces the stored candles in $mode mode: $expected', ({ mode, expected }) => {
+      mockConfig.getWatch.mockReturnValue({ mode });
+      expect(new TestStorage()['replaceStoredCandles']).toBe(expected);
+    });
   });
 
   describe('addCandle', () => {

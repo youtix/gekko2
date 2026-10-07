@@ -24,7 +24,15 @@ export class SQLiteStorage extends Storage {
   }
 
   public insertCandles(symbol: TradingPair): void {
-    const stmt = this.db.prepare(`INSERT OR IGNORE INTO ${this.getQuotedTable(symbol)} VALUES (?,?,?,?,?,?,?)`);
+    const table = this.getQuotedTable(symbol);
+    // An upsert keeps the row of the minute and its id, where INSERT OR REPLACE would delete it and insert another one
+    const stmt = this.db.prepare(
+      this.replaceStoredCandles
+        ? `INSERT INTO ${table} VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(start) DO UPDATE
+           SET open = excluded.open, high = excluded.high, low = excluded.low, close = excluded.close, volume = excluded.volume`
+        : `INSERT OR IGNORE INTO ${table} VALUES (?,?,?,?,?,?,?)`,
+    );
     const insertCandles = this.db.transaction((bucket: CandleBucket[]) => {
       const candles = bucket.flatMap(b => b.get(symbol) ?? []);
       each(candles, ({ start, open, high, low, close, volume }) => stmt.run(null, start, open, high, low, close, volume));
