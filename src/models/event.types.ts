@@ -92,7 +92,7 @@ export type Report = {
   id: 'TRADING REPORT' | 'PORTFOLIO PROFIT REPORT';
   /** Performance relative to the benchmark market return (Excess Return) */
   alpha: number;
-  /** Standard deviation of negative returns (Downside Deviation) used for Sortino Ratio */
+  /** Downside deviation of the returns: root mean square of the negative ones, positive ones counting as 0 (Sortino ratio) */
   downsideDeviation: number;
   /** Timestamp indicating when the reporting period ended */
   periodEndAt: EpochTimeStamp;
@@ -112,7 +112,7 @@ export type Report = {
   sharpeRatio: number;
   /** Sortino Ratio: measure of risk-adjusted return focus on downside deviation */
   sortinoRatio: number;
-  /** Standard deviation of round-trip profits (Volatility) */
+  /** Volatility of the returns: of the round trips for the RoundTripAnalyzer, of the timeframe candles for the PortfolioAnalyzer (%) */
   volatility: number;
   /** Asset price at the beginning of the period */
   startPrice: number;

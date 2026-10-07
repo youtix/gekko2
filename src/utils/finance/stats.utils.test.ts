@@ -293,39 +293,37 @@ describe('calculateSharpeRatio', () => {
 });
 
 describe('calculateSortinoRatio', () => {
+  // Downside deviation over the n returns, gains counting as 0: sqrt(sum of squared losses / n). Annualized by sqrt(n / years),
+  // it simplifies to sqrt(sum of squared losses / years). All rows but the last earn 16 - 1 = 15 points over the risk-free return:
+  // - single loss, [3, -4, 5] over 1 year: sqrt(16 / 1) = 4, 15 / 4 = 3.75
+  // - equal losses, [-2, -2, -2, 5, 5] over 3 years: sqrt((4 + 4 + 4) / 3) = 2, 15 / 2 = 7.5
+  // - losses of 1 and 3, [5, -1, -3] over 1 year: sqrt(1 + 9) = 3.162278, 15 / 3.162278 = 4.74342 (rounded)
+  // - losses of 11 and 13, [5, -11, -13] over 1 year: sqrt(121 + 169) = 17.029386, 15 / 17.029386 = 0.88083 (rounded)
+  // - small losses among large gains, [5, -4, 12, -3] over 1 year: sqrt(16 + 9) = 5, 15 / 5 = 3. Its Sharpe ratio is only
+  //   15 / 13 = 1.15: mean 2.5, annualized standard deviation sqrt(6.25 + 42.25 + 90.25 + 30.25) = sqrt(169) = 13
+  // - below the risk-free return, [3, -4, 5] over 1 year earning 1 - 3 = -2: -2 / 4 = -0.5
+  // The stdev of the losses around their own mean, used before, gave 0 for the first two rows, 8.660254 for both of the next
+  // two and 15 for the small losses. Values have at most 5 decimals and toBeCloseTo(_, 4) allows a difference below 0.00005.
   it.each`
-    description                                      | returns               | yearlyProfit | riskFreeReturn | elapsedYears | expected
-    ${'return 0 for empty returns array'}            | ${[]}                 | ${10}        | ${1}           | ${1}         | ${0}
-    ${'return 0 for zero elapsed years'}             | ${[-1, -2, 3]}        | ${10}        | ${1}           | ${0}         | ${0}
-    ${'return 0 for negative elapsed years'}         | ${[-1, -2, 3]}        | ${10}        | ${1}           | ${-1}        | ${0}
-    ${'return 0 when there are no negative returns'} | ${[1, 2, 3, 4, 5]}    | ${10}        | ${1}           | ${1}         | ${0}
-    ${'return 0 when all losses are identical'}      | ${[-2, -2, -2, 5, 5]} | ${10}        | ${1}           | ${1}         | ${0}
+    description                                   | returns               | yearlyProfit | riskFreeReturn | elapsedYears | expected
+    ${'return 0 for an empty returns array'}      | ${[]}                 | ${16}        | ${1}           | ${1}         | ${0}
+    ${'return 0 for zero elapsed years'}          | ${[5, -1, -3]}        | ${16}        | ${1}           | ${0}         | ${0}
+    ${'return 0 for negative elapsed years'}      | ${[5, -1, -3]}        | ${16}        | ${1}           | ${-1}        | ${0}
+    ${'return 0 when no return is a loss'}        | ${[1, 0, 3]}          | ${16}        | ${1}           | ${1}         | ${0}
+    ${'count a single loss as downside risk'}     | ${[3, -4, 5]}         | ${16}        | ${1}           | ${1}         | ${3.75}
+    ${'count equal losses as downside risk'}      | ${[-2, -2, -2, 5, 5]} | ${16}        | ${1}           | ${3}         | ${7.5}
+    ${'weigh losses of 1 and 3 by their size'}    | ${[5, -1, -3]}        | ${16}        | ${1}           | ${1}         | ${4.74342}
+    ${'weigh losses of 11 and 13 by their size'}  | ${[5, -11, -13]}      | ${16}        | ${1}           | ${1}         | ${0.88083}
+    ${'not count the gains as risk'}              | ${[5, -4, 12, -3]}    | ${16}        | ${1}           | ${1}         | ${3}
+    ${'turn negative below the risk-free return'} | ${[3, -4, 5]}         | ${1}         | ${3}           | ${1}         | ${-0.5}
   `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, expected }) => {
-    expect(calculateSortinoRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears })).toBe(expected);
+    expect(calculateSortinoRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears })).toBeCloseTo(expected, 4);
   });
 
-  it.each`
-    description                                             | returns                         | yearlyProfit | riskFreeReturn | elapsedYears | comparison
-    ${'calculate positive ratio for profitable strategy'}   | ${[2, -1, 3, -0.5, 2.5, -2, 1]} | ${15}        | ${2}           | ${1}         | ${'positive'}
-    ${'calculate negative ratio when below risk-free rate'} | ${[2, -1, 3, -0.5, 2.5, -2, 1]} | ${0.5}       | ${2}           | ${1}         | ${'negative'}
-  `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, comparison }) => {
-    const result = calculateSortinoRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears });
-    if (comparison === 'positive') expect(result).toBeGreaterThan(0);
-    else expect(result).toBeLessThan(0);
-  });
-
-  it('should be higher than sharpe ratio when there are more gains than losses', () => {
-    // When there are more positive returns, downside deviation is typically lower
-    // than overall standard deviation, leading to higher Sortino vs Sharpe
-    const params = {
-      returns: [3, 4, 5, -1, 2, 3, -0.5, 4, 5, 2],
-      yearlyProfit: 20,
-      riskFreeReturn: 2,
-      elapsedYears: 1,
-    };
-    const sharpe = calculateSharpeRatio(params);
-    const sortino = calculateSortinoRatio(params);
-    expect(sortino).toBeGreaterThan(sharpe);
+  it('should be higher than the sharpe ratio when the losses are small relative to the overall spread', () => {
+    // 3 against 15 / 13, see the small losses among large gains above
+    const params = { returns: [5, -4, 12, -3], yearlyProfit: 16, riskFreeReturn: 1, elapsedYears: 1 };
+    expect(calculateSortinoRatio(params)).toBeGreaterThan(calculateSharpeRatio(params));
   });
 });
 

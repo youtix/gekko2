@@ -204,28 +204,28 @@ export const calculateSharpeRatio = ({ returns, yearlyProfit, riskFreeReturn, el
 
 /**
  * Calculates the annualized Sortino ratio.
- * Sortino ratio measures risk-adjusted return using only downside deviation (negative returns).
+ * Sortino ratio measures risk-adjusted return using only the downside deviation of the returns (see calculateDownsideDeviation):
+ * the root mean square of the losses over all the returns, gains counting as zero, so that only losses are penalised.
+ * It is annualized like the standard deviation of the Sharpe ratio, by sqrt(observations per year).
  *
  * @param params.returns - Array of percentage returns per trade/period
  * @param params.yearlyProfit - Annualized profit percentage
  * @param params.riskFreeReturn - Risk-free rate of return (e.g., 1 for 1%)
  * @param params.elapsedYears - Total elapsed time in years
- * @returns Annualized Sortino ratio
+ * @returns Annualized Sortino ratio, or 0 when there is no return, no elapsed time or no losing return
+ * (without downside risk the ratio is undefined, and 0 is reported instead)
  */
 export const calculateSortinoRatio = ({ returns, yearlyProfit, riskFreeReturn, elapsedYears }: RatioParams): number => {
   if (!returns.length || elapsedYears <= 0) return 0;
 
-  const lossReturns = returns.filter(r => r < 0);
-  if (!lossReturns.length) return 0;
-
-  const downsideDeviation = stdev(lossReturns);
-  if (!downsideDeviation || Number.isNaN(downsideDeviation)) return 0;
+  // Not the spread of the losses around their own mean: that is 0 for one loss or equal losses, and ignores how large they are
+  const downsideDeviation = calculateDownsideDeviation(returns);
 
   // Annualize downside deviation: multiply by sqrt(observations per year)
   const observationsPerYear = returns.length / elapsedYears;
   const annualizedDownsideDev = downsideDeviation * Math.sqrt(observationsPerYear);
 
-  return (yearlyProfit - riskFreeReturn) / Math.abs(annualizedDownsideDev);
+  return !annualizedDownsideDev ? 0 : (yearlyProfit - riskFreeReturn) / annualizedDownsideDev;
 };
 
 /**
