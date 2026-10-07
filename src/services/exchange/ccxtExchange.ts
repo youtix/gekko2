@@ -122,16 +122,22 @@ export class CCXTExchange implements Exchange {
     if (spotCurrencyMapping) this.privateClient.options.spotCurrencyMapping = { ...spotCurrencyMapping };
   }
 
+  /**
+   * The tickers keyed by the symbols asked for, the configured ones the Trader reads them with. ccxt 4.5.39 keys them by the unified
+   * symbol of their market, which may differ from the symbol asked for: it resolves a symbol written with the name of a wrapped spot
+   * token of Hyperliquid (UBTC/USDC) to the market of the coin it wraps (BTC/USDC, see fetchBalance), and keys its ticker BTC/USDC.
+   * Each ticker is read under the unified symbol of its market, as ccxt's own fetchTicker does, or else under the symbol asked for.
+   */
   public async fetchTickers(symbols: TradingPair[]): Promise<Record<TradingPair, Ticker>> {
     return retry<Record<TradingPair, Ticker>>(async () => {
       const tickers = await this.publicClient.fetchTickers(symbols);
-      return Object.entries(tickers).reduce(
-        (acc, [symbol, ticker]) => {
-          if (isNil(ticker.last)) throw new GekkoError('exchange', `Fetch ticker failed to return data for ${symbol}`);
-          return { ...acc, [symbol as TradingPair]: { ask: ticker.ask ?? ticker.last, bid: ticker.bid ?? ticker.last } };
-        },
-        {} as Record<TradingPair, Ticker>,
-      );
+      const result = {} as Record<TradingPair, Ticker>;
+      for (const symbol of symbols) {
+        const ticker = tickers[this.publicClient.market(symbol).symbol] ?? tickers[symbol];
+        if (isNil(ticker?.last)) throw new GekkoError('exchange', `Fetch ticker failed to return data for ${symbol}`);
+        result[symbol] = { ask: ticker.ask ?? ticker.last, bid: ticker.bid ?? ticker.last };
+      }
+      return result;
     });
   }
 

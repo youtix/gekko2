@@ -5,7 +5,7 @@ import * as logger from '@services/logger';
 import { assertOrderWithinLimits } from '@utils/market/market.utils';
 import ccxt from 'ccxt';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { CCXTExchange } from './ccxtExchange';
+import { CCXTExchange, type CCXTExchangeConfig } from './ccxtExchange';
 import { BROKER_MAX_RETRIES_ON_FAILURE, LIMITS, MAX_MY_TRADES_PAGES } from './exchange.const';
 import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from './exchange.error';
 import { checkMandatoryFeatures, createExchange, mapCcxtOrderToOrder, mapCcxtTradeToTrade, mapOhlcvToCandles } from './exchange.utils';
@@ -220,6 +220,56 @@ describe('CCXTExchange', () => {
 
     it('getExchangeName returns configured name', () => {
       expect(exchange.getExchangeName()).toBe('binance');
+    });
+  });
+
+  describe('fetchTickers', () => {
+    // As ccxt 4.5.39 resolves them: a symbol to its market, whose unified symbol keys the ticker ccxt returns. A symbol written with
+    // the name of a wrapped spot token of Hyperliquid (UBTC, UETH, USOL...) resolves to the market of the coin it wraps, UBTC/USDC to
+    // BTC/USDC, and its ticker comes keyed BTC/USDC
+    const unifiedSymbols: Record<string, string> = { 'BTC/USDT': 'BTC/USDT', 'UBTC/USDC': 'BTC/USDC', 'ETH/USDC': 'ETH/USDC' };
+    const btc = { ask: 101, bid: 100, last: 100.5 };
+    const eth = { ask: 3001, bid: 3000, last: 3000.5 };
+
+    /** An exchange whose ccxt client resolves the symbols as above and answers fetchTickers with `tickers` */
+    const exchangeWithTickers = (exchangeConfig: CCXTExchangeConfig, tickers: object) => {
+      const exchange = new CCXTExchange(exchangeConfig);
+      const instance = (ccxt as any)[exchangeConfig.name].mock.instances.at(-1);
+      instance.market.mockImplementation((symbol: string) => ({ symbol: unifiedSymbols[symbol] }));
+      instance.fetchTickers.mockResolvedValue(tickers);
+      return exchange;
+    };
+
+    it.each`
+      description                                                   | exchangeConfig       | symbol         | tickers
+      ${'keys by the token name a ticker under the unified symbol'} | ${hyperliquidConfig} | ${'UBTC/USDC'} | ${{ 'BTC/USDC': btc }}
+      ${'keys the ticker of a binance symbol by that symbol'}       | ${binanceConfig}     | ${'BTC/USDT'}  | ${{ 'BTC/USDT': btc }}
+      ${'reads a ticker keyed by the symbol asked for itself'}      | ${hyperliquidConfig} | ${'UBTC/USDC'} | ${{ 'UBTC/USDC': btc }}
+    `('$description', async ({ exchangeConfig, symbol, tickers }) => {
+      expect(await exchangeWithTickers(exchangeConfig, tickers).fetchTickers([symbol])).toEqual({ [symbol]: { ask: 101, bid: 100 } });
+    });
+
+    it('keys the tickers of several symbols by those symbols', async () => {
+      const exchange = exchangeWithTickers(hyperliquidConfig, { 'BTC/USDC': btc, 'ETH/USDC': eth });
+      expect(await exchange.fetchTickers(['UBTC/USDC', 'ETH/USDC'])).toEqual({
+        'UBTC/USDC': { ask: 101, bid: 100 },
+        'ETH/USDC': { ask: 3001, bid: 3000 },
+      });
+    });
+
+    it('gives a ticker without an ask or a bid its last price for both', async () => {
+      const exchange = exchangeWithTickers(binanceConfig, { 'BTC/USDT': { ask: undefined, bid: undefined, last: 100.5 } });
+      expect(await exchange.fetchTickers(['BTC/USDT'])).toEqual({ 'BTC/USDT': { ask: 100.5, bid: 100.5 } });
+    });
+
+    it.each`
+      description                           | tickers
+      ${'a ticker missing from the answer'} | ${{}}
+      ${'a ticker without a last price'}    | ${{ 'BTC/USDC': { ...btc, last: undefined } }}
+    `('rejects $description with a GekkoError naming the symbol asked for', async ({ tickers }) => {
+      await expect(exchangeWithTickers(hyperliquidConfig, tickers).fetchTickers(['UBTC/USDC'])).rejects.toStrictEqual(
+        new GekkoError('exchange', 'Fetch ticker failed to return data for UBTC/USDC'),
+      );
     });
   });
 
