@@ -7,9 +7,12 @@ import { DummyExchange } from '@services/exchange/exchange.types';
 import { isDummyExchange } from '@services/exchange/exchange.utils';
 import { inject } from '@services/injecter/injecter';
 import { info, error as logError, warning } from '@services/logger';
-import { isString } from 'lodash-es';
+import { isString, partition } from 'lodash-es';
 import { Writable } from 'node:stream';
 import { inspect } from 'node:util';
+
+/** A plugin that failed on a bucket, and what it threw */
+type PluginFailure = { plugin: Plugin; reason: unknown };
 
 /**
  * A failure in one line, as main() starts reporting it: a GekkoError's message explains it, any other error is named. Not String()
@@ -27,6 +30,8 @@ export class PluginsStream extends Writable {
   private readonly initializedPlugins: Plugin[] = [];
   private readonly dummyExchange?: DummyExchange;
   private finalized = false;
+  /** Settles once the bucket being written has been handled, whatever the outcome; between two buckets, that of the last one */
+  private writing: Promise<void> = Promise.resolve();
 
   constructor(plugins: Plugin[]) {
     super({ objectMode: true });
@@ -49,12 +54,20 @@ export class PluginsStream extends Writable {
   }
 
   public async _write(bucket: CandleBucket, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
+    const writing = Promise.withResolvers<void>();
+    this.writing = writing.promise;
+    let otherFailures: PluginFailure[] = []; // The plugins that failed on the bucket besides the one whose failure is thrown
     try {
       // Forward bucket to dummy exchange (if set by user) before all plugins
       await this.dummyExchange?.processOneMinuteBucket(bucket);
 
-      // Forward bucket to all plugins concurrently
-      await Promise.all(this.plugins.map(plugin => plugin.processInputStream(bucket)));
+      // Forward bucket to all plugins concurrently, each one to its end even when another fails: a failure finalises them all
+      const results = await Promise.allSettled(this.plugins.map(plugin => plugin.processInputStream(bucket)));
+      const [failure, ...others] = this.rankFailures(results);
+      if (failure) {
+        otherFailures = others;
+        throw failure.reason;
+      }
 
       // Broadcast all deferred events sequentially
       for (const plugin of this.plugins) {
@@ -67,12 +80,19 @@ export class PluginsStream extends Writable {
       done();
     } catch (error) {
       this.logCloseReason(error);
+      for (const { plugin, reason } of otherFailures) {
+        logError('stream', `${plugin.emitterName} failed on the bucket as well: ${describeReason(reason)}`);
+      }
+      this.logDroppedEvents();
 
       // Finalize all plugins before destroying the stream
       await this.finalizeAllPlugins();
 
-      // The pipeline rejects with this error, which is how main() tells an ApplicationStopError from a crash
+      // The pipeline rejects with this error, which is how main() tells an ApplicationStopError from a crash. _destroy runs at once
+      // and waits for this write to settle (below): nothing after this call may wait for the stream to close.
       this.destroy(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      writing.resolve();
     }
   }
 
@@ -97,6 +117,11 @@ export class PluginsStream extends Writable {
   public async _destroy(error: Nullable<Error>, callback: (error?: Nullable<Error>) => void) {
     // A failure upstream or of _construct: a failed _write has said why and finalised the plugins already
     if (error && !this.finalized) this.logCloseReason(error);
+    // A failure upstream destroys the stream at once, whatever the bucket in flight is doing: its handlers run to their end (an order
+    // being created, deferred events being delivered) before the plugins are finalised, not under them
+    await this.writing;
+    // Counted once that bucket is done: what is left waits for a bucket that never comes. A failed _write has named them already.
+    if (error && !this.finalized) this.logDroppedEvents();
     try {
       await this.finalizeAllPlugins();
     } catch (finalizeError) {
@@ -113,6 +138,39 @@ export class PluginsStream extends Writable {
   private logCloseReason(reason: unknown) {
     if (reason instanceof ApplicationStopError) warning('stream', `Application stopped gracefully: ${reason.message}`);
     else logError('stream', `Gekko is closing the application due to an error: ${describeReason(reason)}`);
+  }
+
+  /**
+   * The plugins that failed on a bucket, the one whose failure is thrown first. An ApplicationStopError comes before any other failure:
+   * it is an orderly stop, which a restart-on-failure supervisor must leave stopped, and main() tells it from a crash by the error the
+   * pipeline rejects with. So when one plugin asks to stop and another fails, Gekko stops (exit code 0). Then config order, whichever
+   * plugin failed first in time: the failure reported does not depend on timing.
+   */
+  private rankFailures(results: PromiseSettledResult<void>[]): PluginFailure[] {
+    const failures = results.flatMap((result, index) =>
+      result.status === 'rejected' ? [{ plugin: this.plugins[index], reason: result.reason }] : [],
+    );
+    const [stops, others] = partition(failures, ({ reason }) => reason instanceof ApplicationStopError);
+    return [...stops, ...others];
+  }
+
+  /**
+   * Names, per plugin, the deferred events left queued as the application closes on a failure, before the plugins are finalised (for
+   * Supervision's last flush): those a failed bucket did not deliver, or, on a failure upstream, those a handler queued on a plugin
+   * flushed before it (an order a strategy hook places on a fill), for a bucket that never comes. They are dropped: delivered after a
+   * stop (the circuit breaker), they could make the strategy act again, an order hook placing a new order. The final reports may miss
+   * them (an orderCompleted, a roundtripCompleted).
+   * Not counted: the group whose delivery threw. broadcastDeferredEmit takes a group out of the queue before delivering it, and emit
+   * stops at the listener that throws: the listeners wired after it (in config order) never receive it. An EventSubscriber configured
+   * after the TradingAdvisor never hears of the orderErrored that tripped the circuit breaker.
+   */
+  private logDroppedEvents() {
+    const dropped = this.plugins.flatMap(plugin => {
+      const counts = Array.from(plugin.countUndeliveredPayloads(), ([event, count]) => `${event}: ${count}`);
+      return counts.length ? [`${plugin.emitterName} (${counts.join(', ')})`] : [];
+    });
+    if (dropped.length)
+      warning('stream', `Deferred events dropped as the application closes, the final reports may miss them: ${dropped.join(', ')}`);
   }
 
   /**

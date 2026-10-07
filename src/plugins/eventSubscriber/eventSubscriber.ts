@@ -203,10 +203,10 @@ export class EventSubscriber extends Plugin {
   /**
    * Lets the pending notifications go out before the run ends, for LAST_FLUSH_TIMEOUT at most: they are then given up, their loop
    * left to go on in the background until the process exits. It never rejects, as `sending` never does.
-   * Events can still arrive once the finalisation has started (on a failure upstream, PluginsStream._destroy finalises the plugins
-   * while a flush may still run), and a notification queued while no loop runs starts another one, with its own promise. So, within
-   * the one deadline, it waits for `sending` read anew until a wait ends with no loop running, the first wait included: that lets in
-   * a notification queued right after the call, even when no loop ran then.
+   * No event is delivered once the finalisation has started (PluginsStream waits for the bucket in flight before it finalises the
+   * plugins), but the wait stays defensive: a notification queued while no loop runs starts another one, with its own promise. So,
+   * within the one deadline, it waits for `sending` read anew until a wait ends with no loop running, the first wait included: that
+   * lets in a notification queued right after the call, even when no loop ran then.
    */
   private async waitForPending() {
     let timer: Timer | undefined;

@@ -609,8 +609,8 @@ describe('EventSubscriber', () => {
         expect(warning).toHaveBeenCalledWith('event subscriber', '1 notification given up: not sent within 15 s');
       });
 
-      // Events can still arrive once it has started (on a failure upstream, PluginsStream._destroy finalises the plugins while a flush
-      // may still run): a notification queued while no loop runs starts another one, with its own promise
+      // No event is delivered once it has started (PluginsStream waits for the bucket in flight before it finalises the plugins), but
+      // the wait stays defensive: a notification queued while no loop runs starts another one, with its own promise
       describe('with a notification queued once it has started', () => {
         let finalization: Promise<void>;
         let isFinalized: boolean;

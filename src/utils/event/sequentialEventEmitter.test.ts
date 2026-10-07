@@ -138,4 +138,46 @@ describe('SequentialEventEmitter', () => {
       expect(result).toBe(false);
     });
   });
+
+  describe('countUndeliveredPayloads', () => {
+    it.each`
+      counted                                              | queued                                                  | counts
+      ${'nothing when nothing is queued'}                  | ${[]}                                                   | ${[]}
+      ${'the payloads of every group queued under a name'} | ${[['a', 'a1'], ['b', 'b1'], ['a', 'a2'], ['a', 'a3']]} | ${[['a', 3], ['b', 1]]}
+      ${'no event nobody listens to'}                      | ${[['a', 'a1'], ['unheard', 'u1']]}                     | ${[['a', 1]]}
+    `('should count $counted', ({ queued, counts }: { queued: [string, string][]; counts: [string, number][] }) => {
+      const { emitter } = createRecordingEmitter(['a', 'b']);
+      for (const [event, payload] of queued) emitter.addDeferredEmit(event, payload);
+
+      expect(Array.from(emitter.countUndeliveredPayloads())).toEqual(counts);
+    });
+
+    it('should not count an event whose listeners were all removed', () => {
+      const emitter = new SequentialEventEmitter('test');
+      emitter.on('a', noop);
+      emitter.off('a', noop);
+      emitter.addDeferredEmit('a', 'a1');
+
+      expect(emitter.countUndeliveredPayloads().size).toBe(0);
+    });
+
+    it('should count nothing once the queue is broadcast', async () => {
+      const { emitter } = createRecordingEmitter(['a']);
+      emitter.addDeferredEmit('a', 'a1');
+
+      await broadcastAll(emitter);
+
+      expect(emitter.countUndeliveredPayloads().size).toBe(0);
+    });
+
+    it('should leave the payloads it counts queued', async () => {
+      const { emitter, deliveries } = createRecordingEmitter(['a']);
+      emitter.addDeferredEmit('a', 'a1');
+
+      emitter.countUndeliveredPayloads();
+      await broadcastAll(emitter);
+
+      expect(deliveries).toEqual([['a', ['a1']]]);
+    });
+  });
 });

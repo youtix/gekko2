@@ -13,7 +13,7 @@ export class SequentialEventEmitter {
    * consecutive).
    */
   private readonly deferredGroups: DeferredGroup[];
-  private readonly emitterName: string;
+  public readonly emitterName: string;
 
   constructor(emitterName: string) {
     this.listeners = new Map();
@@ -63,5 +63,17 @@ export class SequentialEventEmitter {
     debug('event', `[${this.emitterName}] Broadcasting deferred event: ${name} (${payloads.length} payloads)`);
     await this.emit(name, payloads); // Broadcast all deferred events sequentially to avoid race conditions
     return true;
+  }
+
+  /**
+   * How many deferred payloads are still queued, per event name, in the order the names were first queued: what never arrives if no
+   * broadcast follows. Only the events listened to are counted, nothing is lost with the others. It leaves the queue as it is.
+   */
+  public countUndeliveredPayloads(): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const { name, payloads } of this.deferredGroups) {
+      if (this.listeners.get(name)?.length) counts.set(name, (counts.get(name) ?? 0) + payloads.length);
+    }
+    return counts;
   }
 }
