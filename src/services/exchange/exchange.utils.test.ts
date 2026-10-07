@@ -1,6 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import * as logger from '@services/logger';
-import ccxt, { binance, NetworkError } from 'ccxt';
+import ccxt, { binance, hyperliquid, NetworkError } from 'ccxt';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { pick } from 'lodash-es';
 import { SocksProxyAgent } from 'socks-proxy-agent';
@@ -365,6 +365,13 @@ describe('Exchange Utils', () => {
       exchangeSynchInterval: 1,
       orderSynchInterval: 1,
     };
+    // A throwaway key, valid for signing: the requests the tests make it sign are never sent
+    const hyperliquidConfig = {
+      ...baseConfig,
+      name: 'hyperliquid' as const,
+      privateKey: `0x${'11'.repeat(32)}`,
+      walletAddress: `0x${'22'.repeat(20)}`,
+    };
 
     it('should create default exchange', () => {
       const result = utils.createExchange(baseConfig);
@@ -372,9 +379,66 @@ describe('Exchange Utils', () => {
     });
 
     it('should create hyperliquid exchange', () => {
-      const config = { ...baseConfig, name: 'hyperliquid' as const, privateKey: 'p', walletAddress: 'w' };
-      const result = utils.createExchange(config);
+      const result = utils.createExchange(hyperliquidConfig);
       expect(result).toMatchObject({ publicClient: expect.any(Object), privateClient: expect.any(Object) });
+    });
+
+    it.each`
+      client             | option                   | expected
+      ${'publicClient'}  | ${'builderFee'}          | ${false}
+      ${'privateClient'} | ${'builderFee'}          | ${false}
+      ${'publicClient'}  | ${'fetchMarkets.types'}  | ${['spot']}
+      ${'privateClient'} | ${'fetchMarkets.types'}  | ${['spot']}
+      ${'publicClient'}  | ${'maxRetriesOnFailure'} | ${0}
+      ${'privateClient'} | ${'maxRetriesOnFailure'} | ${0}
+    `('sets the $option option of the hyperliquid $client to $expected', ({ client, option, expected }) => {
+      const clients = utils.createExchange(hyperliquidConfig);
+      expect(clients[client as keyof typeof clients].options).toHaveProperty(option, expected);
+    });
+
+    // ccxt's hyperliquid charges a builder fee for ccxt's own address by default: before the first order or cancelation of a session
+    // (initializeClient), it signs its approval with the user's wallet, then adds it to every order.
+    describe('hyperliquid builder fee', () => {
+      // A spot market as ccxt parses it from hyperliquid (the wrapped token UBTC, listed as BTC/USDC), enough to build an order request
+      const market = {
+        id: '@142',
+        symbol: 'BTC/USDC',
+        base: 'BTC',
+        quote: 'USDC',
+        baseId: '10142',
+        baseName: 'UBTC',
+        quoteId: 'USDC',
+        type: 'spot',
+        spot: true,
+        contract: false,
+        precision: { amount: 0.00001, price: 1 },
+        limits: { cost: { min: 10 } },
+      };
+      let privateClient: hyperliquid;
+
+      beforeEach(() => {
+        privateClient = utils.createExchange(hyperliquidConfig).privateClient as hyperliquid;
+        // The exchange endpoint, which the approval, the referrer and the orders are posted to, answered without any request
+        vi.spyOn(privateClient, 'privatePostExchange').mockResolvedValue({ status: 'ok', response: { type: 'default' } });
+      });
+
+      it('skips the approval of the builder fee', async () => {
+        expect(await privateClient.handleBuilderFeeApproval()).toBe(false);
+      });
+
+      it('posts no approval of the builder fee', async () => {
+        await privateClient.handleBuilderFeeApproval();
+        expect(privateClient.privatePostExchange).not.toHaveBeenCalled();
+      });
+
+      it('adds no builder fee to a sell order built once the client is initialised', async () => {
+        privateClient.setMarkets([market]);
+        await privateClient.initializeClient(); // as createOrders does before building its request
+        const request = privateClient.createOrdersRequest([
+          { symbol: 'BTC/USDC', type: 'limit', side: 'sell', amount: 0.001, price: 100000 },
+        ]);
+        expect(request.action).not.toHaveProperty('builder');
+      });
     });
 
     it.each`

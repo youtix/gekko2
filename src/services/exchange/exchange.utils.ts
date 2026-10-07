@@ -36,7 +36,13 @@ export const createExchange = (config: CCXTExchangeConfig) => {
   switch (name) {
     case 'hyperliquid': {
       const { privateKey, walletAddress } = config;
-      const options = { fetchMarkets: { types: ['spot'] }, maxRetriesOnFailure: 0 }; // we handle it manualy
+      // maxRetriesOnFailure: we handle it manualy.
+      // builderFee: on by default, ccxt's hyperliquid charges a builder fee for ccxt's own address. Before the first order or cancelation
+      // of a session (initializeClient), it signs with the user's wallet an approval of 0.01 % for that address, then adds 1 basis point
+      // to every order: paid on every spot sell, missing from Gekko's fee model (the fees of getMarketData), and counted twice in the
+      // fee of the trades ccxt parses (Hyperliquid's fee already includes it, parseTrade adds it again). Off, nothing is approved nor
+      // added. The referrer ccxt also sets in initializeClient (code CCXT1, a fee discount for the user) is left as it is.
+      const options = { fetchMarkets: { types: ['spot'] }, maxRetriesOnFailure: 0, builderFee: false };
       const publicClient = new ccxt.hyperliquid({ ...commonConfig, agent, options });
       const privateClient = new ccxt.hyperliquid({ ...commonConfig, privateKey, walletAddress, options });
       return { publicClient, privateClient };
