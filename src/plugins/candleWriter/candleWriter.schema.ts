@@ -1,3 +1,3 @@
 import { z } from 'zod';
 
-export const candleWriterSchema = z.object({ name: z.string() });
+export const candleWriterSchema = z.strictObject({ name: z.string() });

@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
-export const traderSchema = z.object({
+export const traderSchema = z.strictObject({
   name: z.string().optional(),
   portfolioUpdates: z
-    .object({
+    .strictObject({
       /** Percentage change required to emit (e.g., 1 for 1%) */
       threshold: z.number().min(0),
       /** Value in quote currency below which an asset is ignored (e.g., 1 for $1) */
