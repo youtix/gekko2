@@ -1,5 +1,11 @@
+import { error } from '@services/logger';
 import { wait } from '@utils/process/process.utils';
+import { inspect } from 'node:util';
 import { HandleCommand } from './bots.types';
+
+// After a failed check, each wait doubles, up to this many intervals (a minute with the default interval): a network that stays
+// down is then tried, and its failure logged, about once a minute rather than at every interval.
+const MAX_BACKOFF_FACTOR = 60;
 
 export abstract class Bot {
   protected handleCommand?: HandleCommand;
@@ -12,14 +18,30 @@ export abstract class Bot {
 
   protected abstract checkUpdates(): Promise<void>;
 
+  /**
+   * Checks for updates every `interval` ms until close(). Never rejects: the callers float the promise, and a failed check (the
+   * network down, a reply that could not be sent) must not end the polling for the rest of the process. A failure is logged and
+   * the loop backs off: the wait doubles after each failed check, up to MAX_BACKOFF_FACTOR intervals, and is back to `interval`
+   * after a successful one.
+   */
   public async listen(interval = 1000) {
     this.isListening = true;
+    let delay = interval;
     while (this.isListening) {
-      await this.checkUpdates();
-      await wait(interval);
+      try {
+        await this.checkUpdates();
+        delay = interval;
+      } catch (err) {
+        delay = Math.min(delay * 2, interval * MAX_BACKOFF_FACTOR);
+        // Not String(), which throws for an object without a prototype: the failure would escape and end the loop after all
+        const reason = err instanceof Error ? err.message : inspect(err);
+        error('bot', `Failed to check for updates, next check in ${delay} ms: ${reason}`);
+      }
+      await wait(delay);
     }
   }
 
+  /** The loop stops once the check or the wait in progress is over. */
   public close() {
     this.isListening = false;
   }
