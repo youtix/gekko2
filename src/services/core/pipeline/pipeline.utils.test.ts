@@ -175,9 +175,21 @@ describe('Pipeline Utils', () => {
         vi.useRealTimers();
       });
 
-      it('should build a live stream for each pair', async () => {
+      it('should build a live stream for each pair, starting with the minute in progress', async () => {
         await launchRealtime('1h', 2);
-        expect(vi.mocked(RealtimeStream).mock.calls).toEqual([[symbol]]);
+        expect(vi.mocked(RealtimeStream).mock.calls).toEqual([[symbol, at('2024-03-15T10:20:00.000Z')]]);
+      });
+
+      it('should start the live streams of all the pairs with the same minute when building them crosses a minute boundary', async () => {
+        vi.mocked(RealtimeStream).mockImplementation(function (this: RealtimeStream) {
+          vi.setSystemTime(Date.now() + ONE_MINUTE);
+          return this;
+        });
+        await launchRealtime('1h', 2, [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }]);
+        expect(vi.mocked(RealtimeStream).mock.calls).toEqual([
+          ['BTC/USDT', at('2024-03-15T10:20:00.000Z')],
+          ['ETH/USDT', at('2024-03-15T10:20:00.000Z')],
+        ]);
       });
 
       it('should synchronize the live streams', async () => {
@@ -218,6 +230,12 @@ describe('Pipeline Utils', () => {
         const gapFiller = vi.mocked(pipeline).mock.lastCall![3] as FillCandleGapStream;
         const symbols = watchedPairs.map(({ symbol }) => symbol);
         expect(await passThroughGapFiller(gapFiller, symbols)).toEqual([symbols]);
+      });
+
+      it('should have the gap filler drop a bucket lacking a pair that has had no candle yet', async () => {
+        await launchRealtime('1h', 2, [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }]);
+        const gapFiller = vi.mocked(pipeline).mock.lastCall![3] as FillCandleGapStream;
+        expect(await passThroughGapFiller(gapFiller, ['BTC/USDT'])).toEqual([]);
       });
 
       // From the start of the candle `candleCount` candles before the one in progress to the last closed minute. The window
@@ -267,19 +285,19 @@ describe('Pipeline Utils', () => {
           uptime.mockRestore();
         });
 
-        // 0 is a closed minute fetched twice (the second copy is dropped), 1 is contiguous, 2 or more is a gap
+        // 0 would be a closed minute fetched twice (the second copy dropped), 1 is contiguous, 2 or more a gap
         it.each`
           slowStep                                | minutesAfterHistory
           ${'nothing'}                            | ${1}
           ${'the process start-up'}               | ${1}
-          ${'building the live stream'}           | ${0}
+          ${'building the live stream'}           | ${1}
           ${'building the warmup history stream'} | ${1}
         `(
           'should fetch the first live minute $minutesAfterHistory minute(s) after the last history minute when $slowStep crosses a minute boundary',
           async ({ slowStep, minutesAfterHistory }) => {
             if (slowStep === 'the process start-up') uptime.mockReturnValue(120);
-            vi.mocked(RealtimeStream).mockImplementation(function (pair: TradingPair) {
-              const stream = new ActualRealtimeStream(pair);
+            vi.mocked(RealtimeStream).mockImplementation(function (pair: TradingPair, startMinute: EpochTimeStamp) {
+              const stream = new ActualRealtimeStream(pair, startMinute);
               liveStreams.push(stream);
               if (slowStep === 'building the live stream') crossMinuteBoundary();
               return stream;
@@ -367,6 +385,13 @@ describe('Pipeline Utils', () => {
         const gapFiller = vi.mocked(pipeline).mock.lastCall![2] as FillCandleGapStream;
         const symbols = pairs.map(({ symbol }) => symbol);
         expect(await passThroughGapFiller(gapFiller, symbols)).toEqual([symbols]);
+      });
+
+      // A pair listed after the start of the range has no candle there, and the others are imported meanwhile
+      it('should have the gap filler let out a bucket lacking a pair that has had no candle yet', async () => {
+        await launchImporter('2024-03-15T09:00:00.000Z');
+        const gapFiller = vi.mocked(pipeline).mock.lastCall![2] as FillCandleGapStream;
+        expect(await passThroughGapFiller(gapFiller, ['BTC/USDT'])).toEqual([['BTC/USDT']]);
       });
 
       it('should hand the plugins to the plugins stream', async () => {

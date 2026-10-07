@@ -1,13 +1,14 @@
 import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
-import { warning } from '@services/logger';
+import { debug, warning } from '@services/logger';
 import { createEmptyCandle } from '@utils/candle/candle.utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FillCandleGapStream } from './fillCandleGap.stream';
 
 // Mocks
 vi.mock('@services/logger', () => ({
+  debug: vi.fn(),
   warning: vi.fn(),
 }));
 
@@ -35,7 +36,6 @@ describe('FillCandleGapStream', () => {
 
   beforeEach(() => {
     stream = new FillCandleGapStream(pairs);
-    vi.clearAllMocks();
   });
 
   const createBucket = (timestamp?: number, candles: { pair: TradingPair; candle: Candle }[] = []): CandleBucket => {
@@ -215,5 +215,102 @@ describe('FillCandleGapStream', () => {
     expect(t2Bucket.size).toBe(2);
     expect(t2Bucket.get(eth)?.volume).toBe(0);
     expect(t2Bucket.get(btc)?.volume).toBe(0);
+  });
+
+  describe('a pair that has had no candle yet', () => {
+    const at = (minutes: number) => start + minutes * 60000;
+    const ethOnly = (minutes: number) => createBucket(at(minutes), [{ pair: eth, candle: ethCandle }]);
+    const both = (minutes: number) =>
+      createBucket(at(minutes), [
+        { pair: eth, candle: ethCandle },
+        { pair: btc, candle: btcCandle },
+      ]);
+
+    // Writes the buckets into a gap filler built with the option, and returns the buckets it lets out
+    const fill = (completeBucketsOnly: boolean, ...buckets: CandleBucket[]) => {
+      const gapFiller = new FillCandleGapStream(pairs, { completeBucketsOnly });
+      const emitted: CandleBucket[] = [];
+      gapFiller.on('data', bucket => emitted.push(bucket));
+      for (const bucket of buckets) gapFiller.write(bucket);
+      return emitted;
+    };
+
+    it.each`
+      completeBucketsOnly | emittedPairs
+      ${false}            | ${[[eth]]}
+      ${true}             | ${[]}
+    `(
+      'should let out $emittedPairs from a first bucket lacking it, with completeBucketsOnly $completeBucketsOnly',
+      ({ completeBucketsOnly, emittedPairs }) => {
+        expect(fill(completeBucketsOnly, ethOnly(0)).map(bucket => [...bucket.keys()])).toEqual(emittedPairs);
+      },
+    );
+
+    it('should let the first complete bucket out first, without filling the minutes dropped before it', () => {
+      const firstComplete = both(2);
+      expect(fill(true, ethOnly(0), firstComplete)).toEqual([firstComplete]);
+    });
+
+    it('should fill it once it has had a candle, with completeBucketsOnly', () => {
+      const [, filled] = fill(true, both(0), ethOnly(1));
+      expect(filled.get(btc)).toMatchObject({ start: at(1), volume: 0 });
+    });
+
+    describe('the logs of the buckets dropped', () => {
+      const sol: TradingPair = 'SOL/USDT';
+      const candles: Record<TradingPair, Candle> = { [eth]: ethCandle, [btc]: btcCandle, [sol]: { ...ethCandle, close: 150 } };
+      const iso = (minutes: number) => new Date(at(minutes)).toISOString();
+      // A bucket at the given minute, with a candle of each pair given
+      const bucketOf = (minutes: number, ...present: TradingPair[]) =>
+        createBucket(
+          at(minutes),
+          present.map(pair => ({ pair, candle: candles[pair] })),
+        );
+
+      // Writes the buckets into a gap filler of the watched pairs that lets complete buckets only out
+      const write = (watched: TradingPair[], ...buckets: CandleBucket[]) => {
+        const gapFiller = new FillCandleGapStream(watched, { completeBucketsOnly: true });
+        for (const bucket of buckets) gapFiller.write(bucket);
+      };
+
+      it('should warn of the first drop only, saying that the buckets are dropped until every pair has had a candle', () => {
+        write(pairs, ethOnly(0), ethOnly(1), ethOnly(2));
+        expect(vi.mocked(warning).mock.calls).toEqual([
+          [
+            'stream',
+            `No ${btc} candle at ${iso(0)}, nor an earlier one to fill it with: the buckets are dropped until every pair has had a candle`,
+          ],
+        ]);
+      });
+
+      it('should log the next drops at debug level, with the pairs and the minute', () => {
+        write([btc, eth, sol], bucketOf(0, btc, sol), bucketOf(1, btc), bucketOf(2, btc));
+        expect(vi.mocked(debug).mock.calls).toEqual([
+          ['stream', `No ${eth}, ${sol} candle at ${iso(1)}, nor an earlier one to fill it with: bucket dropped`],
+          ['stream', `No ${eth}, ${sol} candle at ${iso(2)}, nor an earlier one to fill it with: bucket dropped`],
+        ]);
+      });
+
+      it.each`
+        drops                      | watched            | buckets                                                                  | summary
+        ${'one'}                   | ${[eth, btc]}      | ${[ethOnly(0), both(1)]}                                                 | ${`1 bucket dropped from ${iso(0)} to ${iso(0)}, for want of a candle of ${btc}: the stream starts at ${iso(1)}`}
+        ${'three'}                 | ${[eth, btc]}      | ${[ethOnly(0), ethOnly(1), ethOnly(2), both(3)]}                         | ${`3 buckets dropped from ${iso(0)} to ${iso(2)}, for want of a candle of ${btc}: the stream starts at ${iso(3)}`}
+        ${'two of changing pairs'} | ${[btc, eth, sol]} | ${[bucketOf(0, btc, sol), bucketOf(1, btc), bucketOf(2, btc, eth, sol)]} | ${`2 buckets dropped from ${iso(0)} to ${iso(1)}, for want of a candle of ${eth}, ${sol}: the stream starts at ${iso(2)}`}
+      `('should sum $drops drop(s) up in a warning when the stream starts', ({ watched, buckets, summary }) => {
+        write(watched, ...buckets);
+        expect(vi.mocked(warning).mock.lastCall).toEqual(['stream', summary]);
+      });
+
+      // The first of the three drops and the summary
+      it('should sum the drops up once', () => {
+        write(pairs, ethOnly(0), ethOnly(1), ethOnly(2), both(3), both(4));
+        expect(warning).toHaveBeenCalledTimes(2);
+      });
+
+      it('should not warn when no bucket is dropped', () => {
+        write(pairs, both(0), both(1));
+        expect(warning).not.toHaveBeenCalled();
+      });
+    });
   });
 });
