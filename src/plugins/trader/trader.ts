@@ -9,13 +9,13 @@ import {
   PORTFOLIO_CHANGE_EVENT,
 } from '@constants/event.const';
 import { DEFAULT_FEE_BUFFER } from '@constants/order.const';
-import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder } from '@models/advice.types';
 import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
 import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
+import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
 import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
@@ -39,7 +39,7 @@ const getErrorMessage = (err: unknown) => (err instanceof Error ? err.message : 
 type OrderInstance = TraderOrderMetadata['orderInstance'];
 /** An order, as the events relayed to the strategy describe it */
 type RelayedOrder = OrderInitiatedEvent['order'];
-/** What an order reports with ORDER_INVALID_EVENT (see Order.orderRejected) */
+/** What an order reports with ORDER_INVALID_EVENT (see Order.orderRejected): `filled` says whether it executed part of its amount */
 type OrderRejection = { reason: string; status: string; filled: boolean };
 /** What an order reports with ORDER_CANCELED_EVENT (see Order.orderCanceled): relayed as is */
 type OrderCancelation = { timestamp: EpochTimeStamp } & Pick<OrderCanceledEvent['order'], 'filled' | 'remaining'>;
@@ -48,8 +48,6 @@ export class Trader extends Plugin {
   private readonly orders: Map<UUID, TraderOrderMetadata>;
   private readonly portfolioUpdatesConfig: PortfolioUpdatesConfig | null;
 
-  private warmupCompleted: boolean = false;
-  private warmupBucket: CandleBucket = new Map();
   private portfolio: Portfolio = createEmptyPortfolio();
   private prices: Map<TradingPair, number> = new Map();
   private currentTimestamp: EpochTimeStamp = 0;
@@ -59,6 +57,12 @@ export class Trader extends Plugin {
   private synchronization: Promise<void> | null = null;
   /** How many synchronizations have started: whoever notes the count knows which ones read the exchange after that moment */
   private synchronizationCount = 0;
+  /**
+   * What may still queue the end of an order: the reports in flight (see relayTerminalEvents), and the launches and cancelations
+   * sent, whose answer may end the order and so start a report. Each one leaves the set once settled. None rejects: each catches
+   * its own failures.
+   */
+  private readonly pendingReports = new Set<Promise<void>>();
 
   constructor(parameters?: { portfolioUpdates?: PortfolioUpdatesConfig }) {
     super(Trader.name);
@@ -76,12 +80,11 @@ export class Trader extends Plugin {
    * while one is in flight joins it, and shares its outcome.
    *
    * Unless it started too early for the caller. An order that ended filled or canceled changed the portfolio (a fill, the release of
-   * what the order reserved), and its event carries the portfolio after that change: `startedAfter` is then the count of
-   * synchronizations started when the order ended, and one started before may have read the exchange too early. The caller waits
-   * for it to end, then joins the next one, which all such callers share.
+   * what the order reserved), and so may one that ended in error or refused (see relayError): its event carries the portfolio after
+   * that change. `startedAfter` is then the count of synchronizations started when the order ended, and one started before may have
+   * read the exchange too early. The caller waits for it to end, then joins the next one, which all such callers share.
    *
-   * Not async, so that the promise returned is the synchronization itself, and a caller resumes right after it ends: each step added
-   * before an order report queues its event may push the event past the flush of its bucket, to the next one.
+   * Not async, so that the promise returned is the synchronization itself, and a caller resumes right after it ends.
    */
   private synchronize(startedAfter = 0): Promise<void> {
     if (!this.synchronization) return this.startSynchronization();
@@ -182,11 +185,10 @@ export class Trader extends Plugin {
     const { amount, price, feePercent, side, orderExecutionDate } = summary;
     const { effectivePrice, fee } = computeOrderPricing(side, price, amount, feePercent);
 
+    // Defensive: a summary comes with a price, the exchange's or an estimate (see summarizeCompletedOrder), unless the Trader no
+    // longer lists the order, and so may not know its price (see estimateExecutionPrice)
     if (Number.isNaN(price)) {
-      error(
-        'trader',
-        `[${id}] Order Summary: price is NaN. This usually happens when the exchange returns invalid data or the order was not filled correctly.`,
-      );
+      error('trader', `[${id}] Order Summary: price is NaN, neither the exchange nor the Trader knows the price the order executed at.`);
     } else {
       if (isNil(feePercent) || !Number.isFinite(feePercent))
         warning('trader', 'Exchange did not provide fee information, assuming no fees.');
@@ -210,27 +212,86 @@ export class Trader extends Plugin {
   }
 
   /**
-   * The summary of a completed order, or undefined when it cannot be created (trades not fetched, invalid exchange data). The
-   * order is then reported as errored instead: the strategy waits for a terminal event of every order it created.
+   * The summary of a completed order. A fill is a fact: the order executed, and the position changed on the exchange. When the
+   * exchange cannot summarize it (its trades out of reach once the retries are spent, or any failure after the fill), the summary is
+   * estimated instead (see estimateOrderSummary), and the strategy still hears of a fill. Relayed as an error, it counted towards
+   * the circuit breaker, dropped the trailing stop of the position the order opened, and let a strategy place the order again.
+   *
+   * So is a summary without a usable amount, price or execution date: createOrderSummary resolves with NaN ones when none of the
+   * trades of the account matches the order (fetched from a bound past its fills, beyond the pages fetched, or not listed yet by the
+   * exchange). Relayed as they were, they armed the trailing stop of the position with an amount of NaN, whose SELL was refused,
+   * and the analyzers skipped or misdated the fill.
    */
-  private async summarizeCompletedOrder(orderInstance: OrderInstance, order: RelayedOrder, startedAfter: number) {
+  private async summarizeCompletedOrder(orderInstance: OrderInstance, order: RelayedOrder) {
+    const isFinitePositive = (value: number) => Number.isFinite(value) && value > 0;
+    let reason: string;
     try {
-      return await orderInstance.createSummary();
+      const summary = await orderInstance.createSummary();
+      const { amount, price, orderExecutionDate } = summary;
+      if (isFinitePositive(amount) && isFinitePositive(price) && Number.isFinite(orderExecutionDate)) return summary;
+      reason = `its trades were not found, or not usable (amount ${amount}, price ${price}, executed at ${toISOString(orderExecutionDate)})`;
     } catch (err) {
-      const reason = getErrorMessage(err);
-      error('trader', `[${order.id}] ${order.side} ${order.type} order completed, but its summary could not be created: ${reason}`);
-      await this.relayError(order, reason, startedAfter);
+      reason = `its summary could not be created: ${getErrorMessage(err)}`;
     }
+    return this.estimateOrderSummary(orderInstance, order, reason);
   }
 
   /**
-   * Forgets an order that ended in error, or that the exchange refused, then relays ORDER_ERRORED_EVENT. Neither changed the
-   * portfolio: any synchronization will do (see synchronize), unless a fill came first, whose summary failed (`startedAfter`).
-   * The synchronization is best effort, here as in every report: a failure is logged, and the event leaves with the portfolio
-   * known, since the strategy waits for it whatever happens. It is awaited right here, not through a wrapper, which would add a
-   * step before the event (see synchronize).
+   * A summary of a filled order estimated from what the Trader and the order know, for when the exchange gives none. It is logged
+   * as an error, with `reason`, which completes "order filled, but", and the source of each figure:
+   * - amount: the fills the order recorded, as the exchange reported them. Without any, the amount ordered, which a filled order
+   *   executed in full, up to the lot rounding of the exchange.
+   * - price: see estimateExecutionPrice.
+   * - fee: unknown, which computeOrderPricing takes as no fee.
+   * - execution date: the order does not know when it was filled: the end of the last minute processed.
    */
-  private async relayError(order: RelayedOrder, reason: string, startedAfter?: number) {
+  private estimateOrderSummary(orderInstance: OrderInstance, order: RelayedOrder, reason: string): OrderSummary {
+    const { id, side, type } = order;
+    const filledAmount = orderInstance.getFilledAmount();
+    const isFillReported = filledAmount > 0;
+    const amount = isFillReported ? filledAmount : order.amount;
+    const amountSource = isFillReported
+      ? 'the fill reported'
+      : 'the amount ordered: no fill reported, and a filled order executed it in full, up to lot rounding';
+    const { price, priceSource } = this.estimateExecutionPrice(order);
+
+    error(
+      'trader',
+      [
+        `[${id}] ${side} ${type} order filled, but ${reason}. Its summary is estimated:`,
+        `amount ${amount} (${amountSource}),`,
+        `price ${price} (${priceSource}),`,
+        'fee unknown,',
+        `executed at ${toISOString(this.currentTimestamp)} (the end of the last minute processed)`,
+      ].join(' '),
+    );
+    return { amount, price, side, feePercent: undefined, orderExecutionDate: this.currentTimestamp };
+  }
+
+  /**
+   * The price a filled order executed at, estimated (see estimateOrderSummary): a LIMIT order executed at its price, or better. Any
+   * other one at the market, which a STICKY order follows: the last price known, else the price the order was created with. That
+   * price is kept with the order until its end is reported (see reportCompleted).
+   */
+  private estimateExecutionPrice({ id, symbol, type }: RelayedOrder) {
+    const creationPrice = this.orders.get(id)?.price ?? NaN;
+    if (type === 'LIMIT') return { price: creationPrice, priceSource: 'its limit price' };
+
+    const marketPrice = this.prices.get(symbol) ?? NaN;
+    if (marketPrice > 0) return { price: marketPrice, priceSource: 'the last market price' };
+    return { price: creationPrice, priceSource: 'the price it was created with: no market price known' };
+  }
+
+  /**
+   * Forgets an order that ended in error, or that the exchange refused, then relays ORDER_ERRORED_EVENT with the portfolio from a
+   * synchronization started after that end (`startedAfter`, see synchronize), as every report does. Either may follow a change of
+   * the portfolio: an error may come after the order executed, in part or in full (a STICKY order reports what it had already
+   * filled, a poll can fail for good after a fill, a creation whose outcome is unknown may be live), and the relaunch of a STICKY
+   * order is refused once its move has canceled the transaction before, releasing what it reserved. The synchronization is best
+   * effort, here as in every report: a failure is logged, and the event leaves with the portfolio known, since the strategy waits
+   * for it whatever happens.
+   */
+  private async relayError(order: RelayedOrder, reason: string, startedAfter: number) {
     this.orders.delete(order.id);
     try {
       await this.synchronize(startedAfter);
@@ -259,22 +320,49 @@ export class Trader extends Plugin {
    * the first terminal event an order emits is the only one relayed, a later one (a fill after an error, an error repeated) is
    * ignored, and the strategy hears once of each order. Doing so while the order emits is safe: an EventEmitter calls a copy of the
    * listeners it had when emit began, and the status and fill logs come first, emitted before the terminal event.
+   *
+   * A report queues its event several exchange calls after the order ended (the summary, the synchronization), and the events of a
+   * bucket are flushed once, as soon as the plugins have processed it (see PluginsStream). Each report is kept in pendingReports:
+   * - in backtest, they are awaited before the events are flushed (see processOneMinuteBucket and broadcastDeferredEmit), and so are
+   *   the launches and cancelations: the simulated exchange answers within a few ticks. The end of an order it settles with a bucket
+   *   is delivered with that bucket, and that of an order it ends at once, created or canceled during the flush of the TradingAdvisor,
+   *   in the flush of the Trader that follows. Left to race the flush, a fill reached the strategy and the analyzers one or two
+   *   candles late, the count depending on how many ticks each step took (even on the STICKY orders open), and a fill on the last
+   *   bucket was never delivered: nothing is flushed after processFinalize.
+   * - in realtime, paper trading included, a report waits for the network: awaited, it would hold the bucket, and every plugin, for
+   *   as long as the exchange takes to answer. It is delivered with the first flush after it ends.
    */
   private relayTerminalEvents(orderInstance: OrderInstance, order: RelayedOrder) {
-    orderInstance.once(ORDER_COMPLETED_EVENT, () => this.reportCompleted(orderInstance, order));
-    orderInstance.once(ORDER_CANCELED_EVENT, (cancelation: OrderCancelation) => this.reportCanceled(orderInstance, order, cancelation));
-    orderInstance.once(ORDER_ERRORED_EVENT, (reason: string) => this.reportErrored(orderInstance, order, reason));
-    orderInstance.once(ORDER_INVALID_EVENT, (rejection: OrderRejection) => this.reportRejected(orderInstance, order, rejection));
+    orderInstance.once(ORDER_COMPLETED_EVENT, () => this.trackReport(this.reportCompleted(orderInstance, order)));
+    orderInstance.once(ORDER_CANCELED_EVENT, (cancelation: OrderCancelation) =>
+      this.trackReport(this.reportCanceled(orderInstance, order, cancelation)),
+    );
+    orderInstance.once(ORDER_ERRORED_EVENT, (reason: string) => this.trackReport(this.reportErrored(orderInstance, order, reason)));
+    orderInstance.once(ORDER_INVALID_EVENT, (rejection: OrderRejection) =>
+      this.trackReport(this.reportRejected(orderInstance, order, rejection)),
+    );
   }
 
-  /** The fill, with its summary and the portfolio after it; an error instead when it cannot be summarized */
+  /** Keeps a report, or a call that may start one, in pendingReports until it settles. It is returned as is. */
+  private trackReport(report: Promise<void>) {
+    this.pendingReports.add(report);
+    const release = () => this.pendingReports.delete(report);
+    report.then(release, release);
+    return report;
+  }
+
+  /** Waits until no report is in flight: the one awaited may start another (a launch ends in a fill, which is then reported) */
+  private async settlePendingReports() {
+    while (this.pendingReports.size) await Promise.all(this.pendingReports);
+  }
+
+  /** The fill, with its summary, estimated when the exchange cannot give it (see summarizeCompletedOrder), and the portfolio after it */
   private async reportCompleted(orderInstance: OrderInstance, order: RelayedOrder) {
     const { id, symbol, side, type, orderCreationDate } = order;
     try {
       orderInstance.removeAllListeners();
       const startedAfter = this.synchronizationCount;
-      const summary = await this.summarizeCompletedOrder(orderInstance, order, startedAfter);
-      if (!summary) return;
+      const summary = await this.summarizeCompletedOrder(orderInstance, order);
       // The portfolio after the fill, best effort (see relayError)
       try {
         await this.synchronize(startedAfter);
@@ -314,25 +402,43 @@ export class Trader extends Plugin {
     }
   }
 
+  /** The error, and the portfolio after it: the order may have executed before (see relayError) */
   private async reportErrored(orderInstance: OrderInstance, order: RelayedOrder, reason: string) {
     const { id, side, type } = order;
     try {
       orderInstance.removeAllListeners();
+      const startedAfter = this.synchronizationCount;
       error('trader', `[${id}] ${side} ${type} order: ${reason} (status: ERROR)`);
-      await this.relayError(order, reason);
+      await this.relayError(order, reason, startedAfter);
     } catch (err) {
       error('trader', `[${id}] Impossible to report the error of the ${side} ${type} order: ${getErrorMessage(err)}`);
     }
   }
 
-  /** The refusal of the order by the exchange, which the strategy hears of as an error */
+  /**
+   * The refusal of the order by the exchange, which the strategy hears of as an error. Unless the order had executed part of what it
+   * ordered: a STICKY order whose relaunch after a move is refused (see StickyOrder.handleCreateOrderError) is over with what its
+   * earlier transactions filled, each of them seen canceled, nothing left on the exchange. That part is reported as a completion,
+   * its summary created, or estimated (see reportCompleted), as when what is left is out of the limits of the market, which the
+   * order takes for its fill (OrderOutOfRangeError). Relayed as an error, the strategy never heard of the fill, the trailing stop of
+   * the position was not armed, and the analyzers missed it. The amount the order filled is read from it (see
+   * Order.getFilledAmount): its rejection only says whether it filled anything.
+   */
   private async reportRejected(orderInstance: OrderInstance, order: RelayedOrder, rejection: OrderRejection) {
-    const { id, side, type } = order;
+    const { id, side, type, amount } = order;
     try {
       orderInstance.removeAllListeners();
+      const startedAfter = this.synchronizationCount;
       const { reason, status, filled } = rejection;
+      const filledAmount = orderInstance.getFilledAmount();
+      if (filledAmount > 0) {
+        const fill = `after ${filledAmount} of ${amount} filled: that part is reported as a completion`;
+        warning('trader', `[${id}] ${side} ${type} order: ${reason} (status: ${status}), ${fill}`);
+        await this.reportCompleted(orderInstance, order);
+        return;
+      }
       info('trader', `[${id}] ${side} ${type} order: ${reason} (filled: ${filled}, status: ${status})`);
-      await this.relayError(order, reason);
+      await this.relayError(order, reason, startedAfter);
     } catch (err) {
       error('trader', `[${id}] Impossible to report the rejection of the ${side} ${type} order: ${getErrorMessage(err)}`);
     }
@@ -342,16 +448,18 @@ export class Trader extends Plugin {
   /*                             EVENT LISTENERS                                */
   /* -------------------------------------------------------------------------- */
 
+  /**
+   * Emits the portfolio at the end of the warmup, when the PortfolioAnalyzer starts recording the equity. The bucket that ended the
+   * warmup was processed as it arrived, like every bucket: nothing else is left to do. Best effort, like every synchronization of the
+   * plugin (see relayError): a rejection leaving the handler would end the run (see PluginsStream), and the next synchronization
+   * tries again.
+   */
   public async onStrategyWarmupCompleted(_bucket: CandleBucket[]) {
-    // There is only one warmup event during the execution
-    this.warmupCompleted = true;
-    const oneMinuteCandleBucket = this.warmupBucket;
-    this.warmupBucket = new Map();
-
-    if (oneMinuteCandleBucket.size === this.pairs.length) await this.processOneMinuteBucket(oneMinuteCandleBucket);
-    else throw new GekkoError('trader', 'Impossible to process warmup bucket: Not all pairs are present');
-
-    await this.synchronize();
+    try {
+      await this.synchronize();
+    } catch (err) {
+      error('trader', `[warmup] Impossible to synchronize: ${getErrorMessage(err)}`);
+    }
   }
 
   public async onStrategyCancelOrder(payloads: UUID[]) {
@@ -360,18 +468,22 @@ export class Trader extends Plugin {
       uniq(payloads).map(async id => {
         const orderMetadata = this.orders.get(id);
         if (!orderMetadata) return warning('trader', `[${id}] Impossible to cancel order: Unknown Order`);
-        const { orderInstance, side, amount, type, orderCreationDate, price, symbol } = orderMetadata;
+        const { orderInstance, side, amount, type, orderCreationDate, requestedPrice, symbol } = orderMetadata;
 
-        // From now on its updates are no longer logged, and its end is relayed with the price it was placed at (the creation flow
-        // relays the price the strategy asked for, if any)
+        // From now on its updates are no longer logged, and its end is relayed as the creation flow relays it: with the price the
+        // strategy asked for, if any. Not the price the order was created with (see TraderOrderMetadata), the market price for an
+        // order without one, which the strategy and the EventSubscriber would read as a requested limit price.
         orderInstance.removeAllListeners();
-        this.relayTerminalEvents(orderInstance, { id, orderCreationDate, amount, side, type, price, symbol });
+        this.relayTerminalEvents(orderInstance, { id, orderCreationDate, amount, side, type, price: requestedPrice, symbol });
 
         // Cancel, without waiting: the outcome arrives through the terminal events. A failure is reported as ORDER_ERRORED_EVENT,
-        // so a rejection is not expected, but it must not become an unhandled one
-        orderInstance
-          .cancel()
-          .catch(err => error('trader', `[${id}] Impossible to cancel the ${side} ${type} order: ${getErrorMessage(err)}`));
+        // so a rejection is not expected, but it must not become an unhandled one. Tracked as a report: the simulated exchange
+        // answers at once, and its answer ends the order (see relayTerminalEvents).
+        this.trackReport(
+          orderInstance
+            .cancel()
+            .catch(err => error('trader', `[${id}] Impossible to cancel the ${side} ${type} order: ${getErrorMessage(err)}`)),
+        );
       }),
     );
   }
@@ -382,9 +494,19 @@ export class Trader extends Plugin {
       payloads.map(async advice => {
         const { id, side, orderCreationDate, type, symbol } = advice;
         const price = advice.price ?? this.prices.get(symbol);
+        // Unknown (a pair not watched), 0, negative or NaN: the order can be neither sized nor placed. The strategy already holds its
+        // id and waits for a terminal event of it: it hears of it as an error, like an order the exchange refused. Nothing was
+        // initiated and nothing changed on the exchange: no ORDER_INITIATED_EVENT, no synchronization, the event leaves with the
+        // portfolio known.
         if (!price || price <= 0) {
-          warning('trader', `[${id}] No price found for symbol: ${symbol}`);
-          return; // Reject order
+          const reason = isNil(advice.price) ? `no price known for ${symbol}` : `invalid requested price ${advice.price}`;
+          warning('trader', `[${id}] Impossible to create the ${side} ${type} order: ${reason}`);
+          // The amount the strategy asked for, if any. Without one the order was all-in, to be sized as it is placed (a BUY from the
+          // price, missing or invalid here): never placed, it ordered nothing.
+          const order = { ...advice, amount: advice.amount ?? 0, reason, orderErrorDate: this.currentTimestamp };
+          const exchange = { price: this.prices.get(symbol) || 0, portfolio: this.portfolio };
+          this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
+          return;
         }
 
         const [assetName, currencyName] = symbol.split('/');
@@ -403,7 +525,7 @@ export class Trader extends Plugin {
 
         // Create order
         const orderInstance = new ORDER_FACTORY[type](symbol, id, side, amount, price);
-        this.orders.set(id, { amount, side, orderCreationDate, type, price, orderInstance, symbol });
+        this.orders.set(id, { amount, side, orderCreationDate, type, price, requestedPrice: advice.price, orderInstance, symbol });
 
         // UPDATE EVENTS
         orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>
@@ -419,10 +541,13 @@ export class Trader extends Plugin {
         this.relayTerminalEvents(orderInstance, orderInitiated);
 
         // Launch the order, without waiting: the outcome arrives through the terminal events. A failure is reported as
-        // ORDER_ERRORED_EVENT, so a rejection is not expected, but it must not become an unhandled one
-        orderInstance
-          .launch()
-          .catch(err => error('trader', `[${id}] Impossible to launch the ${side} ${type} order: ${getErrorMessage(err)}`));
+        // ORDER_ERRORED_EVENT, so a rejection is not expected, but it must not become an unhandled one. Tracked as a report: the
+        // simulated exchange may end the order at its launch, a MARKET order filled at once (see relayTerminalEvents).
+        this.trackReport(
+          orderInstance
+            .launch()
+            .catch(err => error('trader', `[${id}] Impossible to launch the ${side} ${type} order: ${getErrorMessage(err)}`)),
+        );
       }),
     );
   }
@@ -442,12 +567,13 @@ export class Trader extends Plugin {
   protected async processOneMinuteBucket(bucket: CandleBucket) {
     // Throw error if bucket is empty
     const firstEntry = getFirstCandleFromBucket(bucket);
+    // The first execution, which the backtest mode sync below skips
+    const isFirstBucket = !this.currentTimestamp;
 
-    // Update warmup candle bucket until warmup is completed
-    if (!this.warmupCompleted) this.warmupBucket = bucket;
-
-    // Update all candle bucket prices
+    // Update all candle bucket prices, and the time: the end of the minute, where the clock of the simulated exchange already is
+    // (see PluginsStream). A report settled during the bucket dates an estimated fill, or an error, with it.
     for (const [symbol, candle] of bucket) this.prices.set(symbol, candle.close);
+    this.currentTimestamp = addMinutes(firstEntry.start, 1).getTime();
 
     if (this.mode === 'backtest') {
       // Check the orders before the synchronization, which then sees what a move reserves (see checkStickyOrders)
@@ -455,15 +581,28 @@ export class Trader extends Plugin {
 
       // Synchronize periodically in backtest mode (order fills are handled by exchange callbacks)
       const minutes = differenceInMinutes(firstEntry.start, 0);
-      if (this.currentTimestamp && minutes % getBacktestModeIntervalSyncTime(this.timeframe) === 0) await this.synchronize();
-    }
+      if (!isFirstBucket && minutes % getBacktestModeIntervalSyncTime(this.timeframe) === 0) await this.synchronize();
 
-    // Update timestamp last to detect the first execution for backtest mode sync above
-    this.currentTimestamp = addMinutes(firstEntry.start, 1).getTime();
+      // The ends of orders the simulated exchange settled with this bucket, or the checks above, are queued before its events are
+      // flushed, and delivered with it (see relayTerminalEvents)
+      await this.settlePendingReports();
+    }
   }
 
-  protected processFinalize(): void {
+  /**
+   * Delivers the oldest group of deferred events (see SequentialEventEmitter). In backtest, once the reports in flight are queued: the
+   * flush of the TradingAdvisor, which comes first, creates and cancels orders, and the simulated exchange ends some of them at once
+   * (see relayTerminalEvents).
+   */
+  public async broadcastDeferredEmit(): Promise<boolean> {
+    if (this.mode === 'backtest') await this.settlePendingReports();
+    return super.broadcastDeferredEmit();
+  }
+
+  protected async processFinalize() {
     if (this.syncInterval) clearInterval(this.syncInterval);
+    // Nothing is flushed any more, but in backtest the reports in flight end before the run does, their logs complete
+    if (this.mode === 'backtest') await this.settlePendingReports();
   }
 
   /* -------------------------------------------------------------------------- */

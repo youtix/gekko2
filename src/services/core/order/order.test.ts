@@ -127,15 +127,18 @@ describe('order', () => {
     });
   });
 
+  // `filled` says whether the order executed part of what it ordered before its refusal, as a STICKY order whose relaunch after a move
+  // is refused may have: its earlier transaction canceled, with what it filled
   describe('orderRejected', () => {
-    it('should call setStatus with "rejected" and emit ORDER_INVALID_EVENT with filled false and a reason', () => {
+    it.each`
+      kind                | states                                                             | filled
+      ${'no fill'}        | ${[]}                                                              | ${false}
+      ${'a partial fill'} | ${[{ id: 'tx1', status: 'canceled', filled: 2, timestamp: 1000 }]} | ${true}
+    `('sets the status "rejected" and emits ORDER_INVALID_EVENT with filled $filled and the reason, given $kind', ({ states, filled }) => {
+      states.forEach((state: OrderState) => testOrder['recordOrderUpdate'](state));
       const spy = vi.spyOn(testOrder, 'emit');
       testOrder['orderRejected']('error reason');
-      expect(spy).toHaveBeenCalledWith(ORDER_INVALID_EVENT, {
-        status: 'rejected',
-        filled: false,
-        reason: 'error reason',
-      });
+      expect(spy).toHaveBeenCalledWith(ORDER_INVALID_EVENT, { status: 'rejected', filled, reason: 'error reason' });
     });
   });
 
@@ -326,6 +329,33 @@ describe('order', () => {
         record({ filled });
         expect(listener.mock.calls).toEqual(calls);
       });
+    });
+  });
+
+  // What the order executed as the exchange reported it, which the Trader estimates the summary of a fill from when the exchange
+  // cannot give one: the cumulative fill of each transaction, added up over the transactions (a STICKY order places several)
+  describe('getFilledAmount', () => {
+    const record = (states: Partial<OrderState>[]) =>
+      states.forEach(state => testOrder['recordOrderUpdate']({ id: 'tx1', status: 'open', timestamp: 1000, ...state }));
+
+    it.each`
+      kind                                       | states                                                                   | expected
+      ${'no state'}                              | ${[]}                                                                    | ${0}
+      ${'a state without fill'}                  | ${[{ filled: undefined }]}                                               | ${0}
+      ${'a fill'}                                | ${[{ filled: 2 }]}                                                       | ${2}
+      ${'a transaction filled further'}          | ${[{ filled: 2 }, { filled: 5, status: 'closed' }]}                      | ${5}
+      ${'a fill, then a state without fill'}     | ${[{ filled: 2 }, { filled: undefined, status: 'closed' }]}              | ${2}
+      ${'the fills of two transactions'}         | ${[{ filled: 2 }, { id: 'tx2', filled: 3 }]}                             | ${5}
+      ${'a transaction without fill and a fill'} | ${[{ filled: undefined, status: 'canceled' }, { id: 'tx2', filled: 3 }]} | ${3}
+    `('returns $expected given $kind', ({ states, expected }) => {
+      record(states);
+      expect(testOrder.getFilledAmount()).toBe(expected);
+    });
+
+    // recordOrderUpdate always records a number: a transaction typed without one counts as nothing filled, not as NaN
+    it('counts a transaction recorded without a fill as 0', () => {
+      testOrder['transactions'].set('tx1', { id: 'tx1', status: 'closed', timestamp: 1000 });
+      expect(testOrder.getFilledAmount()).toBe(0);
     });
   });
 

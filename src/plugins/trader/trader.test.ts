@@ -8,6 +8,7 @@ import {
   ORDER_STATUS_CHANGED_EVENT,
   PORTFOLIO_CHANGE_EVENT,
 } from '@constants/event.const';
+import { EMPTY_ORDER_SUMMARY } from '@constants/order.const';
 import { AdviceOrder } from '@models/advice.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { OrderSummary } from '@services/core/order/order.types';
@@ -125,6 +126,9 @@ function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = fa
       side: this.side,
       orderExecutionDate: 1_700_000_111_000,
     }));
+    // No fill reported, unless a test says otherwise: a refused order executed nothing (see Trader.reportRejected), and the summary
+    // of a filled order that reported none is estimated from the amount ordered (see Trader.estimateOrderSummary)
+    this.getFilledAmount = vi.fn(() => 0);
     this.removeAllListeners = vi.fn(() => {
       listenersStore.set(this, new Map());
     });
@@ -210,6 +214,13 @@ describe('Trader', () => {
     (trader['addDeferredEmit'] as unknown as Mock).mock.calls.find(call => call[0] === ORDER_COMPLETED_EVENT)?.[1];
   const getCanceledEvent = () =>
     (trader['addDeferredEmit'] as unknown as Mock).mock.calls.find(call => call[0] === ORDER_CANCELED_EVENT)?.[1];
+  const getErroredEvent = () =>
+    (trader['addDeferredEmit'] as unknown as Mock).mock.calls.find(call => call[0] === ORDER_ERRORED_EVENT)?.[1];
+  // The terminal events relayed to the strategy, in the order they were queued
+  const getRelayedEvents = () =>
+    (trader['addDeferredEmit'] as unknown as Mock).mock.calls
+      .map(([event]) => event)
+      .filter(event => [ORDER_CANCELED_EVENT, ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT].includes(event));
 
   const buildAdvice = (overrides?: Partial<AdviceOrder>): AdviceOrder => ({
     id: overrides?.id ?? '20a7abd2-546b-4c65-b04d-900b84fa5fe6',
@@ -272,13 +283,8 @@ describe('Trader', () => {
   });
 
   describe('constructor', () => {
-    it.each`
-      field                | expected
-      ${'warmupCompleted'} | ${false}
-      ${'warmupBucket'}    | ${expect.any(Map)}
-      ${'prices'}          | ${expect.any(Map)}
-    `('initializes $field to $expected', ({ field, expected }) => {
-      expect((trader as any)[field]).toEqual(expected);
+    it('initializes prices as an empty Map', () => {
+      expect(trader['prices']).toEqual(new Map());
     });
 
     it('initializes portfolio as an empty Map', () => {
@@ -464,60 +470,49 @@ describe('Trader', () => {
     });
   });
 
+  // The bucket that ends the warmup was processed as it arrived, like every bucket: what is left is the portfolio at the end of the warmup
   describe('onStrategyWarmupCompleted', () => {
-    it('should set warmupCompleted to true', async () => {
-      trader['warmupCompleted'] = false;
-      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
-      trader['warmupBucket'] = bucket;
-      trader['processOneMinuteBucket'] = vi.fn();
-      trader['synchronize'] = vi.fn();
+    const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
 
-      await trader.onStrategyWarmupCompleted(new Map() as any);
+    // As in the stream: every plugin processes the bucket that ends the warmup, then its events are flushed
+    const completeWarmup = async () => {
+      await trader['processOneMinuteBucket'](bucket);
+      await trader.onStrategyWarmupCompleted([bucket]);
+    };
 
-      expect(trader['warmupCompleted']).toBeTruthy();
+    it('synchronizes once', async () => {
+      await completeWarmup();
+      expect(fakeExchange.fetchBalance).toHaveBeenCalledOnce();
     });
 
-    it('should clear warmupBucket', async () => {
-      trader['warmupCompleted'] = false;
-      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
-      trader['warmupBucket'] = bucket;
-      trader['processOneMinuteBucket'] = vi.fn();
-      trader['synchronize'] = vi.fn();
-
-      await trader.onStrategyWarmupCompleted(new Map() as any);
-
-      expect(trader['warmupBucket']).not.toBe(bucket);
-      expect(trader['warmupBucket']?.size).toBe(0);
+    it('emits the portfolio it fetched', async () => {
+      await completeWarmup();
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(PORTFOLIO_CHANGE_EVENT, trader['portfolio']);
     });
 
-    it('should call processOneMinuteBucket when collected bucket has all pairs', async () => {
-      // pairs length is 1 by default mock
-      trader['warmupCompleted'] = false;
-      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
-      trader['warmupBucket'] = bucket;
-      trader['processOneMinuteBucket'] = vi.fn();
-      trader['synchronize'] = vi.fn();
-
-      await trader.onStrategyWarmupCompleted(new Map() as any);
-
-      expect(trader['processOneMinuteBucket']).toHaveBeenCalledWith(bucket);
+    it('checks a STICKY order once for the bucket that ends the warmup in backtest', async () => {
+      (trader as any).mode = 'backtest';
+      await trader.onStrategyCreateOrder([buildAdvice({ amount: 1, price: 100 })]);
+      await completeWarmup();
+      expect(orderActions.checkOrder).toHaveBeenCalledOnce();
     });
 
-    it('should throw error if warmup buckets are incomplete (not all pairs present)', async () => {
-      trader['warmupBucket'] = new Map() as any; // Empty map, but 1 pair expected
-      trader['processOneMinuteBucket'] = vi.fn();
+    // Best effort, like every synchronization of the plugin: a rejection leaving the handler would end the run
+    describe('when the synchronization fails', () => {
+      let settled: PromiseSettledResult<void>[];
 
-      await expect(trader.onStrategyWarmupCompleted(new Map() as any)).rejects.toThrow(/Impossible to process warmup bucket/);
-    });
+      beforeEach(async () => {
+        fakeExchange.fetchBalance.mockRejectedValue(new Error('network down'));
+        settled = await Promise.allSettled([completeWarmup()]);
+      });
 
-    it('should synchronize with exchange', async () => {
-      trader['warmupBucket'] = new Map([['BTC/USDT', defaultCandle]]) as any;
-      trader['processOneMinuteBucket'] = vi.fn();
-      trader['synchronize'] = vi.fn();
+      it('resolves instead of rejecting', () => {
+        expect(settled).toEqual([{ status: 'fulfilled', value: undefined }]);
+      });
 
-      await trader.onStrategyWarmupCompleted(new Map() as any);
-
-      expect(trader['synchronize']).toHaveBeenCalledOnce();
+      it('logs the failure', () => {
+        expect(logger.error).toHaveBeenCalledWith('trader', '[warmup] Impossible to synchronize: network down');
+      });
     });
   });
 
@@ -548,27 +543,6 @@ describe('Trader', () => {
       await trader['processOneMinuteBucket'](bucket);
 
       expect(trader['currentTimestamp']).toBe(1_700_000_060_000); // start + 1 min
-    });
-
-    it('should buffer candle until warmup completes', async () => {
-      trader['warmupCompleted'] = false;
-      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
-      // Note: processOneMinuteBucket REPLACES warmupBucket reference if not completed
-
-      await trader['processOneMinuteBucket'](bucket);
-
-      expect(trader['warmupBucket']).toBe(bucket);
-    });
-
-    it('should NOT update warmupBucket once warmup completes', async () => {
-      trader['warmupCompleted'] = true;
-      const initialBucket = new Map() as any;
-      trader['warmupBucket'] = initialBucket;
-      const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
-
-      await trader['processOneMinuteBucket'](bucket);
-
-      expect(trader['warmupBucket']).toBe(initialBucket);
     });
 
     // In realtime an interval of each order runs its check. In backtest nothing does but the bucket, for the STICKY orders, which
@@ -750,15 +724,56 @@ describe('Trader', () => {
       expect(metadata?.price).toBe(95);
     });
 
-    it('rejects order when symbol price is missing and no price provided', async () => {
+    // The strategy already holds the id of the order (see StrategyManager.createOrder) and waits for a terminal event of it
+    describe.each`
+      description                          | price        | marketPrice  | reason
+      ${'no price is known for the pair'}  | ${undefined} | ${undefined} | ${'no price known for BTC/USDT'}
+      ${'the price requested is 0'}        | ${0}         | ${100}       | ${'invalid requested price 0'}
+      ${'the price requested is negative'} | ${-5}        | ${100}       | ${'invalid requested price -5'}
+      ${'the price requested is NaN'}      | ${NaN}       | ${100}       | ${'invalid requested price NaN'}
+    `('when $description', ({ price, marketPrice, reason }) => {
+      const advice = buildAdvice({ price });
+
+      beforeEach(async () => {
+        trader['prices'].clear();
+        if (marketPrice) trader['prices'].set('BTC/USDT', marketPrice);
+        await trader.onStrategyCreateOrder([advice]);
+      });
+
+      it('logs a warning with the reason', () => {
+        expect(logger.warning).toHaveBeenCalledWith('trader', `[${advice.id}] Impossible to create the BUY STICKY order: ${reason}`);
+      });
+
+      it('emits a deferred ORDER_ERRORED_EVENT with the reason, the portfolio and the price known', () => {
+        expect(trader['addDeferredEmit']).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, {
+          order: { ...advice, amount: 0, reason, orderErrorDate: 1_700_000_000_000 },
+          exchange: { price: marketPrice ?? 0, portfolio: trader['portfolio'] },
+        });
+      });
+
+      it('emits no ORDER_INITIATED_EVENT', () => {
+        expect(getInitiatedEvent()).toBeUndefined();
+      });
+
+      it('creates no order', () => {
+        expect(getOrdersMap().size).toBe(0);
+      });
+
+      // Nothing was placed, so nothing changed on the exchange
+      it('does not synchronize', () => {
+        expect(fakeExchange.fetchBalance).not.toHaveBeenCalled();
+      });
+    });
+
+    it('relays the amount the strategy asked for in the ORDER_ERRORED_EVENT of an order without price', async () => {
       trader['prices'].clear();
-      const advice = buildAdvice({ amount: 1, type: 'MARKET', side: 'SELL' });
 
-      await trader.onStrategyCreateOrder([advice]);
+      await trader.onStrategyCreateOrder([buildAdvice({ amount: 1, type: 'MARKET', side: 'SELL' })]);
 
-      expect(logger.warning).toHaveBeenCalledWith('trader', expect.stringContaining('No price found'));
-      const metadata = getOrderMetadata(advice.id);
-      expect(metadata).toBeUndefined();
+      expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
+        ORDER_ERRORED_EVENT,
+        expect.objectContaining({ order: expect.objectContaining({ amount: 1 }) }),
+      );
     });
 
     it('handles ORDER_ERRORED_EVENT from order instance', async () => {
@@ -957,21 +972,6 @@ describe('Trader', () => {
       );
     });
 
-    it('includes requested price when canceling limit orders', async () => {
-      const advice = buildAdvice({ type: 'LIMIT', side: 'SELL', price: 210 });
-      await trader.onStrategyCreateOrder([advice]);
-      const order = getOrderInstance(advice.id)!;
-
-      await trader.onStrategyCancelOrder([advice.id]);
-
-      order.emit(ORDER_CANCELED_EVENT, { filled: 0, remaining: 5 });
-      await tick();
-
-      const call = (trader['addDeferredEmit'] as Mock).mock.calls.find(c => c[0] === ORDER_CANCELED_EVENT);
-      expect(call).toBeDefined();
-      expect(call![1].order.price).toBe(210);
-    });
-
     it('handles cancellation error', async () => {
       const advice = buildAdvice();
       const synchronizeSpy = vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
@@ -1133,18 +1133,22 @@ describe('Trader', () => {
       });
     });
 
+    // A fill is a fact: the strategy hears of it as one, its summary estimated from what the Trader and the order know. Relayed as an
+    // error, it counted towards the circuit breaker, dropped the trailing stop of the position, and let the strategy order again.
     describe.each`
       flow
       ${'creation'}
       ${'cancelation'}
     `('when the summary of an order completed in the $flow flow cannot be created', ({ flow }) => {
-      const advice = buildAdvice();
+      const advice = buildAdvice({ type: 'MARKET', amount: 1 });
       let settled: PromiseSettledResult<unknown>[];
 
       beforeEach(async () => {
         vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
         const order = await prepareOrder(flow, advice);
         order.createSummary.mockRejectedValue(new Error('fetchMyTrades failed'));
+        order.getFilledAmount.mockReturnValue(0.98);
+        trader['prices'].set('BTC/USDT', 105);
         settled = await order.emitAndSettle(ORDER_COMPLETED_EVENT);
       });
 
@@ -1152,26 +1156,198 @@ describe('Trader', () => {
         expect(settled).toEqual([{ status: 'fulfilled', value: undefined }]);
       });
 
-      it('logs the failure', () => {
+      it('logs an error with the reason, saying the summary is estimated', () => {
         expect(logger.error).toHaveBeenCalledWith(
           'trader',
-          expect.stringContaining('its summary could not be created: fetchMyTrades failed'),
+          expect.stringContaining(
+            `[${advice.id}] BUY MARKET order filled, but its summary could not be created: fetchMyTrades failed. Its summary is estimated:`,
+          ),
         );
+      });
+
+      it('emits a deferred ORDER_COMPLETED_EVENT with the estimated summary, its fee unknown', () => {
+        expect(trader['addDeferredEmit']).toHaveBeenCalledWith(ORDER_COMPLETED_EVENT, {
+          order: {
+            id: advice.id,
+            symbol: 'BTC/USDT',
+            side: 'BUY',
+            type: 'MARKET',
+            orderCreationDate: advice.orderCreationDate,
+            orderExecutionDate: 1_700_000_000_000,
+            amount: 0.98,
+            price: 105,
+            feePercent: undefined,
+            fee: 0,
+            effectivePrice: 105,
+          },
+          exchange: { price: 105, portfolio: trader['portfolio'] },
+        });
+      });
+
+      it('emits no ORDER_ERRORED_EVENT', () => {
+        expect(getErroredEvent()).toBeUndefined();
       });
 
       it('forgets the order', () => {
         expect(getOrdersMap().has(advice.id)).toBe(false);
       });
+    });
 
-      it('emits a deferred ORDER_ERRORED_EVENT whose reason is the error message', () => {
-        expect(trader['addDeferredEmit']).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, {
-          order: expect.objectContaining({ id: advice.id, reason: 'fetchMyTrades failed', orderErrorDate: 1_700_000_000_000 }),
-          exchange: { price: 100, portfolio: trader['portfolio'] },
+    it('relays the summary of a completed order as the exchange gave it when its figures are usable', async () => {
+      vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+      const order = await prepareOrder('creation', buildAdvice({ type: 'MARKET', amount: 1 }));
+      trader['prices'].set('BTC/USDT', 105);
+      await order.emitAndSettle(ORDER_COMPLETED_EVENT);
+      expect(getCompletedEvent()?.order).toEqual(
+        expect.objectContaining({ amount: 1, price: 100, feePercent: 0.25, orderExecutionDate: 1_700_000_111_000 }),
+      );
+    });
+
+    // createOrderSummary resolves with NaN figures when none of the trades of the account matches the order. Relayed as they were,
+    // they armed the trailing stop of the position with an amount of NaN and the analyzers skipped or misdated the fill: the summary
+    // is estimated instead, as when it cannot be created.
+    describe.each`
+      shape                            | summary                                                                                 | figures
+      ${'empty (EMPTY_ORDER_SUMMARY)'} | ${EMPTY_ORDER_SUMMARY}                                                                  | ${'amount NaN, price NaN, executed at Unknown Date'}
+      ${'without amount'}              | ${{ amount: NaN, price: 100, feePercent: 0.25, orderExecutionDate: 1_700_000_111_000 }} | ${'amount NaN, price 100, executed at 2023-11-14T22:15:11.000Z'}
+      ${'with a price of 0'}           | ${{ amount: 1, price: 0, feePercent: 0.25, orderExecutionDate: 1_700_000_111_000 }}     | ${'amount 1, price 0, executed at 2023-11-14T22:15:11.000Z'}
+      ${'without execution date'}      | ${{ amount: 1, price: 100, feePercent: 0.25, orderExecutionDate: NaN }}                 | ${'amount 1, price 100, executed at Unknown Date'}
+    `('when the summary of a completed order is $shape', ({ summary, figures }) => {
+      const advice = buildAdvice({ type: 'MARKET', amount: 1 });
+
+      beforeEach(async () => {
+        vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+        const order = await prepareOrder('creation', advice);
+        order.createSummary.mockResolvedValue({ ...summary, side: 'BUY' });
+        order.getFilledAmount.mockReturnValue(0.98);
+        trader['prices'].set('BTC/USDT', 105);
+        await order.emitAndSettle(ORDER_COMPLETED_EVENT);
+      });
+
+      it('logs an error with its figures, saying the summary is estimated', () => {
+        expect(logger.error).toHaveBeenCalledWith(
+          'trader',
+          expect.stringContaining(
+            `[${advice.id}] BUY MARKET order filled, but its trades were not found, or not usable (${figures}). Its summary is estimated:`,
+          ),
+        );
+      });
+
+      it('emits a deferred ORDER_COMPLETED_EVENT with finite estimated figures, its fee unknown', () => {
+        expect(trader['addDeferredEmit']).toHaveBeenCalledWith(ORDER_COMPLETED_EVENT, {
+          order: {
+            id: advice.id,
+            symbol: 'BTC/USDT',
+            side: 'BUY',
+            type: 'MARKET',
+            orderCreationDate: advice.orderCreationDate,
+            orderExecutionDate: 1_700_000_000_000,
+            amount: 0.98,
+            price: 105,
+            feePercent: undefined,
+            fee: 0,
+            effectivePrice: 105,
+          },
+          exchange: { price: 105, portfolio: trader['portfolio'] },
         });
       });
 
-      it('emits no ORDER_COMPLETED_EVENT', () => {
-        expect(getCompletedEvent()).toBeUndefined();
+      it('emits no ORDER_ERRORED_EVENT', () => {
+        expect(getErroredEvent()).toBeUndefined();
+      });
+    });
+
+    // Each figure of the estimate comes from the best source known (see Trader.estimateOrderSummary)
+    describe('the summary estimated when the exchange cannot create it', () => {
+      // Created with a requested price of 95, at a market price of 100; the last market price is 105, unless unknown by then
+      const completeWithoutSummary = async (type: AdviceOrder['type'], filled: number, marketPrice?: number) => {
+        vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+        const order = await prepareOrder('creation', buildAdvice({ type, amount: 1, price: 95 }));
+        order.createSummary.mockRejectedValue(new Error('fetchMyTrades failed'));
+        order.getFilledAmount.mockReturnValue(filled);
+        trader['prices'].clear();
+        if (marketPrice) trader['prices'].set('BTC/USDT', marketPrice);
+        await order.emitAndSettle(ORDER_COMPLETED_EVENT);
+      };
+
+      describe.each`
+        source                  | filled  | amount  | note
+        ${'the fill reported'}  | ${0.98} | ${0.98} | ${'amount 0.98 (the fill reported)'}
+        ${'the amount ordered'} | ${0}    | ${1}    | ${'amount 1 (the amount ordered: no fill reported, and a filled order executed it in full, up to lot rounding)'}
+      `('when the amount comes from $source', ({ filled, amount, note }) => {
+        beforeEach(async () => {
+          await completeWithoutSummary('MARKET', filled, 105);
+        });
+
+        it(`relays an amount of ${amount}`, () => {
+          expect(getCompletedEvent()?.order.amount).toBe(amount);
+        });
+
+        it('says so in the log', () => {
+          expect(logger.error).toHaveBeenCalledWith('trader', expect.stringContaining(note));
+        });
+      });
+
+      describe.each`
+        type        | marketPrice  | source                             | price  | note
+        ${'LIMIT'}  | ${105}       | ${'its limit price'}               | ${95}  | ${'price 95 (its limit price)'}
+        ${'MARKET'} | ${105}       | ${'the last market price'}         | ${105} | ${'price 105 (the last market price)'}
+        ${'STICKY'} | ${105}       | ${'the last market price'}         | ${105} | ${'price 105 (the last market price)'}
+        ${'MARKET'} | ${undefined} | ${'the price it was created with'} | ${95}  | ${'price 95 (the price it was created with: no market price known)'}
+      `('when the price of a $type order comes from $source', ({ type, marketPrice, price, note }) => {
+        beforeEach(async () => {
+          await completeWithoutSummary(type, 0.98, marketPrice);
+        });
+
+        it(`relays a price of ${price}`, () => {
+          expect(getCompletedEvent()?.order.price).toBe(price);
+        });
+
+        it('says so in the log', () => {
+          expect(logger.error).toHaveBeenCalledWith('trader', expect.stringContaining(note));
+        });
+      });
+
+      // Placed at the market price of its creation, 100: its limit price, although its events relay no requested price
+      it('relays the market price a LIMIT order created without price was placed at as its price', async () => {
+        vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+        const order = await prepareOrder('creation', buildAdvice({ type: 'LIMIT', amount: 1 }));
+        order.createSummary.mockRejectedValue(new Error('fetchMyTrades failed'));
+        trader['prices'].set('BTC/USDT', 105);
+        await order.emitAndSettle(ORDER_COMPLETED_EVENT);
+        expect(getCompletedEvent()?.order.price).toBe(100);
+      });
+
+      it('logs the fee as unknown and the execution date as the end of the last minute processed', async () => {
+        await completeWithoutSummary('MARKET', 0.98, 105);
+        expect(logger.error).toHaveBeenCalledWith(
+          'trader',
+          expect.stringContaining('fee unknown, executed at 2023-11-14T22:13:20.000Z (the end of the last minute processed)'),
+        );
+      });
+
+      // Defensive: the Trader keeps an order until its end is reported. Without it, the fill is still relayed, its price unknown.
+      describe('when the Trader no longer lists the LIMIT order', () => {
+        const advice = buildAdvice({ type: 'LIMIT', amount: 1, price: 95 });
+
+        beforeEach(async () => {
+          vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+          const order = await prepareOrder('creation', advice);
+          order.createSummary.mockRejectedValue(new Error('fetchMyTrades failed'));
+          getOrdersMap().clear();
+          await order.emitAndSettle(ORDER_COMPLETED_EVENT);
+        });
+
+        it('relays its fill with a price unknown', () => {
+          expect(getCompletedEvent()?.order.price).toBeNaN();
+        });
+
+        it('logs that neither the exchange nor the Trader knows the price', () => {
+          expect(logger.error).toHaveBeenCalledWith(
+            'trader',
+            `[${advice.id}] Order Summary: price is NaN, neither the exchange nor the Trader knows the price the order executed at.`,
+          );
+        });
       });
     });
 
@@ -1187,11 +1363,11 @@ describe('Trader', () => {
         await order.emitAndSettle(ORDER_COMPLETED_EVENT);
       });
 
-      it('still emits a deferred ORDER_ERRORED_EVENT', () => {
-        expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
-          ORDER_ERRORED_EVENT,
-          expect.objectContaining({ order: expect.objectContaining({ reason: 'fetchMyTrades failed' }) }),
-        );
+      it('still emits a deferred ORDER_COMPLETED_EVENT, with the portfolio known', () => {
+        expect(trader['addDeferredEmit']).toHaveBeenCalledWith(ORDER_COMPLETED_EVENT, {
+          order: expect.objectContaining({ id: buildAdvice().id }),
+          exchange: { price: 100, portfolio: trader['portfolio'] },
+        });
       });
 
       it('logs the synchronization failure', () => {
@@ -1199,13 +1375,12 @@ describe('Trader', () => {
       });
     });
 
-    it('reports a price of 0 in the ORDER_ERRORED_EVENT of an unsummarized order when the price of its pair is unknown', async () => {
+    it('reports a price of 0 in the ORDER_ERRORED_EVENT of an order when the price of its pair is unknown', async () => {
       vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
       const order = await prepareOrder('creation');
-      order.createSummary.mockRejectedValue(new Error('fetchMyTrades failed'));
       trader['prices'].clear();
 
-      await order.emitAndSettle(ORDER_COMPLETED_EVENT);
+      await order.emitAndSettle(ORDER_ERRORED_EVENT, 'exchange timeout');
 
       expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
@@ -1227,23 +1402,98 @@ describe('Trader', () => {
     });
   });
 
-  // An order that ended filled or canceled changed the portfolio (a fill, the release of what it reserved): its event needs a
-  // synchronization started after its end. An error or a refusal changed nothing: any synchronization will do.
+  // A STICKY order whose relaunch after a move is refused is over with what its earlier transactions filled (see
+  // StickyOrder.handleCreateOrderError), its rejection saying so (`filled: true`). Relayed as an error, the strategy never heard of
+  // that fill, the trailing stop of the position was not armed, and the analyzers missed it: it is reported as a completion.
+  describe('the refusal of an order', () => {
+    const advice = buildAdvice({ type: 'STICKY', amount: 5 });
+    const rejection = { reason: 'Filter failure: NOTIONAL', status: 'rejected' };
+    // What the exchange summarizes from the trades of the order: the part filled, 2 of the 5 ordered
+    const summary = { amount: 2, price: 101.25, feePercent: 0.1, side: 'BUY', orderExecutionDate: 1_700_000_002_000 };
+
+    // An order of the flow, refused after it filled the amount given
+    const refuse = async (flow: 'creation' | 'cancelation', filled: number) => {
+      const order = await prepareOrder(flow, advice);
+      order.getFilledAmount.mockReturnValue(filled);
+      order.createSummary.mockResolvedValue(summary);
+      await order.emitAndSettle(ORDER_INVALID_EVENT, { ...rejection, filled: filled > 0 });
+      return order;
+    };
+
+    beforeEach(() => {
+      trader['prices'].set('BTC/USDT', 100);
+      vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+    });
+
+    it.each`
+      flow             | filled | relayed
+      ${'creation'}    | ${0}   | ${ORDER_ERRORED_EVENT}
+      ${'creation'}    | ${2}   | ${ORDER_COMPLETED_EVENT}
+      ${'cancelation'} | ${0}   | ${ORDER_ERRORED_EVENT}
+      ${'cancelation'} | ${2}   | ${ORDER_COMPLETED_EVENT}
+    `('relays as $relayed the refusal of an order of the $flow flow that filled $filled', async ({ flow, filled, relayed }) => {
+      await refuse(flow, filled);
+      expect(getRelayedEvents()).toEqual([relayed]);
+    });
+
+    describe('when it had filled part of what it ordered', () => {
+      beforeEach(async () => {
+        await refuse('creation', 2);
+      });
+
+      it('relays the summary the exchange gives of the part filled', () => {
+        expect(getCompletedEvent()?.order).toEqual(expect.objectContaining({ id: advice.id, ...summary }));
+      });
+
+      it('logs a warning with the reason and the part filled', () => {
+        expect(logger.warning).toHaveBeenCalledWith(
+          'trader',
+          `[${advice.id}] BUY STICKY order: Filter failure: NOTIONAL (status: rejected), after 2 of 5 filled: that part is reported as a completion`,
+        );
+      });
+
+      it('forgets the order', () => {
+        expect(getOrdersMap().has(advice.id)).toBe(false);
+      });
+    });
+
+    // As for any fill the exchange cannot summarize: the amount is the fill the order reported (see Trader.estimateOrderSummary)
+    it('relays the part filled as the amount of the summary estimated when the exchange cannot give one', async () => {
+      const order = await prepareOrder('creation', advice);
+      order.getFilledAmount.mockReturnValue(2);
+      order.createSummary.mockRejectedValue(new Error('fetchMyTrades failed'));
+      await order.emitAndSettle(ORDER_INVALID_EVENT, { ...rejection, filled: true });
+      expect(getCompletedEvent()?.order.amount).toBe(2);
+    });
+  });
+
+  // Whatever way an order ended, the portfolio may have changed: a fill, the release of what it reserved, before an error or a refusal
+  // too (the relaunch of a STICKY order is refused once its move has canceled the transaction before). Every report waits for a
+  // synchronization started after the end of its order.
   describe('synchronization after the end of an order', () => {
     const portfolioBefore = new Map<string, BalanceDetail>([['USDT', { free: 50, used: 950, total: 1000 }]]);
     const portfolioAfter = new Map<string, BalanceDetail>([['USDT', { free: 1000, used: 0, total: 1000 }]]);
+    const rejection = { reason: 'Filter failure: NOTIONAL', status: 'rejected' };
 
     beforeEach(() => {
       trader['prices'].set('BTC/USDT', 100);
     });
 
-    describe('when a synchronization started before the cancelation of an order is in flight', () => {
+    describe.each`
+      end                       | flow             | event                   | payload                                                        | filled | getRelayed
+      ${'cancelation'}          | ${'cancelation'} | ${ORDER_CANCELED_EVENT} | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 9.5 }} | ${0}   | ${getCanceledEvent}
+      ${'error after a fill'}   | ${'creation'}    | ${ORDER_ERRORED_EVENT}  | ${'Invalid API key (2 of 5 already filled)'}                   | ${2}   | ${getErroredEvent}
+      ${'refusal'}              | ${'creation'}    | ${ORDER_INVALID_EVENT}  | ${{ ...rejection, filled: false }}                             | ${0}   | ${getErroredEvent}
+      ${'refusal after a fill'} | ${'creation'}    | ${ORDER_INVALID_EVENT}  | ${{ ...rejection, filled: true }}                              | ${2}   | ${getCompletedEvent}
+    `('when a synchronization started before the $end of an order is in flight', ({ flow, event, payload, filled, getRelayed }) => {
       beforeEach(async () => {
-        const order = await prepareOrder('cancelation');
+        const order = await prepareOrder(flow);
+        order.getFilledAmount.mockReturnValue(filled);
         const balance = deferred<Portfolio>();
         fakeExchange.fetchBalance.mockReturnValueOnce(balance.promise).mockResolvedValueOnce(portfolioAfter);
         const inFlight = trader['synchronize']();
-        const reported = order.emitAndSettle(ORDER_CANCELED_EVENT, { timestamp: 1_700_000_100_000, filled: 0, remaining: 9.5 });
+        const reported = order.emitAndSettle(event, payload);
+        await tick(10); // The report reaches its synchronization while the one in flight still waits for the balance
         balance.resolve(portfolioBefore);
         await Promise.all([inFlight, reported]);
       });
@@ -1252,9 +1502,23 @@ describe('Trader', () => {
         expect(fakeExchange.fetchBalance).toHaveBeenCalledTimes(2);
       });
 
-      it('emits the ORDER_CANCELED_EVENT with the portfolio fetched after the cancelation', () => {
-        expect(getCanceledEvent()?.exchange.portfolio).toEqual(portfolioAfter);
+      it('relays the end of the order with the portfolio fetched after it', () => {
+        expect(getRelayed()?.exchange.portfolio).toEqual(portfolioAfter);
       });
+    });
+
+    // The fill changed the portfolio, whether its summary is created or estimated
+    it('emits the ORDER_COMPLETED_EVENT of an order whose summary is estimated with the portfolio fetched after the fill', async () => {
+      const order = await prepareOrder('creation');
+      order.createSummary.mockRejectedValue(new Error('fetchMyTrades failed'));
+      const balance = deferred<Portfolio>();
+      fakeExchange.fetchBalance.mockReturnValueOnce(balance.promise).mockResolvedValueOnce(portfolioAfter);
+      const inFlight = trader['synchronize']();
+      const reported = order.emitAndSettle(ORDER_COMPLETED_EVENT);
+      balance.resolve(portfolioBefore);
+      await Promise.all([inFlight, reported]);
+
+      expect(getCompletedEvent()?.exchange.portfolio).toEqual(portfolioAfter);
     });
 
     describe('when a synchronization starts between the fill of an order and its report', () => {
@@ -1277,21 +1541,35 @@ describe('Trader', () => {
         expect(getCompletedEvent()?.exchange.portfolio).toEqual(portfolioAfter);
       });
     });
+  });
+
+  // The price the strategy asked for, if any, in both flows. The cancelation flow relayed the price the order was created with: for
+  // an order without one, the market price of its creation, which the strategy and the EventSubscriber read as a requested limit price.
+  describe.each`
+    flow             | event                   | payload
+    ${'creation'}    | ${ORDER_CANCELED_EVENT} | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 1 }}
+    ${'creation'}    | ${ORDER_ERRORED_EVENT}  | ${'exchange timeout'}
+    ${'cancelation'} | ${ORDER_CANCELED_EVENT} | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 1 }}
+    ${'cancelation'} | ${ORDER_ERRORED_EVENT}  | ${'exchange timeout'}
+  `('the price of the $event relayed in the $flow flow', ({ flow, event, payload }) => {
+    // Throws when the event was not relayed, rather than reading its price as undefined
+    const getRelayedPrice = () => (event === ORDER_CANCELED_EVENT ? getCanceledEvent() : getErroredEvent()).order.price;
+
+    beforeEach(() => {
+      trader['prices'].set('BTC/USDT', 100);
+      vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+    });
 
     it.each`
-      event                  | payload
-      ${ORDER_ERRORED_EVENT} | ${'exchange timeout'}
-      ${ORDER_INVALID_EVENT} | ${{ reason: 'too small', status: 'rejected', filled: false }}
-    `('joins the synchronization in flight to relay $event', async ({ event, payload }) => {
-      const order = await prepareOrder('creation');
-      const balance = deferred<Portfolio>();
-      fakeExchange.fetchBalance.mockReturnValueOnce(balance.promise);
-      const inFlight = trader['synchronize']();
-      const reported = order.emitAndSettle(event, payload);
-      balance.resolve(portfolioBefore);
-      await Promise.all([inFlight, reported]);
-
-      expect(fakeExchange.fetchBalance).toHaveBeenCalledOnce();
+      order                            | type        | price
+      ${'a MARKET order'}              | ${'MARKET'} | ${undefined}
+      ${'a STICKY order'}              | ${'STICKY'} | ${undefined}
+      ${'a LIMIT order without price'} | ${'LIMIT'}  | ${undefined}
+      ${'a LIMIT order at 210'}        | ${'LIMIT'}  | ${210}
+    `('is the price requested ($price) for $order', async ({ type, price }) => {
+      const order = await prepareOrder(flow, buildAdvice({ type, amount: 1, price }));
+      await order.emitAndSettle(event, payload);
+      expect(getRelayedPrice()).toBe(price);
     });
   });
 
@@ -1304,9 +1582,6 @@ describe('Trader', () => {
       [ORDER_COMPLETED_EVENT]: undefined,
       [ORDER_CANCELED_EVENT]: { timestamp: 1_700_000_100_000, filled: 0, remaining: 9.5 },
     };
-    const relayedEvents = [ORDER_CANCELED_EVENT, ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT];
-    const getRelayedEvents = () =>
-      (trader['addDeferredEmit'] as unknown as Mock).mock.calls.map(([event]) => event).filter(event => relayedEvents.includes(event));
 
     beforeEach(() => {
       trader['prices'].set('BTC/USDT', 100);
@@ -1343,6 +1618,164 @@ describe('Trader', () => {
       order.emit(ORDER_STATUS_CHANGED_EVENT, { status: 'filled' });
 
       expect(logger.info).not.toHaveBeenCalled();
+    });
+  });
+
+  // A report queues its event several exchange calls after the end of the order, and the events of a bucket are flushed once. In
+  // backtest the reports are awaited before the flush: left to race it, the end of an order reached the strategy and the analyzers
+  // one or two candles late, and never for the last bucket. In realtime a report waits for the network, which nothing waits for.
+  describe('delivery of the end of an order', () => {
+    const advice = buildAdvice({ type: 'MARKET', amount: 1 });
+    const bucket = new Map([['BTC/USDT', defaultCandle]]) as any;
+    const cancelation = { timestamp: 1_700_000_100_000, filled: 0, remaining: 1 };
+    const isAbout = (id: string) => expect.objectContaining({ order: expect.objectContaining({ id }) });
+
+    // The events of the Trader are flushed as PluginsStream flushes them
+    const flush = async () => {
+      while (await trader.broadcastDeferredEmit()) {
+        // Until none is queued
+      }
+    };
+
+    // A listener of the Trader's event, which the deferred queue, no longer mocked, delivers
+    const listenTo = (event: string) => {
+      delete (trader as any).addDeferredEmit;
+      const listener = vi.fn();
+      trader.on(event, listener);
+      return listener;
+    };
+
+    // An order whose report takes several ticks, as with an exchange: its summary and the balance come late
+    const prepareSlowOrder = async () => {
+      const order = await prepareOrder('creation', advice);
+      const summary = await order.createSummary();
+      order.createSummary.mockImplementation(async () => {
+        await tick(10);
+        return summary;
+      });
+      fakeExchange.fetchBalance.mockImplementation(async () => {
+        await tick(10);
+        return new Map<string, BalanceDetail>([['USDT', { free: 1000, used: 0, total: 1000 }]]);
+      });
+      return order;
+    };
+
+    beforeEach(() => {
+      trader['prices'].set('BTC/USDT', 100);
+    });
+
+    describe('in backtest', () => {
+      beforeEach(() => {
+        (trader as any).mode = 'backtest';
+      });
+
+      describe.each`
+        event                    | payload                                                       | relayed
+        ${ORDER_COMPLETED_EVENT} | ${undefined}                                                  | ${ORDER_COMPLETED_EVENT}
+        ${ORDER_CANCELED_EVENT}  | ${cancelation}                                                | ${ORDER_CANCELED_EVENT}
+        ${ORDER_ERRORED_EVENT}   | ${'exchange timeout'}                                         | ${ORDER_ERRORED_EVENT}
+        ${ORDER_INVALID_EVENT}   | ${{ reason: 'too small', status: 'rejected', filled: false }} | ${ORDER_ERRORED_EVENT}
+      `('when an order emits $event and its report takes several ticks', ({ event, payload, relayed }) => {
+        // Emitted as the simulated exchange settles the bucket, before the plugins process it
+        it(`queues the ${relayed} by the time the bucket is processed`, async () => {
+          const order = await prepareSlowOrder();
+          order.emit(event, payload);
+          await trader['processOneMinuteBucket'](bucket);
+          expect(trader['addDeferredEmit']).toHaveBeenCalledWith(relayed, isAbout(advice.id));
+        });
+
+        it(`delivers the ${relayed} in a flush that starts while the report is in flight`, async () => {
+          const listener = listenTo(relayed);
+          const order = await prepareSlowOrder();
+          order.emit(event, payload);
+          await flush();
+          expect(listener).toHaveBeenCalledWith([isAbout(advice.id)]);
+        });
+
+        it(`queues the ${relayed} before the run ends`, async () => {
+          const order = await prepareSlowOrder();
+          order.emit(event, payload);
+          await trader['processFinalize']();
+          expect(trader['addDeferredEmit']).toHaveBeenCalledWith(relayed, isAbout(advice.id));
+        });
+      });
+
+      // The flush of the TradingAdvisor comes first, and the simulated exchange ends at once some of the orders it creates or cancels
+      it.each`
+        action      | event                    | payload
+        ${'launch'} | ${ORDER_COMPLETED_EVENT} | ${undefined}
+        ${'cancel'} | ${ORDER_CANCELED_EVENT}  | ${cancelation}
+      `('delivers in the same flush the $event of an order that the answer to its $action ends', async ({ action, event, payload }) => {
+        const listener = listenTo(event);
+        const answer = async function (this: { emit: (event: string, payload: unknown) => void }) {
+          await tick(10);
+          this.emit(event, payload);
+          return undefined;
+        };
+        (action === 'launch' ? orderActions.launch : orderActions.cancel).mockImplementationOnce(answer);
+        await trader.onStrategyCreateOrder([advice]);
+        if (action === 'cancel') await trader.onStrategyCancelOrder([advice.id]);
+        await flush();
+        expect(listener).toHaveBeenCalledWith([isAbout(advice.id)]);
+      });
+
+      // An order canceled in a later flush than the one of its creation (a LIMIT order resting in the book), with nothing else queued:
+      // the answer to the cancelation starts the report, which is awaited in turn. Awaited alone, the cancelation left the queue empty
+      // and the flush ended, the event one bucket late. The balance comes late, so that the portfolio is not queued in time either.
+      it('delivers in a later flush, nothing else queued, the ORDER_CANCELED_EVENT of an order the answer to its cancelation ends', async () => {
+        const listener = listenTo(ORDER_CANCELED_EVENT);
+        await prepareSlowOrder();
+        await flush(); // The flush of the bucket it was created in
+        orderActions.cancel.mockImplementationOnce(async function (this: { emit: (event: string, payload: unknown) => void }) {
+          await tick(10);
+          this.emit(ORDER_CANCELED_EVENT, cancelation);
+        });
+        await trader.onStrategyCancelOrder([advice.id]);
+        await flush();
+        expect(listener).toHaveBeenCalledWith([isAbout(advice.id)]);
+      });
+
+      // The end of the minute, where the clock of the simulated exchange is when it settles the bucket
+      it('dates the estimated summary of a fill settled with the bucket at the end of its minute', async () => {
+        const order = await prepareSlowOrder();
+        order.createSummary.mockImplementation(async () => {
+          await tick(10);
+          throw new Error('fetchMyTrades failed');
+        });
+        order.emit(ORDER_COMPLETED_EVENT);
+        await trader['processOneMinuteBucket'](bucket);
+        expect(getCompletedEvent()?.order.orderExecutionDate).toBe(1_700_000_060_000);
+      });
+
+      it('does not synchronize at the first bucket, even at a minute of the synchronization interval', async () => {
+        const synchronizeSpy = vi.spyOn(trader as any, 'synchronize');
+        trader['currentTimestamp'] = 0;
+        await trader['processOneMinuteBucket'](new Map([['BTC/USDT', { ...defaultCandle, start: 1_700_000_400_000 }]]));
+        expect(synchronizeSpy).not.toHaveBeenCalled();
+      });
+    });
+
+    // The exchange has not answered the synchronization of the report yet
+    describe('in realtime', () => {
+      beforeEach(async () => {
+        (trader as any).mode = 'realtime';
+        delete (trader as any).addDeferredEmit;
+        const order = await prepareOrder('creation', advice);
+        fakeExchange.fetchBalance.mockReturnValue(new Promise(noop));
+        order.emit(ORDER_COMPLETED_EVENT);
+      });
+
+      it('processes the bucket without waiting for the report', async () => {
+        await expect(trader['processOneMinuteBucket'](bucket)).resolves.toBeUndefined();
+      });
+
+      it('delivers the events queued without waiting for the report', async () => {
+        await expect(trader.broadcastDeferredEmit()).resolves.toBe(true);
+      });
+
+      it('finalizes without waiting for the report', async () => {
+        await expect(trader['processFinalize']()).resolves.toBeUndefined();
+      });
     });
   });
 

@@ -2,6 +2,7 @@ import {
   ORDER_CANCELED_EVENT,
   ORDER_COMPLETED_EVENT,
   ORDER_ERRORED_EVENT,
+  ORDER_INVALID_EVENT,
   ORDER_PARTIALLY_FILLED_EVENT,
   ORDER_STATUS_CHANGED_EVENT,
 } from '@constants/event.const';
@@ -1161,6 +1162,49 @@ describe('StickyOrder', () => {
 
       it('clears the interval polling the order', () => {
         expect(vi.getTimerCount()).toBe(0);
+      });
+    });
+
+    // The poll records 2 of the 5 filled and the market runs away: the move cancels the transaction, and the exchange refuses the 3 left
+    // (InvalidOrder: a filter of the market, the balance). The order is over with the 2 filled, which its rejection says: the Trader
+    // reports that part as a completion (see Trader.reportRejected)
+    describe('when the relaunch of a move is refused after a partial fill', () => {
+      let invalidListener: Mock;
+      let terminalListener: Mock;
+
+      beforeEach(async () => {
+        await order.launch();
+        fakeExchange.fetchOrder.mockResolvedValue({ ...defaultOrder, filled: 2, remaining: 3, price: 102 });
+        fakeExchange.cancelOrder.mockResolvedValue({ ...defaultOrder, status: 'canceled', filled: 2, remaining: 3, price: 102 });
+        fakeExchange.fetchTicker.mockResolvedValue({ bid: 200, ask: 210 });
+        fakeExchange.createLimitOrder.mockRejectedValueOnce(new InvalidOrder('Filter failure: NOTIONAL'));
+        invalidListener = listen(ORDER_INVALID_EVENT);
+        terminalListener = listen(ORDER_COMPLETED_EVENT, ORDER_CANCELED_EVENT, ORDER_ERRORED_EVENT);
+        await nextCheck();
+      });
+
+      it('sends the 3 left at the new price, which the exchange refuses', () => {
+        expect(fakeExchange.createLimitOrder).toHaveBeenLastCalledWith('BTC/USDT', 'BUY', 3, 202, undefined);
+      });
+
+      it('emits ORDER_INVALID_EVENT once, saying it filled part of what it ordered', () => {
+        expect(invalidListener.mock.calls).toEqual([[{ status: 'rejected', filled: true, reason: '[EXCHANGE] Filter failure: NOTIONAL' }]]);
+      });
+
+      it('reports the 2 its canceled transaction filled', () => {
+        expect(order.getFilledAmount()).toBe(2);
+      });
+
+      it('leaves no transaction open on the exchange', () => {
+        expect(Array.from(order['transactions'].values(), ({ status }) => status)).toEqual(['canceled']);
+      });
+
+      it('clears the interval polling the order', () => {
+        expect(vi.getTimerCount()).toBe(0);
+      });
+
+      it('emits no other terminal event', () => {
+        expect(terminalListener).not.toHaveBeenCalled();
       });
     });
   });

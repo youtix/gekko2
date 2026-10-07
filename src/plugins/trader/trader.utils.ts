@@ -77,14 +77,18 @@ export type ShouldEmitPortfolioParams = {
 /**
  * Determines whether a portfolio change is significant enough to warrant emitting a `PORTFOLIO_CHANGE_EVENT`.
  *
+ * Every asset of either portfolio is compared: the exchanges, and the backtest simulator, keep a sold-out asset in the balance with a
+ * total of 0, and an asset missing from one side counts as 0 there. Both sides are valued at the current prices (total * price), so
+ * that a price move alone is never a change. The quote currency of the pairs is valued at 1, and an asset without a known price
+ * (outside the pairs, or no ticker) at 0: below any dust above 0, its changes are never emitted.
+ *
  * Algorithm:
  * 1. First sync (lastEmitted is null) → always emit.
- * 2. For each asset in current portfolio:
- *    a. Compute value in quote currency (total * assetPrice). Skip if < dust.
- *    b. If asset is new (not in lastEmitted) and value ≥ dust → emit.
- *    c. Compute %-change vs lastEmitted. If > threshold → emit.
- * 3. Check for removed assets (in lastEmitted but not in current) with value ≥ dust → emit.
- * 4. Otherwise → do not emit.
+ * 2. For each asset of current or lastEmitted, it is dust on a side when its value there is below `dust`, or its quantity is 0:
+ *    a. Dust on one side only (a buy-in, or a sell-out to 0 or to dust) → emit.
+ *    b. Dust on both sides → ignore it.
+ *    c. Otherwise, if its quantity changed by more than `threshold` % since lastEmitted → emit.
+ * 3. Otherwise → do not emit.
  */
 export const shouldEmitPortfolio = ({ current, lastEmitted, prices, pairs, portfolioConfig }: ShouldEmitPortfolioParams): boolean => {
   // First sync → always emit
@@ -101,38 +105,23 @@ export const shouldEmitPortfolio = ({ current, lastEmitted, prices, pairs, portf
   }
 
   const thresholdFraction = portfolioConfig.threshold / 100;
+  // A quantity of 0 is never held, even with a dust of 0: a sell-out then crosses the boundary, where a 100% change would not pass a
+  // threshold of 100 or more
+  const isHeld = (quantity: number, price: number) => quantity > 0 && quantity * price >= portfolioConfig.dust;
 
-  // Check current assets for significant changes
-  for (const [asset, balance] of current) {
-    const assetPrice = assetPrices.get(asset) ?? 0;
-    const currentValue = balance.total * assetPrice;
+  for (const asset of new Set([...current.keys(), ...lastEmitted.keys()])) {
+    const price = assetPrices.get(asset) ?? 0;
+    const previousQty = lastEmitted.get(asset)?.total ?? 0;
+    const currentQty = current.get(asset)?.total ?? 0;
+    const wasHeld = isHeld(previousQty, price);
 
-    // Dust check — skip insignificant assets
-    if (currentValue < portfolioConfig.dust) continue;
+    // Crossing the dust boundary, either way
+    if (wasHeld !== isHeld(currentQty, price)) return true;
+    // Dust on both sides: noise
+    if (!wasHeld) continue;
 
-    const previousBalance = lastEmitted.get(asset);
-
-    // New asset appeared with value ≥ dust
-    if (!previousBalance) return true;
-
-    // Threshold check: |current - previous| / previous > threshold
-    const previousQty = previousBalance.total;
-    if (previousQty === 0) {
-      // Previous was 0, current is non-zero (and not dust) → significant
-      if (balance.total > 0) return true;
-      continue;
-    }
-
-    const change = Math.abs(balance.total - previousQty) / previousQty;
-    if (change > thresholdFraction) return true;
-  }
-
-  // Check for removed assets (in lastEmitted but not in current)
-  for (const [asset, balance] of lastEmitted) {
-    if (current.has(asset)) continue;
-    const assetPrice = assetPrices.get(asset) ?? 0;
-    const previousValue = balance.total * assetPrice;
-    if (previousValue >= portfolioConfig.dust) return true;
+    // Held on both sides, so previousQty > 0: |current - previous| / previous > threshold
+    if (Math.abs(currentQty - previousQty) / previousQty > thresholdFraction) return true;
   }
 
   return false;

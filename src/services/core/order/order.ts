@@ -16,7 +16,7 @@ import { Exchange, OrderSettledCallback } from '@services/exchange/exchange.type
 import { inject } from '@services/injecter/injecter';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { isNil } from 'lodash-es';
+import { isNil, sumBy } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { OrderCancelDetails, OrderCancelEventPayload, OrderStatus, OrderSummary, Transaction } from './order.types';
@@ -52,6 +52,15 @@ export abstract class Order extends EventEmitter {
 
   public getGekkoOrderId() {
     return this.gekkoOrderId;
+  }
+
+  /**
+   * What the order has executed, as far as the exchange reported it: the cumulative fills of its transactions added up (a STICKY
+   * order places one after the other). 0 while none is reported, and an exchange may answer an order without its fill (see
+   * recordOrderUpdate). The Trader estimates the summary of a fill from it when the exchange cannot give one.
+   */
+  public getFilledAmount() {
+    return sumBy(Array.from(this.transactions.values()), ({ filled }) => filled ?? 0);
   }
 
   /**
@@ -130,7 +139,8 @@ export abstract class Order extends EventEmitter {
 
   protected orderRejected(reason: string) {
     this.setStatus('rejected', reason);
-    this.emit(ORDER_INVALID_EVENT, { status: this.status, filled: false, reason });
+    // Whether it executed part of what it ordered before: the relaunch of a STICKY order is refused after fills (see StickyOrder)
+    this.emit(ORDER_INVALID_EVENT, { status: this.status, filled: this.getFilledAmount() > 0, reason });
   }
 
   // The cumulative fill of the current transaction has grown (see recordOrderUpdate)
