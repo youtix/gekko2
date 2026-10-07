@@ -1,10 +1,18 @@
+import { ONE_MINUTE } from '@constants/time.const';
 import { Candle } from '@models/candle.types';
-import { describe, expect, it } from 'vitest';
-import { FastCandleBatcher } from './fastCandleBatcher';
+import { warning } from '@services/logger';
+import { toISOString, toTimestamp } from '@utils/date/date.utils';
+import { range } from 'lodash-es';
+import { describe, expect, it, vi } from 'vitest';
+import { CandleSize } from './candleBatcher.types';
+import { FastCandleBatcher, isTimeframeCandleClose } from './fastCandleBatcher';
 
-// Helper to create candles
-const createCandle = (override: Partial<Candle> = {}): Candle => ({
-  start: 0,
+vi.mock('@services/logger', () => ({ warning: vi.fn() }));
+
+const T0 = toTimestamp('2023-01-01T00:00:00Z');
+
+const candleAt = (minute: number, override: Partial<Candle> = {}): Candle => ({
+  start: T0 + minute * ONE_MINUTE,
   open: 100,
   high: 100,
   low: 100,
@@ -13,164 +21,167 @@ const createCandle = (override: Partial<Candle> = {}): Candle => ({
   ...override,
 });
 
+/** Feeds the candles in order and returns what each call returned */
+const feed = (candleSize: CandleSize, candles: Candle[]) => {
+  const batcher = new FastCandleBatcher(candleSize);
+  return candles.map(candle => batcher.addCandle(candle));
+};
+
 describe('FastCandleBatcher', () => {
-  describe('Aggregation Logic', () => {
-    it('should initialize accumulator with the first candle', () => {
-      const batcher = new FastCandleBatcher(5);
-      const candle = createCandle({ start: new Date('2023-01-01T00:01:00Z').getTime() });
+  describe('aggregation', () => {
+    const fiveMinutes = [
+      candleAt(0, { open: 10, high: 12, low: 9, close: 11, volume: 100 }),
+      candleAt(1, { open: 11, high: 15, low: 11, close: 14, volume: 200 }),
+      candleAt(2, { open: 14, high: 14, low: 8, close: 9, volume: 150 }),
+      candleAt(3, { open: 9, high: 10, low: 9, close: 10, volume: 50 }),
+      candleAt(4, { open: 10, high: 11, low: 10, close: 11, volume: 100 }),
+    ];
 
-      const result = batcher.addCandle(candle);
-
-      expect(result).toBeNull();
+    it('should return nothing until the timeframe candle closes', () => {
+      expect(feed(5, fiveMinutes).slice(0, 4)).toEqual([null, null, null, null]);
     });
 
-    it('should aggregate OHLCV correctly over multiple candles', () => {
-      // 5 minute batcher
-      const batcher = new FastCandleBatcher(5);
-      const startTime = new Date('2023-01-01T00:00:00Z').getTime();
-
-      const c1 = createCandle({ start: startTime, open: 10, high: 12, low: 9, close: 11, volume: 100 });
-      const c2 = createCandle({ start: startTime + 60000, open: 11, high: 15, low: 11, close: 14, volume: 200 }); // 00:01
-      const c3 = createCandle({ start: startTime + 120000, open: 14, high: 14, low: 8, close: 9, volume: 150 }); // 00:02
-      const c4 = createCandle({ start: startTime + 180000, open: 9, high: 10, low: 9, close: 10, volume: 50 }); // 00:03
-      const c5 = createCandle({ start: startTime + 240000, open: 10, high: 11, low: 10, close: 11, volume: 100 }); // 00:04
-
-      batcher.addCandle(c1);
-      batcher.addCandle(c2);
-      batcher.addCandle(c3);
-      batcher.addCandle(c4);
-      const result = batcher.addCandle(c5);
-
-      expect(result).not.toBeNull();
-      expect(result).toEqual({
-        start: startTime,
-        open: 10, // Open of the first
-        high: 15, // Max high
-        low: 8, // Min low
-        close: 11, // Close of the last
-        volume: 600, // Sum of volumes
-      });
+    it('should return the first open, highest high, lowest low, last close and total volume on the closing minute', () => {
+      expect(feed(5, fiveMinutes)[4]).toEqual({ start: T0, open: 10, high: 15, low: 8, close: 11, volume: 600 });
     });
 
-    it('should reset accumulator after emission', () => {
-      const batcher = new FastCandleBatcher(5);
-      const t1 = new Date('2023-01-01T00:04:00Z').getTime();
-      const t2 = new Date('2023-01-01T00:09:00Z').getTime();
+    it('should start a new timeframe candle after returning one', () => {
+      const results = feed(5, [...fiveMinutes, ...range(5, 10).map(minute => candleAt(minute, { open: minute, close: minute }))]);
+      expect(results[9]).toEqual({ start: T0 + 5 * ONE_MINUTE, open: 5, high: 100, low: 100, close: 9, volume: 5000 });
+    });
 
-      // First batch
-      batcher.addCandle(createCandle({ start: t1, open: 1, close: 1 }));
-      // New candle (start of next batch, though this test simplifies it by just checking adding logic)
-      // Wait, logic: addCandle -> check if ready -> return.
-      // If we add a candle that triggers readiness, it returns result and sets this.accumulator = null.
+    it('should not modify the candles it is given', () => {
+      const first = candleAt(0, { high: 1, low: 1 });
+      feed(5, [first, ...range(1, 5).map(minute => candleAt(minute, { high: 200, low: 50 }))]);
+      expect(first).toEqual(candleAt(0, { high: 1, low: 1 }));
+    });
 
-      // Next candle added should be the start of a new accumulator.
-      const c2 = createCandle({ start: t2, open: 2, close: 2 });
-      const result2 = batcher.addCandle(c2); // This triggers the second batch (00:05-00:09 end at 09)
-
-      expect(result2).not.toBeNull();
-      expect(result2?.open).toBe(2); // Should be start of new batch
+    it('should carry over neither the id nor the synthetic flag of the first candle', () => {
+      const [result] = feed(1, [candleAt(0, { id: 3, synthetic: true })]);
+      expect(result).toStrictEqual({ start: T0, open: 100, high: 100, low: 100, close: 100, volume: 1000 });
     });
   });
 
-  describe('Timeframe Triggers', () => {
-    // 1. Minute based (< 60)
-    it('should trigger 5m candle correctly', () => {
-      const batcher = new FastCandleBatcher(5);
-      // Not ready
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-01T00:03:00Z').getTime() }))).toBeNull();
-      // Ready (minute % 5 === 4)
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-01T00:04:00Z').getTime() }))).not.toBeNull();
+  describe('volume', () => {
+    // A batcher of as many minutes as volumes, fed from a boundary, returns the timeframe candle on the last one
+    const sumVolumes = (volumes: number[]) =>
+      feed(
+        volumes.length as CandleSize,
+        volumes.map((volume, minute) => candleAt(minute, { volume })),
+      ).at(-1)?.volume;
+
+    it.each`
+      volumes                                        | expected
+      ${[0.1, 0.2]}                                  | ${0.3}
+      ${[1.5, 0.25, 0.125]}                          | ${1.875}
+      ${[0.29, 0.58, 1.13]}                          | ${2}
+      ${[12.34567891, 0.00012345, 3.1]}              | ${15.44580236}
+      ${[0.1, 0.2, 0.30000000000000004, 1e-20, 2.4]} | ${3}
+      ${[1e-7, 2e-7, 3e-7, 4e-7, 5e-7]}              | ${1.5e-6}
+      ${[3, 0, 0, 1, 2]}                             | ${6}
+    `('should sum $volumes to exactly $expected', ({ volumes, expected }) => {
+      expect(sumVolumes(volumes)).toBe(expected);
     });
 
-    // 2. Hour based (< 1440) -> e.g. 60m (1h), 240m (4h)
-    it('should trigger 1h (60m) candle on minute 59', () => {
-      const batcher = new FastCandleBatcher(60);
-      // 00:58
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-01T00:58:00Z').getTime() }))).toBeNull();
-      // 00:59
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-01T00:59:00Z').getTime() }))).not.toBeNull();
+    it('should sum to NaN when a volume is not a number', () => {
+      expect(sumVolumes([1.5, NaN])).toBeNaN();
     });
 
-    it('should trigger 4h (240m) candle correctly', () => {
-      // 240 / 60 = 4 hours. hour % 4 === 3. minute === 59.
-      const batcher = new FastCandleBatcher(240);
+    it('should sum the volumes of the next timeframe candle from scratch', () => {
+      const volumes = [0.12345678, 0.1, 1, 2];
+      expect(
+        feed(
+          2,
+          volumes.map((volume, minute) => candleAt(minute, { volume })),
+        )[3]?.volume,
+      ).toBe(3);
+    });
+  });
 
-      // 02:59 -> hour 2. 2 % 4 = 2 (not 3).
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-01T02:59:00Z').getTime() }))).toBeNull();
+  describe('first candle off a timeframe boundary', () => {
+    // 1h timeframe fed from 00:57: the minutes before 01:00 cannot make up a whole hour
+    const fromMinute57 = range(57, 120).map(minute => candleAt(minute));
 
-      // 03:59 -> hour 3. 3 % 4 = 3 (match).
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-01T03:59:00Z').getTime() }))).not.toBeNull();
+    it('should skip the candles before the first boundary, even a closing one', () => {
+      expect(feed(60, fromMinute57).slice(0, 3)).toEqual([null, null, null]);
     });
 
-    // 3. Daily (< 10080) -> 1440
-    it('should trigger 1d (1440m) candle on 23:59', () => {
-      const batcher = new FastCandleBatcher(1440);
-      // 23:58
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-01T23:58:00Z').getTime() }))).toBeNull();
-      // 23:59
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-01T23:59:00Z').getTime() }))).not.toBeNull();
+    it('should start the first timeframe candle on the first boundary', () => {
+      expect(feed(60, fromMinute57)[62]?.start).toBe(T0 + 60 * ONE_MINUTE);
     });
 
-    // 4. Weekly (10080) -> Sunday 23:59
-    it('should trigger 1w (10080m) candle on Sunday 23:59', () => {
-      const batcher = new FastCandleBatcher(10080);
-
-      // Saturday Jan 7 2023 -> not ready
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-07T23:59:00Z').getTime() }))).toBeNull();
-
-      // Sunday Jan 8 2023 -> ready
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-08T23:59:00Z').getTime() }))).not.toBeNull();
+    it('should warn once about the candles skipped', () => {
+      feed(60, fromMinute57);
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        'core',
+        `Skipped 3 one-minute candle(s) from ${toISOString(T0 + 57 * ONE_MINUTE)}: the first 60-minute candle starts on the first boundary, ${toISOString(T0 + 60 * ONE_MINUTE)}`,
+      );
     });
 
-    // 5. Monthly (43200) -> Month End
-    it('should trigger 1M (43200m) candle on month end', () => {
-      const batcher = new FastCandleBatcher(43200);
-
-      // Jan 30 -> Not end
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-30T23:59:00Z').getTime() }))).toBeNull();
-
-      // Jan 31 -> End
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-01-31T23:59:00Z').getTime() }))).not.toBeNull();
-
-      // Feb 28 (on non-leap year 2023) -> End
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-02-28T23:59:00Z').getTime() }))).not.toBeNull();
+    it('should not warn when the first candle starts on a boundary', () => {
+      feed(
+        60,
+        range(0, 120).map(minute => candleAt(minute)),
+      );
+      expect(warning).not.toHaveBeenCalled();
     });
 
-    // 6. Quarterly (129600) -> (month+1)%3==0 && Match End
-    // Months: 3, 6, 9, 12 (Indices 2, 5, 8, 11)
-    it('should trigger 3M (129600m) candle on quarter end', () => {
-      const batcher = new FastCandleBatcher(129600);
-
-      // Feb 28 -> Month End, but month index 1. (1+1)%3 = 2 != 0.
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-02-28T23:59:00Z').getTime() }))).toBeNull();
-
-      // Mar 31 -> Month index 2. (2+1)%3 = 0. Match.
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-03-31T23:59:00Z').getTime() }))).not.toBeNull();
+    it('should no longer skip a candle once started', () => {
+      // Sparse on purpose: the batcher itself does not check that the minutes follow each other
+      expect(feed(60, [candleAt(0), candleAt(119)])[1]?.start).toBe(T0);
     });
+  });
+});
 
-    // 7. Semi-annual (259200) -> [5, 11] (Jun, Dec)
-    it('should trigger 6M (259200m) candle on semester end', () => {
-      const batcher = new FastCandleBatcher(259200);
+describe('isTimeframeCandleClose', () => {
+  it.each`
+    size      | minute                    | expected
+    ${1}      | ${'2024-01-01T00:00:00Z'} | ${true}
+    ${2}      | ${'2024-01-01T00:01:00Z'} | ${true}
+    ${2}      | ${'2024-01-01T00:02:00Z'} | ${false}
+    ${3}      | ${'2024-01-01T00:02:00Z'} | ${true}
+    ${3}      | ${'2024-01-01T00:03:00Z'} | ${false}
+    ${5}      | ${'2024-01-01T00:04:00Z'} | ${true}
+    ${5}      | ${'2024-01-01T00:03:00Z'} | ${false}
+    ${10}     | ${'2024-01-01T00:09:00Z'} | ${true}
+    ${10}     | ${'2024-01-01T00:08:00Z'} | ${false}
+    ${15}     | ${'2024-01-01T00:14:00Z'} | ${true}
+    ${15}     | ${'2024-01-01T00:15:00Z'} | ${false}
+    ${30}     | ${'2024-01-01T00:29:00Z'} | ${true}
+    ${30}     | ${'2024-01-01T00:30:00Z'} | ${false}
+    ${60}     | ${'2024-01-01T00:59:00Z'} | ${true}
+    ${60}     | ${'2024-01-01T00:58:00Z'} | ${false}
+    ${120}    | ${'2024-01-01T01:59:00Z'} | ${true}
+    ${120}    | ${'2024-01-01T00:59:00Z'} | ${false}
+    ${240}    | ${'2024-01-01T03:59:00Z'} | ${true}
+    ${240}    | ${'2024-01-01T01:59:00Z'} | ${false}
+    ${360}    | ${'2024-01-01T05:59:00Z'} | ${true}
+    ${360}    | ${'2024-01-01T03:59:00Z'} | ${false}
+    ${480}    | ${'2024-01-01T07:59:00Z'} | ${true}
+    ${480}    | ${'2024-01-01T05:59:00Z'} | ${false}
+    ${720}    | ${'2024-01-01T11:59:00Z'} | ${true}
+    ${720}    | ${'2024-01-01T07:59:00Z'} | ${false}
+    ${1440}   | ${'2024-01-01T23:59:00Z'} | ${true}
+    ${1440}   | ${'2024-01-01T22:59:00Z'} | ${false}
+    ${10080}  | ${'2024-01-07T23:59:00Z'} | ${true}
+    ${10080}  | ${'2024-01-06T23:59:00Z'} | ${false}
+    ${43200}  | ${'2024-01-31T23:59:00Z'} | ${true}
+    ${43200}  | ${'2024-01-30T23:59:00Z'} | ${false}
+    ${43200}  | ${'2023-02-28T23:59:00Z'} | ${true}
+    ${43200}  | ${'2024-02-28T23:59:00Z'} | ${false}
+    ${43200}  | ${'2024-02-29T23:59:00Z'} | ${true}
+    ${129600} | ${'2024-03-31T23:59:00Z'} | ${true}
+    ${129600} | ${'2024-02-29T23:59:00Z'} | ${false}
+    ${259200} | ${'2024-06-30T23:59:00Z'} | ${true}
+    ${259200} | ${'2024-12-31T23:59:00Z'} | ${true}
+    ${259200} | ${'2024-03-31T23:59:00Z'} | ${false}
+    ${518400} | ${'2024-12-31T23:59:00Z'} | ${true}
+    ${518400} | ${'2024-06-30T23:59:00Z'} | ${false}
+  `('should return $expected for a $size-minute candle at $minute', ({ size, minute, expected }) => {
+    expect(isTimeframeCandleClose(size, toTimestamp(minute))).toBe(expected);
+  });
 
-      // Mar 31 -> Month 2. Not in [5, 11]
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-03-31T23:59:00Z').getTime() }))).toBeNull();
-
-      // Jun 30 -> Month 5. Matches.
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-06-30T23:59:00Z').getTime() }))).not.toBeNull();
-
-      // Dec 31 -> Month 11. Matches.
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-12-31T23:59:00Z').getTime() }))).not.toBeNull();
-    });
-
-    // 8. Yearly (518400) -> Dec 31
-    it('should trigger 1Y (518400m) candle on year end', () => {
-      const batcher = new FastCandleBatcher(518400);
-
-      // Jun 30 -> Not year end
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-06-30T23:59:00Z').getTime() }))).toBeNull();
-
-      // Dec 31 -> Year end
-      expect(batcher.addCandle(createCandle({ start: new Date('2023-12-31T23:59:00Z').getTime() }))).not.toBeNull();
-    });
+  it('should throw on a candle size that is not a timeframe', () => {
+    expect(() => isTimeframeCandleClose(45 as CandleSize, T0)).toThrow('[CORE] Unsupported candle size: 45 minutes');
   });
 });

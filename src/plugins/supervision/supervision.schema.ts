@@ -1,3 +1,4 @@
+import { ONE_MINUTE } from '@constants/time.const';
 import { chatIdSchema } from '@services/bots/telegram/telegram.schema';
 import { z } from 'zod';
 
@@ -13,6 +14,12 @@ const checkIntervalSchema = (field: string) => {
   return z.number(message).int(message).min(MIN_CHECK_INTERVAL, message).max(MAX_TIMER_DELAY, message);
 };
 
+/**
+ * A bucket comes once a minute, so the last one is up to a minute old before the next one: a stale threshold of a minute or less would
+ * report the candles as stopped, then as coming again, between every two of them.
+ */
+const CANDLE_STALE_THRESHOLD_MESSAGE = `candleStaleThreshold must be an integer number of milliseconds above ${ONE_MINUTE}: the 1-minute candles come once a minute`;
+
 export const supervisionSchema = z.strictObject({
   name: z.string(),
   token: z.string(),
@@ -25,4 +32,12 @@ export const supervisionSchema = z.strictObject({
   cpuCheckInterval: checkIntervalSchema('cpuCheckInterval').default(10000),
   memoryCheckInterval: checkIntervalSchema('memoryCheckInterval').default(10000),
   logMonitoringInterval: checkIntervalSchema('logMonitoringInterval').default(60000),
+  /** How often the candle check looks at the age of the last 1-minute bucket received */
+  candleCheckInterval: checkIntervalSchema('candleCheckInterval').default(60000),
+  /** Age of the last 1-minute bucket beyond which the candle check alerts that the candles stopped coming */
+  candleStaleThreshold: z
+    .number(CANDLE_STALE_THRESHOLD_MESSAGE)
+    .int(CANDLE_STALE_THRESHOLD_MESSAGE)
+    .gt(ONE_MINUTE, CANDLE_STALE_THRESHOLD_MESSAGE)
+    .default(180000),
 });

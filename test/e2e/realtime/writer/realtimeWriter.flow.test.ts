@@ -59,7 +59,7 @@ mock.module('@services/configuration/configuration', () => {
       }),
       getStorage: () => ({
         type: 'sqlite',
-        path: ':memory:', // Isolated DB
+        database: ':memory:', // Isolated DB
       }),
       getPlugins: () => [
         {
@@ -266,13 +266,18 @@ describe('E2E: Realtime Writer (Synthetic)', () => {
     // ASSERTION 1: The pipeline completed without errors (we got here = no error thrown)
 
     // ASSERTION 2: Verify duplicate detection via logs
-    // The RejectDuplicateCandleStream should log a warning when it detects a duplicate
-    const warningLogs = logStore.filter(log => log.level === 'warn' && log.message.includes('Duplicate bucket detected'));
+    // The live stream asks for the minutes after the last one it pushed: it drops a minute served again, with a warning
+    const warningLogs = logStore.filter(log => log.level === 'warn' && log.message.includes('Ignored a duplicate 1m candle'));
     expect(warningLogs.length).toBeGreaterThan(0);
 
     // ASSERTION 3: Verify the stored candles are valid and not corrupted by duplicate handling
     const recentCandles = db.query('SELECT * FROM candles_BTC_USDT ORDER BY start DESC LIMIT 5').all() as any[];
     expect(recentCandles.length).toBeGreaterThan(0);
+
+    // ASSERTION 4: The minute hidden behind a duplicate is asked for again on the next tick: every stored candle is the
+    // exchange's own, none is a synthetic gap filler
+    const isExchangeCandle = (row: any) => row.open === generateSyntheticCandle('BTC/USDT', row.start).open;
+    expect(recentCandles.every(isExchangeCandle)).toBe(true);
   }, 30000);
 
   it('Scenario D: Handling future candle emissions', async () => {
@@ -288,9 +293,6 @@ describe('E2E: Realtime Writer (Synthetic)', () => {
     const storage = inject.storage() as SQLiteStorage;
     const db = storage['db'];
 
-    // Record the current time before running the pipeline
-    const now = Date.now();
-
     // Run the pipeline - this should NOT throw any errors even with future candles
     const pipelinePromise = gekkoPipeline();
 
@@ -301,18 +303,23 @@ describe('E2E: Realtime Writer (Synthetic)', () => {
     // ASSERTION 1: The pipeline completed without errors (we got here = no error thrown)
 
     // ASSERTION 2: Verify no future candles are stored in the database
-    // The system should gracefully ignore future candles
-    const futureCandles = db.query('SELECT * FROM candles_BTC_USDT WHERE start > ?').all(now) as any[];
+    // The system should gracefully ignore future candles. The mock's future candle starts 5 minutes after the fetch, off
+    // the minute boundaries; the closed minutes recorded during the run legitimately start after the run started, so the
+    // check is: nothing stored is unaligned, in progress or in the future at the end of the run.
+    const currentFastMinute = Math.floor(Date.now() / FAST_MINUTE) * FAST_MINUTE;
+    const selectNotClosed = (table: string) =>
+      db.query(`SELECT * FROM ${table} WHERE start >= ? OR start % ? != 0`).all(currentFastMinute, FAST_MINUTE) as any[];
 
     // There should be NO future candles stored in the database
-    expect(futureCandles.length).toBe(0);
+    expect(selectNotClosed('candles_BTC_USDT').length).toBe(0);
 
     // ASSERTION 3: Also check ETH and LTC tables for no future candles
-    const futureCandlesETH = db.query('SELECT * FROM candles_ETH_USDT WHERE start > ?').all(now) as any[];
-    const futureCandlesLTC = db.query('SELECT * FROM candles_LTC_USDT WHERE start > ?').all(now) as any[];
+    expect(selectNotClosed('candles_ETH_USDT').length).toBe(0);
+    expect(selectNotClosed('candles_LTC_USDT').length).toBe(0);
 
-    expect(futureCandlesETH.length).toBe(0);
-    expect(futureCandlesLTC.length).toBe(0);
+    // ASSERTION 4: The future candle does not hide the closed minute served with it
+    const rowCountBTC = db.query('SELECT count(*) as count FROM candles_BTC_USDT').get() as { count: number };
+    expect(rowCountBTC.count).toBeGreaterThan(0);
   }, 30000);
 
   it('Scenario E: Filling candle gaps', async () => {

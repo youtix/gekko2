@@ -4,6 +4,11 @@ import { cloneDeep, get, set } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { configurationSchema, watchSchema } from './configuration.schema';
 
+const BATCH_SIZE_MESSAGE =
+  'batchSize must be an integer between 1 and 44640 (minutes, 31 days at most: each batch is read into memory at once)';
+const INSERT_THRESHOLD_MESSAGE =
+  'storage.insertThreshold must be an integer between 1 and 1440 (minutes, a day at most: the candles are held in memory until they are written)';
+
 const DISCLAIMER_FIELD = 'I understand that Gekko only automates MY OWN trading strategies' as const;
 
 const ISO_START = '2023-01-01T00:00:00.000Z';
@@ -45,8 +50,14 @@ exchange:
         cost: { min: 5, max: 9000000 }
         precision: { price: 8, amount: 8 }
         fee: { maker: 0.0004, taker: 0.0007 }
+storage:
+  type: sqlite
+  database: db/candles.sql
 plugins: []
 `;
+
+// Required in backtest mode and by CandleWriter
+const sqliteStorage = { type: 'sqlite', database: 'db/candles.sql' };
 
 // Base pairs for v3 config format
 const basePairs = [{ symbol: 'BTC/USDT' }];
@@ -308,9 +319,11 @@ describe('watchSchema', () => {
       ${['warmup', 'tickrate']}    | ${500.5}  | ${'warmup.tickrate must be an integer of at least 100'}
       ${['warmup', 'candleCount']} | ${-1}     | ${'warmup.candleCount must be an integer of at least 0'}
       ${['warmup', 'candleCount']} | ${10.5}   | ${'warmup.candleCount must be an integer of at least 0'}
-      ${['batchSize']}             | ${0}      | ${'batchSize must be an integer of at least 1'}
-      ${['batchSize']}             | ${-1}     | ${'batchSize must be an integer of at least 1'}
-      ${['batchSize']}             | ${1440.5} | ${'batchSize must be an integer of at least 1'}
+      ${['batchSize']}             | ${0}      | ${BATCH_SIZE_MESSAGE}
+      ${['batchSize']}             | ${-1}     | ${BATCH_SIZE_MESSAGE}
+      ${['batchSize']}             | ${1440.5} | ${BATCH_SIZE_MESSAGE}
+      ${['batchSize']}             | ${44641}  | ${BATCH_SIZE_MESSAGE}
+      ${['batchSize']}             | ${'1440'} | ${BATCH_SIZE_MESSAGE}
     `('rejects $value at $path', ({ path, value, message }) => {
       const result = watchSchema.safeParse(set(cloneDeep(realtimeWatch), path, value));
       expect(result.error?.issues).toMatchObject([{ path, message }]);
@@ -325,6 +338,11 @@ describe('watchSchema', () => {
     `('accepts $value at $path, the lowest value allowed', ({ path, value }) => {
       const watch = watchSchema.parse(set(cloneDeep(realtimeWatch), path, value));
       expect(get(watch, path)).toBe(value);
+    });
+
+    it('accepts a batchSize of 44640, 31 days of minutes, the highest value allowed', () => {
+      const watch = watchSchema.parse({ ...realtimeWatch, batchSize: 44640 });
+      expect(watch.batchSize).toBe(44640);
     });
   });
 
@@ -417,43 +435,78 @@ describe('configurationSchema', () => {
     expect(result[DISCLAIMER_FIELD]).toBeNull();
   });
 
+  describe('storage', () => {
+    const backtestConfig = () => ({
+      ...createBaseConfig(),
+      watch: { ...createBaseConfig().watch, mode: 'backtest', daterange: { start: ISO_START, end: ISO_END } },
+      exchange: {
+        name: 'dummy-cex',
+        simulationBalance: [{ assetName: 'USDT', balance: 1000 }],
+        marketData: [marketDataEntry('BTC/USDT')],
+      },
+    });
+    const writerConfig = () => ({ ...createBaseConfig(), plugins: [{ name: 'CandleWriter' }] });
+
+    it.each`
+      scenario                        | config            | message
+      ${'in backtest mode'}           | ${backtestConfig} | ${'storage is required in backtest mode, which reads the candles from it'}
+      ${'with a CandleWriter plugin'} | ${writerConfig}   | ${'storage is required by the CandleWriter plugin, which writes the candles to it'}
+    `('reports a missing storage $scenario', ({ config, message }) => {
+      const result = configurationSchema.safeParse(config());
+      expect(result.error?.issues).toMatchObject([{ path: ['storage'], message }]);
+    });
+
+    it.each`
+      scenario                        | config
+      ${'in backtest mode'}           | ${backtestConfig}
+      ${'with a CandleWriter plugin'} | ${writerConfig}
+    `('accepts a storage $scenario', ({ config }) => {
+      const result = configurationSchema.safeParse({ ...config(), storage: sqliteStorage });
+      expect(result.error?.issues).toBeUndefined();
+    });
+
+    it('reports a missing storage together with an invalid watch field', () => {
+      const result = configurationSchema.safeParse(set(backtestConfig(), ['watch', 'tickrate'], 50));
+      expect(result.error?.issues.map(issue => issue.path)).toEqual([['watch', 'tickrate'], ['storage']]);
+    });
+
+    // The marketData rule only stands down for an issue inside a section, not for one of the rules next to it
+    it('reports a missing storage together with a missing marketData entry', () => {
+      const result = configurationSchema.safeParse(set(backtestConfig(), ['watch', 'assets'], ['BTC', 'ETH']));
+      expect(result.error?.issues.map(issue => issue.path)).toEqual([['storage'], ['exchange', 'marketData']]);
+    });
+
+    it.each`
+      field                | value        | issue
+      ${'database'}        | ${''}        | ${{ path: ['storage', 'database'], message: 'storage.database must not be empty' }}
+      ${'database'}        | ${'   '}     | ${{ path: ['storage', 'database'], message: 'storage.database must not be empty' }}
+      ${'database'}        | ${undefined} | ${{ path: ['storage', 'database'], code: 'invalid_type' }}
+      ${'insertThreshold'} | ${0}         | ${{ path: ['storage', 'insertThreshold'], message: INSERT_THRESHOLD_MESSAGE }}
+      ${'insertThreshold'} | ${-3}        | ${{ path: ['storage', 'insertThreshold'], message: INSERT_THRESHOLD_MESSAGE }}
+      ${'insertThreshold'} | ${1.5}       | ${{ path: ['storage', 'insertThreshold'], message: INSERT_THRESHOLD_MESSAGE }}
+      ${'insertThreshold'} | ${1441}      | ${{ path: ['storage', 'insertThreshold'], message: INSERT_THRESHOLD_MESSAGE }}
+      ${'insertThreshold'} | ${'1000'}    | ${{ path: ['storage', 'insertThreshold'], message: INSERT_THRESHOLD_MESSAGE }}
+    `('reports $value as storage.$field', ({ field, value, issue }) => {
+      const result = configurationSchema.safeParse({ ...createBaseConfig(), storage: { ...sqliteStorage, [field]: value } });
+      expect(result.error?.issues).toMatchObject([issue]);
+    });
+
+    // Left out, insertThreshold stays out, and Storage applies the default of the mode
+    it.each`
+      scenario                                         | storage                                                | expected
+      ${'a database path with spaces around it'}       | ${{ ...sqliteStorage, database: '  db/candles.sql ' }} | ${sqliteStorage}
+      ${'an insertThreshold of 1, the fewest'}         | ${{ ...sqliteStorage, insertThreshold: 1 }}            | ${{ ...sqliteStorage, insertThreshold: 1 }}
+      ${'an insertThreshold of 1440, a day, the most'} | ${{ ...sqliteStorage, insertThreshold: 1440 }}         | ${{ ...sqliteStorage, insertThreshold: 1440 }}
+      ${'no insertThreshold'}                          | ${sqliteStorage}                                       | ${sqliteStorage}
+    `('reads $scenario', ({ storage, expected }) => {
+      const result = configurationSchema.parse({ ...createBaseConfig(), storage });
+      expect(result.storage).toStrictEqual(expected);
+    });
+  });
+
   it('reports a storage type other than sqlite', () => {
     const result = configurationSchema.safeParse({ ...createBaseConfig(), storage: { type: 'postgres', database: 'gekko.db' } });
     expect(result.error?.issues).toMatchObject([{ path: ['storage', 'type'], code: 'invalid_value' }]);
-  });
-
-  describe('storage insertThreshold', () => {
-    const createStorage = (insertThreshold?: unknown) => ({
-      type: 'sqlite',
-      database: 'gekko.db',
-      ...(insertThreshold !== undefined && { insertThreshold }),
-    });
-
-    // Storage would read 0 as left out and apply its default, write every minute as it comes for a negative count, round a fraction up
-    it.each`
-      scenario                        | insertThreshold
-      ${'0'}                          | ${0}
-      ${'a negative count'}           | ${-5}
-      ${'a fractional count'}         | ${2.5}
-      ${'more than a day (1441)'}     | ${1441}
-      ${'a number given as a string'} | ${'100'}
-    `('refuses $scenario', ({ insertThreshold }) => {
-      const result = configurationSchema.safeParse({ ...createBaseConfig(), storage: createStorage(insertThreshold) });
-      expect(result.error?.issues).toMatchObject([
-        { path: ['storage', 'insertThreshold'], message: 'insertThreshold must be an integer number of minutes between 1 and 1440' },
-      ]);
-    });
-
-    // Left out, it stays absent and Storage applies the default of the mode
-    it.each`
-      scenario                   | insertThreshold
-      ${'1, the fewest'}         | ${1}
-      ${'1440, a day, the most'} | ${1440}
-      ${'no value'}              | ${undefined}
-    `('accepts $scenario', ({ insertThreshold }) => {
-      const { storage } = configurationSchema.parse({ ...createBaseConfig(), storage: createStorage(insertThreshold) });
-      expect(storage).toStrictEqual(createStorage(insertThreshold));
-    });
   });
 
   const traderPlugin = [{ name: 'Trader' }];
@@ -538,6 +591,7 @@ describe('configurationSchema', () => {
       ...createBaseConfig(),
       watch: { ...createBaseConfig().watch, mode, daterange: { start: ISO_START, end: ISO_END } },
       exchange: exchanges[exchange],
+      storage: sqliteStorage,
     });
 
     it.each`
@@ -601,6 +655,7 @@ describe('configurationSchema', () => {
         simulationBalance: [{ assetName: 'USDT', balance: 1000 }],
         ...(symbols && { marketData: symbols.map(marketDataEntry) }),
       },
+      storage: sqliteStorage,
     });
     const missingIssue = (symbols: string) => ({
       path: ['exchange', 'marketData'],
@@ -659,7 +714,7 @@ describe('configurationSchema', () => {
         scenario                                 | path                                       | value                             | issue
         ${'a tickrate below 100'}                | ${['watch', 'tickrate']}                   | ${50}                             | ${{ path: ['watch', 'tickrate'], message: 'tickrate must be an integer of at least 100' }}
         ${'a negative warmup candleCount'}       | ${['watch', 'warmup', 'candleCount']}      | ${-1}                             | ${{ path: ['watch', 'warmup', 'candleCount'], message: 'warmup.candleCount must be an integer of at least 0' }}
-        ${'a batchSize of 0'}                    | ${['watch', 'batchSize']}                  | ${0}                              | ${{ path: ['watch', 'batchSize'], message: 'batchSize must be an integer of at least 1' }}
+        ${'a batchSize of 0'}                    | ${['watch', 'batchSize']}                  | ${0}                              | ${{ path: ['watch', 'batchSize'], message: BATCH_SIZE_MESSAGE }}
         ${'a duplicated asset'}                  | ${['watch', 'assets']}                     | ${['BTC', 'BTC']}                 | ${{ path: ['watch', 'assets'], message: 'assets must not contain duplicates (repeated: BTC)' }}
         ${'an asset with a slash'}               | ${['watch', 'assets']}                     | ${['BTC/USDT']}                   | ${{ path: ['watch', 'assets', 0], message: 'Asset must not contain a slash' }}
         ${'6 assets'}                            | ${['watch', 'assets']}                     | ${['A', 'B', 'C', 'D', 'E', 'F']} | ${{ path: ['watch', 'assets'], message: 'Maximum 5 assets allowed' }}
@@ -692,6 +747,7 @@ describe('configurationSchema', () => {
     const createStrategyConfig = (plugins: object[], strategy?: object) => ({
       ...createBaseConfig(),
       plugins,
+      storage: sqliteStorage,
       ...(strategy && { strategy }),
     });
     const mismatchIssue = (name: string, strategyName: string) => ({

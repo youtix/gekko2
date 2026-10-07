@@ -10,28 +10,31 @@ import { CandleDateranges, MissingCandleCount } from './storage.types';
 export abstract class Storage {
   protected buffer: CandleBucket[];
   protected insertThreshold: number;
-  /** Whether a candle written for a minute already stored replaces the stored one, rather than being dropped */
-  protected readonly replaceStoredCandles: boolean;
+  /**
+   * Whether the real candles written have the last word over the stored ones: in an import, which reads the exchange's history.
+   * SQLiteStorage.insertCandles states what each written candle replaces.
+   */
+  protected readonly hasLastWord: boolean;
 
   constructor() {
     const { mode } = config.getWatch();
-    const storage = config.getStorage();
     this.buffer = [];
-    if (storage?.insertThreshold) this.insertThreshold = storage.insertThreshold;
-    else if (mode === 'realtime') this.insertThreshold = 1;
-    else this.insertThreshold = INSERT_THRESHOLD;
-    // An import has the last word: it reads the exchange's history, so it replaces the candles that FillCandleGap made up (flat,
-    // without volume) for minutes an earlier run missed, such as those of a network blip in realtime. A realtime run keeps what
-    // is stored: its own candle for a minute can be such a stand-in, which must never overwrite an imported one.
-    this.replaceStoredCandles = mode === 'importer';
+    // Realtime writes each minute as it closes; the importer batches its inserts
+    this.insertThreshold = config.getStorage()?.insertThreshold ?? (mode === 'realtime' ? 1 : INSERT_THRESHOLD);
+    this.hasLastWord = mode === 'importer';
   }
 
-  public addCandle(bucket: CandleBucket) {
+  public addBucket(bucket: CandleBucket) {
     this.buffer.push(bucket);
-    if (this.buffer.length >= this.insertThreshold) {
-      bucket.keys().forEach(symbol => this.insertCandles(symbol));
-      this.buffer = [];
-    }
+    if (this.buffer.length >= this.insertThreshold) this.flush();
+  }
+
+  /** Inserts the candles of every pair the buffer holds, not only the pairs of its last bucket, then empties it. */
+  protected flush() {
+    const symbols = new Set<TradingPair>();
+    for (const bucket of this.buffer) for (const symbol of bucket.keys()) symbols.add(symbol);
+    for (const symbol of symbols) this.insertCandles(symbol);
+    this.buffer = [];
   }
 
   protected getTable(symbol: TradingPair) {
@@ -41,9 +44,10 @@ export abstract class Storage {
   }
 
   public abstract insertCandles(symbol: TradingPair): void;
-  public abstract upsertTable(symbol: TradingPair): void;
+  public abstract createTable(symbol: TradingPair): void;
   public abstract getCandleDateranges(symbol: TradingPair): Nullable<CandleDateranges[]>;
   public abstract getCandles(symbol: TradingPair, interval: Interval<EpochTimeStamp, EpochTimeStamp>): Candle[];
   public abstract checkInterval(symbol: TradingPair, interval: Interval<EpochTimeStamp, EpochTimeStamp>): Nullable<MissingCandleCount>;
+  /** Inserts the buffered candles, then closes the connection. */
   public abstract close(): void;
 }

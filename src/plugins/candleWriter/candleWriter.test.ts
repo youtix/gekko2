@@ -1,3 +1,4 @@
+import { Storage } from '@services/storage/storage';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CandleWriter } from './candleWriter';
 import { candleWriterSchema } from './candleWriter.schema';
@@ -25,14 +26,20 @@ describe('CandleWriter', () => {
   beforeEach(() => {
     const config = { name: 'CandleWriter' };
     writer = new CandleWriter(config);
-    fakeStorage = { addCandle: vi.fn(), insertCandles: vi.fn(), close: vi.fn() } as unknown as Storage;
-    // @ts-expect-error Force casting to storage
+    fakeStorage = { addBucket: vi.fn(), close: vi.fn() } as unknown as Storage;
     writer.getStorage = (): Storage => fakeStorage;
   });
 
   describe('constructor', () => {
     it('should create an instance with the given name', () => {
       expect(writer['pluginName']).toBe('CandleWriter');
+    });
+  });
+
+  describe('processInit', () => {
+    it('leaves the storage alone', () => {
+      writer['processInit']();
+      expect([fakeStorage.addBucket, fakeStorage.close].flatMap(mock => vi.mocked(mock).mock.calls)).toEqual([]);
     });
   });
 
@@ -49,17 +56,12 @@ describe('CandleWriter', () => {
       };
       const bucket = new Map([['BTC/USDT', candle]]);
       writer['processOneMinuteBucket'](bucket as any);
-      expect(fakeStorage.addCandle).toHaveBeenCalledWith(bucket);
+      expect(fakeStorage.addBucket).toHaveBeenCalledWith(bucket);
     });
   });
 
   describe('processFinalize', () => {
-    it('should call insertCandles on the storage', () => {
-      writer['processFinalize']();
-      expect(fakeStorage.insertCandles).toHaveBeenCalled();
-    });
-
-    it('should call close on the storage', () => {
+    it('closes the storage, which inserts the buffered candles', () => {
       writer['processFinalize']();
       expect(fakeStorage.close).toHaveBeenCalled();
     });

@@ -87,6 +87,9 @@ export class PerformanceReporter extends Plugin {
     },
     { header: 'benchmark asset', value: portfolioOnly(({ benchmarkAsset }) => benchmarkAsset) },
     { header: 'top maes', value: tradingOnly(({ topMAEs }) => JSON.stringify(topMAEs)) },
+    // The row of a run stopped before its end (a crash, missing candles, the circuit breaker) says why, rather than passing for that of
+    // a full run. The reason is written as the error gave it, quoted when it holds the separator or a line break (see toCsvCell).
+    { header: 'status', value: ({ interruption }) => (interruption === undefined ? 'completed' : `interrupted: ${interruption}`) },
   ];
 
   private readonly header = this.columns.map(({ header }) => header).join(';');

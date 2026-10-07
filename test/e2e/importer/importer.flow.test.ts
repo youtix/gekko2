@@ -80,7 +80,7 @@ mock.module('@services/configuration/configuration', () => {
       }),
       getStorage: () => ({
         type: 'sqlite',
-        path: ':memory:', // Isolated DB
+        database: ':memory:', // Isolated DB
       }),
       getPlugins: () => [
         {
@@ -111,7 +111,7 @@ describe('E2E: Importer (Synthetic)', () => {
     const storage = inject.storage() as SQLiteStorage;
     cleanDatabase(storage);
     clearLogs();
-    storage.close = () => {}; // Prevent closure so assertions can run
+    storage.close = () => storage['flush'](); // Insert the buffered candles but keep the in-memory database open for the assertions
 
     // Reset MockCCXTExchange static state
     MockCCXTExchange.simulatedGaps = [];
@@ -138,7 +138,7 @@ describe('E2E: Importer (Synthetic)', () => {
     // 1. Run the Pipeline
     // Monkey-patch storage.close to prevent closure before verification
     const storage = inject.storage() as SQLiteStorage;
-    storage.close = () => {};
+    storage.close = () => storage['flush']();
 
     await gekkoPipeline();
 
@@ -227,6 +227,16 @@ describe('E2E: Importer (Synthetic)', () => {
       .get(SCENARIO_C_START, SCENARIO_C_END) as { count: number };
 
     expect(rowCountBTC.count).toBe(1001); // 1000 minutes + 1 inclusive
+
+    // The range spans two exchange pages: the second one, requested from the millisecond after the last candle of the
+    // first, must start at the next minute, and the last minute of the range must be there
+    const { lastStart, offGridRows } = db
+      .query(
+        'SELECT max(start) as lastStart, count(CASE WHEN start % ? != 0 THEN 1 END) as offGridRows FROM candles_BTC_USDT WHERE start >= ? AND start <= ?',
+      )
+      .get(ONE_MINUTE, SCENARIO_C_START, SCENARIO_C_END) as { lastStart: number; offGridRows: number };
+    expect(lastStart).toBe(SCENARIO_C_END);
+    expect(offGridRows).toBe(0);
   }, 120000); // Higher timeout for larger scale
 
   it('Scenario D: Error Handling & Resilience (Simulated Network Error)', async () => {
@@ -345,7 +355,7 @@ describe('E2E: Importer (Synthetic)', () => {
     // Re-initialize storage with new mockPairs
     inject.reset();
     const storage = inject.storage() as SQLiteStorage;
-    storage.close = () => {};
+    storage.close = () => storage['flush']();
     const db = storage['db'];
 
     await gekkoPipeline();
@@ -396,7 +406,7 @@ describe('E2E: Importer (Synthetic)', () => {
     // Re-initialize storage with new mockPairs
     inject.reset();
     const storage = inject.storage() as SQLiteStorage;
-    storage.close = () => {};
+    storage.close = () => storage['flush']();
     const db = storage['db'];
 
     await gekkoPipeline();

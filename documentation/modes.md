@@ -76,7 +76,7 @@ plugins:
 > Import duration depends on the date range and exchange. Large ranges (multiple years) can take several minutes.
 
 > [!NOTE]
-> An import overwrites whatever the database already holds for its date range, while a realtime run never overwrites a stored minute. Re-importing therefore repairs the flat, zero-volume candles that a realtime run with `CandleWriter` stores for the minutes it missed: re-import the ranges named by its `Total gap detected` and `Partial gap detected` warnings.
+> An import replaces whatever the database already holds for the minutes the exchange returns, a minute without trades included; the candle it makes up for a minute the exchange lacks only replaces a stored candle that is made up too. A realtime run with `CandleWriter` only replaces a stored made-up candle, and only with a candle that traded. Re-importing therefore repairs the flat, zero-volume candles that a realtime run stores for the minutes it missed: re-import the ranges named by its `Total gap detected` and `Partial gap` warnings. A gap of more than 7 days in the exchange's history is not filled: the run stops with an error naming the gap.
 
 > [!NOTE]
 > On `hyperliquid` (importer or realtime), write a Unit-wrapped spot token by its token name in `watch.assets` (`UBTC`, `UETH`, `USOL`, `UPUMP`...), not by the coin it wraps: ccxt resolves the token name to its spot market, while a coin name only works when ccxt happens to name the market after it (`BTC/USDC` resolves, `PUMP/USDC` does not).

@@ -19,7 +19,7 @@ import { RejectFutureCandleStream } from '../stream/validation/rejectFutureCandl
 const buildRealtimePipeline = async (plugins: Plugin[]) => {
   const { pairs, timeframe, warmup } = config.getWatch();
   // The clock is read once: the live stream of every pair starts with the minute in progress and the warmup history ends with the
-  // minute before, so that the pairs fetch the same minutes and the history meets the live candles without a gap or an overlap,
+  // minute before, so that every pair starts on the same minute and the history meets the live candles without a gap or an overlap,
   // however slow start-up is
   const currentMinute = startOfMinute(Date.now()).getTime();
   const liveStream = synchronizeStreams(pairs.map(p => new RealtimeStream(p.symbol, currentMinute)));
@@ -28,16 +28,20 @@ const buildRealtimePipeline = async (plugins: Plugin[]) => {
   const end = subMinutes(currentMinute, 1).getTime();
   const history = new MultiAssetHistoricalStream({ daterange: { start, end }, tickrate: warmup.tickrate, pairs });
 
-  await pipeline(
-    mergeSequentialStreams(history, liveStream),
-    new RejectFutureCandleStream(),
-    new RejectDuplicateCandleStream(),
-    // Every plugin then gets every pair in every bucket: a pair without a candle yet holds the buckets back (see FillCandleGapStream)
-    new FillCandleGapStream(
-      pairs.map(p => p.symbol),
-      { completeBucketsOnly: true },
+  const sink = new PluginsStream(plugins);
+  await runPipeline(sink, () =>
+    pipeline(
+      mergeSequentialStreams(history, liveStream),
+      new RejectFutureCandleStream(),
+      new RejectDuplicateCandleStream(),
+      // A pair listed after the start of the warmup has no candle in its first buckets: they are dropped rather than handed to
+      // the plugins incomplete (the timeframe batcher refuses a bucket that misses a pair)
+      new FillCandleGapStream(
+        pairs.map(p => p.symbol),
+        { dropIncompleteLeadingBuckets: true },
+      ),
+      sink,
     ),
-    new PluginsStream(plugins),
   );
 };
 
@@ -45,7 +49,9 @@ const buildBacktestPipeline = async (plugins: Plugin[]) => {
   const { daterange, pairs } = config.getWatch();
   if (!daterange) throw new Error('daterange is not set');
 
-  await pipeline(new MultiAssetBacktestStream({ daterange, pairs }), new PluginsStream(plugins));
+  warning('stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!');
+  const sink = new PluginsStream(plugins);
+  await runPipeline(sink, () => pipeline(new MultiAssetBacktestStream({ daterange, pairs }), sink));
 };
 
 const buildImporterPipeline = async (plugins: Plugin[]) => {
@@ -64,7 +70,21 @@ const buildImporterPipeline = async (plugins: Plugin[]) => {
   const end = isEndClosed ? daterange.end : lastClosedMinute;
 
   const stream = new MultiAssetHistoricalStream({ daterange: { start: daterange.start, end }, tickrate, pairs });
-  return pipeline(stream, new RejectFutureCandleStream(), new FillCandleGapStream(pairs.map(p => p.symbol)), new PluginsStream(plugins));
+  const sink = new PluginsStream(plugins);
+  await runPipeline(sink, () => pipeline(stream, new RejectFutureCandleStream(), new FillCandleGapStream(pairs.map(p => p.symbol)), sink));
+};
+
+/**
+ * pipeline() rejects with the first error of the chain. When a bucket fails and a stream upstream fails too during the
+ * finalisation that follows, that first error is the upstream one, but the bucket's error is the one main() has to see (an
+ * ApplicationStopError is a graceful stop, not a crash): it wins.
+ */
+const runPipeline = async (sink: PluginsStream, run: () => Promise<void>) => {
+  try {
+    await run();
+  } catch (error) {
+    throw sink.failure ?? error;
+  }
 };
 
 export const streamPipelines = {
@@ -95,6 +115,10 @@ export const mergeSequentialStreams = (...streams: Readable[]) => {
     }
     return originalDestroy(error ?? undefined);
   };
+
+  // Relayed from the start, not only once the generator reads a stream: the live stream fails while the warmup history is
+  // still read, and an 'error' event without a listener is an uncaught exception, which exits without finalising the plugins
+  for (const stream of streams) stream.on('error', error => merged.destroy(error));
 
   return merged;
 };

@@ -80,6 +80,17 @@ export class Supervision extends Plugin {
   private lastCheckedLog?: BufferedLog;
   /** The batch the log monitoring is sending, if any. It never rejects. */
   private logBatchInFlight?: Promise<void>;
+  /** How often the candle check looks at the age of the last 1-minute bucket (see checkCandleFreshness) */
+  private candleCheckIntervalTime: number;
+  /** The age of the last 1-minute bucket beyond which the candle check reports that the candles stopped coming */
+  private candleStaleThreshold: number;
+  private candleCheckInterval?: Timer;
+  /** When the last 1-minute bucket was received, or when the candle check started if none had been by then */
+  private lastBucketReceivedAt?: EpochTimeStamp;
+  /** Whether Telegram has taken the alert that the candles stopped, and not since the message that they are coming again */
+  private candlesReportedStale = false;
+  /** The candle alert being sent, if any (see checkCandleFreshness). It never rejects. */
+  private candleAlertInFlight?: Promise<void>;
 
   constructor({
     name,
@@ -91,6 +102,8 @@ export class Supervision extends Plugin {
     cpuCheckInterval,
     memoryCheckInterval,
     logMonitoringInterval,
+    candleCheckInterval,
+    candleStaleThreshold,
   }: SupervisionConfig) {
     super(name);
     this.bot = new TelegramBot(token, botUsername, this.handleCommand.bind(this), chatId);
@@ -99,6 +112,8 @@ export class Supervision extends Plugin {
     this.cpuIntervalTime = cpuCheckInterval;
     this.memoryIntervalTime = memoryCheckInterval;
     this.logMonitorIntervalTime = logMonitoringInterval;
+    this.candleCheckIntervalTime = candleCheckInterval;
+    this.candleStaleThreshold = candleStaleThreshold;
   }
 
   private handleCommand(command: string): string {
@@ -108,7 +123,7 @@ export class Supervision extends Plugin {
           'healthcheck - Check if gekko is up',
           'sub_cpu_check - Check CPU usage',
           'sub_memory_check - Check memory usage',
-          'sub_candle_check - Check timeframe candle calculations',
+          'sub_candle_check - Check timeframe candle calculations and that 1m candles keep coming',
           'sub_monitor_log - Monitor log application',
           'subscribe_all - Subscribe to all notifications',
           'unsubscribe_all - Unsubscribe from all notifications',
@@ -242,11 +257,53 @@ export class Supervision extends Plugin {
   }
 
   private launchTimeframeCandleCheck() {
+    if (this.candleCheckInterval) return;
     debug('supervision', 'Starting Timeframe Candle monitoring');
+    // Counted from the subscription when no bucket came yet: a stall is measured from the last candle, or from here
+    this.lastBucketReceivedAt ??= Date.now();
+    this.candleCheckInterval = setInterval(() => this.checkCandleFreshness(), this.candleCheckIntervalTime);
   }
 
   private stopTimeframeCandleCheck() {
+    if (!this.candleCheckInterval) return;
+    clearInterval(this.candleCheckInterval);
+    this.candleCheckInterval = undefined;
+    this.candlesReportedStale = false;
     debug('supervision', 'Stopped Timeframe Candle monitoring');
+  }
+
+  /**
+   * The strategy, the trailing stops and the circuit breaker only run on candles: when they stop coming (the exchange, the network,
+   * or a stream that stalled), nothing else tells. One alert when they stop, one message when they come back. A check is skipped
+   * while an alert is in flight (Telegram slow to answer, the fetcher retrying), so that they go out one at a time and in order:
+   * the check after it sends what has changed meanwhile, if anything has.
+   */
+  private checkCandleFreshness() {
+    if (this.candleAlertInFlight) return debug('supervision', 'Candle freshness check skipped: the previous alert is still in flight');
+    const lastBucketReceivedAt = this.lastBucketReceivedAt!; // Set when the check started, at the latest
+    const age = Date.now() - lastBucketReceivedAt;
+    const isStale = age > this.candleStaleThreshold;
+    if (isStale === this.candlesReportedStale) return;
+    const message = isStale
+      ? `⚠️ No 1m candle received for ${Math.floor(age / ONE_MINUTE)} minute(s), last one @ ${toISOString(lastBucketReceivedAt)}`
+      : `✅ 1m candles are coming again, last one @ ${toISOString(lastBucketReceivedAt)}`;
+    this.candleAlertInFlight = this.sendCandleAlert(message, isStale).finally(() => {
+      this.candleAlertInFlight = undefined;
+    });
+  }
+
+  /**
+   * Sends a candle alert, and records what it reports once Telegram has taken it: an alert it fails to take is sent again at the
+   * next check, with the age of then. It never rejects: nothing awaits the interval callback that calls it, so a failure would be
+   * an unhandled rejection, which makes the run exit 1. It is logged as a warning instead.
+   */
+  private async sendCandleAlert(message: string, isStale: boolean) {
+    try {
+      await this.bot.sendMessage(message);
+      this.candlesReportedStale = isStale;
+    } catch (err) {
+      warning('supervision', `Candle alert not sent, sent again at the next check: ${describeFailure(err)}`);
+    }
   }
 
   private startLogMonitoring() {
@@ -394,8 +451,9 @@ export class Supervision extends Plugin {
     this.bot.listen();
   }
 
+  /** Records when the last 1-minute bucket came, whose age the candle check measures (see checkCandleFreshness) */
   protected processOneMinuteBucket(): void {
-    /** Nothing to do */
+    this.lastBucketReceivedAt = Date.now();
   }
 
   protected async processFinalize() {

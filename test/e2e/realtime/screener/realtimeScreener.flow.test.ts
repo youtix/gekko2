@@ -92,7 +92,7 @@ mock.module('@services/configuration/configuration', () => {
       }),
       getStorage: () => ({
         type: 'sqlite',
-        path: ':memory:', // Isolated DB
+        database: ':memory:', // Isolated DB
       }),
       getPlugins: () => [
         { name: 'TradingAdvisor', strategyName: 'DebugAdvice' },
@@ -301,9 +301,9 @@ describe('E2E: Realtime Screener Flow', () => {
     const pipelinePromise = gekkoPipeline();
     await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
 
-    // One warning at the first drop (the later drops go to debug), then a summary once the stream starts
+    // One warning per pair never seen at the first drop (the later drops are silent), then a summary at the first minute pushed
     const dropWarnings = logStore.filter(
-      log => log.level === 'warn' && String(log.message).includes('dropped until every pair has had a candle'),
+      log => log.level === 'warn' && String(log.message).includes('dropping the leading buckets until every pair has a candle'),
     );
     expect(dropWarnings.length).toBeGreaterThan(0);
     // The strategy started once both pairs had a candle

@@ -28,6 +28,9 @@
   "license": "MIT",
   "main": "gekko2.js",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build:exec": "bun build src/gekko2.ts --compile --outfile dist/gekko2",
     "build:js": "bun build ./src/gekko2.ts --outdir ./dist --target bun --minify --sourcemap",
@@ -46,7 +49,7 @@
     "test": "vitest --run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "test:e2e": "bun test test/e2e",
+    "test:e2e": "bun test --isolate test/e2e",
     "type:check": "bun tsc --noEmit"
   },
   "devDependencies": {

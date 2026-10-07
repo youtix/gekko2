@@ -12,7 +12,7 @@ vi.mock('@services/configuration/configuration', () => ({ config: mockConfig }))
 
 class TestStorage extends Storage {
   public insertCandles = vi.fn();
-  public upsertTable = vi.fn();
+  public createTable = vi.fn();
   public getCandleDateranges = vi.fn();
   public getCandles = vi.fn();
   public checkInterval = vi.fn();
@@ -30,8 +30,12 @@ describe('Storage', () => {
       mode          | storage                   | expected
       ${'backtest'} | ${{ insertThreshold: 5 }} | ${5}
       ${'realtime'} | ${{ insertThreshold: 5 }} | ${5}
+      ${'importer'} | ${{ insertThreshold: 1 }} | ${1}
       ${'realtime'} | ${undefined}              | ${1}
+      ${'realtime'} | ${{}}                     | ${1}
+      ${'importer'} | ${undefined}              | ${INSERT_THRESHOLD}
       ${'importer'} | ${{}}                     | ${INSERT_THRESHOLD}
+      ${'backtest'} | ${{}}                     | ${INSERT_THRESHOLD}
     `('sets the insert threshold to $expected in $mode mode with storage $storage', ({ mode, storage, expected }) => {
       mockConfig.getWatch.mockReturnValue({ mode });
       mockConfig.getStorage.mockReturnValue(storage);
@@ -43,13 +47,13 @@ describe('Storage', () => {
       ${'importer'} | ${true}
       ${'realtime'} | ${false}
       ${'backtest'} | ${false}
-    `('replaces the stored candles in $mode mode: $expected', ({ mode, expected }) => {
+    `('gives the real candles written the last word in $mode mode: $expected', ({ mode, expected }) => {
       mockConfig.getWatch.mockReturnValue({ mode });
-      expect(new TestStorage()['replaceStoredCandles']).toBe(expected);
+      expect(new TestStorage()['hasLastWord']).toBe(expected);
     });
   });
 
-  describe('addCandle', () => {
+  describe('addBucket', () => {
     const bucket: CandleBucket = new Map([
       ['BTC/USDT', { start: 0 } as Candle],
       ['ETH/USDT', { start: 0 } as Candle],
@@ -62,19 +66,23 @@ describe('Storage', () => {
     });
 
     it('keeps the bucket in the buffer while the insert threshold is not reached', () => {
-      storage.addCandle(bucket);
+      storage.addBucket(bucket);
       expect(storage.insertCandles).not.toHaveBeenCalled();
     });
 
-    it('inserts the candles of every pair of the bucket once the insert threshold is reached', () => {
-      storage.addCandle(bucket);
-      storage.addCandle(bucket);
-      expect(storage.insertCandles.mock.calls).toEqual([['BTC/USDT'], ['ETH/USDT']]);
+    it.each`
+      scenario                                 | buckets                                                 | expected
+      ${'every pair in both buckets'}          | ${[['BTC/USDT', 'ETH/USDT'], ['BTC/USDT', 'ETH/USDT']]} | ${[['BTC/USDT'], ['ETH/USDT']]}
+      ${'a pair missing from the last bucket'} | ${[['BTC/USDT', 'ETH/USDT'], ['BTC/USDT']]}             | ${[['BTC/USDT'], ['ETH/USDT']]}
+      ${'a pair only in the last bucket'}      | ${[['BTC/USDT'], ['ETH/USDT']]}                         | ${[['BTC/USDT'], ['ETH/USDT']]}
+    `('inserts the candles of every buffered pair once the insert threshold is reached, with $scenario', ({ buckets, expected }) => {
+      for (const symbols of buckets) storage.addBucket(new Map(symbols.map((symbol: string) => [symbol, { start: 0 } as Candle])));
+      expect(storage.insertCandles.mock.calls).toEqual(expected);
     });
 
     it('empties the buffer once the candles are inserted', () => {
-      storage.addCandle(bucket);
-      storage.addCandle(bucket);
+      storage.addBucket(bucket);
+      storage.addBucket(bucket);
       expect(storage['buffer']).toEqual([]);
     });
   });

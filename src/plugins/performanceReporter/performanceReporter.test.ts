@@ -41,11 +41,11 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 
 const HEADER =
-  'id;report type;pair;timeframe;net profit;total return;yearly profit;win rate;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;trade count;start time;end time;duration;exposure;start balance;final balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset;top maes';
+  'id;report type;pair;timeframe;net profit;total return;yearly profit;win rate;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;trade count;start time;end time;duration;exposure;start balance;final balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset;top maes;status';
 
 const HEADER_COLUMN_COUNT = HEADER.split(';').length;
 
-// The headers of the versions that had one column layout per report type.
+// The headers of the versions that had one column layout per report type, the last of which added a status column to both.
 const OLD_PORTFOLIO_HEADER =
   'id;pair;net profit;total return;yearly profit;market;alpha;sharpe ratio;sortino ratio;max drawdown;total changes;start time;end time;duration;exposure;original balance;current balance;start price;end price;standard deviation;downside deviation;longest drawdown duration;benchmark asset';
 
@@ -258,6 +258,8 @@ describe('PerformanceReporter', () => {
         ${sampleTradingReport}   | ${'total changes'}             | ${''}
         ${sampleTradingReport}   | ${'longest drawdown duration'} | ${''}
         ${sampleTradingReport}   | ${'benchmark asset'}           | ${''}
+        ${samplePortfolioReport} | ${'status'}                    | ${'completed'}
+        ${sampleTradingReport}   | ${'status'}                    | ${'completed'}
       `('should write $value under $column for $report.id', ({ report, column, value }) => {
         const file = useInMemoryFile();
 
@@ -286,6 +288,38 @@ describe('PerformanceReporter', () => {
         reporter.onPerformanceReport(report);
 
         expect(cellOf(file.content, column)).toBe(value);
+      });
+    });
+
+    describe('When the run stopped before its end', () => {
+      it.each`
+        description                                 | report                                                                                            | value
+        ${'the reason of a portfolio report'}       | ${{ ...samplePortfolioReport, interruption: 'Missing candles' }}                                  | ${'interrupted: Missing candles'}
+        ${'the reason of a trading report'}         | ${{ ...sampleTradingReport, interruption: 'Max consecutive order errors reached (5)' }}           | ${'interrupted: Max consecutive order errors reached (5)'}
+        ${'a reason holding the separator, quoted'} | ${{ ...sampleTradingReport, interruption: 'Max consecutive order errors reached (5); stopping' }} | ${'"interrupted: Max consecutive order errors reached (5); stopping"'}
+      `('should write $value under status for $description', ({ report, value }) => {
+        const file = useInMemoryFile();
+
+        reporter.onPerformanceReport(report);
+
+        expect(cellOf(file.content, 'status')).toBe(value);
+      });
+
+      it('should write a row with as many columns as the header when the reason holds the separator', () => {
+        const file = useInMemoryFile();
+
+        reporter.onPerformanceReport({ ...sampleTradingReport, interruption: 'Max consecutive order errors reached (5); stopping' });
+
+        expect(toCells(toLines(file.content)[1])).toHaveLength(HEADER_COLUMN_COUNT);
+      });
+
+      // An error without a message still stopped the run
+      it('should write the row of a run stopped by an error without a message as interrupted', () => {
+        useInMemoryFile();
+
+        reporter.onPerformanceReport({ ...samplePortfolioReport, interruption: '' });
+
+        expect(fs.appendFileSync).toHaveBeenCalledWith(expectedPath, expect.stringMatching(/;interrupted: \n$/), 'utf8');
       });
     });
 
@@ -494,16 +528,18 @@ describe('PerformanceReporter', () => {
 
     describe('When the first line of the file is not the expected header', () => {
       it.each`
-        description                                     | content
-        ${'the old portfolio report header'}            | ${`${OLD_PORTFOLIO_HEADER}\nDEMA;Portfolio;100\n`}
-        ${'the old trading report header'}              | ${`${OLD_TRADING_HEADER}\nDEMA;Trading;100\n`}
-        ${'a header without the timeframe column'}      | ${`${HEADER.replace(';timeframe', '')}\nDEMA;Portfolio;100\n`}
-        ${'a header with one more column'}              | ${`${HEADER};extra\nDEMA;Portfolio;100\n`}
-        ${'a header with one column less'}              | ${`${HEADER.slice(0, HEADER.lastIndexOf(';'))}\nDEMA;Portfolio;100\n`}
-        ${'a row, the file having no header'}           | ${'DEMA;Portfolio;100\nDEMA;Portfolio;100\n'}
-        ${'the header without its line break'}          | ${HEADER}
-        ${'the header ended by a lone carriage return'} | ${`${HEADER}\rDEMA;Portfolio;100\r`}
-        ${'a byte order mark and an old header'}        | ${`\uFEFF${OLD_TRADING_HEADER}\r\nDEMA;Trading;100\r\n`}
+        description                                      | content
+        ${'the old portfolio report header'}             | ${`${OLD_PORTFOLIO_HEADER}\nDEMA;Portfolio;100\n`}
+        ${'the old trading report header'}               | ${`${OLD_TRADING_HEADER}\nDEMA;Trading;100\n`}
+        ${'the old portfolio report header with status'} | ${`${OLD_PORTFOLIO_HEADER};status\nDEMA;Portfolio;100\n`}
+        ${'the old trading report header with status'}   | ${`${OLD_TRADING_HEADER};status\nDEMA;Trading;100\n`}
+        ${'a header without the timeframe column'}       | ${`${HEADER.replace(';timeframe', '')}\nDEMA;Portfolio;100\n`}
+        ${'a header with one more column'}               | ${`${HEADER};extra\nDEMA;Portfolio;100\n`}
+        ${'a header with one column less (no status)'}   | ${`${HEADER.slice(0, HEADER.lastIndexOf(';'))}\nDEMA;Portfolio;100\n`}
+        ${'a row, the file having no header'}            | ${'DEMA;Portfolio;100\nDEMA;Portfolio;100\n'}
+        ${'the header without its line break'}           | ${HEADER}
+        ${'the header ended by a lone carriage return'}  | ${`${HEADER}\rDEMA;Portfolio;100\r`}
+        ${'a byte order mark and an old header'}         | ${`\uFEFF${OLD_TRADING_HEADER}\r\nDEMA;Trading;100\r\n`}
       `('should not append to a file holding $description', ({ content }) => {
         const file = useInMemoryFile(content);
 

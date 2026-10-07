@@ -1,7 +1,7 @@
 import { config } from '@services/configuration/configuration';
 import { gekkoPipeline } from '@services/core/pipeline/pipeline';
 import { inject } from '@services/injecter/injecter';
-import { debug, error } from '@services/logger';
+import { debug, error, warning } from '@services/logger';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@services/configuration/configuration', () => ({ config: { showLogo: vi.fn() } }));
@@ -142,8 +142,8 @@ describe('main', () => {
     beforeEach(async () => {
       const { ApplicationStopError } = await import('@errors/applicationStop.error');
       vi.mocked(gekkoPipeline).mockImplementation(async () => {
-        // As when a failed order creation rejects the Trader's un-awaited launch() before the breaker trips
-        handlerOf('unhandledRejection')(new Error('binance createOrder failed: Account has insufficient balance'));
+        // As when a floated timer-driven task (an order poll) rejects before the breaker trips
+        handlerOf('unhandledRejection')(new Error('binance fetchOrder failed: 503 Service Unavailable'));
         throw new ApplicationStopError('Max consecutive order errors reached (5)');
       });
       await import('./gekko2');
@@ -299,6 +299,8 @@ describe('main', () => {
       event
       ${'uncaughtException'}
       ${'unhandledRejection'}
+      ${'SIGINT'}
+      ${'SIGTERM'}
     `('registers a $event handler before the pipeline starts', async ({ event }) => {
       vi.mocked(gekkoPipeline).mockResolvedValue([]);
       await import('./gekko2');
@@ -352,6 +354,62 @@ describe('main', () => {
       it('still exits with code 1', () => {
         onUncaughtException();
         expect(process.exit).toHaveBeenCalledExactlyOnceWith(1);
+      });
+    });
+  });
+
+  describe.each`
+    signal       | exitCode
+    ${'SIGINT'}  | ${130}
+    ${'SIGTERM'} | ${143}
+  `('on $signal during a realtime run', ({ signal, exitCode }) => {
+    const onSignal = () => handlerOf(signal)(signal);
+
+    beforeEach(async () => {
+      await startRealtimeRun();
+    });
+
+    describe('when the storage closes', () => {
+      beforeEach(() => {
+        onSignal();
+      });
+
+      it('logs the signal at warning level', () => {
+        expect(warning).toHaveBeenCalledWith('gekko', `Received ${signal}: closing the storage and exiting without finalising the plugins`);
+      });
+
+      it(`exits with code ${exitCode}`, () => {
+        expect(process.exit).toHaveBeenCalledExactlyOnceWith(exitCode);
+      });
+
+      it('closes the storage before exiting', () => {
+        const [closeCallOrder] = vi.mocked(inject.closeStorage).mock.invocationCallOrder;
+        const [exitCallOrder] = vi.mocked(process.exit).mock.invocationCallOrder;
+        expect(closeCallOrder).toBeLessThan(exitCallOrder);
+      });
+    });
+
+    describe('when closing the storage throws', () => {
+      const closeError = new Error('database is locked');
+
+      beforeEach(() => {
+        vi.mocked(inject.closeStorage).mockImplementation(() => {
+          throw closeError;
+        });
+      });
+
+      it('does not throw', () => {
+        expect(onSignal).not.toThrow();
+      });
+
+      it('logs the failure at error level', () => {
+        onSignal();
+        expect(error).toHaveBeenCalledWith('gekko', `Could not close the storage: ${closeError.stack}`);
+      });
+
+      it(`still exits with code ${exitCode}`, () => {
+        onSignal();
+        expect(process.exit).toHaveBeenCalledExactlyOnceWith(exitCode);
       });
     });
   });

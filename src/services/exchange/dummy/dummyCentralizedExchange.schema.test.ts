@@ -186,6 +186,7 @@ describe('dummyExchangeSchema', () => {
         daterange: { start: '2023-01-01T00:00:00.000Z', end: '2023-01-02T00:00:00.000Z' },
       },
       exchange,
+      storage: { type: 'sqlite', database: 'db/candles.sql' },
       plugins: [],
     });
 

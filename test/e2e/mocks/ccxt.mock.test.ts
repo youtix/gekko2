@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { ONE_MINUTE } from '@constants/time.const';
 import { MockCCXTExchange } from './ccxt.mock';
 
 describe('MockCCXTExchange', () => {
@@ -36,11 +37,23 @@ describe('MockCCXTExchange', () => {
       expect(result[0]).toEqual([3000, 103, 110, 100, 102, 50]);
 
       // 4th tick - should fallback to synthetic
-      result = await exchange.fetchOHLCV(symbol, '1m', 4000, 2);
+      result = await exchange.fetchOHLCV(symbol, '1m', 4 * ONE_MINUTE + 1, 2);
       expect(result).toHaveLength(2);
-      expect(result[0][0]).toBe(4000); // starts at since
+      expect(result[0][0]).toBe(5 * ONE_MINUTE); // starts at the first minute at or after since
       // Since it's synthetic data, it shouldn't match our predefined close
       expect(result[0][4]).not.toBe(102);
+    });
+  });
+
+  describe('Synthetic Candles', () => {
+    // bun:test takes no tagged-template table
+    it.each([
+      { since: 10 * ONE_MINUTE, expected: [10, 11, 12].map(n => n * ONE_MINUTE) },
+      { since: 10 * ONE_MINUTE + 1, expected: [11, 12, 13].map(n => n * ONE_MINUTE) },
+      { since: 11 * ONE_MINUTE - 1, expected: [11, 12, 13].map(n => n * ONE_MINUTE) },
+    ])('should serve minute-aligned candles from the first minute at or after since=$since', async ({ since, expected }) => {
+      const result = await exchange.fetchOHLCV('BTC/USDT', '1m', since, 3);
+      expect(result.map(([start]) => start)).toEqual(expected);
     });
 
     it('should respect resetPredefinedCandles', async () => {

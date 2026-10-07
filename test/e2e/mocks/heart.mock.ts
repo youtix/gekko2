@@ -1,16 +1,16 @@
-import { bindAll, defer } from 'lodash-es';
+import type { HeartOptions } from '@services/core/heart/heart';
 import EventEmitter from 'node:events';
 
+/** Ticks right after pump(), then every tick rate from there, unaligned on the boundaries, so that the scenarios run fast */
 export class MockHeart extends EventEmitter {
   private static instances: Set<MockHeart> = new Set();
 
   private tickRate: number;
   private timeout?: Timer;
 
-  constructor(tickRate: number) {
+  constructor(tickRate: number, _options?: HeartOptions) {
     super();
     this.tickRate = tickRate;
-    bindAll(this, [this.tick.name]);
     MockHeart.instances.add(this);
   }
 
@@ -19,12 +19,12 @@ export class MockHeart extends EventEmitter {
   }
 
   public pump() {
-    this.timeout = setInterval(this.tick, this.tickRate);
-    defer(this.tick);
+    if (this.isHeartBeating()) return;
+    this.timeout = setTimeout(() => this.beat(), 0);
   }
 
   public stop() {
-    clearInterval(this.timeout);
+    clearTimeout(this.timeout);
     this.timeout = undefined;
   }
 
@@ -39,5 +39,10 @@ export class MockHeart extends EventEmitter {
       instance.removeAllListeners();
     }
     MockHeart.instances.clear();
+  }
+
+  private beat() {
+    this.timeout = setTimeout(() => this.beat(), this.tickRate);
+    this.tick();
   }
 }

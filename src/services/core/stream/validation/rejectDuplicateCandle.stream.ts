@@ -1,8 +1,7 @@
 import { CandleBucket } from '@models/event.types';
 import { warning } from '@services/logger';
+import { getBucketTimestamp } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
-import { differenceInMinutes } from 'date-fns';
-import { isNil } from 'lodash-es';
 import { Transform, TransformCallback } from 'node:stream';
 
 export class RejectDuplicateCandleStream extends Transform {
@@ -12,19 +11,19 @@ export class RejectDuplicateCandleStream extends Transform {
     super({ objectMode: true });
   }
 
-  async _transform(bucket: CandleBucket, _: BufferEncoding, next: TransformCallback) {
+  _transform(bucket: CandleBucket, _: BufferEncoding, next: TransformCallback) {
     try {
-      const firstCandle = bucket.values().next().value;
-      if (!firstCandle) return next();
+      const bucketTimestamp = getBucketTimestamp(bucket);
+      if (bucketTimestamp === undefined) return next();
 
-      const bucketTimestamp = firstCandle.start;
-
-      if (!isNil(this.lastBucketTimestamp)) {
-        const isBucketDuplicate = differenceInMinutes(bucketTimestamp, this.lastBucketTimestamp) < 1;
-        if (isBucketDuplicate) {
-          warning('stream', `Duplicate bucket detected @ ${toISOString(bucketTimestamp)}. Ignoring.`);
-          return next();
-        }
+      if (this.lastBucketTimestamp !== undefined && bucketTimestamp <= this.lastBucketTimestamp) {
+        warning(
+          'stream',
+          bucketTimestamp === this.lastBucketTimestamp
+            ? `Duplicate bucket detected @ ${toISOString(bucketTimestamp)}. Ignoring.`
+            : `Out-of-order bucket detected @ ${toISOString(bucketTimestamp)}, after ${toISOString(this.lastBucketTimestamp)}. Ignoring.`,
+        );
+        return next();
       }
 
       this.lastBucketTimestamp = bucketTimestamp;

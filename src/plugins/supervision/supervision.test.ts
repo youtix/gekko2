@@ -47,6 +47,8 @@ describe('Supervision', () => {
     cpuCheckInterval: 100,
     memoryCheckInterval: 100,
     logMonitoringInterval: 100,
+    candleCheckInterval: 100,
+    candleStaleThreshold: 300,
   };
 
   beforeEach(() => {
@@ -204,6 +206,22 @@ describe('Supervision', () => {
         expect(sample).toHaveBeenCalledTimes(3);
       });
     });
+  });
+
+  it.each`
+    check       | command                | sampler
+    ${'CPU'}    | ${'/sub_cpu_check'}    | ${'getCpuUsage'}
+    ${'Memory'} | ${'/sub_memory_check'} | ${'getMemoryUsage'}
+  `('sends no $check alert while the usage is under its threshold', async ({ command, sampler }) => {
+    plugin[sampler as 'getCpuUsage' | 'getMemoryUsage'] = vi.fn(() => 10); // Both thresholds are 50
+    plugin['handleCommand'](command);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(fakeBot.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('measures the memory usage as the resident set size, in MB', () => {
+    vi.spyOn(process, 'memoryUsage').mockReturnValue({ rss: 3 * 1024 * 1024 } as NodeJS.MemoryUsage);
+    expect(plugin['getMemoryUsage']()).toBe(3);
   });
 
   describe('timeframe candle check', () => {
@@ -419,6 +437,153 @@ describe('Supervision', () => {
       });
       await check(bucket('BTC/USDT', 'ETH/USDT'));
       expect(fakeBot.sendMessage.mock.calls).toEqual([[mismatch('ETH/USDT', '1h', 'open: 2 | 1')]]);
+    });
+  });
+
+  // The same subscription checks that the 1-minute candles keep coming: every 100 ms here, the stale threshold being 300 ms
+  describe('candle freshness check', () => {
+    type Settle = Omit<PromiseWithResolvers<void>, 'promise'>;
+    /** Monday 1 January 2024 at midnight UTC: the time of the subscription, unless a test lets time go by first */
+    const subscribedAt = Date.UTC(2024, 0, 1);
+    const toggleSubscription = () => plugin['handleCommand']('/sub_candle_check');
+    /** Lets `ms` go by, a check every 100 ms, with a bucket received before each check until `bucketsUntil` ms have gone by */
+    const run = async (ms: number, bucketsUntil = 0) => {
+      for (let elapsed = 100; elapsed <= ms; elapsed += 100) {
+        if (elapsed <= bucketsUntil) plugin['processOneMinuteBucket']();
+        await vi.advanceTimersByTimeAsync(100);
+      }
+    };
+    /** The alert that no bucket came for `minutes`, the last one received at `lastAt` */
+    const stopped = (minutes: number, lastAt = '2024-01-01T00:00:00.000Z') =>
+      `⚠️ No 1m candle received for ${minutes} minute(s), last one @ ${lastAt}`;
+    /** The message that the buckets come again, the last one received at `lastAt` */
+    const comingAgain = (lastAt: string) => `✅ 1m candles are coming again, last one @ ${lastAt}`;
+    const sentMessages = () => fakeBot.sendMessage.mock.calls.map(([text]) => text);
+
+    beforeEach(() => {
+      vi.setSystemTime(subscribedAt);
+    });
+
+    it.each`
+      description                                          | bucketsUntil | expected
+      ${'nothing while the buckets keep coming'}           | ${1000}      | ${[]}
+      ${'one alert when none came since the subscription'} | ${0}         | ${[stopped(0)]}
+      ${'one alert naming the last bucket received'}       | ${200}       | ${[stopped(0, '2024-01-01T00:00:00.100Z')]}
+    `('sends $description, over ten checks', async ({ bucketsUntil, expected }) => {
+      toggleSubscription();
+      await run(1000, bucketsUntil);
+      expect(sentMessages()).toEqual(expected);
+    });
+
+    it('sends nothing while the last bucket is as old as the stale threshold, not older', async () => {
+      toggleSubscription();
+      await run(300);
+      expect(fakeBot.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('measures the age from the last bucket received before the subscription', async () => {
+      plugin['processOneMinuteBucket']();
+      await vi.advanceTimersByTimeAsync(250);
+      toggleSubscription();
+      await run(100); // The first check, 350 ms after the bucket
+      expect(sentMessages()).toEqual([stopped(0)]);
+    });
+
+    it('names the age of the last bucket in whole minutes', async () => {
+      plugin = new Supervision({ ...baseConfig, candleCheckInterval: ONE_MINUTE, candleStaleThreshold: 3 * ONE_MINUTE });
+      plugin['bot'] = fakeBot as any;
+      toggleSubscription();
+      await vi.advanceTimersByTimeAsync(4 * ONE_MINUTE); // Stale at the check of the 4th minute only: 3 minutes is not older
+      expect(sentMessages()).toEqual([stopped(4)]);
+    });
+
+    it('says once that the buckets come again, naming the one that came', async () => {
+      toggleSubscription();
+      await run(600); // The alert, at 400 ms
+      plugin['processOneMinuteBucket'](); // At 600 ms
+      await run(300);
+      expect(sentMessages()).toEqual([stopped(0), comingAgain('2024-01-01T00:00:00.600Z')]);
+    });
+
+    it('alerts again on a new subscription while the buckets are still missing', async () => {
+      toggleSubscription();
+      await run(500); // The alert, at 400 ms
+      toggleSubscription();
+      toggleSubscription();
+      await run(100);
+      expect(sentMessages()).toEqual([stopped(0), stopped(0)]);
+    });
+
+    it('stops on unsubscription', async () => {
+      toggleSubscription();
+      toggleSubscription();
+      await run(1000);
+      expect(fakeBot.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it('keeps one check when started again while subscribed', () => {
+      toggleSubscription();
+      plugin['launchTimeframeCandleCheck']();
+      expect(vi.getTimerCount()).toBe(1);
+    });
+
+    it('stops with the finalization', async () => {
+      toggleSubscription();
+      await plugin['processFinalize']();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    // A value without a prototype, which String() (and so a template literal) throws for, is described as inspect() does
+    describe.each`
+      failure                          | rejection                        | reason
+      ${'an error'}                    | ${new Error('Telegram is down')} | ${'Telegram is down'}
+      ${'a value without a prototype'} | ${Object.create(null)}           | ${'[Object: null prototype] {}'}
+    `('when Telegram fails to take the alert with $failure', ({ rejection, reason }) => {
+      beforeEach(async () => {
+        fakeBot.sendMessage.mockRejectedValueOnce(rejection);
+        toggleSubscription();
+        await run(400); // The alert, at 400 ms
+      });
+
+      it('logs the failure as a warning', () => {
+        expect(warning).toHaveBeenCalledWith('supervision', `Candle alert not sent, sent again at the next check: ${reason}`);
+      });
+
+      it('sends it again at the next check', async () => {
+        await run(100);
+        expect(sentMessages()).toEqual([stopped(0), stopped(0)]);
+      });
+    });
+
+    describe('while an alert is in flight', () => {
+      let send: Settle;
+
+      beforeEach(async () => {
+        fakeBot.sendMessage.mockReturnValueOnce(new Promise<void>((resolve, reject) => (send = { resolve, reject })));
+        toggleSubscription();
+        await run(400); // The alert, at 400 ms, which Telegram does not answer yet
+        plugin['processOneMinuteBucket'](); // The buckets come again, at 400 ms
+      });
+
+      it('sends nothing else', async () => {
+        await run(500);
+        expect(fakeBot.sendMessage).toHaveBeenCalledOnce();
+      });
+
+      it('logs the checks it skips at debug level', async () => {
+        await run(100);
+        expect(debug).toHaveBeenCalledWith('supervision', 'Candle freshness check skipped: the previous alert is still in flight');
+      });
+
+      it.each`
+        outcome     | settle                                                    | expected
+        ${'sent'}   | ${(s: Settle) => s.resolve()}                             | ${[stopped(0), comingAgain('2024-01-01T00:00:00.400Z')]}
+        ${'failed'} | ${(s: Settle) => s.reject(new Error('Telegram is down'))} | ${[stopped(0)]}
+      `('sends what has changed meanwhile at the next check once it has $outcome', async ({ settle, expected }) => {
+        settle(send);
+        await run(100);
+        expect(sentMessages()).toEqual(expected);
+      });
     });
   });
 
@@ -662,6 +827,7 @@ describe('Supervision', () => {
       command
       ${'/subscribe_all'}
       ${'/sub_cpu_check'}
+      ${'/sub_candle_check'}
       ${'/sub_monitor_log'}
     `('starts no timer on $command', ({ command }) => {
       plugin['handleCommand'](command);
@@ -710,6 +876,25 @@ describe('Supervision', () => {
   it('should return no subscriptions when empty', () => {
     const res = plugin['handleCommand']('/subscriptions');
     expect(res).toBe('No subscriptions');
+  });
+
+  it.each`
+    description                             | command
+    ${'a subscription that does not exist'} | ${'/sub_unknown'}
+    ${'a command that does not exist'}      | ${'/unknown'}
+  `('answers $description as an unknown command', ({ command }) => {
+    expect(plugin['handleCommand'](command)).toBe('Unknown command');
+  });
+
+  it('answers /healthcheck that Gekko is not running when the process has no uptime', () => {
+    vi.spyOn(process, 'uptime').mockReturnValue(0);
+    expect(plugin['handleCommand']('/healthcheck')).toBe('❌ Gekko is not running');
+  });
+
+  it('keeps one timer per monitoring when /subscribe_all follows every subscription', () => {
+    SUBSCRIPTION_NAMES.forEach(subscription => plugin['handleCommand'](`/sub_${subscription}`));
+    plugin['handleCommand']('/subscribe_all');
+    expect(vi.getTimerCount()).toBe(SUBSCRIPTION_NAMES.length);
   });
 
   it('getStaticConfiguration returns expected meta', () => {

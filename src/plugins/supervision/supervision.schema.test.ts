@@ -8,6 +8,8 @@ const defaults = {
   cpuCheckInterval: 10_000,
   memoryCheckInterval: 10_000,
   logMonitoringInterval: 60_000,
+  candleCheckInterval: 60_000,
+  candleStaleThreshold: 180_000,
 };
 const custom = {
   cpuThreshold: 90,
@@ -15,9 +17,14 @@ const custom = {
   cpuCheckInterval: 5000,
   memoryCheckInterval: 15_000,
   logMonitoringInterval: 30_000,
+  candleCheckInterval: 30_000,
+  candleStaleThreshold: 300_000,
 };
 
 const intervalMessage = (field: string) => `${field} must be an integer number of milliseconds between 1000 and 2147483647`;
+
+const staleThresholdMessage =
+  'candleStaleThreshold must be an integer number of milliseconds above 60000: the 1-minute candles come once a minute';
 
 describe('supervisionSchema', () => {
   it.each`
@@ -73,6 +80,7 @@ describe('supervisionSchema', () => {
     ${'cpuCheckInterval'}
     ${'memoryCheckInterval'}
     ${'logMonitoringInterval'}
+    ${'candleCheckInterval'}
   `('$field', ({ field }) => {
     it.each`
       scenario                                       | value
@@ -98,6 +106,33 @@ describe('supervisionSchema', () => {
     `('accepts $scenario', ({ value }) => {
       const result = supervisionSchema.parse({ ...entry, [field]: value });
       expect(result[field as keyof typeof defaults]).toBe(value);
+    });
+  });
+
+  // A bucket comes once a minute: with a threshold of a minute or less, the candles would be reported as stopped, then as coming
+  // again, between every two of them
+  describe('candleStaleThreshold', () => {
+    it.each`
+      scenario                               | value
+      ${'0'}                                 | ${0}
+      ${'a negative age'}                    | ${-1}
+      ${'one minute'}                        | ${60_000}
+      ${'less than a minute'}                | ${30_000}
+      ${'a fractional age above one minute'} | ${90_000.5}
+      ${'Infinity'}                          | ${Infinity}
+      ${'NaN'}                               | ${NaN}
+      ${'a number given as a string'}        | ${'180000'}
+    `('rejects $scenario', ({ value }) => {
+      const result = supervisionSchema.safeParse({ ...entry, candleStaleThreshold: value });
+      expect(result.error?.issues).toMatchObject([{ path: ['candleStaleThreshold'], message: staleThresholdMessage }]);
+    });
+
+    it.each`
+      scenario                         | value
+      ${'a millisecond over a minute'} | ${60_001}
+      ${'a day'}                       | ${86_400_000}
+    `('accepts $scenario', ({ value }) => {
+      expect(supervisionSchema.parse({ ...entry, candleStaleThreshold: value }).candleStaleThreshold).toBe(value);
     });
   });
 });

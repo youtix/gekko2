@@ -25,14 +25,22 @@ const daterangeSchema = z
   })
   .transform(({ start, end }) => ({ start: toTimestamp(start), end: toTimestamp(end) }));
 
-// Heart throws once two ticks are more than 3 tick periods apart. At 100 ms only an event-loop stall of over 200 ms trips
-// it, well clear of ordinary stalls such as a batch of SQLite inserts (up to 80 ms measured on a laptop).
+// tickrate and warmup.tickrate space the requests of a history download (the importer's, the realtime warmup's): the least delay,
+// in ms, between the starts of two of them
 const MIN_TICKRATE = 100;
 
 const integerAtLeast = (field: string, min: number) => {
   const message = `${field} must be an integer of at least ${min}`;
   return z.number(message).int(message).min(min, message);
 };
+
+const integerBetween = (field: string, min: number, max: number, reason: string) => {
+  const message = `${field} must be an integer between ${min} and ${max} (${reason})`;
+  return z.number(message).int(message).min(min, message).max(max, message);
+};
+
+// A backtest reads each batch of candles into memory at once, for every pair: 31 days of 1-minute candles is ample.
+const MAX_BATCH_SIZE = 31 * 24 * 60;
 
 const warmupSchema = z
   .strictObject({
@@ -50,7 +58,12 @@ export const watchSchema = z
     mode: z.enum(['realtime', 'backtest', 'importer']),
     warmup: warmupSchema,
     daterange: daterangeSchema.optional(),
-    batchSize: integerAtLeast('batchSize', 1).optional(),
+    batchSize: integerBetween(
+      'batchSize',
+      1,
+      MAX_BATCH_SIZE,
+      'minutes, 31 days at most: each batch is read into memory at once',
+    ).optional(),
   })
   .transform(data => ({
     ...data,
@@ -83,23 +96,22 @@ export const watchSchema = z
     }
   });
 
-// Storage holds the candles until it has insertThreshold minutes of them (about 1.6 KB a minute for 5 pairs), then writes them in
-// one synchronous transaction per pair, which stalls the event loop (measured with 5 pairs: 0.1 s for a day, 0.6 to 1.2 s for a
-// week). A day is the most, close to the importer's default of 1000: the Heart of a history download fails after a 0.2 s stall at
-// the shortest tickrate, and a run stopped without finalising its plugins (Ctrl-C) loses all that Storage holds. Storage would
-// read 0 as left out (1 in realtime, 1000 in the importer), hence the minimum of 1.
-const MAX_INSERT_THRESHOLD = 1440;
-const insertThresholdMessage = `insertThreshold must be an integer number of minutes between 1 and ${MAX_INSERT_THRESHOLD}`;
+// Storage holds insertThreshold minutes of candles in memory (about 1.6 KB a minute for 5 pairs), then writes them in one
+// synchronous transaction per pair, which blocks the event loop (with 5 pairs: 0.1 s for a day, 0.6 to 1.2 s for a week), and a
+// process killed before the storage is closed (SIGKILL, a power cut) loses all it holds. A day is the most, above the importer's
+// default of 1000.
+const MAX_INSERT_THRESHOLD = 24 * 60;
 
 export const storageSchema = z.strictObject({
   type: z.literal('sqlite'),
-  database: z.string(),
-  insertThreshold: z
-    .number(insertThresholdMessage)
-    .int(insertThresholdMessage)
-    .min(1, insertThresholdMessage)
-    .max(MAX_INSERT_THRESHOLD, insertThresholdMessage)
-    .optional(),
+  // Bun opens an in-memory database for an empty path: the candles would be lost on exit, without a word
+  database: z.string().trim().min(1, 'storage.database must not be empty'),
+  insertThreshold: integerBetween(
+    'storage.insertThreshold',
+    1,
+    MAX_INSERT_THRESHOLD,
+    'minutes, a day at most: the candles are held in memory until they are written',
+  ).optional(),
 });
 
 export const configurationSchema = z
@@ -120,6 +132,21 @@ export const configurationSchema = z
     [disclaimerField]: z.boolean().nullable().default(null),
   })
   .superRefine((data, ctx) => {
+    // Zod also runs this refinement after a non-aborting issue in a section (a failed refine or bound), with the transforms that
+    // build watch.pairs and the marketData Map skipped. Counted before the rules below add issues of their own.
+    const hasSectionIssues = ctx.issues.length > 0;
+
+    // Checked here rather than when the storage is first used: the backtest reads its candles from it at once, but a
+    // CandleWriter would only need it after the markets are loaded from the exchange.
+    const hasCandleWriter = some(data.plugins, { name: 'CandleWriter' });
+    if (!data.storage && (data.watch.mode === 'backtest' || hasCandleWriter)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['storage'],
+        message: `storage is required ${data.watch.mode === 'backtest' ? 'in backtest mode, which reads the candles from it' : 'by the CandleWriter plugin, which writes the candles to it'}`,
+      });
+    }
+
     // Only the simulator fills orders from replayed candles: any other exchange, sandbox included, would receive the
     // backtest's orders. The importer needs a real exchange to download candles from.
     const exchangesByMode: Record<typeof data.watch.mode, Array<typeof data.exchange.name>> = {
@@ -152,9 +179,8 @@ export const configurationSchema = z
 
     // marketData is dummy-cex's only source of fees and order limits, looked up by exact symbol: a watched pair without an
     // entry would trade free of both, and an entry for any other symbol (a typo, a swapped asset) would never be read.
-    // Zod also runs this refinement after a non-aborting issue (a failed refine or bound), with the transforms that build
-    // watch.pairs and the marketData Map skipped, so the rule only checks a configuration that has no other issue.
-    if (data.exchange.name === 'dummy-cex' && !ctx.issues.length) {
+    // The rule reads watch.pairs and the marketData Map, so it only checks a configuration whose sections have no issue.
+    if (data.exchange.name === 'dummy-cex' && !hasSectionIssues) {
       const watchedSymbols = data.watch.pairs.map(({ symbol }) => symbol);
       const marketDataSymbols = [...data.exchange.marketData.keys()];
       const missingSymbols = difference(watchedSymbols, marketDataSymbols);

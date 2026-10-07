@@ -90,6 +90,8 @@ export type RoundTrip = {
 export type Report = {
   /** Unique identifier for the report type */
   id: 'TRADING REPORT' | 'PORTFOLIO PROFIT REPORT';
+  /** Why the run stopped before its end, when it did: the report then covers a partial period */
+  interruption?: string;
   /** Performance relative to the benchmark market return (Excess Return) */
   alpha: number;
   /** Downside deviation of the returns: root mean square of the negative ones, positive ones counting as 0 (Sortino ratio) */

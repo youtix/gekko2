@@ -258,6 +258,7 @@ The report holds the fields of `Report` (`src/models/event.types.ts`), and those
 | `downsideDeviation`                          | Both      | Root mean square of the negative returns, the positive ones counting as 0 (%)                                                                              |
 | `sharpeRatio`, `sortinoRatio`                | Both      | Risk-adjusted returns, annualized (see below)                                                                                                              |
 | `startPrice`, `endPrice`                     | Both      | Price of the asset, or of the benchmark asset, at the start and at the end                                                                                 |
+| `interruption`                               | Both      | Message of the error that stopped the run before its end (a crash, missing candles, the circuit breaker), absent when it completed                         |
 | `startBalance`, `finalBalance`               | RoundTrip | Pair equity at the start and at the end, a position still open included                                                                                    |
 | `winRate`                                    | RoundTrip | Share of the closed round trips with a positive P&L (%), `null` without any                                                                                |
 | `tradeCount`                                 | RoundTrip | Trades of the period: orders completed and canceled ones that filled in part, from the first BUY on (or the first SELL of a position the warmup left open) |
@@ -329,7 +330,7 @@ plugins:
 
 ### CSV Output Format
 
-The reports of the PortfolioAnalyzer and of the RoundTripAnalyzer share one header, so both can be appended to the same file. A column that a report type does not have is left empty (*Portfolio only* / *Trading only* below). The lock of step 3 above covers writing the header of a new or empty file, checking the header and appending the row, so that no other run writes in between. The reporter never appends to a file whose first line is not this header, such as a file written by an older version: it logs an error and skips the report, so move or rename that file. A byte order mark at the start of the file and a `\r\n` line ending after the header, which Excel and LibreOffice add when they save the file back on Windows, are accepted; the rows the reporter appends still end with `\n`. The layout changed when the `timeframe` column was added and `pair` went back to holding the watched pairs (it had been repeating the report type), so every file written before that is refused.
+The reports of the PortfolioAnalyzer and of the RoundTripAnalyzer share one header, so both can be appended to the same file. A column that a report type does not have is left empty (*Portfolio only* / *Trading only* below). The lock of step 3 above covers writing the header of a new or empty file, checking the header and appending the row, so that no other run writes in between. The reporter never appends to a file whose first line is not this header, such as a file written by an older version: it logs an error and skips the report, so move or rename that file. A byte order mark at the start of the file and a `\r\n` line ending after the header, which Excel and LibreOffice add when they save the file back on Windows, are accepted; the rows the reporter appends still end with `\n`. The layout changed when the `timeframe` column was added and `pair` went back to holding the watched pairs (it had been repeating the report type), and again when the `status` column was added, so every file written before that is refused: the 28-column files without `status`, and the files of the version that wrote one header per report type, ending in `;status`.
 
 Cells are separated by `;`. A cell that holds a `;`, a double quote or a line break (a strategy parameter, for example) is enclosed in double quotes, and its own double quotes are doubled: the usual CSV quoting, which spreadsheets read back as the original value.
 
@@ -365,6 +366,7 @@ Amounts and prices (`net profit`, the profit in `yearly profit`, `start balance`
 | `longest drawdown duration` | Duration of the longest drawdown, *Portfolio only*                                                                                                           |
 | `benchmark asset`           | Asset whose price gives the market return, *Portfolio only*                                                                                                  |
 | `top maes`                  | The 10 largest maximum adverse excursions (%), as a JSON array, *Trading only*                                                                               |
+| `status`                    | `completed`, or `interrupted: <reason>` when the run stopped before its end (the message of the error that stopped it, quoted when it holds a `;`)           |
 
 > [!TIP]
 > Use the PerformanceReporter when running multiple backtests with different parameters. The CSV format makes it easy to analyze results in spreadsheet software or import into data analysis tools.
@@ -536,6 +538,8 @@ plugins:
     cpuCheckInterval: 10000       # Check CPU every 10 seconds
     memoryCheckInterval: 10000    # Check memory every 10 seconds
     logMonitoringInterval: 60000  # Check logs every 60 seconds
+    candleCheckInterval: 60000    # Check every 60 seconds that 1m candles keep coming
+    candleStaleThreshold: 180000  # Alert when no 1m candle came for 3 minutes
 ```
 
 ### Configuration Reference
@@ -551,8 +555,10 @@ plugins:
 | `cpuCheckInterval`      | integer | No                | `10000` | CPU check interval (milliseconds)                                                                                                           |
 | `memoryCheckInterval`   | integer | No                | `10000` | Memory check interval (milliseconds)                                                                                                        |
 | `logMonitoringInterval` | integer | No                | `60000` | Log monitoring interval (milliseconds)                                                                                                      |
+| `candleCheckInterval`   | integer | No                | `60000` | Candle freshness check interval (milliseconds)                                                                                              |
+| `candleStaleThreshold`  | integer | No                | `180000` | Age of the last 1-minute candle beyond which the candle check alerts that the candles stopped coming (milliseconds, above `60000`)          |
 
-The three intervals are whole milliseconds between `1000` (one second) and `2147483647` (about 24.8 days, the longest timer delay).
+The four intervals (`cpuCheckInterval`, `memoryCheckInterval`, `logMonitoringInterval` and `candleCheckInterval`) are whole milliseconds between `1000` (one second) and `2147483647` (about 24.8 days, the longest timer delay). `candleStaleThreshold` is a whole number of milliseconds above `60000`: the 1-minute candles come once a minute, so a shorter threshold would alert between every two of them.
 
 > [!IMPORTANT]
 > Set `chatId`, as for the EventSubscriber above (whose configuration section also tells how to find your chat id): without it, the first chat to send the bot a command after start-up gets the alerts and the forwarded logs, and controls the monitoring, until Gekko stops.
@@ -573,7 +579,7 @@ Control monitoring via Telegram commands:
 | `/healthcheck`               | Check if Gekko is running                  |
 | `/sub_cpu_check`             | Toggle CPU usage monitoring                |
 | `/sub_memory_check`          | Toggle memory usage monitoring             |
-| `/sub_candle_check`          | Toggle candle validation                   |
+| `/sub_candle_check`          | Toggle the candle checks (see below)       |
 | `/sub_monitor_log`           | Toggle log monitoring (warns/errors)       |
 | `/subscribe_all`             | Subscribe to all monitoring                |
 | `/unsubscribe_all`           | Unsubscribe from all monitoring            |
@@ -593,6 +599,7 @@ Control monitoring via Telegram commands:
 | **CPU Monitoring**    | Alert when CPU usage exceeds threshold                   |
 | **Memory Monitoring** | Alert when memory usage exceeds threshold                |
 | **Candle Validation** | Compare local candles with exchange data for accuracy    |
+| **Candle Freshness**  | Alert when the 1-minute candles stop coming              |
 | **Log Monitoring**    | Forward warning and error logs to Telegram               |
 
 ### Example Alerts
@@ -613,6 +620,15 @@ Control monitoring via Telegram commands:
 close: 42500 | 42498
 volume: 1234.5 | 1234.7
 ```
+
+**Candle Stall** (then one message when the candles come again):
+```
+⚠️ No 1m candle received for 3 minute(s), last one @ 2024-01-15T14:00:00.000Z
+✅ 1m candles are coming again, last one @ 2024-01-15T14:05:00.000Z
+```
+
+> [!NOTE]
+> `/sub_candle_check` turns on both candle checks. The validation compares each timeframe candle with the exchange's. The freshness check looks every `candleCheckInterval` at the age of the last 1-minute bucket, because the strategy, the trailing stops and the circuit breaker only run on candles: it sends one alert when that age exceeds `candleStaleThreshold`, then one message when the candles come again. An alert Telegram did not take is logged as a warning and sent again at the next check. Before the first bucket, the age is counted from the subscription, so a subscription made before a warmup longer than the threshold alerts before any candle came.
 
 > [!NOTE]
 > The candle check runs in the background, so a slow or unreachable exchange or Telegram never holds up candles or orders. A timeframe candle that closes while the check of the previous one is still running is not checked (a debug log line says so).

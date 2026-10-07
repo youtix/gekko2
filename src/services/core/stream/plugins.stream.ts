@@ -24,14 +24,21 @@ const describeReason = (reason: unknown) => {
   return isString(reason) ? reason : inspect(reason);
 };
 
+const toError = (value: unknown) => (value instanceof Error ? value : new Error(String(value)));
+
 export class PluginsStream extends Writable {
   private readonly plugins: Plugin[];
-  /** Only these are finalised: all the plugins, unless _construct failed part way */
+  /** Only these are finalised: all the plugins, unless _construct failed or the stream was destroyed part way */
   private readonly initializedPlugins: Plugin[] = [];
   private readonly dummyExchange?: DummyExchange;
-  private finalized = false;
-  /** Settles once the bucket being written has been handled, whatever the outcome; between two buckets, that of the last one */
-  private writing: Promise<void> = Promise.resolve();
+  /** The bucket being processed. _destroy waits for it, so that no plugin is finalised in the middle of a bucket. */
+  private pendingWrite?: Promise<void>;
+  /** Started by whichever of _final, a failed bucket and _destroy comes first; the others wait for the same promise. */
+  private finalization?: Promise<void>;
+  /** The error a bucket failed with. The stream reports it even when a stream upstream fails while the plugins are finalised. */
+  private caughtError?: Error;
+  /** The plugins that failed on that bucket besides the one whose failure is the error: logged after it */
+  private otherFailures: PluginFailure[] = [];
 
   constructor(plugins: Plugin[]) {
     super({ objectMode: true });
@@ -40,9 +47,20 @@ export class PluginsStream extends Writable {
     if (isDummyExchange(exchange)) this.dummyExchange = exchange;
   }
 
+  /**
+   * The error a bucket failed with, if any. pipeline() rejects with the first error of the chain, so when a stream upstream
+   * fails while the plugins are finalised after a failed bucket, it rejects with the upstream error, not this one: the
+   * caller has to prefer this one to tell an ApplicationStopError from a crash.
+   */
+  public get failure(): Error | undefined {
+    return this.caughtError;
+  }
+
   public async _construct(callback: (error?: Error | null) => void): Promise<void> {
     try {
       for (const plugin of this.plugins) {
+        // Destroyed meanwhile (a stream upstream failed): the plugins left would be finalised as soon as initialised
+        if (this.destroyed) break;
         await plugin.processInitStream();
         this.initializedPlugins.push(plugin);
       }
@@ -53,82 +71,83 @@ export class PluginsStream extends Writable {
     }
   }
 
-  public async _write(bucket: CandleBucket, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
-    const writing = Promise.withResolvers<void>();
-    this.writing = writing.promise;
-    let otherFailures: PluginFailure[] = []; // The plugins that failed on the bucket besides the one whose failure is thrown
-    try {
-      // Forward bucket to dummy exchange (if set by user) before all plugins
-      await this.dummyExchange?.processOneMinuteBucket(bucket);
-
-      // Forward bucket to all plugins concurrently, each one to its end even when another fails: a failure finalises them all
-      const results = await Promise.allSettled(this.plugins.map(plugin => plugin.processInputStream(bucket)));
-      const [failure, ...others] = this.rankFailures(results);
-      if (failure) {
-        otherFailures = others;
-        throw failure.reason;
-      }
-
-      // Broadcast all deferred events sequentially
-      for (const plugin of this.plugins) {
-        while (await plugin.broadcastDeferredEmit()) {
-          // Continue looping while at least one plugin emitted an event
-        }
-      }
-
-      // Tell the stream that we're done
-      done();
-    } catch (error) {
-      this.logCloseReason(error);
-      for (const { plugin, reason } of otherFailures) {
-        logError('stream', `${plugin.emitterName} failed on the bucket as well: ${describeReason(reason)}`);
-      }
-      this.logDroppedEvents();
-
-      // Finalize all plugins before destroying the stream
-      await this.finalizeAllPlugins();
-
-      // The pipeline rejects with this error, which is how main() tells an ApplicationStopError from a crash. _destroy runs at once
-      // and waits for this write to settle (below): nothing after this call may wait for the stream to close.
-      this.destroy(error instanceof Error ? error : new Error(String(error)));
-    } finally {
-      writing.resolve();
-    }
+  public _write(bucket: CandleBucket, _: BufferEncoding, done: (error?: Nullable<Error>) => void) {
+    this.pendingWrite = this.processBucket(bucket).then(
+      () => done(),
+      (reason: unknown) => this.stopOnError(reason),
+    );
   }
 
   public async _final(done: (error?: Nullable<Error>) => void) {
+    // Only reached after every bucket succeeded: a failed bucket destroys the stream, which then never calls _final
     try {
-      if (this.finalized) {
-        done();
-        return;
-      }
       await this.finalizeAllPlugins();
       info('stream', 'Gekko is closing the application !');
       done();
     } catch (error) {
-      done(error instanceof Error ? error : new Error(String(error)));
+      done(toError(error));
     }
   }
 
   /**
-   * Runs on every teardown. _final and a failed _write finalise the plugins before it, but stream/promises destroys this
-   * stream without calling _final when a stream upstream fails, or _construct does: the plugins are finalised here then.
+   * Runs on every teardown. _final and a failed bucket finalise the plugins before it, but stream/promises destroys this
+   * stream without calling _final when a stream upstream fails, or _construct does: the plugins are finalised here then,
+   * once the bucket in progress, if any, is done.
    */
   public async _destroy(error: Nullable<Error>, callback: (error?: Nullable<Error>) => void) {
-    // A failure upstream or of _construct: a failed _write has said why and finalised the plugins already
-    if (error && !this.finalized) this.logCloseReason(error);
-    // A failure upstream destroys the stream at once, whatever the bucket in flight is doing: its handlers run to their end (an order
-    // being created, deferred events being delivered) before the plugins are finalised, not under them
-    await this.writing;
-    // Counted once that bucket is done: what is left waits for a bucket that never comes. A failed _write has named them already.
-    if (error && !this.finalized) this.logDroppedEvents();
+    // A failure upstream or of _construct. Not once the finalisation has started: a failed bucket has said why already, and a failure
+    // of _final is one of the finalisation itself, logged below.
+    if (error && !this.finalization) this.logCloseReason(error);
+    // A failure upstream destroys the stream at once, whatever the bucket in progress is doing: its handlers run to their end (an
+    // order being created, deferred events being delivered) before the plugins are finalised, not under them
+    await this.pendingWrite; // Never rejects: a failed bucket is handled by stopOnError
+    // Counted once that bucket is done: what is left waits for a bucket that never comes. A failed bucket has named them already.
+    if (error && !this.finalization) this.logDroppedEvents();
     try {
-      await this.finalizeAllPlugins();
+      await this.finalizeAllPlugins(this.caughtError ?? error ?? undefined);
     } catch (finalizeError) {
-      warning('stream', `Finalization errors: ${finalizeError instanceof Error ? finalizeError.message : finalizeError}`);
+      warning('stream', `Finalization errors: ${toError(finalizeError).message}`);
     }
-    // Always the error the stream was destroyed with, never a finalisation failure: the pipeline rejects with it
-    callback(error);
+    // The error of a failed bucket, or else the one the stream was destroyed with, never a finalisation failure
+    callback(this.caughtError ?? error);
+  }
+
+  private async processBucket(bucket: CandleBucket) {
+    // Forward bucket to dummy exchange (if set by user) before all plugins
+    await this.dummyExchange?.processOneMinuteBucket(bucket);
+
+    // Forward bucket to all plugins concurrently, and let them all finish before the plugins can be finalised
+    const results = await Promise.allSettled(this.plugins.map(plugin => plugin.processInputStream(bucket)));
+    const [failure, ...otherFailures] = this.rankFailures(results);
+    if (failure) {
+      this.otherFailures = otherFailures;
+      throw failure.reason;
+    }
+
+    // Broadcast the deferred events plugin by plugin, in config order. Each call delivers the oldest group of the plugin's queue,
+    // the payloads queued in a row under one event name, so that the events arrive in the order they were queued. It resolves to
+    // false once the queue is empty.
+    for (const plugin of this.plugins) {
+      while (await plugin.broadcastDeferredEmit());
+    }
+  }
+
+  /** The bucket failed: `reason` is what the dummy exchange, a plugin or an event handler threw */
+  private async stopOnError(reason: unknown) {
+    const error = toError(reason);
+    this.caughtError = error;
+    this.logCloseReason(reason);
+    for (const { plugin, reason: otherReason } of this.otherFailures) {
+      logError('stream', `${plugin.emitterName} failed on the bucket as well: ${describeReason(otherReason)}`);
+    }
+    this.logDroppedEvents();
+
+    // Finalize all plugins before destroying the stream. A failed finalisation is logged by _destroy, which waits for it too.
+    await this.finalizeAllPlugins(error).catch(() => undefined);
+
+    // The pipeline rejects with this error, which is how main() tells an ApplicationStopError from a crash. _destroy runs at once
+    // and waits for this bucket to settle: nothing here may wait for the stream to close.
+    this.destroy(error);
   }
 
   /**
@@ -177,15 +196,16 @@ export class PluginsStream extends Writable {
    * Safely finalize all plugins whose init completed, ensuring each plugin's cleanup runs
    * regardless of errors in other plugins.
    */
-  private async finalizeAllPlugins(): Promise<void> {
-    if (this.finalized) return;
-    this.finalized = true;
+  private finalizeAllPlugins(failure?: Error): Promise<void> {
+    this.finalization ??= this.finalizePlugins(failure);
+    return this.finalization;
+  }
 
-    const results = await Promise.allSettled(this.initializedPlugins.map(plugin => plugin.processCloseStream()));
+  /** `failure` tells the plugins that the run stops before its end: their final reports then describe a partial run */
+  private async finalizePlugins(failure?: Error): Promise<void> {
+    const results = await Promise.allSettled(this.initializedPlugins.map(plugin => plugin.processCloseStream(failure)));
 
-    const errors = results
-      .filter((r): r is PromiseRejectedResult => r.status === 'rejected')
-      .map(r => (r.reason instanceof Error ? r.reason : new Error(String(r.reason))));
+    const errors = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected').map(r => toError(r.reason));
 
     if (errors.length > 0) {
       warning('stream', `Finalization errors: ${errors.map(e => e.message).join(', ')}`);

@@ -340,9 +340,10 @@ export class PortfolioAnalyzer extends Plugin {
     if (this.warmupCompleted) this.dates.end = this.currentTimestamp;
   }
 
-  protected processFinalize(): void {
+  protected processFinalize(failure?: Error): void {
     this.markEnd();
-    const report = this.calculateReportStatistics();
+    // A run stopped before its end (a crash, missing candles, the circuit breaker) gives the report of a partial period, and says why
+    const report: PortfolioReport = { ...this.calculateReportStatistics(), ...(failure && { interruption: failure.message }) };
 
     // The equity curve has a point per timeframe candle: on a long backtest it would make the log line megabytes long. The log gets
     // its length, the emitted report keeps the whole curve.

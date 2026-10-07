@@ -1196,6 +1196,14 @@ describe('RoundTripAnalyzer', () => {
       expect(emitSpy).toHaveBeenCalledWith(PERFORMANCE_REPORT_EVENT, mockReport);
     });
 
+    it('should say why the run was interrupted in the report', () => {
+      const emitSpy = vi.spyOn(analyzer as any, 'emit');
+      vi.spyOn(analyzer as any, 'calculateReportStatistics').mockReturnValue({ id: 'TRADING REPORT' });
+
+      analyzer['processFinalize'](new Error('circuit breaker'));
+      expect(emitSpy).toHaveBeenCalledWith(PERFORMANCE_REPORT_EVENT, { id: 'TRADING REPORT', interruption: 'circuit breaker' });
+    });
+
     it('should log final report when console table enabled', () => {
       const calcSpy = vi.spyOn(analyzer as any, 'calculateReportStatistics');
       const mockReport = { id: 'TRADING REPORT' } as any;

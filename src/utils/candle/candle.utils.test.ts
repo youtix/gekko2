@@ -1,13 +1,21 @@
 import { ONE_MINUTE } from '@constants/time.const';
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { Candle } from '@models/candle.types';
-import { CandleBucket } from '@models/event.types';
 import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
-import { CandleBucketBatcher } from '@services/core/batcher/candleBatcher/candleBucketBatcher';
+import { FastCandleBatcher, isTimeframeCandleClose } from '@services/core/batcher/candleBatcher/fastCandleBatcher';
 import { range, sortedUniq } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { toISOString, toTimestamp } from '../date/date.utils';
-import { getCandleStart, getCandleTimeOffset, hl2, hlc3, ohlc4 } from './candle.utils';
+import {
+  createEmptyCandle,
+  getBucketTimestamp,
+  getCandleStart,
+  getCandleTimeOffset,
+  getFirstCandleFromBucket,
+  hl2,
+  hlc3,
+  ohlc4,
+} from './candle.utils';
 
 describe('candle utils', () => {
   const defaultCandle: Candle = {
@@ -55,17 +63,69 @@ describe('candle utils', () => {
     });
   });
 
+  describe('createEmptyCandle', () => {
+    it('should make up the next minute flat at the last close, with no volume, marked synthetic and without id', () => {
+      expect(createEmptyCandle({ ...defaultCandle, id: 7 })).toEqual({
+        start: defaultCandle.start + ONE_MINUTE,
+        open: 100,
+        high: 100,
+        low: 100,
+        close: 100,
+        volume: 0,
+        synthetic: true,
+      });
+    });
+  });
+
+  describe('getBucketTimestamp', () => {
+    it('should return the start of the candles of a bucket', () => {
+      expect(getBucketTimestamp(new Map([['BTC/USDT', defaultCandle]]))).toBe(defaultCandle.start);
+    });
+
+    it('should return undefined for an empty bucket', () => {
+      expect(getBucketTimestamp(new Map())).toBeUndefined();
+    });
+  });
+
+  describe('getFirstCandleFromBucket', () => {
+    it('should return the first candle of a bucket', () => {
+      expect(getFirstCandleFromBucket(new Map([['BTC/USDT', defaultCandle]]))).toBe(defaultCandle);
+    });
+
+    it('should throw on an empty bucket', () => {
+      expect(() => getFirstCandleFromBucket(new Map())).toThrow('Impossible to get first candle from bucket: Empty candle bucket');
+    });
+  });
+
   describe('getCandleTimeOffset', () => {
+    // Sunday 2025-06-22 19:53:30, 1193 minutes after midnight, 21 days into June, 82 into the quarter, 172 into the year
     it.each`
-      size     | expected
-      ${1}     | ${0}
-      ${5}     | ${53 % 5}
-      ${120}   | ${(19 * 60 + 53) % 120}
-      ${1440}  | ${19 * 60 + 53}
-      ${10080} | ${((0 + 6) % 7) * 1440 + 19 * 60 + 53}
-      ${43200} | ${Math.floor((toTimestamp('2025-06-22T19:53:30Z') - Date.UTC(2025, 5, 1)) / 60000)}
-    `('should return $size => $expected', ({ size, expected }) => {
+      size      | expected
+      ${1}      | ${0}
+      ${2}      | ${1}
+      ${3}      | ${2}
+      ${5}      | ${3}
+      ${10}     | ${3}
+      ${15}     | ${8}
+      ${30}     | ${23}
+      ${60}     | ${53}
+      ${120}    | ${113}
+      ${240}    | ${233}
+      ${360}    | ${113}
+      ${480}    | ${233}
+      ${720}    | ${473}
+      ${1440}   | ${1193}
+      ${10080}  | ${6 * 1440 + 1193}
+      ${43200}  | ${21 * 1440 + 1193}
+      ${129600} | ${82 * 1440 + 1193}
+      ${259200} | ${172 * 1440 + 1193}
+      ${518400} | ${172 * 1440 + 1193}
+    `('should return $expected minutes into a $size-minute candle', ({ size, expected }) => {
       expect(getCandleTimeOffset(size, toTimestamp('2025-06-22T19:53:30Z'))).toBe(expected);
+    });
+
+    it('should throw on a candle size that is not a timeframe', () => {
+      expect(() => getCandleTimeOffset(45 as CandleSize, defaultCandle.start)).toThrow('[UTILS] Unsupported candle size: 45 minutes');
     });
   });
 
@@ -92,8 +152,6 @@ describe('candle utils', () => {
     });
 
     describe('replayed through the TradingAdvisor batcher', () => {
-      const symbol = 'BTC/USDT';
-      const bucketAt = (start: EpochTimeStamp): CandleBucket => new Map([[symbol, { ...defaultCandle, start }]]);
       // Every month of 2023-2028 (2024 and 2028 are leap years): its first, second, a middle and its last minute
       const minutes = range(2023, 2029).flatMap(year =>
         range(12).flatMap(month => [
@@ -115,11 +173,11 @@ describe('candle utils', () => {
       const replay = (size: CandleSize, start: EpochTimeStamp, end: EpochTimeStamp) => {
         const closes = closeCandidates(size, start, end).filter(minute => minute > start && minute < end);
         const history = start > end ? [] : sortedUniq([start, ...closes, end]);
-        const batcher = new CandleBucketBatcher([symbol], size);
+        const batcher = new FastCandleBatcher(size);
         return {
           // The history starts on a candle boundary when the minute before it closes a candle
-          startsOnBoundary: new CandleBucketBatcher([symbol], size).addBucket(bucketAt(start - ONE_MINUTE)) !== undefined,
-          closedCandles: history.filter(minute => batcher.addBucket(bucketAt(minute))).length,
+          startsOnBoundary: isTimeframeCandleClose(size, start - ONE_MINUTE),
+          closedCandles: history.filter(minute => batcher.addCandle({ ...defaultCandle, start: minute })).length,
         };
       };
 

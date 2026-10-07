@@ -1,99 +1,73 @@
-import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
 import { warning } from '@services/logger';
+import { toISOString } from '@utils/date/date.utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RejectFutureCandleStream } from './rejectFutureCandle.stream';
 
-// Mocks
-vi.mock('@services/logger', () => ({
-  warning: vi.fn(),
-}));
+vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 
-vi.mock('@utils/date/date.utils', () => ({
-  toISOString: vi.fn(d => `ISO(${d})`),
-}));
+const NOW = Date.UTC(2024, 0, 1, 12, 0, 30);
 
-vi.mock('@constants/time.const', () => ({
-  ONE_MINUTE: 60000,
-}));
+const bucketStarting = (start: EpochTimeStamp): CandleBucket =>
+  new Map([['BTC/USDT', { start, open: 1, high: 2, low: 0.5, close: 1.5, volume: 100 }]]);
+
+const run = async (bucket: CandleBucket) => {
+  const stream = new RejectFutureCandleStream();
+  stream.end(bucket);
+  return (await stream.toArray()) as CandleBucket[];
+};
+
+const throwUnreadable = () => {
+  throw new Error('unreadable');
+};
 
 describe('RejectFutureCandleStream', () => {
-  let stream: RejectFutureCandleStream;
-  const symbol = 'BTC/USDT';
-  const now = 1600000000000;
-
   beforeEach(() => {
-    stream = new RejectFutureCandleStream();
-    vi.useFakeTimers();
-    vi.setSystemTime(now);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  const validCandle: Candle = { start: now - 60000, open: 1, high: 2, low: 0.5, close: 1.5, volume: 100 };
-
-  const createBucket = (pair: string, c: Candle | null): CandleBucket => {
-    const bucket: CandleBucket = new Map();
-    if (c) bucket.set(pair as any, c);
-    return bucket;
-  };
-
-  it('should pass null/empty buckets through (or handle gracefully)', () => {
-    const dataFn = vi.fn();
-    stream.on('data', dataFn);
-
-    const bucket = createBucket(symbol, null); // Empty bucket
-    stream.write(bucket);
-
-    // Implementation swallows empty buckets
-    expect(dataFn).not.toHaveBeenCalled();
+  it.each`
+    case                        | start            | expected
+    ${'closed long ago'}        | ${NOW - 600_000} | ${1}
+    ${'closed right now'}       | ${NOW - 60_000}  | ${1}
+    ${'closing in 1 ms'}        | ${NOW - 59_999}  | ${0}
+    ${'in progress'}            | ${NOW - 30_000}  | ${0}
+    ${'starting in the future'} | ${NOW + 60_000}  | ${0}
+  `('should let through $expected bucket of a candle $case', async ({ start, expected }) => {
+    expect(await run(bucketStarting(start))).toHaveLength(expected);
   });
 
-  it('should pass past/current candles', () => {
-    const dataFn = vi.fn();
-    stream.on('data', dataFn);
+  it('should let the bucket itself through', async () => {
+    const bucket = bucketStarting(NOW - 60_000);
+    expect(await run(bucket)).toEqual([bucket]);
+  });
 
-    const bucket = createBucket(symbol, validCandle);
-    stream.write(bucket);
+  it('should warn about a rejected bucket', async () => {
+    await run(bucketStarting(NOW - 30_000));
+    expect(warning).toHaveBeenCalledExactlyOnceWith(
+      'stream',
+      `Rejecting future bucket: candle end time ${toISOString(NOW + 30_000)} is in the future.`,
+    );
+  });
 
-    expect(dataFn).toHaveBeenCalledWith(bucket);
+  it('should not warn about a bucket let through', async () => {
+    await run(bucketStarting(NOW - 60_000));
     expect(warning).not.toHaveBeenCalled();
   });
 
-  it('should reject future candles', () => {
-    const dataFn = vi.fn();
-    stream.on('data', dataFn);
-
-    // Candle starts at now, ends at now + 60000 (future)
-    const futureCandle = { ...validCandle, start: now };
-    const bucket = createBucket(symbol, futureCandle);
-
-    stream.write(bucket);
-
-    expect(dataFn).not.toHaveBeenCalled();
-    expect(warning).toHaveBeenCalledTimes(1);
-    expect(warning).toHaveBeenCalledWith('stream', expect.stringContaining('Rejecting future bucket'));
+  it('should drop an empty bucket', async () => {
+    expect(await run(new Map())).toEqual([]);
   });
 
-  it('should catch and forward errors', async () => {
-    vi.useRealTimers();
-    const errorFn = vi.fn();
-    stream.on('error', errorFn);
-
-    const badCandle = {
-      get start() {
-        throw new Error('Property Access Error');
-      },
-    } as any;
-
-    const bucket = createBucket(symbol, badCandle);
-    stream.write(bucket);
-
-    // Wait for async _transform
-    await new Promise(resolve => setTimeout(resolve, 0));
-
-    expect(errorFn).toHaveBeenCalledWith(expect.any(Error));
+  it('should forward an error thrown while reading a bucket', async () => {
+    const unreadable: CandleBucket = new Map([
+      ['BTC/USDT', Object.defineProperty(bucketStarting(NOW).get('BTC/USDT')!, 'start', { get: throwUnreadable })],
+    ]);
+    await expect(run(unreadable)).rejects.toThrow('unreadable');
   });
 });

@@ -424,11 +424,12 @@ export class RoundTripAnalyzer extends Plugin {
     }
   }
 
-  protected processFinalize(): void {
+  protected processFinalize(failure?: Error): void {
     // The end is marked to market too: the last bucket may have closed no timeframe candle, and orders may have filled since the last
     // close that did
     this.markToMarket();
-    const report = this.calculateReportStatistics();
+    // A run stopped before its end (a crash, missing candles, the circuit breaker) gives the report of a partial period, and says why
+    const report: TradingReport = { ...this.calculateReportStatistics(), ...(failure && { interruption: failure.message }) };
     if (this.enableConsoleTable) logFinalize(report, this.currency);
     else info('roundtrip analyzer', report);
     if (this.openRoundTrip) this.logOpenRoundTrip(this.openRoundTrip);

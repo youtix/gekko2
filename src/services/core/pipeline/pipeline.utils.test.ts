@@ -7,7 +7,7 @@ import { inject } from '@services/injecter/injecter';
 import { warning } from '@services/logger';
 import { synchronizeStreams } from '@utils/stream/stream.utils';
 import { startOfMinute } from 'date-fns';
-import { Readable } from 'stream';
+import { Readable, Writable } from 'stream';
 import { pipeline } from 'stream/promises';
 import { afterEach, beforeEach, describe, expect, it, Mock, MockInstance, vi } from 'vitest';
 import { MultiAssetBacktestStream } from '../stream/backtest/multiAssetBacktest.stream';
@@ -128,6 +128,49 @@ describe('Pipeline Utils', () => {
       });
     });
 
+    describe('when the second stream fails while the first one is still read', () => {
+      const error = new Error('live stream failed');
+      let s1: Readable;
+      let onUncaughtException: Mock;
+      let outcome: unknown;
+
+      beforeEach(async () => {
+        onUncaughtException = vi.fn();
+        process.on('uncaughtException', onUncaughtException);
+        const { pipeline: actualPipeline } = await vi.importActual<typeof import('stream/promises')>('stream/promises');
+
+        // Never ends, as a warmup history still downloading: the merge has not started reading s2
+        s1 = new Readable({ objectMode: true, read() {} });
+        s1.push(1);
+        const s2 = new Readable({ objectMode: true, read() {} });
+        const sink = new Writable({ objectMode: true, write: (_chunk, _encoding, callback) => callback() });
+        const settled = actualPipeline(mergeSequentialStreams(s1, s2), sink).then(
+          () => 'resolved',
+          (reason: unknown) => reason,
+        );
+        await new Promise(resolve => setImmediate(resolve));
+
+        s2.destroy(error);
+        outcome = await Promise.race([settled, new Promise(resolve => setTimeout(() => resolve('still pending'), 100))]);
+      });
+
+      afterEach(() => {
+        process.off('uncaughtException', onUncaughtException);
+      });
+
+      it('should make the pipeline reject with the error', () => {
+        expect(outcome).toBe(error);
+      });
+
+      it('should not raise an uncaught exception', () => {
+        expect(onUncaughtException).not.toHaveBeenCalled();
+      });
+
+      it('should destroy the first stream', () => {
+        expect(s1.destroyed).toBe(true);
+      });
+    });
+
     it('should not destroy an already destroyed underlying stream', () => {
       const s1 = Readable.from([1]);
       const s2 = Readable.from([2]);
@@ -166,9 +209,16 @@ describe('Pipeline Utils', () => {
         return vi.mocked(MultiAssetHistoricalStream).mock.lastCall![0].daterange;
       };
 
+      // A stream that never ends: the merge of the history and the live stream subscribes to the errors of both
+      const pendingStream = () => new Readable({ objectMode: true, read() {} });
+
       beforeEach(() => {
         vi.useFakeTimers();
         vi.setSystemTime(at('2024-03-15T10:20:30.500Z'));
+        vi.mocked(MultiAssetHistoricalStream).mockImplementation(function () {
+          return pendingStream() as MultiAssetHistoricalStream;
+        });
+        vi.mocked(synchronizeStreams).mockReturnValue(pendingStream());
       });
 
       afterEach(() => {
@@ -232,8 +282,9 @@ describe('Pipeline Utils', () => {
         expect(await passThroughGapFiller(gapFiller, symbols)).toEqual([symbols]);
       });
 
-      it('should have the gap filler drop a bucket lacking a pair that has had no candle yet', async () => {
-        await launchRealtime('1h', 2, [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }]);
+      it('should drop a leading bucket that misses a pair never seen instead of handing it incomplete to the plugins', async () => {
+        const watchedPairs = [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }];
+        await launchRealtime('1h', 2, watchedPairs);
         const gapFiller = vi.mocked(pipeline).mock.lastCall![3] as FillCandleGapStream;
         expect(await passThroughGapFiller(gapFiller, ['BTC/USDT'])).toEqual([]);
       });
@@ -302,9 +353,9 @@ describe('Pipeline Utils', () => {
               if (slowStep === 'building the live stream') crossMinuteBoundary();
               return stream;
             });
-            vi.mocked(MultiAssetHistoricalStream).mockImplementation(function (this: MultiAssetHistoricalStream) {
+            vi.mocked(MultiAssetHistoricalStream).mockImplementation(function () {
               if (slowStep === 'building the warmup history stream') crossMinuteBoundary();
-              return this;
+              return pendingStream() as MultiAssetHistoricalStream;
             });
 
             const { end } = await launchRealtime('1h', 2);
@@ -313,6 +364,44 @@ describe('Pipeline Utils', () => {
             expect((fetchOHLCV.mock.calls[0][1].from - end) / ONE_MINUTE).toBe(minutesAfterHistory);
           },
         );
+      });
+    });
+
+    describe('when the pipeline rejects', () => {
+      const upstreamError = new Error('a stream upstream failed');
+      const bucketError = new Error('a bucket failed');
+      const modes = Object.keys(streamPipelines) as (keyof typeof streamPipelines)[];
+
+      // Launches the pipeline of a mode with a plugins stream whose last bucket failed with `failure`, if any
+      const launchFailing = (mode: keyof typeof streamPipelines, failure?: Error) => {
+        (config.getWatch as Mock).mockReturnValue({
+          pairs: [{ symbol: 'BTC/USDT' }],
+          timeframe: '1h',
+          warmup: { candleCount: 1, tickrate: 1000 },
+          daterange: { start: new Date('2023-01-01').getTime(), end: new Date('2023-01-02').getTime() },
+          tickrate: 500,
+        });
+        vi.mocked(PluginsStream).mockImplementation(function () {
+          return { failure } as PluginsStream;
+        });
+        vi.mocked(pipeline).mockRejectedValue(upstreamError);
+        return streamPipelines[mode](mockPlugins);
+      };
+
+      beforeEach(() => {
+        const pendingStream = () => new Readable({ objectMode: true, read() {} });
+        vi.mocked(MultiAssetHistoricalStream).mockImplementation(function () {
+          return pendingStream() as MultiAssetHistoricalStream;
+        });
+        vi.mocked(synchronizeStreams).mockReturnValue(pendingStream());
+      });
+
+      it.each(modes)('should reject the %s pipeline with the error of the failed bucket rather than the upstream one', async mode => {
+        await expect(launchFailing(mode, bucketError)).rejects.toBe(bucketError);
+      });
+
+      it.each(modes)('should reject the %s pipeline with the upstream error when no bucket failed', async mode => {
+        await expect(launchFailing(mode)).rejects.toBe(upstreamError);
       });
     });
 
@@ -339,6 +428,13 @@ describe('Pipeline Utils', () => {
       it('should hand the plugins to the plugins stream', async () => {
         await launchBacktest();
         expect(PluginsStream).toHaveBeenCalledWith(mockPlugins);
+      });
+
+      it('should warn once that the backtest needs proper testing', async () => {
+        await launchBacktest();
+        expect(vi.mocked(warning).mock.calls).toEqual([
+          ['stream', 'BACKTESTING FEATURE NEEDS PROPER TESTING, ACT ON THESE NUMBERS AT YOUR OWN RISK!'],
+        ]);
       });
 
       it('should throw an error if daterange is not set in config', async () => {
