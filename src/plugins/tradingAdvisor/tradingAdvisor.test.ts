@@ -1,5 +1,3 @@
-process.env.GEKKO_CONFIG_FILE_PATH = 'test';
-
 import {
   STRATEGY_CANCEL_ORDER_EVENT,
   STRATEGY_CREATE_ORDER_EVENT,
@@ -7,350 +5,355 @@ import {
   STRATEGY_WARMUP_COMPLETED_EVENT,
   TIMEFRAME_CANDLE_EVENT,
 } from '@constants/event.const';
-import { GekkoError } from '@errors/gekko.error';
-import { AdviceOrder } from '@models/advice.types';
+import { ONE_MINUTE } from '@constants/time.const';
+import { ApplicationStopError } from '@errors/applicationStop.error';
+import { StrategyOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
-import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
-import { BalanceDetail } from '@models/portfolio.types';
-import { StrategyInfo } from '@models/strategyInfo.types';
+import { Timeframe, Watch } from '@models/configuration.types';
+import { CandleBucket, ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
+import { Portfolio } from '@models/portfolio.types';
+import { TradingPair } from '@models/utility.types';
+import { config } from '@services/configuration/configuration';
 import { Exchange, MarketData } from '@services/exchange/exchange.types';
-import { StrategyManager } from '@strategies/strategyManager';
+import {
+  InitParams,
+  OnCandleEventParams,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+} from '@strategies/strategy.types';
+import { toTimestamp } from '@utils/date/date.utils';
+import { UUID } from 'node:crypto';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { toTimestamp } from '../../utils/date/date.utils';
 import { TradingAdvisor } from './tradingAdvisor';
-import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
+import { tradingAdvisorSchema } from './tradingAdvisor.schema';
+
+// The advisor runs on the real StrategyManager, only the strategy is a double. Its hooks are these spies, through which a test
+// scripts what the strategy does (tools.createOrder, tools.cancelOrder, tools.log) and reads what the strategy was given.
+const { strategy, TestStrategy } = vi.hoisted(() => {
+  const strategy = {
+    init: vi.fn<(params: InitParams<object>) => void>(),
+    onEachTimeframeCandle: vi.fn<(params: OnCandleEventParams<object>) => void>(),
+    onTimeframeCandleAfterWarmup: vi.fn<(params: OnCandleEventParams<object>) => void>(),
+    onOrderCompleted: vi.fn<(params: OnOrderCompletedEventParams<object>) => void>(),
+    onOrderCanceled: vi.fn<(params: OnOrderCanceledEventParams<object>) => void>(),
+    onOrderErrored: vi.fn<(params: OnOrderErroredEventParams<object>) => void>(),
+    end: vi.fn<() => void>(),
+  };
+  class TestStrategy implements Strategy<object> {
+    init = strategy.init;
+    onEachTimeframeCandle = strategy.onEachTimeframeCandle;
+    onTimeframeCandleAfterWarmup = strategy.onTimeframeCandleAfterWarmup;
+    onOrderCompleted = strategy.onOrderCompleted;
+    onOrderCanceled = strategy.onOrderCanceled;
+    onOrderErrored = strategy.onOrderErrored;
+    end = strategy.end;
+  }
+  return { strategy, TestStrategy };
+});
+
+// The real registry answers undefined for a name it does not export, a module mock throws: MissingStrategy plays that name
+vi.mock('@strategies/index', () => ({ TestStrategy, MissingStrategy: undefined }));
+vi.mock('@services/configuration/configuration', () => ({ config: { getWatch: vi.fn(), getStrategy: vi.fn() } }));
+vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() }));
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mocks
+// Fixtures
 // ─────────────────────────────────────────────────────────────────────────────
 
-const attachMockExchange = (instance: TradingAdvisor) => {
-  instance.setExchange({
-    getExchangeName: (): string => 'binance',
-    getMarketData: (): MarketData => ({ amount: { min: 3 } }),
-    fetchBalance: () =>
-      new Map<string, BalanceDetail>([
-        ['asset', { free: 100, used: 0, total: 100 }],
-        ['currency', { free: 100, used: 0, total: 100 }],
-      ]),
-  } as unknown as Exchange);
+// A midnight (UTC), so that the first bucket sent opens a candle of every timeframe used here
+const START = toTimestamp('2025-01-01T00:00:00.000Z');
+const BASE_PRICES = new Map<TradingPair, number>([
+  ['BTC/USDT', 100],
+  ['ETH/USDT', 200],
+]);
+
+/** The bucket of the minute starting `minute` minutes after START: the prices of every pair rise by 1 a minute from its base price. */
+const oneMinuteBucket = (minute: number): CandleBucket =>
+  new Map(
+    [...BASE_PRICES].map(([pair, basePrice]): [TradingPair, Candle] => {
+      const price = basePrice + minute;
+      return [pair, { start: START + minute * ONE_MINUTE, open: price, high: price + 2, low: price - 2, close: price + 1, volume: 1 }];
+    }),
+  );
+
+/** The 3m bucket made of the first three one-minute buckets: first open, highest high, lowest low, last close, total volume. */
+const FIRST_3M_BUCKET: CandleBucket = new Map([
+  ['BTC/USDT', { start: START, open: 100, high: 104, low: 98, close: 103, volume: 3 }],
+  ['ETH/USDT', { start: START, open: 200, high: 204, low: 198, close: 203, volume: 3 }],
+]);
+
+const watch = (timeframe: Timeframe, warmupCandleCount: number): Watch => ({
+  assets: ['BTC', 'ETH'],
+  currency: 'USDT',
+  pairs: [{ symbol: 'BTC/USDT' }, { symbol: 'ETH/USDT' }],
+  timeframe,
+  tickrate: 1000,
+  mode: 'backtest',
+  warmup: { tickrate: 1000, candleCount: warmupCandleCount },
+});
+
+const MARKET_DATA = new Map<TradingPair, MarketData>([
+  ['BTC/USDT', { amount: { min: 0.0001 }, price: { min: 0.01 } }],
+  ['ETH/USDT', { amount: { min: 0.001 }, price: { min: 0.1 } }],
+]);
+
+const usdtPortfolio = (total: number): Portfolio => new Map([['USDT', { free: total, used: 0, total }]]);
+const FETCHED_BALANCE = usdtPortfolio(1000);
+
+// All that processInit asks of the exchange
+const exchange: Pick<Exchange, 'getMarketData' | 'fetchBalance'> = {
+  getMarketData: symbol => MARKET_DATA.get(symbol) ?? {},
+  fetchBalance: async () => FETCHED_BALANCE,
 };
 
-vi.mock('@strategies/index', () => ({
-  DummyStrategy: class {
-    init = vi.fn();
-    onNewCandle = vi.fn();
-    onOrderCanceled = vi.fn();
-    onOrderCompleted = vi.fn();
-    onOrderErrored = vi.fn();
-    onPortfolioChange = vi.fn();
-    setUpMarketLimits = vi.fn();
-    finish = vi.fn();
-    on() {
-      return this;
-    }
-  },
-  NonExistentStrategy: undefined,
-}));
+const ORDER_IDS: UUID[] = ['3b0e8a52-4c1d-4f6e-9a7b-2d5c8e1f0a01', '3b0e8a52-4c1d-4f6e-9a7b-2d5c8e1f0a02'];
+const ORDER = { symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', amount: 1, price: 100, orderCreationDate: START } as const;
+const EXCHANGE_EVENT: ExchangeEvent = { portfolio: FETCHED_BALANCE, price: 100 };
 
-vi.mock('@strategies/strategyManager', () => {
-  return {
-    StrategyManager: class {
-      constructor() {}
-      onOneMinuteBucket() {}
-      createStrategy() {}
-      setMarketData() {}
-      onPortfolioChange() {}
-      setCurrentTimestamp() {}
-      onTimeFrameCandle() {}
-      onStrategyEnd() {}
-      onOrderCompleted() {}
-      onOrderCanceled() {}
-      onOrderErrored() {}
-      on() {
-        return this;
-      }
-    },
-  };
+const orderCompleted = (id: UUID): OrderCompletedEvent => ({
+  order: { ...ORDER, id, orderExecutionDate: START, effectivePrice: 100, fee: 0.1, feePercent: 0.1 },
+  exchange: EXCHANGE_EVENT,
+});
+const orderCanceled = (id: UUID): OrderCanceledEvent => ({
+  order: { ...ORDER, id, orderCancelationDate: START, filled: 0, remaining: 1 },
+  exchange: EXCHANGE_EVENT,
+});
+const orderErrored = (id: UUID): OrderErroredEvent => ({
+  order: { ...ORDER, id, orderErrorDate: START, reason: 'Insufficient balance' },
+  exchange: EXCHANGE_EVENT,
 });
 
-vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn(function () {
-    return {
-      getWatch: vi.fn(() => ({
-        pairs: [{ symbol: 'BTC/USDT', timeframe: '1m' }],
-        warmup: {},
-      })),
-      getStrategy: vi.fn(() => ({})),
-      showLogo: vi.fn(),
-      getPlugins: vi.fn(),
-      getStorage: vi.fn(),
-      getExchange: vi.fn(),
-    };
-  });
-  return { config: new Configuration() };
-});
+/** A batch of order events of one kind, one per id of ORDER_IDS, in that order. */
+const batchOf = <T>(orderEvent: (id: UUID) => T) => ORDER_IDS.map(id => orderEvent(id));
+
+// Each order handler of the advisor, sent a batch of its own kind of events
+const SEND_ORDER_BATCH = {
+  onOrderCompleted: (advisor: TradingAdvisor) => advisor.onOrderCompleted(batchOf(orderCompleted)),
+  onOrderCanceled: (advisor: TradingAdvisor) => advisor.onOrderCanceled(batchOf(orderCanceled)),
+  onOrderErrored: (advisor: TradingAdvisor) => advisor.onOrderErrored(batchOf(orderErrored)),
+};
+
+const BUY_ORDER: StrategyOrder = { symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', amount: 1 };
+const ORDER_TO_CANCEL: UUID = '3b0e8a52-4c1d-4f6e-9a7b-2d5c8e1f0a03';
+const INFO_MESSAGE = 'Buying BTC';
+
+// What the advisor queues, in the order getStaticConfiguration declares it
+const EMITTED_EVENTS = [
+  STRATEGY_INFO_EVENT,
+  STRATEGY_CREATE_ORDER_EVENT,
+  STRATEGY_CANCEL_ORDER_EVENT,
+  STRATEGY_WARMUP_COMPLETED_EVENT,
+  TIMEFRAME_CANDLE_EVENT,
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+type StaticConfiguration = ReturnType<typeof TradingAdvisor.getStaticConfiguration>;
+
+type AdvisorOptions = Partial<{
+  timeframe: Timeframe;
+  warmupCandleCount: number;
+  maxConsecutiveErrors: number;
+  strategyName: string;
+  strategyPath: string;
+}>;
+
+/** An advisor set up as the pipeline does it: built from its parsed configuration, then given the exchange it asks for. */
+const createAdvisor = ({
+  timeframe = '3m',
+  warmupCandleCount = 0,
+  maxConsecutiveErrors = 5,
+  strategyName = 'TestStrategy',
+  strategyPath,
+}: AdvisorOptions = {}) => {
+  vi.mocked(config.getWatch).mockReturnValue(watch(timeframe, warmupCandleCount));
+  const advisor = new TradingAdvisor({ name: 'TradingAdvisor', strategyName, strategyPath, maxConsecutiveErrors });
+  advisor.setExchange(exchange as Exchange);
+  return advisor;
+};
+
+const startAdvisor = async (options?: AdvisorOptions) => {
+  const advisor = createAdvisor(options);
+  await advisor.processInitStream();
+  return advisor;
+};
+
+/** Sends the advisor the `count` consecutive one-minute buckets from START, one at a time as PluginsStream does. */
+const sendBuckets = async (advisor: TradingAdvisor, count: number) => {
+  for (let minute = 0; minute < count; minute++) await advisor.processInputStream(oneMinuteBucket(minute));
+};
+
+/** Broadcasts what the advisor queued, as PluginsStream does after a bucket, and returns the payloads delivered for each event. */
+const flushDeferredEvents = async (advisor: TradingAdvisor) => {
+  const delivered = new Map<string, unknown[]>();
+  for (const event of EMITTED_EVENTS) {
+    advisor.on<unknown[]>(event, payloads => {
+      delivered.set(event, [...(delivered.get(event) ?? []), ...payloads]);
+    });
+  }
+  while (await advisor.broadcastDeferredEmit()) {
+    // Until the queue is empty
+  }
+  return delivered;
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('TradingAdvisor', () => {
-  const config = {
-    name: 'TradingAdvisor',
-    strategyName: 'DummyStrategy',
-    maxConsecutiveErrors: 5,
-  } satisfies TradingAdvisorConfiguration;
-
-  const defaultAdvice: AdviceOrder = {
-    id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-    orderCreationDate: toTimestamp('2020'),
-    type: 'STICKY',
-    side: 'SELL',
-    amount: 1,
-    symbol: 'BTC/USDT',
-  };
-
-  const defaultCandle: Candle = {
-    id: undefined,
-    close: 100,
-    high: 150,
-    low: 90,
-    open: 110,
-    start: toTimestamp('2025'),
-    volume: 10,
-  };
-
-  const defaultBuyTradeEvent: OrderCompletedEvent = {
-    order: {
-      id: 'ee21e130-48bc-405f-be0c-46e9bf17b52e',
-      side: 'BUY',
-      type: 'STICKY',
-      amount: 30,
-      price: 100,
-      orderCreationDate: 0,
-      orderExecutionDate: 0,
-      fee: 1,
-      feePercent: 0.33,
-      effectivePrice: 31,
-      symbol: 'BTC/USDT',
-    },
-    exchange: {
-      portfolio: new Map<string, BalanceDetail>([
-        ['asset', { free: 100, used: 0, total: 100 }],
-        ['currency', { free: 200, used: 0, total: 200 }],
-      ]),
-      price: 100,
-    },
-  };
-
-  const defaultCanceledOrder: OrderCanceledEvent = {
-    order: {
-      id: '91f8d591-1a72-4d26-9477-5455e8d88111',
-      orderCreationDate: 0,
-      orderCancelationDate: 0,
-      type: 'STICKY',
-      side: 'BUY',
-      amount: 5,
-      filled: 2,
-      remaining: 3,
-      symbol: 'BTC/USDT',
-    },
-    exchange: {
-      price: 100,
-      portfolio: new Map<string, BalanceDetail>([
-        ['asset', { free: 50, used: 0, total: 50 }],
-        ['currency', { free: 500, used: 0, total: 500 }],
-      ]),
-    },
-  };
-
-  const defaultErroredOrder: OrderErroredEvent = {
-    order: {
-      id: defaultCanceledOrder.order.id,
-      orderCreationDate: 0,
-      orderErrorDate: 0,
-      type: 'STICKY',
-      side: 'BUY',
-      reason: 'Order errored',
-      amount: 2,
-      symbol: 'BTC/USDT',
-    },
-    exchange: defaultCanceledOrder.exchange,
-  };
-
-  let advisor: TradingAdvisor;
-
-  beforeEach(() => {
-    advisor = new TradingAdvisor(config);
-    attachMockExchange(advisor);
-    (advisor as any).addDeferredEmit = vi.fn();
+  describe('getStaticConfiguration', () => {
+    it.each`
+      property            | expected
+      ${'name'}           | ${'TradingAdvisor'}
+      ${'schema'}         | ${tradingAdvisorSchema}
+      ${'modes'}          | ${['realtime', 'backtest']}
+      ${'dependencies'}   | ${[]}
+      ${'inject'}         | ${['exchange']}
+      ${'eventsHandlers'} | ${['onOrderCompleted', 'onOrderCanceled', 'onOrderErrored', 'onPortfolioChange']}
+      ${'eventsEmitted'}  | ${EMITTED_EVENTS}
+    `('declares its $property', ({ property, expected }: { property: keyof StaticConfiguration; expected: unknown }) => {
+      expect(TradingAdvisor.getStaticConfiguration()[property]).toEqual(expected);
+    });
   });
 
-  describe('life cycle functions', () => {
-    describe('processInit', () => {
-      it('should throw StrategyNotFoundError if an invalid strategy name is provided', async () => {
-        const badAdvisor = new TradingAdvisor({
-          name: 'TradingAdvisor',
-          strategyName: 'NonExistentStrategy',
-          maxConsecutiveErrors: 5,
+  describe('processInit', () => {
+    it.each`
+      source                    | strategyName         | strategyPath                                      | message
+      ${'the strategies index'} | ${'MissingStrategy'} | ${undefined}                                      | ${'Cannot find internal MissingStrategy strategy'}
+      ${'its strategyPath'}     | ${'TestStrategy'}    | ${resolve(__dirname, 'tradingAdvisor.schema.ts')} | ${'Cannot find external TestStrategy strategy'}
+    `('rejects when $source does not export the strategy', async ({ strategyName, strategyPath, message }) => {
+      await expect(createAdvisor({ strategyName, strategyPath }).processInitStream()).rejects.toThrow(message);
+    });
+
+    describe('on the first timeframe candle', () => {
+      beforeEach(async () => {
+        await sendBuckets(await startAdvisor(), 3);
+      });
+
+      it.each`
+        given                                      | expected
+        ${'the market data of every watched pair'} | ${expect.objectContaining({ tools: expect.objectContaining({ marketData: MARKET_DATA }) })}
+        ${'the balance fetched from the exchange'} | ${expect.objectContaining({ portfolio: FETCHED_BALANCE })}
+      `('gives the strategy $given', ({ expected }) => {
+        expect(strategy.init).toHaveBeenCalledExactlyOnceWith(expected);
+      });
+    });
+  });
+
+  describe('processOneMinuteBucket', () => {
+    it.each`
+      timeframe | bucketCount | candleCount
+      ${'1m'}   | ${1}        | ${1}
+      ${'1m'}   | ${3}        | ${3}
+      ${'3m'}   | ${2}        | ${0}
+      ${'3m'}   | ${3}        | ${1}
+      ${'3m'}   | ${6}        | ${2}
+      ${'1h'}   | ${59}       | ${0}
+      ${'1h'}   | ${60}       | ${1}
+    `(
+      'sends the strategy the $timeframe candles completed by $bucketCount one-minute buckets',
+      async ({ timeframe, bucketCount, candleCount }) => {
+        await sendBuckets(await startAdvisor({ timeframe }), bucketCount);
+        expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(candleCount);
+      },
+    );
+
+    it('queues no event before the timeframe candle is complete', async () => {
+      const advisor = await startAdvisor();
+      await sendBuckets(advisor, 2);
+      expect(await flushDeferredEvents(advisor)).toEqual(new Map());
+    });
+
+    it('queues only the timeframe candle while the strategy warms up', async () => {
+      strategy.onTimeframeCandleAfterWarmup.mockImplementation(({ tools }) => tools.log('info', INFO_MESSAGE));
+      const advisor = await startAdvisor({ warmupCandleCount: 1 });
+      await sendBuckets(advisor, 3);
+      const delivered = await flushDeferredEvents(advisor);
+      expect([...delivered.keys()]).toEqual([TIMEFRAME_CANDLE_EVENT]);
+    });
+
+    it('rejects when the strategy logs an error', async () => {
+      strategy.onEachTimeframeCandle.mockImplementation(({ tools }) => tools.log('error', 'Indicator out of range'));
+      const advisor = await startAdvisor();
+      await expect(sendBuckets(advisor, 3)).rejects.toThrow('Indicator out of range');
+    });
+
+    describe('on a complete timeframe candle after the warmup', () => {
+      let createdOrderId: UUID | undefined;
+      let delivered: Map<string, unknown[]>;
+
+      beforeEach(async () => {
+        createdOrderId = undefined;
+        strategy.onTimeframeCandleAfterWarmup.mockImplementation(({ tools }) => {
+          createdOrderId = tools.createOrder(BUY_ORDER);
+          tools.cancelOrder(ORDER_TO_CANCEL);
+          tools.log('info', INFO_MESSAGE);
         });
-        attachMockExchange(badAdvisor);
-
-        vi.spyOn(StrategyManager.prototype, 'createStrategy').mockRejectedValue(new GekkoError('configuration', 'Strategy not found'));
-
-        await expect(() => (badAdvisor as any).processInit()).rejects.toThrowError(GekkoError);
+        const advisor = await startAdvisor();
+        await sendBuckets(advisor, 3);
+        delivered = await flushDeferredEvents(advisor);
       });
 
-      it('should create a strategy manager when a valid strategy name is provided', async () => {
-        await (advisor as any).processInit();
-        expect((advisor as any).strategyManager).toBeDefined();
+      it('sends the strategy the bucket aggregated over the timeframe', () => {
+        expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ candle: FIRST_3M_BUCKET }));
       });
 
-      it('should set up market limits in strategy manager', async () => {
-        const setUpSpy = vi.spyOn(StrategyManager.prototype, 'setMarketData');
-        const expectedMap = new Map([['BTC/USDT', { amount: { min: 3 } }]]);
-
-        await (advisor as any).processInit();
-
-        expect(setUpSpy).toHaveBeenCalledExactlyOnceWith(expectedMap);
-        setUpSpy.mockRestore();
-      });
-    });
-
-    describe('processOneMinuteBucket', () => {
-      beforeEach(async () => {
-        await (advisor as any).processInit();
-      });
-
-      it('should pass bucket to the bucketBatcher', () => {
-        const addBucketSpy = vi.spyOn((advisor as any).bucketBatcher, 'addBucket').mockReturnValue(undefined);
-        const bucket: CandleBucket = new Map([['BTC/USDT', defaultCandle]]);
-
-        (advisor as any).processOneMinuteBucket(bucket);
-
-        expect(addBucketSpy).toHaveBeenCalledWith(bucket);
-      });
-
-      it('should not emit timeframe candle event when addBucket returns undefined', () => {
-        vi.spyOn((advisor as any).bucketBatcher, 'addBucket').mockReturnValue(undefined);
-        const bucket: CandleBucket = new Map([['BTC/USDT', defaultCandle]]);
-
-        (advisor as any).processOneMinuteBucket(bucket);
-
-        expect((advisor as any).addDeferredEmit).not.toHaveBeenCalled();
-      });
-
-      it('should emit TIMEFRAME_CANDLE_EVENT when addBucket returns a completed bucket', () => {
-        const completedBucket = new Map([['BTC/USDT', defaultCandle]]);
-        vi.spyOn((advisor as any).bucketBatcher, 'addBucket').mockReturnValue(completedBucket);
-        const bucket: CandleBucket = new Map([['BTC/USDT', defaultCandle]]);
-
-        (advisor as any).processOneMinuteBucket(bucket);
-
-        expect((advisor as any).addDeferredEmit).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_CANDLE_EVENT, completedBucket);
-      });
-    });
-
-    describe('processFinalize', () => {
-      beforeEach(async () => {
-        await (advisor as any).processInit();
-      });
-
-      it('should call strategyManager.finish when processFinalize is called', () => {
-        (advisor as any).strategyManager!.onStrategyEnd = vi.fn();
-        (advisor as any).processFinalize();
-        expect((advisor as any).strategyManager?.onStrategyEnd).toHaveBeenCalled();
-      });
-    });
-  });
-
-  describe('relay functions', () => {
-    beforeEach(async () => {
-      await (advisor as any).processInit();
-    });
-
-    it('relayStrategyWarmupCompleted emits STRATEGY_WARMUP_COMPLETED_EVENT', () => {
-      const payload = new Map([['BTC/USDT', defaultCandle]]);
-      (advisor as any).relayStrategyWarmupCompleted(payload);
-      expect((advisor as any).addDeferredEmit).toHaveBeenCalledExactlyOnceWith(STRATEGY_WARMUP_COMPLETED_EVENT, payload);
-    });
-
-    it('relayCreateOrder emits STRATEGY_CREATE_ORDER_EVENT', () => {
-      (advisor as any).relayCreateOrder(defaultAdvice);
-      expect((advisor as any).addDeferredEmit).toHaveBeenCalledExactlyOnceWith(STRATEGY_CREATE_ORDER_EVENT, defaultAdvice);
-    });
-
-    it('relayStrategyInfo emits STRATEGY_INFO_EVENT', () => {
-      const strategyInfoPayload: StrategyInfo = {
-        level: 'debug',
-        message: 'Hello World !',
-        tag: 'strategy',
-        timestamp: 123456789,
-      };
-      (advisor as any).relayStrategyInfo(strategyInfoPayload);
-      expect((advisor as any).addDeferredEmit).toHaveBeenCalledExactlyOnceWith(STRATEGY_INFO_EVENT, strategyInfoPayload);
-    });
-
-    describe('relayCancelOrder', () => {
-      it('should emit STRATEGY_CANCEL_ORDER_EVENT', () => {
-        (advisor as any).relayCancelOrder(defaultCanceledOrder.order.id);
-        expect((advisor as any).addDeferredEmit).toHaveBeenCalledExactlyOnceWith(
-          STRATEGY_CANCEL_ORDER_EVENT,
-          defaultCanceledOrder.order.id,
-        );
-      });
-    });
-  });
-
-  describe('listeners functions', () => {
-    beforeEach(async () => {
-      await (advisor as any).processInit();
-      // Ensure strategyManager methods are mocks
-      if ((advisor as any).strategyManager) {
-        (advisor as any).strategyManager.onOrderCompleted = vi.fn();
-        (advisor as any).strategyManager.onOrderCanceled = vi.fn();
-        (advisor as any).strategyManager.onOrderErrored = vi.fn();
-        (advisor as any).strategyManager.onPortfolioChange = vi.fn();
-      }
-    });
-
-    it.each([
-      {
-        method: 'onOrderCompleted',
-        payload: [defaultBuyTradeEvent],
-        managerMethod: 'onOrderCompleted',
-        expectedArg: defaultBuyTradeEvent,
-      },
-      {
-        method: 'onOrderCanceled',
-        payload: [defaultCanceledOrder],
-        managerMethod: 'onOrderCanceled',
-        expectedArg: defaultCanceledOrder,
-      },
-      {
-        method: 'onOrderErrored',
-        payload: [defaultErroredOrder],
-        managerMethod: 'onOrderErrored',
-        expectedArg: defaultErroredOrder,
-      },
-    ])('calls strategyManager.$managerMethod when $method is called', async ({ method, payload, managerMethod, expectedArg }) => {
-      await (advisor as any)[method](payload);
-
-      expect((advisor as any).strategyManager[managerMethod]).toHaveBeenCalledExactlyOnceWith(expectedArg);
-    });
-
-    describe('onPortfolioChange', () => {
-      it('should forward latest portfolio to the strategy manager', () => {
-        const portfolio = new Map<string, BalanceDetail>([
-          ['asset', { free: 5, used: 0, total: 5 }],
-          ['currency', { free: 10, used: 0, total: 10 }],
+      // The last bucket starts at START + 2 min: the strategy's clock is its close, START + 3 min, and an order is dated a minute later
+      it('queues the order the strategy created', () => {
+        expect(delivered.get(STRATEGY_CREATE_ORDER_EVENT)).toEqual([
+          { ...BUY_ORDER, id: createdOrderId, orderCreationDate: START + 4 * ONE_MINUTE },
         ]);
-
-        advisor.onPortfolioChange([portfolio]);
-
-        expect((advisor as any).strategyManager?.onPortfolioChange).toHaveBeenCalledExactlyOnceWith(portfolio);
       });
+
+      it.each`
+        event                              | expected
+        ${STRATEGY_CANCEL_ORDER_EVENT}     | ${[ORDER_TO_CANCEL]}
+        ${STRATEGY_INFO_EVENT}             | ${[{ timestamp: START + 3 * ONE_MINUTE, level: 'info', tag: 'strategy', message: INFO_MESSAGE }]}
+        ${STRATEGY_WARMUP_COMPLETED_EVENT} | ${[FIRST_3M_BUCKET]}
+        ${TIMEFRAME_CANDLE_EVENT}          | ${[FIRST_3M_BUCKET]}
+      `('queues $event', ({ event, expected }) => {
+        expect(delivered.get(event)).toEqual(expected);
+      });
+    });
+  });
+
+  describe('order events', () => {
+    it.each`
+      handler
+      ${'onOrderCompleted'}
+      ${'onOrderCanceled'}
+      ${'onOrderErrored'}
+    `('$handler gives the strategy every order of the batch, in order', async ({ handler }: { handler: keyof typeof SEND_ORDER_BATCH }) => {
+      await SEND_ORDER_BATCH[handler](await startAdvisor());
+      expect(strategy[handler].mock.calls.map(([{ order }]) => order.id)).toEqual(ORDER_IDS);
+    });
+
+    it('onOrderErrored rejects with ApplicationStopError once a batch reaches maxConsecutiveErrors', async () => {
+      const advisor = await startAdvisor({ maxConsecutiveErrors: ORDER_IDS.length });
+      await expect(SEND_ORDER_BATCH.onOrderErrored(advisor)).rejects.toThrow(ApplicationStopError);
+    });
+  });
+
+  describe('onPortfolioChange', () => {
+    it('gives the strategy the last portfolio of the batch', async () => {
+      const advisor = await startAdvisor();
+      advisor.onPortfolioChange([usdtPortfolio(900), usdtPortfolio(800)]);
+      await sendBuckets(advisor, 3);
+      expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ portfolio: usdtPortfolio(800) }));
+    });
+  });
+
+  describe('processFinalize', () => {
+    it('ends the strategy', async () => {
+      const advisor = await startAdvisor();
+      await advisor.processCloseStream();
+      expect(strategy.end).toHaveBeenCalledOnce();
     });
   });
 });
