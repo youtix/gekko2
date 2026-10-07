@@ -1,3 +1,4 @@
+import { LogLevel } from '@models/logLevel.types';
 import { Tag } from '@models/tag.types';
 import { RingBuffer } from '@utils/collection/ringBuffer';
 import { isString, upperCase } from 'lodash-es';
@@ -5,6 +6,18 @@ import { createLogger, format, transports } from 'winston';
 import { BufferedLog, LogInput } from './logger.types';
 const { combine, timestamp, json } = format;
 
+/**
+ * The levels kept in the buffer: the ones the log monitoring of Supervision, which the buffer is for, forwards to Telegram, whatever
+ * GEKKO_LOG_LEVEL is (it only decides what winston prints). Buffered too, the info and debug logs of the order polls, a few per poll
+ * of each open order (about 1080 a minute for 30 orders polled every 5 s), evicted the warnings and errors before the monitoring
+ * read them.
+ */
+const BUFFERED_LEVELS: LogLevel[] = ['warn', 'error'];
+
+/**
+ * The last warnings and errors, oldest first, the oldest evicted first. 1000 of them is an hour of warnings at one every 3.6 s,
+ * far more than pile up between two checks of the log monitoring (a minute apart by default).
+ */
 const logBuffer = new RingBuffer<BufferedLog>(1000);
 
 const DEFAULT_LOG_LEVEL = 'error';
@@ -36,7 +49,8 @@ if (rejectedLogLevel !== undefined) {
 }
 
 const log = ({ tag, message, level }: LogInput) => {
-  logBuffer.push({ timestamp: Date.now(), level, tag, message: isString(message) ? message : JSON.stringify(message) });
+  if (BUFFERED_LEVELS.includes(level))
+    logBuffer.push({ timestamp: Date.now(), level, tag, message: isString(message) ? message : JSON.stringify(message) });
   logger.log({ level, message: message as string, _tag: upperCase(tag) });
 };
 
@@ -56,4 +70,5 @@ export const error = (tag: Tag, message: unknown) => {
   log({ tag, message, level: 'error' });
 };
 
+/** The buffered warnings and errors, oldest first: the same entry objects on every call, so that a reader can find where it left off */
 export const getBufferedLogs = () => logBuffer.toArray();
