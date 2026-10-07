@@ -3,7 +3,10 @@ import { Asset } from '@models/utility.types';
 
 export interface PortfolioReport extends Report {
   id: 'PORTFOLIO PROFIT REPORT';
-  /** Equity curve: array of snapshots */
+  /**
+   * Equity curve: the portfolio marked to market at the close of every timeframe candle of the period, then at its end with the
+   * latest portfolio at the last prices
+   */
   equityCurve: EquitySnapshot[];
   /** Maximum drawdown percentage (peak-to-trough) */
   maxDrawdownPct: number;

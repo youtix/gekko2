@@ -1,10 +1,11 @@
+import { formatAmount } from '@utils/string/string.utils';
 import { PortfolioReport } from './portfolioAnalyzer.types';
 
 export const logPortfolioReport = (report: PortfolioReport, currency: string): void => {
   // eslint-disable-next-line no-console
   console.table({
-    'Net Profit': `${report.netProfit.toFixed(2)} ${currency}`,
-    'Annualized Net Profit': `${report.annualizedNetProfit.toFixed(2)} ${currency}`,
+    'Net Profit': `${formatAmount(report.netProfit)} ${currency}`,
+    'Annualized Net Profit': `${formatAmount(report.annualizedNetProfit)} ${currency}`,
     'Total Return %': report.totalReturnPct.toFixed(2) + '%',
     'Annualized Return %': report.annualizedReturnPct.toFixed(2) + '%',
     'Market Return %': report.marketReturnPct.toFixed(2) + '%',
@@ -14,10 +15,10 @@ export const logPortfolioReport = (report: PortfolioReport, currency: string): v
     'Sortino Ratio': report.sortinoRatio.toFixed(4),
     Volatility: report.volatility.toFixed(4),
     'Downside Deviation': report.downsideDeviation.toFixed(4),
-    'Start Equity': `${report.startEquity.toFixed(2)} ${currency}`,
-    'End Equity': `${report.endEquity.toFixed(2)} ${currency}`,
-    'Start Price': `${report.startPrice.toFixed(4)} ${currency}`,
-    'End Price': `${report.endPrice.toFixed(4)} ${currency}`,
+    'Start Equity': `${formatAmount(report.startEquity)} ${currency}`,
+    'End Equity': `${formatAmount(report.endEquity)} ${currency}`,
+    'Start Price': `${formatAmount(report.startPrice)} ${currency}`,
+    'End Price': `${formatAmount(report.endPrice)} ${currency}`,
     Benchmark: report.benchmarkAsset,
     Changes: report.portfolioChangeCount,
     Duration: report.formattedDuration,

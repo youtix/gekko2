@@ -288,23 +288,28 @@ describe('E2E: Backtest Flow', () => {
     expect(report.alpha).toBeCloseTo(0.792, 2);
     expect(report.downsideDeviation).toBeGreaterThan(0);
     expect(report.periodEndAt).toBe(1704067740000);
-    expect(report.periodStartAt).toBe(1704067200000);
-    expect(report.exposurePct).toBe(100);
+    // The close of the minute that completed the warmup (00:00), when the start prices and the start equity are taken
+    expect(report.periodStartAt).toBe(1704067260000);
+    // BTC and ETH are held for 2 of the 8 minutes of the period: from the BUYs, heard at 00:02, to the SELLs, heard at 00:04
+    expect(report.exposurePct).toBe(25);
     expect(report.marketReturnPct).toBe(0);
     expect(report.netProfit).toBe(2376);
     expect(report.totalReturnPct).toBeCloseTo(0.792, 2);
-    expect(report.annualizedReturnPct).toBeGreaterThan(0);
+    // Annualized over a day, the minimum horizon, in a leap year: 366 such days
+    expect(report.annualizedReturnPct).toBeCloseTo(0.792 * 366, 2);
     expect(report.sharpeRatio).toBeGreaterThan(0);
-    expect(report.sortinoRatio).toBe(0);
+    expect(report.sortinoRatio).toBeGreaterThan(0);
     expect(report.volatility).toBeGreaterThan(0);
     expect(report.startPrice).toBe(10000);
     expect(report.endPrice).toBe(10000);
-    expect(report.formattedDuration).toBe('9 minutes');
-    expect(report.annualizedNetProfit).toBeGreaterThan(0);
-    expect(report.equityCurve).toBeDefined();
-    expect(report.equityCurve.length).toBeGreaterThan(0);
+    expect(report.formattedDuration).toBe('8 minutes');
+    expect(report.annualizedNetProfit).toBeCloseTo(2376 * 366, 0);
+    // The log carries the length of the equity curve, not the curve
+    expect(report.equityCurveLength).toBeGreaterThan(0);
     expect(report.maxDrawdownPct).toBeGreaterThan(0);
-    expect(report.longestDrawdownMs).toBe(60000);
+    // The curve has one point per close from 00:01 to 00:09. The peak is the 00:04 point, which values the positions at that close
+    // before the SELLs are heard; the SELL fees keep every later point below it until the end of the period: five minutes.
+    expect(report.longestDrawdownMs).toBe(300000);
     expect(report.startEquity).toBe(300000);
     expect(report.endEquity).toBe(302376);
     expect(report.portfolioChangeCount).toBeGreaterThanOrEqual(3);
