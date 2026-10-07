@@ -122,7 +122,7 @@ plugins:
   - name: TradingAdvisor
     strategyName: RSI
   - name: Trader
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     enableConsoleTable: true
 ```
 
@@ -170,6 +170,7 @@ plugins:
   - name: EventSubscriber
     token: YOUR_TELEGRAM_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 ```
 
 **Run the screener:**
@@ -216,7 +217,7 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     riskFreeReturn: 5
 
 [I understand that Gekko only automates MY OWN trading strategies]: true
@@ -268,12 +269,13 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     riskFreeReturn: 5
 
   - name: EventSubscriber
     token: YOUR_TELEGRAM_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 
 [I understand that Gekko only automates MY OWN trading strategies]: true
 ```

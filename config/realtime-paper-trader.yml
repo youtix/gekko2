@@ -32,5 +32,6 @@ plugins:
     enableConsoleTable: true
 
   - name: EventSubscriber
-    token: # Your telgram token
+    token: # Your telegram bot token
     botUsername: # Your telegram bot username
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound

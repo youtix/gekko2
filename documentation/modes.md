@@ -265,6 +265,7 @@ plugins:
   - name: EventSubscriber        # Telegram alerts
     token: YOUR_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 ```
 
 #### 2. Sandbox Trading (Paper Money)
@@ -396,6 +397,7 @@ plugins:
   - name: EventSubscriber        # Get Telegram notifications
     token: YOUR_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 
 [I understand that Gekko only automates MY OWN trading strategies]: true
 ```
@@ -409,6 +411,7 @@ plugins:
   - name: Supervision
     token: YOUR_BOT_TOKEN
     botUsername: YOUR_BOT_SECRET
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
     cpuThreshold: 80             # Alert if CPU > 80%
     memoryThreshold: 1024        # Alert if memory > 1024 MB
     cpuCheckInterval: 10000      # Check every 10 seconds
