@@ -9,7 +9,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GridBot } from './gridBot.strategy';
 import { GridBotStrategyParams, GridBounds, GridSpacingType } from './gridBot.types';
 import {
+  checkPriceTick,
+  checkRoundTripFee,
   computeGridBounds,
+  computeGridPrices,
   computeLevelPrice,
   computeRebalancePlan,
   countDecimals,
@@ -187,6 +190,18 @@ describe('gridBot.utils', () => {
     });
   });
 
+  describe('computeGridPrices', () => {
+    it.each`
+      buyLevels | sellLevels | spacingType  | spacingValue | description                                            | expected
+      ${2}      | ${2}       | ${'fixed'}   | ${5}         | ${'a 2/2 grid'}                                        | ${[90, 95, 100, 105, 110]}
+      ${2}      | ${0}       | ${'fixed'}   | ${5}         | ${'a grid of buy levels only, up to the center price'} | ${[90, 95, 100]}
+      ${0}      | ${2}       | ${'fixed'}   | ${5}         | ${'a grid of sell levels only, from the center price'} | ${[100, 105, 110]}
+      ${3}      | ${3}       | ${'percent'} | ${0.001}     | ${'a 3/3 grid spaced by 0.001 %, rounded to the cent'} | ${[100, 100, 100, 100, 100, 100, 100]}
+    `('are $expected for $description around 100', ({ buyLevels, sellLevels, spacingType, spacingValue, expected }) => {
+      expect(computeGridPrices(100, { buyLevels, sellLevels, spacingType, spacingValue }, 2, 0.01)).toEqual(expected);
+    });
+  });
+
   describe('computeGridBounds', () => {
     it('returns correct bounds for symmetric grid', () => {
       expect(computeGridBounds(100, 2, 2, 2, 'fixed', 5)).toEqual({ min: 90, max: 110 });
@@ -300,6 +315,38 @@ describe('gridBot.utils', () => {
       },
     );
 
+    // A spacing under the tick used to be accepted, the prices of the grid rounded onto each other: percent 0.001 at 100 put every
+    // price of a 3/3 grid at 100, where its levels bought and sold at zero spread, two fees a round trip for nothing
+    it.each`
+      center    | buyLevels | sellLevels | spacingType      | spacingValue | tick      | description                                                     | price
+      ${100}    | ${3}      | ${3}       | ${'percent'}     | ${0.001}     | ${0.01}   | ${'every price of the grid at the center price'}                | ${100}
+      ${100}    | ${2}      | ${2}       | ${'fixed'}       | ${0.004}     | ${0.01}   | ${'the prices next to the center price at the center price'}    | ${100}
+      ${100}    | ${1}      | ${1}       | ${'logarithmic'} | ${0.00004}   | ${0.01}   | ${'a logarithmic spacing under the tick'}                       | ${100}
+      ${100}    | ${3}      | ${3}       | ${'fixed'}       | ${0.008}     | ${0.01}   | ${'the farthest prices only, 0.016 and 0.024 below the center'} | ${99.98}
+      ${0.0123} | ${5}      | ${5}       | ${'percent'}     | ${0.5}       | ${0.0001} | ${'a coin whose tick is 0.8 % of its price, duplicated levels'} | ${0.0121}
+      ${10.25}  | ${2}      | ${2}       | ${'percent'}     | ${1}         | ${0.25}   | ${'a tick of 0.25, not one unit of a decimal'}                  | ${10.25}
+      ${100}    | ${1}      | ${0}       | ${'fixed'}       | ${0.004}     | ${0.01}   | ${'one buy level, which sells at the center price'}             | ${100}
+      ${100}    | ${0}      | ${1}       | ${'fixed'}       | ${0.004}     | ${0.01}   | ${'one sell level, which buys at the center price'}             | ${100}
+    `(
+      'returns error naming the parameter and the tick for two adjacent prices rounded to the same tick: $description',
+      ({ center, buyLevels, sellLevels, spacingType, spacingValue, tick, price }) => {
+        expect(
+          validateConfig({ ...validParams, buyLevels, sellLevels, spacingType, spacingValue }, center, { precision: { price: tick } }),
+        ).toBe(
+          `Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue ${spacingValue} (${spacingType}) around the center price ${center}, two adjacent prices of the grid would both round to ${price} at the price tick ${tick}`,
+        );
+      },
+    );
+
+    // 0.008 below and above 100 round to 99.99 and 100.01: the grid is a tick apart, as rounded, not a level at zero spread
+    it.each`
+      spacingValue | description
+      ${0.01}      | ${'exactly one tick'}
+      ${0.008}     | ${'under one tick, the 2/2 grid rounded a tick apart'}
+    `('returns null for a fixed spacing of $spacingValue at 100 on a tick of 0.01: $description', ({ spacingValue }) => {
+      expect(validateConfig({ ...validParams, spacingValue }, 100, { precision: { price: 0.01 } })).toBeNull();
+    });
+
     it('returns error for price below exchange minimum', () => {
       expect(validateConfig({ ...validParams, buyLevels: 0 }, 0.5, { price: { min: 1 } })).toBe(
         'Center price 0.5 is below exchange minimum 1',
@@ -308,6 +355,75 @@ describe('gridBot.utils', () => {
 
     it('returns error for price above exchange maximum', () => {
       expect(validateConfig(validParams, 1000, { price: { max: 500 } })).toBe('Center price 1000 is above exchange maximum 500');
+    });
+
+    // Checked last, the tick leaves every configuration refused before refused with the same message
+    it('returns error for price below exchange minimum before the one of a grid spaced under the tick', () => {
+      const underTick = { ...validParams, spacingType: 'percent' as const, spacingValue: 0.001 };
+
+      expect(validateConfig(underTick, 0.5, { price: { min: 1 }, precision: { price: 0.01 } })).toBe(
+        'Center price 0.5 is below exchange minimum 1',
+      );
+    });
+  });
+
+  // A percent or logarithmic step shrinks with the price: 0.0084 % keeps the prices of a 3/3 grid a tick apart at 100, not at 99. A
+  // fixed step does not, the center price being on the tick
+  describe('checkPriceTick', () => {
+    const nearTheTick = { buyLevels: 3, sellLevels: 3, spacingValue: 0.0084 };
+
+    it.each`
+      center | spacingType  | description
+      ${100} | ${'percent'} | ${'percent 0.0084 at 100: 99.97, 99.98, 99.99, 100, 100.01, 100.02 and 100.03'}
+      ${99}  | ${'fixed'}   | ${'fixed 0.0084 at 99: 98.97, 98.98, 98.99, 99, 99.01, 99.02 and 99.03'}
+    `('is null for $description', ({ center, spacingType }) => {
+      expect(checkPriceTick({ ...nearTheTick, spacingType }, center, 2, 0.01)).toBeNull();
+    });
+
+    it('is the error of percent 0.0084 at 99, whose prices round to 98.98 twice', () => {
+      expect(checkPriceTick({ ...nearTheTick, spacingType: 'percent' }, 99, 2, 0.01)).toBe(
+        'Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 0.0084 (percent) around the center price 99, two adjacent prices of the grid would both round to 98.98 at the price tick 0.01',
+      );
+    });
+  });
+
+  // A spacing under the round-trip fee used to be accepted without a word: every round trip of a level paid more in fees than it
+  // earned, and the more the grid traded, the more it lost
+  describe('checkRoundTripFee', () => {
+    const fivePerSide = { buyLevels: 5, sellLevels: 5, retryOnError: 3 };
+    /** The warning, from what it names: the round trip's break-even, the fee, the levels under it and the narrowest of them */
+    const underFee = (spacing: string, breakEven: string, fee: number, count: string, narrowest: string) =>
+      `spacingValue ${spacing} is under the round-trip fee: a level that sells less than ${breakEven} above its buy, paying the maker fee of ${fee} (fee.maker) on its BUY and on its SELL, loses money at each round trip, ${count} here, the narrowest ${narrowest}`;
+
+    // A maker fee of 0.0004 costs a round trip 0.08003 % of the price, 0.1 % costs 0.2002 %: 2 × fee / (1 - fee)
+    it.each`
+      center   | spacingType      | spacingValue | maker     | description                                           | breakEven      | count             | narrowest
+      ${60000} | ${'fixed'}       | ${10}        | ${0.0004} | ${'fixed 10 at 60000, 0.0167 % a level'}              | ${'0.08003 %'} | ${'10 out of 10'} | ${'selling at 60050, 0.01666 % above its buy at 60040'}
+      ${60000} | ${'percent'}     | ${0.05}      | ${0.0004} | ${'percent 0.05'}                                     | ${'0.08003 %'} | ${'10 out of 10'} | ${'selling at 60150, 0.0499 % above its buy at 60120'}
+      ${60000} | ${'logarithmic'} | ${0.0005}    | ${0.0004} | ${'logarithmic 0.0005'}                               | ${'0.08003 %'} | ${'10 out of 10'} | ${'selling at 59940.04, 0.04999 % above its buy at 59910.09'}
+      ${60000} | ${'fixed'}       | ${100}       | ${0.001}  | ${'the documentation example of fixed 100, at 0.1 %'} | ${'0.2002 %'}  | ${'10 out of 10'} | ${'selling at 60500, 0.1656 % above its buy at 60400'}
+      ${60000} | ${'fixed'}       | ${48}        | ${0.0004} | ${'fixed 48, under the fee above the center only'}    | ${'0.08003 %'} | ${'5 out of 10'}  | ${'selling at 60240, 0.07974 % above its buy at 60192'}
+      ${100}   | ${'percent'}     | ${0.08}      | ${0.0004} | ${'percent 0.08, a hair under the fee above 100'}     | ${'0.08003 %'} | ${'5 out of 10'}  | ${'selling at 100.4, 0.07974 % above its buy at 100.32'}
+      ${100}   | ${'fixed'}       | ${0.01}      | ${0.0004} | ${'fixed 0.01 at 100, one tick'}                      | ${'0.08003 %'} | ${'10 out of 10'} | ${'selling at 100.05, 0.009996 % above its buy at 100.04'}
+    `(
+      'warns of $description, naming the parameter, the fee and the narrowest level',
+      ({ center, spacingType, spacingValue, maker, breakEven, count, narrowest }) => {
+        const marketData: MarketData = { precision: { price: 0.01 }, fee: { maker } };
+
+        expect(checkRoundTripFee({ ...fivePerSide, spacingType, spacingValue }, center, marketData)).toBe(
+          underFee(`${spacingValue} (${spacingType})`, breakEven, maker, count, narrowest),
+        );
+      },
+    );
+
+    it.each`
+      center      | spacingType  | spacingValue | marketData                                                | description
+      ${61234.56} | ${'percent'} | ${1}         | ${documentedMarketData}                                   | ${'the documentation example, 1 % a level at a maker fee of 0.0004'}
+      ${100}      | ${'percent'} | ${0.09}      | ${{ precision: { price: 0.01 }, fee: { maker: 0.0004 } }} | ${'percent 0.09, over the fee by a hair: 0.08968 % for the narrowest level'}
+      ${100}      | ${'fixed'}   | ${0.01}      | ${{ precision: { price: 0.01 } }}                         | ${'one tick on a market that states no fee'}
+      ${100}      | ${'fixed'}   | ${0.01}      | ${{ precision: { price: 0.01 }, fee: { taker: 0.001 } }}  | ${'one tick on a market that states a taker fee only, which LIMIT orders resting in the book do not pay'}
+    `('returns null for $description', ({ center, spacingType, spacingValue, marketData }) => {
+      expect(checkRoundTripFee({ ...fivePerSide, spacingType, spacingValue }, center, marketData)).toBeNull();
     });
   });
 

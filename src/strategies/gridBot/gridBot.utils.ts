@@ -3,6 +3,7 @@ import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { addPrecise } from '@utils/math/math.utils';
 import { round } from '@utils/math/round.utils';
+import { minBy } from 'lodash-es';
 import { DEFAULT_AMOUNT_PRECISION, DEFAULT_PRICE_PRECISION, EMPTY_BALANCE } from './gridBot.const';
 import { GridBotStrategyParams, GridBounds, GridSize, GridSpacingType, RebalancePlan } from './gridBot.types';
 
@@ -44,8 +45,11 @@ export const getRebalanceBuyCost = (amount: number, price: number, marketData: M
 /** A market limit is a bound only as a finite number above 0: Binance disables a filter bound by setting it to 0 (see market.utils) */
 const toBound = (limit?: number): number | undefined => (limit !== undefined && Number.isFinite(limit) && limit > 0 ? limit : undefined);
 
-/** The step of the amounts, one unit of their last decimal (see inferAmountPrecision): 1e-8 for 8 decimals */
-const getAmountStep = (amountDecimals: number): number => Number(`1e-${amountDecimals}`);
+/**
+ * The step of numbers rounded to `decimals` decimals, one unit of the last: 1e-8 for 8. The step of the amounts (see
+ * inferAmountPrecision), and of the prices when the market states no price step (see inferPricePrecision)
+ */
+const getDecimalStep = (decimals: number): number => Number(`1e-${decimals}`);
 
 /**
  * The smallest amount of an order at `price` that the market takes: one amount step at least, amount.min and cost.min / price,
@@ -55,7 +59,7 @@ const getAmountStep = (amountDecimals: number): number => Number(`1e-${amountDec
  */
 export const getMinimumAmount = (price: number, marketData: MarketData): number => {
   const amountDecimals = inferAmountPrecision(marketData);
-  const step = getAmountStep(amountDecimals);
+  const step = getDecimalStep(amountDecimals);
   const minimumCost = toBound(marketData.cost?.min);
   const atCost = minimumCost && price > 0 ? minimumCost / price : 0;
   // Rounded up as -(the negated value rounded down): round has no ceiling
@@ -75,7 +79,7 @@ export const getMaximumAmount = (price: number, marketData: MarketData): number 
   const limit = Math.min(toBound(marketData.amount?.max) ?? Infinity, atCost);
   if (!Number.isFinite(limit)) return Infinity;
   const maximum = roundAmount(limit, amountDecimals);
-  return maximumCost && maximum * price > maximumCost ? addPrecise(maximum, -getAmountStep(amountDecimals)) : maximum;
+  return maximumCost && maximum * price > maximumCost ? addPrecise(maximum, -getDecimalStep(amountDecimals)) : maximum;
 };
 
 /**
@@ -174,6 +178,22 @@ export const computeLevelPrice = (
 };
 
 /**
+ * The prices of the grid the parameters configure around the center price, rounded as its orders are (see computeLevelPrice): from
+ * its lowest BUY to its highest SELL, the center price included. A level trades between two adjacent ones (see LevelState).
+ */
+export const computeGridPrices = (
+  centerPrice: number,
+  params: Pick<GridBotStrategyParams, 'buyLevels' | 'sellLevels' | 'spacingType' | 'spacingValue'>,
+  priceDecimals: number,
+  priceStep?: number,
+): number[] => {
+  const { buyLevels, sellLevels, spacingType, spacingValue } = params;
+  return Array.from({ length: buyLevels + sellLevels + 1 }, (_, i) =>
+    computeLevelPrice(centerPrice, i - buyLevels, priceDecimals, spacingType, spacingValue, priceStep),
+  );
+};
+
+/**
  * Compute grid bounds (min and max prices) for the given configuration.
  */
 export const computeGridBounds = (
@@ -204,8 +224,8 @@ export const isOutOfRange = (currentPrice: number, bounds: GridBounds): boolean 
 };
 
 /**
- * Validate grid configuration against the center price and the exchange limits. The parameters themselves were checked by the
- * schema (gridBot.schema.ts) before the strategy was created.
+ * Validate grid configuration against the center price, the exchange limits and the price tick. The parameters themselves were
+ * checked by the schema (gridBot.schema.ts) before the strategy was created.
  * Returns an error message if invalid, null if valid.
  */
 export const validateConfig = (params: GridBotStrategyParams, centerPrice: number, marketData: MarketData): string | null => {
@@ -230,7 +250,61 @@ export const validateConfig = (params: GridBotStrategyParams, centerPrice: numbe
     return `Center price ${centerPrice} is above exchange maximum ${marketData.price.max}`;
   }
 
-  return null;
+  // Last, so that a configuration refused before keeps its message
+  return checkPriceTick(params, centerPrice, priceDecimals, priceStep);
+};
+
+/**
+ * Checks the prices of a grid against the price tick. Two adjacent ones that round to the same tick make a level that buys and sells at
+ * that one price: two fees a round trip for nothing, and live, its SELL can meet a BUY of the grid at that price, which self-trade
+ * prevention expires. A spacing under the tick used to be accepted: percent 0.001 at 100 put every price of a 3/3 grid at 100.
+ * Returns an error message when two adjacent prices of the grid round to the same tick, null otherwise.
+ */
+export const checkPriceTick = (
+  params: Pick<GridBotStrategyParams, 'buyLevels' | 'sellLevels' | 'spacingType' | 'spacingValue'>,
+  centerPrice: number,
+  priceDecimals: number,
+  priceStep?: number,
+): string | null => {
+  const prices = computeGridPrices(centerPrice, params, priceDecimals, priceStep);
+  const collision = prices.findIndex((price, i) => i > 0 && price <= prices[i - 1]);
+  if (collision <= 0) return null;
+
+  const spaced = `spaced by spacingValue ${params.spacingValue} (${params.spacingType}) around the center price ${centerPrice}`;
+  const tick = priceStep ?? getDecimalStep(priceDecimals);
+  return `Grid configuration would result in a level buying and selling at the same price: ${spaced}, two adjacent prices of the grid would both round to ${prices[collision]} at the price tick ${tick}`;
+};
+
+/**
+ * A ratio as a percentage of four significant digits, for a message: 0.00016655 as 0.01666 %. With three, the round trip of a maker fee
+ * of 0.04 %, 0.08003 %, read 0.08 %, and a warning of percent spacing 0.08 read as if 0.08 were under 0.08.
+ */
+const toPercent = (ratio: number): string => `${Number((ratio * 100).toPrecision(4))} %`;
+
+/**
+ * Checks the spacing against the round-trip fee. The round trip of a level, a BUY at its lower price then a SELL at its upper one,
+ * pays the maker fee on both (see getMakerFee): it loses money when sellPrice × (1 - fee) < buyPrice × (1 + fee), a SELL less than
+ * 2 × fee / (1 - fee) above its BUY. Such a grid is a bad one, not an impossible one as a grid with two prices at one tick is (see
+ * checkPriceTick): it is warned of, not refused.
+ * Returns a warning message when a level of the grid the parameters configure loses money at each round trip, null otherwise.
+ */
+export const checkRoundTripFee = (params: GridBotStrategyParams, centerPrice: number, marketData: MarketData): string | null => {
+  const fee = getMakerFee(marketData);
+  const { priceDecimals, priceStep } = inferPricePrecision(centerPrice, marketData);
+  const prices = computeGridPrices(centerPrice, params, priceDecimals, priceStep);
+  const levels = prices.slice(1).map((sellPrice, i) => ({ buyPrice: prices[i], sellPrice }));
+  // A spacing under the round-trip fee used to be accepted without a word: at a maker fee of 0.0004, fixed 10 at 60000, 0.0167 % a
+  // level, lost 0.038 USDT at each round trip of 0.001 BTC, and the more the grid traded, the more it lost
+  const losing = levels.filter(({ buyPrice, sellPrice }) => sellPrice * (1 - fee) < buyPrice * (1 + fee));
+  const narrowest = minBy(losing, ({ buyPrice, sellPrice }) => sellPrice / buyPrice);
+  if (!narrowest) return null;
+
+  const { buyPrice, sellPrice } = narrowest;
+  const levelsUnder = `a level that sells less than ${toPercent((2 * fee) / (1 - fee))} above its buy`;
+  const paying = `paying the maker fee of ${fee} (fee.maker) on its BUY and on its SELL`;
+  const count = `${losing.length} out of ${levels.length} here`;
+  const example = `the narrowest selling at ${sellPrice}, ${toPercent(sellPrice / buyPrice - 1)} above its buy at ${buyPrice}`;
+  return `spacingValue ${params.spacingValue} (${params.spacingType}) is under the round-trip fee: ${levelsUnder}, ${paying}, loses money at each round trip, ${count}, ${example}`;
 };
 
 /**

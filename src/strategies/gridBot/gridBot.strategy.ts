@@ -17,6 +17,8 @@ import { DEFAULT_RETRY_LIMIT } from './gridBot.const';
 import { gridBotStrategySchema } from './gridBot.schema';
 import type { GridBotStrategyParams, GridBounds, LevelState, RebalancePlan } from './gridBot.types';
 import {
+  checkPriceTick,
+  checkRoundTripFee,
   computeGridBounds,
   computeLevelPrice,
   computeRebalancePlan,
@@ -40,7 +42,8 @@ import {
  * - The grid is placed on the first timeframe candle after the warmup, centred on its close
  * - Buy levels are placed below the center price
  * - Sell levels are placed above the center price
- * - Spacing between levels is configurable: fixed, percent, or logarithmic
+ * - Spacing between levels is configurable: fixed, percent, or logarithmic. A spacing that rounds two adjacent prices of the grid to
+ *   the same tick stops the run, and one under the round-trip fee, two maker fees, is warned of once
  * - Each level trades back and forth between two adjacent prices of the grid: once its BUY fills it sells one step above, once its
  *   SELL fills it buys one step below
  * - Mandatory rebalancing ensures 50/50 portfolio allocation before grid building
@@ -130,6 +133,10 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
     const validationError = validateConfig(tools.strategyParams, centerPrice, marketData);
     if (validationError) this.stopRun(validationError, tools);
+    // A spacing under the round-trip fee makes a grid that loses money at each round trip of a level: a bad grid, not an impossible
+    // one, placed all the same, after one warning
+    const feeWarning = checkRoundTripFee(tools.strategyParams, centerPrice, marketData);
+    if (feeWarning) tools.log('warn', `GridBot: ${feeWarning}`);
 
     // Always attempt rebalancing first
     this.prepareGrid(centerPrice, portfolio, tools);
@@ -379,6 +386,12 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     );
     const free = `${assetFree} ${this.base} and ${currencyFree} ${this.quote} free`;
     if (size.quantity <= 0) this.stopRun(`Insufficient portfolio for any grid levels: ${free} fund no order the market takes`, tools);
+
+    // The start checked the prices of the grid around its own center price, but a grid rebalanced first is built around the price the
+    // rebalance ended at, where a percent or logarithmic step, which shrinks with the price, can round two adjacent prices to one tick
+    const levelsBuilt = { buyLevels: size.buyLevels, sellLevels: size.sellLevels, spacingType, spacingValue };
+    const tickError = checkPriceTick(levelsBuilt, centerPrice, this.priceDecimals, this.priceStep);
+    if (tickError) this.stopRun(tickError, tools);
 
     // Bounds of the levels built
     const bounds = computeGridBounds(

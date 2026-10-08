@@ -532,6 +532,118 @@ describe('GridBot', () => {
     });
   });
 
+  // A spacing under the price tick used to be accepted, the prices of the grid rounded onto each other: percent 0.001 at 100 put a
+  // 3/3 grid at 100, where its levels bought and sold at zero spread, two fees a round trip for nothing. A spacing under the
+  // round-trip fee was accepted without a word, and its round trips lost money.
+  describe('spacing against the price tick and the round-trip fee', () => {
+    const underTick = { buyLevels: 3, sellLevels: 3, spacingType: 'percent', spacingValue: 0.001 } as const;
+    // On the 2/2 grid of 5 BTC and 500 USDT at 100: 99.98, 99.99, 100.01 and 100.02, 0.01 % a level
+    const oneTick = { spacingType: 'fixed', spacingValue: 0.01 } as const;
+    const feeWarnings = () => log.mock.calls.filter(([level, message]) => level === 'warn' && message.includes('round-trip fee'));
+
+    it('stops the run when two adjacent prices of the grid round to the same tick, naming the parameter and the tick', () => {
+      expect(() => startStrategy(100, underTick)).toThrow(
+        'GridBot: Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 0.001 (percent) around the center price 100, two adjacent prices of the grid would both round to 100 at the price tick 0.01',
+      );
+    });
+
+    it.each`
+      portfolio              | description
+      ${balancedPortfolio}   | ${'the grid of a balanced portfolio'}
+      ${unbalancedPortfolio} | ${'the rebalance of an unbalanced one'}
+    `('sends no order then, neither $description', ({ portfolio }) => {
+      untilStopped(() => startStrategy(100, underTick, portfolio));
+
+      expect(createOrder).not.toHaveBeenCalled();
+    });
+
+    // The grid is built around the price the rebalance ended at, which the start did not check: a percent step shrinks with the price,
+    // and 0.0084 % keeps the prices of a 3/3 grid a tick apart at 100, not at 99, where two round to 98.98
+    describe('once rebalanced at a price lower than the one the start checked', () => {
+      const nearTheTick = { buyLevels: 3, sellLevels: 3, spacingType: 'percent', spacingValue: 0.0084 } as const;
+      const rebalancedAt99 = () =>
+        strategy.onOrderCompleted({
+          order: { id: issuedOrders[0].id } as any,
+          exchange: { price: 99, portfolio: balancedPortfolio },
+          tools,
+        });
+
+      it('stops the run, naming the price the grid would be built around', () => {
+        startStrategy(100, nearTheTick, unbalancedPortfolio);
+
+        expect(rebalancedAt99).toThrow(
+          'GridBot: Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 0.0084 (percent) around the center price 99, two adjacent prices of the grid would both round to 98.98 at the price tick 0.01',
+        );
+      });
+
+      it('sends no order of the grid: the rebalance only', () => {
+        startStrategy(100, nearTheTick, unbalancedPortfolio);
+        untilStopped(rebalancedAt99);
+
+        expect(issuedOrders.map(({ type, side }) => `${type} ${side}`)).toEqual(['STICKY BUY']);
+      });
+
+      // 0.25 BTC and 24.75 USDT fund 2 of the 3 levels a side, at amount.min 0.1: the prices of the 2/2 grid stay a tick apart at 99
+      it('builds the levels the free balances fund, when only the farthest, left out, would round to one tick', () => {
+        const fundingTwoASide: Portfolio = new Map<string, BalanceDetail>([
+          ['BTC', { free: 0.25, used: 0, total: 0.25 }],
+          ['USDT', { free: 24.75, used: 0, total: 24.75 }],
+        ]);
+        startStrategy(100, nearTheTick, unbalancedPortfolio);
+        const exchange = { price: 99, portfolio: fundingTwoASide };
+        strategy.onOrderCompleted({ order: { id: issuedOrders[0].id } as any, exchange, tools });
+
+        expect(amountsSentAfter(1)).toEqual(['BUY 98.98 x0.12', 'BUY 98.99 x0.12', 'SELL 99.01 x0.12', 'SELL 99.02 x0.12']);
+      });
+    });
+
+    describe('on a market with a maker fee of 0.0004, 0.08003 % a round trip', () => {
+      beforeEach(() => {
+        tools.marketData = new Map([['BTC/USDT', { ...marketDataMock, fee: { maker: 0.0004 } }]]);
+      });
+
+      it('warns that a spacing of one tick is under the round-trip fee, naming the parameter and the fee', () => {
+        startStrategy(100, oneTick);
+
+        expect(log).toHaveBeenCalledWith(
+          'warn',
+          'GridBot: spacingValue 0.01 (fixed) is under the round-trip fee: a level that sells less than 0.08003 % above its buy, paying the maker fee of 0.0004 (fee.maker) on its BUY and on its SELL, loses money at each round trip, 4 out of 4 here, the narrowest selling at 100.02, 0.009999 % above its buy at 100.01',
+        );
+      });
+
+      it('warns once: not again on the candles and the fills that follow', () => {
+        startStrategy(100, oneTick);
+        afterWarmup(100);
+        strategy.onEachTimeframeCandle({ candle: makeCandle(100), portfolio: balancedPortfolio, tools });
+        settle('completed', 99.99, 'BUY');
+
+        expect(feeWarnings()).toHaveLength(1);
+      });
+
+      it('places the grid all the same: a bad grid, not an impossible one', () => {
+        startStrategy(100, oneTick);
+
+        expect(amountsSentAfter(0)).toEqual(['BUY 99.98 x2.49', 'BUY 99.99 x2.49', 'SELL 100.01 x2.49', 'SELL 100.02 x2.49']);
+      });
+
+      it.each`
+        params                                            | description
+        ${{}}                                             | ${'fixed 5, 5 % a level'}
+        ${{ spacingType: 'percent', spacingValue: 0.09 }} | ${'percent 0.09, 0.08992 % for the narrowest level'}
+      `('warns of nothing for a spacing over the round-trip fee: $description', ({ params }) => {
+        startStrategy(100, params);
+
+        expect(feeWarnings()).toEqual([]);
+      });
+    });
+
+    it('warns of nothing on a market that states no fee, even for a spacing of one tick', () => {
+      startStrategy(100, oneTick);
+
+      expect(feeWarnings()).toEqual([]);
+    });
+  });
+
   describe('order completion', () => {
     // These two used to check only that no order had disappeared, which held whatever the fill did: it armed nothing, BUY 95 and
     // SELL 105 being each other's neighbour across the center price

@@ -17,6 +17,8 @@ export const gridBotStrategySchema = z
      * - percent: expressed in percent (1 === 1%)
      * - fixed: price units
      * - logarithmic: multiplier increment (0.01 === +1% per hop)
+     * Checked against the market around the center price: a spacing that rounds two adjacent prices of the grid to the same price tick
+     * stops the run, when the grid starts or once it is rebalanced, and one under the round-trip fee, two maker fees, is warned of once.
      */
     spacingValue: z.number().positive(),
     /**
