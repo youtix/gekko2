@@ -8,7 +8,8 @@ import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
 import { WMA } from '@indicators/movingAverages/wma/wma.indicator';
 import { Candle } from '@models/candle.types';
 import { RingBuffer } from '@utils/collection/ringBuffer';
-import { stdev } from '@utils/math/math.utils';
+import { compareWithTolerance, stdev } from '@utils/math/math.utils';
+import { isNil } from 'lodash-es';
 
 const MOVING_AVERAGES = {
   sma: SMA,
@@ -17,6 +18,13 @@ const MOVING_AVERAGES = {
   wma: WMA,
 } as const;
 
+/**
+ * TA-Lib's BBANDS: a middle band, the maType average of the close over period, and an upper and a lower band stdevUp and stdevDown
+ * population standard deviations of those closes away from it, from the candle the middle is ready on: period, 2 × period − 1 with
+ * a dema. On a flat window, its closes equal within the tolerance of compareWithTolerance, the deviation is 0: the three bands are
+ * the middle, and the close itself once the middle sits on it within the tolerance. A middle still lagging a move, as an ema's or a
+ * dema's does after one, stays where it is.
+ */
 export class BollingerBands extends Indicator<'BollingerBands'> {
   private stdevUp: number;
   private stdevDown: number;
@@ -49,7 +57,17 @@ export class BollingerBands extends Indicator<'BollingerBands'> {
     if (!this.ringBuffer.isFull()) return;
 
     const middle = this.ma.getResult();
-    if (!middle) return;
+    // A middle of exactly 0, as an OBV's can be, used to read as not ready: the bands stayed null or kept the previous candle's
+    if (isNil(middle)) return;
+
+    // A flat window used to get a deviation of a few ulps rather than 0, around a middle itself a few ulps off the close, so the close
+    // lay outside bands a few ulps wide in most flat windows: a breakout on a market that did not move. A middle within the tolerance
+    // of the close is the close; one further off, an ema or a dema still catching up with a move, is a real distance and is kept
+    if (compareWithTolerance(this.ringBuffer.max(), this.ringBuffer.min()) === 0) {
+      const band = compareWithTolerance(middle, close) === 0 ? close : middle;
+      this.result = { upper: band, middle: band, lower: band };
+      return;
+    }
 
     // Compute standard deviation
     const standardDeviation = stdev(this.ringBuffer.toArray());

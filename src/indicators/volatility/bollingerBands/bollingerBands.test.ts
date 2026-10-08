@@ -1,6 +1,11 @@
+import { Candle } from '@models/candle.types';
 import { mapValues } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { BollingerBands } from './bollingerBands.indicator';
+
+const flat = (price: number): Candle => ({ start: 0, open: price, high: price, low: price, close: price, volume: 0 });
+// A move closing at 30000.11
+const move = [30000.4, 30010.2, 29995.6, 30001.15, 30000.11].map(flat);
 
 describe('BollingerBands', () => {
   const bbands = new BollingerBands();
@@ -49,5 +54,66 @@ describe('BollingerBands', () => {
     bbands.onNewCandle(candle);
     if (expected === null) expect(bbands.getResult()).toBeNull();
     else expect(bbands.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 13)));
+  });
+
+  // A middle of exactly 0 used to read as not ready: no bands on the second candle, and the previous candle's on the fourth, fifth and
+  // last. A close is never 0 or negative, but the OBV that OBV feeds to its bands is
+  const bbandsAroundZero = new BollingerBands({ period: 2 });
+  it.each`
+    close | expected
+    ${5}  | ${null}
+    ${-5} | ${{ upper: 10, middle: 0, lower: -10 }}
+    ${1}  | ${{ upper: 4, middle: -2, lower: -8 }}
+    ${-1} | ${{ upper: 2, middle: 0, lower: -2 }}
+    ${1}  | ${{ upper: 2, middle: 0, lower: -2 }}
+    ${0}  | ${{ upper: 1.5, middle: 0.5, lower: -0.5 }}
+    ${0}  | ${{ upper: 0, middle: 0, lower: 0 }}
+  `('should return $expected on candle %$, closing at $close', ({ close, expected }) => {
+    bbandsAroundZero.onNewCandle(flat(close));
+    expect(bbandsAroundZero.getResult()).toEqual(expected);
+  });
+
+  // On a flat window, its closes equal within the tolerance, the three bands are the close. The deviation used to come out as a few ulps
+  // rather than 0, around a middle itself a few ulps off the close, so the close lay a few ulps outside the bands in most flat windows
+  it.each`
+    window                                   | parameters            | candles
+    ${'a move, then 5 flat at 30000.11'}     | ${{}}                 | ${[...move, ...Array(5).fill(flat(30000.11))]}
+    ${'a move to 30000.06, then 5 flat'}     | ${{}}                 | ${[...move, ...Array(5).fill(flat(30000.11)), ...Array(6).fill(flat(30000.06))]}
+    ${'5 flat at 30000.11 from the start'}   | ${{}}                 | ${Array(5).fill(flat(30000.11))}
+    ${'5 flat at 0.007 from the start'}      | ${{}}                 | ${Array(5).fill(flat(0.007))}
+    ${'4 flat at 30000, one 3.3e-10 above'}  | ${{}}                 | ${[...Array(4).fill(flat(30000)), flat(30000.00001)]}
+    ${'a move, then 20 flat'}                | ${{ period: 20 }}     | ${[...move, ...Array(20).fill(flat(30000.11))]}
+    ${'a move, then 5 flat, under a wma'}    | ${{ maType: 'wma' }}  | ${[...move, ...Array(5).fill(flat(30000.11))]}
+    ${'a move, then 100 flat, under an ema'} | ${{ maType: 'ema' }}  | ${[...move, ...Array(100).fill(flat(30000.11))]}
+    ${'a move, then 100 flat, under a dema'} | ${{ maType: 'dema' }} | ${[...move, ...Array(100).fill(flat(30000.11))]}
+  `('should put the three bands on the close after $window', ({ parameters, candles }) => {
+    const bbands = new BollingerBands(parameters);
+    for (const candle of candles) bbands.onNewCandle(candle);
+    const { close } = candles[candles.length - 1];
+    expect(bbands.getResult()).toEqual({ upper: close, middle: close, lower: close });
+  });
+
+  // A middle that is off the close by more than the tolerance stays where it is, as an ema's or a dema's is just after a move: the window
+  // is flat, so the bands are that middle, and the close is off them
+  it.each`
+    maType    | closes              | middle
+    ${'ema'}  | ${[10, 20, 20]}     | ${55 / 3}
+    ${'dema'} | ${[10, 20, 20, 20]} | ${550 / 27}
+  `('should put the three bands on the $maType middle $middle, off the close of $closes', ({ maType, closes, middle }) => {
+    const bbands = new BollingerBands({ period: 2, maType });
+    for (const close of closes) bbands.onNewCandle(flat(close));
+    expect(bbands.getResult()).toEqual(mapValues({ upper: middle, middle, lower: middle }, value => expect.closeTo(value, 12)));
+  });
+
+  // A window that moved, however little, keeps its deviation: a tick on 30000 or on 0.05, or 1e-8 of the price, is beyond the tolerance
+  it.each`
+    move                 | candles                                                                             | expected
+    ${'a tick on 30000'} | ${[...Array(2).fill(flat(30000)), flat(30000.01), ...Array(2).fill(flat(30000))]}   | ${{ upper: 30000.01, middle: 30000.002, lower: 29999.994 }}
+    ${'1e-8 of 30000'}   | ${[...Array(2).fill(flat(30000)), flat(30000.0003), ...Array(2).fill(flat(30000))]} | ${{ upper: 30000.0003, middle: 30000.00006, lower: 29999.99982 }}
+    ${'a tick on 0.05'}  | ${[...Array(2).fill(flat(0.05)), flat(0.050001), ...Array(2).fill(flat(0.05))]}     | ${{ upper: 0.050001, middle: 0.0500002, lower: 0.0499994 }}
+  `('should keep the deviation of a window that moved by $move', ({ candles, expected }) => {
+    const bbands = new BollingerBands();
+    for (const candle of candles) bbands.onNewCandle(candle);
+    expect(bbands.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 9)));
   });
 });

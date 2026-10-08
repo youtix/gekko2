@@ -7,7 +7,7 @@ import { Indicator } from './indicator';
 import { INPUT_SOURCES } from './indicator.const';
 
 const price = (index: number) => 100 + 10 * Math.sin(index / 3) + 5 * Math.sin(index / 7);
-// A zigzag without a flat window, so no indicator waits on a zero range or a zero middle band
+// A zigzag without a flat window, so that the readiness below is that of a market that moves
 const candles: Candle[] = Array.from({ length: 150 }, (_, index) => {
   const open = price(index - 1);
   const close = price(index);
@@ -94,8 +94,8 @@ describe('Indicator', () => {
     ${'EFI'}             | ${{}}                                                                      | ${14}
     ${'EFI'}             | ${{ maType: 'dema' }}                                                      | ${26}
     ${'EFI'}             | ${{ maType: 'sma', src: 'hl2' }}                                           | ${14}
-    ${'OBV'}             | ${{}}                                                                      | ${15}
-    ${'OBV'}             | ${{ maType: 'dema' }}                                                      | ${28}
+    ${'OBV'}             | ${{}}                                                                      | ${14}
+    ${'OBV'}             | ${{ maType: 'dema' }}                                                      | ${27}
   `(
     'should return null until candle $firstComplete, then only complete results, for $name $parameters',
     ({ name, parameters, firstComplete }) => {

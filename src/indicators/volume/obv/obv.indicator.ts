@@ -5,6 +5,10 @@ import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 import { Indicator } from '../../indicator';
 
+/**
+ * TA-Lib's OBV, with Bollinger bands around it: the volume of the first candle, then each candle's volume added when its close rose
+ * and subtracted when it fell. The result comes with the bands, from candle period on (2 × period − 1 with a dema).
+ */
 export class OBV extends Indicator<'OBV'> {
   private prevClose?: number;
   private obv: number;
@@ -28,18 +32,15 @@ export class OBV extends Indicator<'OBV'> {
   }
 
   public onNewCandle(candle: Candle): void {
-    if (isNil(this.prevClose)) {
-      this.prevClose = candle.close;
-      return;
-    }
-
-    if (candle.close > this.prevClose) this.obv += candle.volume;
+    // The first candle, which has no close to compare with, used to be skipped: the OBV started a candle later than TA-Lib's, at 0
+    // rather than at that candle's volume, so its level was off by that volume and its bands came a candle late
+    if (isNil(this.prevClose)) this.obv = candle.volume;
+    else if (candle.close > this.prevClose) this.obv += candle.volume;
     else if (candle.close < this.prevClose) this.obv -= candle.volume;
+    this.prevClose = candle.close;
 
     this.bb.onNewCandle({ close: this.obv } as Candle);
     const bands = this.bb.getResult();
-
-    this.prevClose = candle.close;
     // The OBV alone went out while its bands warmed up
     if (isNil(bands)) return;
 
