@@ -1,5 +1,21 @@
+import { Candle } from '@models/candle.types';
 import { describe, expect, it } from 'vitest';
 import { WMA } from './wma.indicator';
+
+const toCandle = (close: number): Candle => ({ start: 0, open: close, high: close, low: close, close, volume: 0 });
+/** The weighted average of a window summed afresh, oldest price first, as the WMA used to do on every candle */
+const fullSum = (window: number[]) =>
+  window.reduce((sum, close, i) => sum + close * (i + 1), 0) / ((window.length * (window.length + 1)) / 2);
+/** A year of 1-minute closes: a random walk from 60000 in cents, drawn from a seeded generator so that every run gets the same */
+const yearOfCloses = (() => {
+  let seed = 7;
+  let close = 60000;
+  return Array.from({ length: 525_600 }, () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    close = Math.max(100, Math.round(close * (1 + (seed / 2 ** 32 - 0.5) * 0.004) * 100) / 100);
+    return close;
+  });
+})();
 
 describe('WMA', () => {
   const wma = new WMA({ period: 9 });
@@ -84,5 +100,66 @@ describe('WMA', () => {
     wmaHl2.onNewCandle(candle);
     if (expected === null) expect(wmaHl2.getResult()).toBeNull();
     else expect(wmaHl2.getResult()).toEqual(expect.closeTo(expected, 13));
+  });
+
+  // Each candle used to sum the whole window again, O(period). The sums now slide in O(1) and are summed afresh every period candles:
+  // without that, their rounding errors would pile up, to 6e-9 of the price by the end of this year at period 14. At each period, a
+  // candle in the middle of the year, and the last one before a fresh sum near its end, where the slid sums have drifted for longest
+  it.each`
+    period  | candles
+    ${14}   | ${262_143}
+    ${14}   | ${525_587}
+    ${200}  | ${262_143}
+    ${200}  | ${525_599}
+    ${1000} | ${262_143}
+    ${1000} | ${524_999}
+  `(
+    'should stay within 1e-12 of the full sum at candle $candles of a year of 1-minute candles with period $period',
+    ({ period, candles }) => {
+      const wma = new WMA({ period });
+      for (const close of yearOfCloses.slice(0, candles)) wma.onNewCandle(toCandle(close));
+      expect(Math.abs((wma.getResult() ?? NaN) / fullSum(yearOfCloses.slice(candles - period, candles)) - 1)).toBeLessThan(1e-12);
+    },
+  );
+
+  // A window of one price, as an illiquid pair or gap-filled minutes make, keeps the average the full sum gives it, candle after candle:
+  // sliding the sums would move it by an ulp now and then, a slope on a market that did not move, and leave EFI's force of 0 off 0
+  it.each`
+    window                   | period | move                                                            | price
+    ${'a move'}              | ${5}   | ${[30003.69, 29987.83, 29982.57, 29995.42, 30009.75, 30007.35]} | ${30011.81}
+    ${'a move'}              | ${3}   | ${[30019.78, 29989.57, 30010.28, 29986.13]}                     | ${29992.93}
+    ${'forces, as EFI sees'} | ${3}   | ${[-83.1402, 1.0714, 1.82984, 50.68496, 29.16452]}              | ${0}
+  `('should hold the full sum of a window flat at $price after $window, on every candle it stays flat', ({ period, move, price }) => {
+    const wma = new WMA({ period });
+    const results = [...move, ...Array(3 * period).fill(price)].map(close => {
+      wma.onNewCandle(toCandle(close));
+      return wma.getResult();
+    });
+    // The window is flat from candle move.length + period on
+    expect(results.slice(move.length + period - 1)).toEqual(Array(2 * period + 1).fill(fullSum(Array(period).fill(price))));
+  });
+
+  // A price that is not a number, or infinite, counts until it leaves the window and no longer: it cannot be taken back out of a sum,
+  // so the sums are made afresh while it is in them
+  const wmaNonFinite = new WMA({ period: 3 });
+  it.each`
+    close       | expected
+    ${1}        | ${null}
+    ${2}        | ${null}
+    ${3}        | ${14 / 6}
+    ${NaN}      | ${NaN}
+    ${5}        | ${NaN}
+    ${6}        | ${NaN}
+    ${7}        | ${38 / 6}
+    ${8}        | ${44 / 6}
+    ${9}        | ${50 / 6}
+    ${Infinity} | ${Infinity}
+    ${11}       | ${Infinity}
+    ${12}       | ${Infinity}
+    ${13}       | ${74 / 6}
+    ${14}       | ${80 / 6}
+  `('should return $expected on candle %$, closing at $close', ({ close, expected }) => {
+    wmaNonFinite.onNewCandle(toCandle(close));
+    expect(wmaNonFinite.getResult()).toBe(expected);
   });
 });
