@@ -24,7 +24,7 @@ import * as strategies from '@strategies/index';
 import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
 import { addMinutes } from 'date-fns';
-import { bindAll, omit } from 'lodash-es';
+import { bindAll, isNil, omit } from 'lodash-es';
 import { randomUUID, UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { isAbsolute, resolve } from 'node:path';
@@ -33,6 +33,21 @@ import { z } from 'zod';
 import { IndicatorResults, Strategy, StrategyConstructor, Tools } from './strategy.types';
 import { TrailingStopManager } from './trailingStopManager';
 import { TrailingStopState } from './trailingStopManager.types';
+
+/**
+ * What is wrong with the trailing stop an order asks for, or undefined when it asks for none or for a valid one: on a BUY only, within
+ * the bounds the TrailingStopManager checks again as it arms the stop. A trigger left out (undefined, or null from an untyped strategy)
+ * asks for a stop active as soon as it is armed.
+ */
+const getTrailingProblem = ({ side, trailing }: StrategyOrder): string | undefined => {
+  if (!trailing) return;
+  if (side !== 'BUY') return 'trailing applies to BUY orders only: its stop sells what the BUY filled';
+  const { percentage, trigger } = trailing;
+  if (!(Number.isFinite(percentage) && percentage > 0 && percentage < 100))
+    return `trailing.percentage must be a number above 0 and below 100 (2.5 for 2.5%), got ${inspect(percentage)}`;
+  if (!isNil(trigger) && !(Number.isFinite(trigger) && trigger > 0))
+    return `trailing.trigger must be a price above 0, or left out for a stop active as soon as its BUY completes, got ${inspect(trigger)}`;
+};
 
 export class StrategyManager extends EventEmitter {
   private readonly warmupPeriod: number;
@@ -202,13 +217,15 @@ export class StrategyManager extends EventEmitter {
     this.portfolio = portfolio;
   }
 
+  // Given the state alone, the trailing hooks could neither cancel a stop, log nor order unless the strategy had kept the tools of an
+  // earlier hook: they get them last, so that a hook written without them still fits
   private onTrailingStopActivated(state: TrailingStopState) {
-    this.strategy?.onTrailingStopActivated?.(state);
+    this.strategy?.onTrailingStopActivated?.(state, this.tools);
   }
 
   private onTrailingStopTriggered(state: TrailingStopState) {
     const orderId = this.createOrder({ symbol: state.symbol, side: 'SELL', type: 'MARKET', amount: state.amount });
-    this.strategy?.onTrailingStopTriggered?.(orderId, state);
+    this.strategy?.onTrailingStopTriggered?.(orderId, state, this.tools);
   }
 
   /* -------------------------------------------------------------------------- */
@@ -253,13 +270,15 @@ export class StrategyManager extends EventEmitter {
         'strategy',
         'Orders are not available until the warmup is over: create them from onTimeframeCandleAfterWarmup, log or an order hook, never from init',
       );
+    this.checkOrder(order);
     const id = randomUUID();
     // The clock is already the end of the minute being processed, where the Trader and the simulated exchange date fills and errors:
     // a minute added to it dated every order after its own fill.
     const orderCreationDate = this.currentTimestamp;
 
-    // If it is a trailing stop order, add it to the waiting list, it will be created after order completion
-    if (order.trailing && order.side === 'BUY') this.pendingTrailingStops.set(id, order.trailing); // Trailing stop order cannot be SELL order
+    // The stop of a BUY (checkOrder refuses one on a SELL) is armed once the BUY completes. Kept by reference until then, it was the
+    // strategy's object: a change made in between armed another stop than the one checked here, or none (a percentage of 0).
+    if (order.trailing) this.pendingTrailingStops.set(id, { ...order.trailing });
 
     this.emit<AdviceOrder>(STRATEGY_CREATE_ORDER_EVENT, { ...omit(order, 'trailing'), id, orderCreationDate });
     return id;
@@ -323,6 +342,18 @@ export class StrategyManager extends EventEmitter {
     }
     this.strategyParams = result.data;
     this.tools.strategyParams = result.data;
+  }
+
+  /**
+   * Refuses, before anything is relayed, an order the strategy cannot have meant. The trailing stop of a BUY was only checked once the
+   * BUY had completed: an invalid one was refused then, with a warning, and the position the BUY had just opened kept no stop. One
+   * given to a SELL was dropped without a word.
+   */
+  private checkOrder(order: StrategyOrder) {
+    const problem = getTrailingProblem(order);
+    if (!problem) return;
+    const { side, type, symbol } = order;
+    throw new GekkoError('strategy', `Impossible to create the ${side} ${type} order on ${symbol}: ${problem}`);
   }
 
   private emitWarmupCompletedEvent(bucket: CandleBucket) {

@@ -32,6 +32,10 @@ export type Tools<T> = {
    *
    * Available once the warmup is over: from log and onTimeframeCandleAfterWarmup on the candle that completes it (the first one
    * with `warmup.candleCount: 0`), then from every hook. Before that, and so always in init, it throws a GekkoError: the bot stops.
+   *
+   * A `trailing` is checked before anything is relayed: on a BUY only, with a percentage above 0 and below 100 and a trigger above 0
+   * or left out. Anything else throws a GekkoError and the order is not sent: the bot stops. The stop is armed, once the BUY
+   * completes, from a copy taken here: changing the object afterwards moves nothing.
    */
   createOrder: (order: StrategyOrder) => UUID;
   cancelOrder: (orderId: UUID) => void;
@@ -76,14 +80,24 @@ export interface Strategy<T> {
    * On each trailing stop activated: when the high of a one-minute candle reaches its trigger, or, for a stop without one, as soon
    * as it is armed (its BUY completed, right after onOrderCompleted). The latter has not trailed any candle yet: its highestPeak and
    * stopPrice are still 0. The former's peak is that candle's open when the open reached the trigger, else its high; the rest of the
-   * candle is trailed after this hook (see TrailingStopState.highestPeak), unless the stop is canceled here (tools.cancelTrailingOrder).
+   * candle is trailed after this hook (see TrailingStopState.highestPeak), unless the stop is canceled here
+   * (tools.cancelTrailingOrder(state.id), state.id being its BUY's id).
+   *
+   * `tools` is the object every other hook gets, passed last so that a hook written with the state alone still fits.
    */
-  onTrailingStopActivated?(state: TrailingStopState): void;
+  onTrailingStopActivated?(state: TrailingStopState, tools: Tools<T>): void;
   /**
    * On each trailing stop triggered: when a price of a one-minute candle, met as open, low, high, close, reaches the stop price (see
    * TrailingStopState.highestPeak). The state holds the peak and the stop price of that moment.
+   *
+   * `orderId` is the MARKET SELL the StrategyManager has just created for the stop, of the amount its BUY filled (state.amount). From
+   * now on it is an order of the strategy's own: its outcome comes through onOrderCompleted, onOrderCanceled or onOrderErrored, under
+   * that id, and a strategy that tracks its position adopts it as its pending SELL (see PositionTracker.adoptSell). Not adopted, it
+   * leaves the strategy long once the stop has sold everything, and the SELL the strategy advises next is refused: nothing is left.
+   *
+   * `tools` is the object every other hook gets, passed last so that a hook written without it still fits.
    */
-  onTrailingStopTriggered?(orderId: UUID, state: TrailingStopState): void;
+  onTrailingStopTriggered?(orderId: UUID, state: TrailingStopState, tools: Tools<T>): void;
   /** Executed at the end of the strategy */
   end?(): void;
 }

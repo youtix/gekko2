@@ -7,16 +7,19 @@ import {
 import { ONE_MINUTE } from '@constants/time.const';
 import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
+import { StrategyOrder, TrailingConfig } from '@models/advice.types';
 import { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
+import { OrderSide } from '@models/order.types';
 import { BalanceDetail } from '@models/portfolio.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
-import { UUID } from 'node:crypto';
+import { randomUUID, UUID } from 'node:crypto';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { Tools } from './strategy.types';
 import { StrategyManager } from './strategyManager';
+import { TrailingStopState } from './trailingStopManager.types';
 
 const indicatorMocks = vi.hoisted(() => {
   const indicatorInstances: Array<{
@@ -653,7 +656,7 @@ describe('StrategyManager', () => {
 
         manager['onTrailingStopActivated'](state as any);
 
-        expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith(state);
+        expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith(state, manager['tools']);
       });
 
       it('creates market order and forwards trigger back to strategy', () => {
@@ -667,7 +670,21 @@ describe('StrategyManager', () => {
 
         expect(createOrderSpy).toHaveBeenCalledWith({ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', amount: 2 });
         // The id comes from randomUUID mock 'db2254e3-c749-448c-b7b6-aa28831bbae7'
-        expect(strategy.onTrailingStopTriggered).toHaveBeenCalledWith(expect.any(String), state);
+        expect(strategy.onTrailingStopTriggered).toHaveBeenCalledWith(expect.any(String), state, manager['tools']);
+      });
+
+      // Given the state alone, these hooks could neither cancel a stop, log nor order unless the strategy had kept the tools of an
+      // earlier hook. They come last, so that a hook written without them still fits.
+      it.each`
+        hook                         | notify
+        ${'onTrailingStopActivated'} | ${(state: TrailingStopState) => manager['onTrailingStopActivated'](state)}
+        ${'onTrailingStopTriggered'} | ${(state: TrailingStopState) => manager['onTrailingStopTriggered'](state)}
+      `('gives $hook, as its last argument, the tools every other hook gets', ({ hook, notify }) => {
+        const strategy = { onTrailingStopActivated: vi.fn(), onTrailingStopTriggered: vi.fn() };
+        manager['strategy'] = strategy as any;
+        completeWarmup(); // The trigger creates the SELL, and orders wait for it
+        notify({ symbol: 'BTC/USDT', amount: 2 } as any);
+        expect(strategy[hook as keyof typeof strategy].mock.lastCall?.at(-1)).toBe(manager['tools']);
       });
     });
 
@@ -703,17 +720,20 @@ describe('StrategyManager', () => {
       it('activates a stop without trigger as soon as its BUY completes', () => {
         const id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
         completeBuy(id, 0.5);
-        expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith({
-          id,
-          symbol,
-          amount: 0.5,
-          config: { percentage: 2 },
-          status: 'active',
-          highestPeak: 0,
-          stopPrice: 0,
-          activationPrice: undefined,
-          createdAt: orderCreationDate,
-        });
+        expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith(
+          {
+            id,
+            symbol,
+            amount: 0.5,
+            config: { percentage: 2 },
+            status: 'active',
+            highestPeak: 0,
+            stopPrice: 0,
+            activationPrice: undefined,
+            createdAt: orderCreationDate,
+          },
+          manager['tools'],
+        );
       });
 
       it('activates a stop without trigger once, not again when it starts trailing', () => {
@@ -735,6 +755,7 @@ describe('StrategyManager', () => {
         manager.onOneMinuteBucket(minute(51000, 50500));
         expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith(
           expect.objectContaining({ id, status: 'active', highestPeak: 51000, stopPrice: 49980, activationPrice: 51000 }),
+          manager['tools'],
         );
       });
 
@@ -747,8 +768,60 @@ describe('StrategyManager', () => {
         expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ symbol, side: 'SELL', type: 'MARKET', amount: 0.5 }));
       });
 
-      // The strategy cancels the stop as it hears of its activation, then a candle goes below the stop price (49000): with a trigger,
-      // the very candle that activates it; without one, the first candle after its BUY completed, which activated it
+      // From then on the SELL is an order of the strategy's own, whose outcome comes back under the id it is relayed with: a strategy
+      // that tracks its position adopts that id, or it stays long once the stop has sold everything
+      describe('when its stop triggers', () => {
+        const BUY_ID: UUID = '0b0b0b0b-0000-4000-8000-000000000001';
+        const SELL_ID: UUID = '5e115e11-0000-4000-8000-000000000002';
+        let listener: Mock;
+
+        beforeEach(() => {
+          vi.mocked(randomUUID).mockReturnValueOnce(BUY_ID).mockReturnValueOnce(SELL_ID);
+          listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+          manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+          completeBuy(BUY_ID, 0.5);
+          manager.onOneMinuteBucket(minute(50000, 48000));
+        });
+
+        it('gives onTrailingStopTriggered the id the SELL is relayed with', () => {
+          expect(strategy.onTrailingStopTriggered.mock.lastCall?.[0]).toBe(listener.mock.lastCall?.[0].id);
+        });
+
+        it('gives onTrailingStopTriggered the id of the SELL, then the state of the stop, then the tools', () => {
+          expect(strategy.onTrailingStopTriggered).toHaveBeenCalledExactlyOnceWith(
+            SELL_ID,
+            expect.objectContaining({ id: BUY_ID, amount: 0.5 }),
+            manager['tools'],
+          );
+        });
+      });
+
+      // The strategy changes the object it gave createOrder before its BUY completes. Kept by reference, the stop armed was the one
+      // changed: another stop than the one checked, or none, a percentage of 0 being refused at arming
+      describe.each`
+        change                        | update
+        ${'sets its percentage to 5'} | ${(trailing: TrailingConfig) => (trailing.percentage = 5)}
+        ${'sets its percentage to 0'} | ${(trailing: TrailingConfig) => (trailing.percentage = 0)}
+        ${'adds a trigger of 60000'}  | ${(trailing: TrailingConfig) => (trailing.trigger = 60000)}
+      `('when the strategy $change after createOrder, before its BUY completes', ({ update }) => {
+        let id: UUID;
+
+        beforeEach(() => {
+          const trailing = { percentage: 2 };
+          id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing });
+          update(trailing);
+          completeBuy(id, 0.5);
+        });
+
+        it('arms the stop createOrder checked', () => {
+          expect(manager['trailingStopManager'].getOrders().get(id)?.config).toEqual({ percentage: 2 });
+        });
+      });
+
+      // The strategy cancels the stop as it hears of its activation, with the tools that hook gets, then a candle goes below the stop
+      // price (49000): with a trigger, the very candle that activates it; without one, the first candle after its BUY completed, which
+      // activated it
       describe.each`
         kind                        | trailing
         ${'a stop with a trigger'}  | ${{ percentage: 2, trigger: 50000 }}
@@ -758,7 +831,9 @@ describe('StrategyManager', () => {
         const listener = vi.fn();
 
         beforeEach(() => {
-          strategy.onTrailingStopActivated.mockImplementation(({ id }: { id: UUID }) => manager['tools'].cancelTrailingOrder(id));
+          strategy.onTrailingStopActivated.mockImplementation(({ id }: TrailingStopState, tools: Tools<object>) =>
+            tools.cancelTrailingOrder(id),
+          );
           const id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing });
           manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
           completeBuy(id, 0.5);
@@ -852,18 +927,107 @@ describe('StrategyManager', () => {
         });
       });
 
-      it('ignores trailing logic if order is SELL (buy only logic)', () => {
-        const sellOrder = { side: 'SELL', type: 'MARKET', amount: 1, symbol: 'BTC/USDT', trailing: { percentage: 2 } } as any;
-
-        manager['createOrder'](sellOrder);
-
-        expect(manager['pendingTrailingStops'].size).toBe(0);
-      });
-
       it('throws if no timestamp available', () => {
         manager['currentTimestamp'] = 0;
         const order = { side: 'BUY', type: 'STICKY', quantity: 1, symbol: 'BTC/USDT' } as const;
         expect(() => manager['createOrder'](order)).toThrow('No candle when relaying advice');
+      });
+
+      // The stop of a BUY was only checked once the BUY had completed: an invalid one was refused then, with a warning, and the position
+      // the BUY had just opened kept no stop. One given to a SELL was dropped without a word.
+      describe('with a trailing stop', () => {
+        /** What a refused percentage, then a refused trigger, is told, the value shown as util.inspect shows it */
+        const percentageIssue = (shown: string) =>
+          `trailing.percentage must be a number above 0 and below 100 (2.5 for 2.5%), got ${shown}`;
+        const triggerIssue = (shown: string) =>
+          `trailing.trigger must be a price above 0, or left out for a stop active as soon as its BUY completes, got ${shown}`;
+        const SELL_ISSUE = 'trailing applies to BUY orders only: its stop sells what the BUY filled';
+        let listener: Mock;
+        let failure: unknown;
+
+        /** Creates a MARKET order of `side` on BTC/USDT asking for `trailing`, and returns what it throws */
+        const createWith = (side: OrderSide, trailing: unknown) => {
+          try {
+            manager['createOrder']({ symbol: 'BTC/USDT', side, type: 'MARKET', trailing } as StrategyOrder);
+          } catch (caught) {
+            return caught;
+          }
+        };
+
+        beforeEach(() => {
+          listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+        });
+
+        describe.each`
+          problem                                    | side      | trailing                                | reason
+          ${'a BUY asks for a percentage of 0'}      | ${'BUY'}  | ${{ percentage: 0 }}                    | ${percentageIssue('0')}
+          ${'a BUY asks for a percentage of 100'}    | ${'BUY'}  | ${{ percentage: 100 }}                  | ${percentageIssue('100')}
+          ${'a BUY asks for a negative percentage'}  | ${'BUY'}  | ${{ percentage: -2 }}                   | ${percentageIssue('-2')}
+          ${'a BUY asks for a percentage of NaN'}    | ${'BUY'}  | ${{ percentage: NaN }}                  | ${percentageIssue('NaN')}
+          ${'a BUY asks for an infinite percentage'} | ${'BUY'}  | ${{ percentage: Infinity }}             | ${percentageIssue('Infinity')}
+          ${'a BUY asks for a quoted percentage'}    | ${'BUY'}  | ${{ percentage: '2' }}                  | ${percentageIssue(quoted('2'))}
+          ${'a BUY misspells its percentage'}        | ${'BUY'}  | ${{ percnt: 2 }}                        | ${percentageIssue('undefined')}
+          ${'a BUY asks for a trigger of 0'}         | ${'BUY'}  | ${{ percentage: 2, trigger: 0 }}        | ${triggerIssue('0')}
+          ${'a BUY asks for a negative trigger'}     | ${'BUY'}  | ${{ percentage: 2, trigger: -1 }}       | ${triggerIssue('-1')}
+          ${'a BUY asks for a trigger of NaN'}       | ${'BUY'}  | ${{ percentage: 2, trigger: NaN }}      | ${triggerIssue('NaN')}
+          ${'a BUY asks for an infinite trigger'}    | ${'BUY'}  | ${{ percentage: 2, trigger: Infinity }} | ${triggerIssue('Infinity')}
+          ${'a BUY asks for a quoted trigger'}       | ${'BUY'}  | ${{ percentage: 2, trigger: '500' }}    | ${triggerIssue(quoted('500'))}
+          ${'a SELL asks for a stop'}                | ${'SELL'} | ${{ percentage: 2 }}                    | ${SELL_ISSUE}
+          ${'a SELL asks for a stop with a trigger'} | ${'SELL'} | ${{ percentage: 2, trigger: 50000 }}    | ${SELL_ISSUE}
+        `('when $problem', ({ side, trailing, reason }) => {
+          beforeEach(() => {
+            failure = createWith(side, trailing);
+          });
+
+          it('refuses the order with a GekkoError', () => {
+            expect(failure).toBeInstanceOf(GekkoError);
+          });
+
+          it('names the order and the field, and says what it accepts', () => {
+            expect(failure).toHaveProperty('message', `[STRATEGY] Impossible to create the ${side} MARKET order on BTC/USDT: ${reason}`);
+          });
+
+          it('relays no order', () => {
+            expect(listener).not.toHaveBeenCalled();
+          });
+
+          it('keeps no trailing stop', () => {
+            expect(manager['pendingTrailingStops'].size).toBe(0);
+          });
+        });
+
+        // A trigger left out, undefined (a strategy passing its own optional parameter) or null (an untyped one), asks for a stop active as
+        // soon as its BUY completes, as the TrailingStopManager reads it
+        describe.each`
+          kind                            | trailing
+          ${'a percentage'}               | ${{ percentage: 2 }}
+          ${'a percentage and a trigger'} | ${{ percentage: 2, trigger: 50000 }}
+          ${'a trigger left undefined'}   | ${{ percentage: 0.1, trigger: undefined }}
+          ${'a trigger left null'}        | ${{ percentage: 99.9, trigger: null }}
+        `('when a BUY asks for a stop with $kind', ({ trailing }) => {
+          beforeEach(() => {
+            failure = createWith('BUY', trailing);
+          });
+
+          it('accepts the order', () => {
+            expect(failure).toBeUndefined();
+          });
+
+          it('relays the BUY without its trailing', () => {
+            expect(listener).toHaveBeenCalledExactlyOnceWith({
+              symbol: 'BTC/USDT',
+              side: 'BUY',
+              type: 'MARKET',
+              id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
+              orderCreationDate: candle.start + ONE_MINUTE,
+            });
+          });
+
+          it('keeps its stop until the BUY completes', () => {
+            expect(manager['pendingTrailingStops'].get('db2254e3-c749-448c-b7b6-aa28831bbae7')).toEqual(trailing);
+          });
+        });
       });
     });
 
