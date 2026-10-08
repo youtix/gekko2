@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { checkInteger } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { RingBuffer } from '@utils/collection/ringBuffer';
 
@@ -6,8 +7,11 @@ import { RingBuffer } from '@utils/collection/ringBuffer';
 export class ROC extends Indicator<'ROC'> {
   private ringBuffer: RingBuffer<number>;
 
+  /** @param period - Candles between the close and its base: a whole number, at least 1. Required */
   constructor({ period }: IndicatorRegistry['ROC']['input']) {
     super();
+    // A period of 0 gave a constant 0, the change of a close over no candle
+    checkInteger('ROC', 'period', period);
     // The close `period` candles back and every close since. The buffer used to hold `period` closes, read before the push: the first
     // value was a change over period − 1 candles, and ROC(1) compared its first close with itself and returned 0.
     this.ringBuffer = new RingBuffer(period + 1);

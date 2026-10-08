@@ -1,4 +1,5 @@
 import { MinusDM } from '@indicators/directionalMovement/minusDM/minusDM.indicator';
+import { checkNumber } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { Indicator } from '../../indicator';
 
@@ -12,8 +13,14 @@ export class PSAR extends Indicator<'PSAR'> {
   private ep: number;
   private isLong: boolean;
 
+  /**
+   * @param acceleration - First acceleration factor, and its increase at each new extreme point: a number above 0. Default 0.02
+   * @param maxAcceleration - Largest acceleration factor: a number above 0. Default 0.2
+   */
   constructor({ acceleration = 0.02, maxAcceleration = 0.2 }: IndicatorRegistry['PSAR']['input'] = {}) {
     super();
+    checkNumber('PSAR', 'acceleration', acceleration, { above: 0 });
+    checkNumber('PSAR', 'maxAcceleration', maxAcceleration, { above: 0 });
     this.acceleration = acceleration;
     this.maxAcceleration = maxAcceleration;
     this.minusDM = new MinusDM({ period: 1 });

@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { checkInteger } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { RingBuffer } from '@utils/collection/ringBuffer';
 
@@ -7,8 +8,10 @@ export class WilliamsR extends Indicator<'WilliamsR'> {
   private ringBufferLow: RingBuffer<number>;
   private ringBufferClose: RingBuffer<number>;
 
+  /** @param period - Candles of the range the close is placed in: a whole number, at least 1. Default 14 */
   constructor({ period = 14 }: IndicatorRegistry['WilliamsR']['input'] = {}) {
     super();
+    checkInteger('WilliamsR', 'period', period);
     this.ringBufferHigh = new RingBuffer(period);
     this.ringBufferLow = new RingBuffer(period);
     this.ringBufferClose = new RingBuffer(period);

@@ -1,4 +1,4 @@
-import { getInputSource } from '@indicators/indicator.utils';
+import { checkInputSource, checkInteger, getInputSource } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { Indicator } from '../../indicator';
 
@@ -10,8 +10,14 @@ export class SMA extends Indicator<'SMA'> {
   private sum: number;
   private getPrice: (candle: Candle) => number;
 
+  /**
+   * @param period - Candles averaged: a whole number, at least 1. Default 30
+   * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
+   */
   constructor({ period = 30, src }: IndicatorRegistry['SMA']['input'] = {}) {
     super();
+    checkInteger('SMA', 'period', period);
+    checkInputSource('SMA', src);
     this.period = period;
     this.buffer = [];
     this.idx = 0;

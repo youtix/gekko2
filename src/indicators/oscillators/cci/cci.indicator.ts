@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { checkInteger } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { hlc3 } from '@utils/candle/candle.utils';
 import { RingBuffer } from '@utils/collection/ringBuffer';
@@ -8,8 +9,10 @@ export class CCI extends Indicator<'CCI'> {
   private ringBuffer: RingBuffer<Candle>;
   private period: number;
 
+  /** @param period - Candles of the mean and of the mean deviation of the typical price: a whole number, at least 2. Default 14 */
   constructor({ period = 14 }: IndicatorRegistry['CCI']['input'] = {}) {
     super();
+    checkInteger('CCI', 'period', period, 2, 'the CCI of a single candle is always 0');
     this.ringBuffer = new RingBuffer(period);
     this.period = period;
   }

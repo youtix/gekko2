@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { checkInteger } from '@indicators/indicator.utils';
 import { WilderSmoothing } from '@indicators/movingAverages/wilderSmoothing/wilderSmoothing.indicator';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
@@ -8,8 +9,10 @@ export class ADX extends Indicator<'ADX'> {
   private dx: DX;
   private smoothing: WilderSmoothing;
 
+  /** @param period - Period of the DX and of its smoothing: a whole number, at least 1. Required */
   constructor({ period }: IndicatorRegistry['ADX']['input']) {
     super();
+    checkInteger('ADX', 'period', period);
     this.dx = new DX({ period });
     this.smoothing = new WilderSmoothing({ period });
   }

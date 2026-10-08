@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { getInputSource } from '@indicators/indicator.utils';
+import { checkInputSource, checkInteger, getInputSource } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 
 /**
@@ -13,8 +13,14 @@ export class WilderSmoothing extends Indicator<'WilderSmoothing'> {
   private prevSmoothed: number;
   private getPrice: (candle: Candle) => number;
 
+  /**
+   * @param period - Candles of the first mean, and the divisor of the smoothing: a whole number, at least 1. Default 14
+   * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
+   */
   constructor({ period = 14, src }: IndicatorRegistry['WilderSmoothing']['input'] = {}) {
     super();
+    checkInteger('WilderSmoothing', 'period', period);
+    checkInputSource('WilderSmoothing', src);
     this.period = period;
     this.age = 0;
     this.sum = 0;

@@ -1,3 +1,4 @@
+import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { InputSources } from '@models/inputSources.types';
 import { describe, expect, it } from 'vitest';
@@ -26,6 +27,19 @@ const readiness = (result: unknown) => {
   const values = typeof result === 'number' ? [result] : Object.values(result as object).flat();
   return values.every(Number.isFinite) ? 'complete' : 'partial';
 };
+
+const create = (name: string, parameters?: object) =>
+  new (indicators[name as keyof typeof indicators] as unknown as new (parameters?: object) => Indicator)(parameters);
+
+const series = (indicator: Indicator) =>
+  candles.map(candle => {
+    indicator.onNewCandle(candle);
+    return structuredClone(indicator.getResult());
+  });
+
+// What the refusals list as accepted for src and for a moving-average kind
+const SOURCES = '"open", "high", "low", "close", "hl2", "hlc3", "ohlc4"';
+const MA_TYPES = '"sma", "ema", "dema", "wma"';
 
 describe('Indicator', () => {
   it.each`
@@ -116,5 +130,186 @@ describe('Indicator', () => {
       });
     const priceAsClose = candles.map(candle => ({ ...candle, close: INPUT_SOURCES[src as InputSources](candle) }));
     expect(results(new IndicatorClass({ ...parameters, src }), candles)).toEqual(results(new IndicatorClass(parameters), priceAsClose));
+  });
+});
+
+// Constructors used to take any parameter and fail later: a missing or fractional period fell back to a default, never seeded, or gave
+// NaN or ±Infinity forever, a ribbon of 0 averages was never null, swapped periods gave the opposite line, an unknown src threw
+// `getPrice is not a function` at the first candle and an unknown maType "undefined is not a constructor". They now refuse such a
+// parameter at once, naming the indicator, the key and what it accepts.
+describe('Indicator parameters', () => {
+  const expectRefusal = ({ name, parameters, refusal }: { name: string; parameters?: object; refusal: string }) => {
+    expect(() => create(name, parameters)).toThrow(new GekkoError('strategy', `Indicator ${name}: ${refusal}`));
+  };
+
+  it.each`
+    name                 | parameters                       | refusal
+    ${'SMA'}             | ${{ period: 0 }}                 | ${'period must be a whole number, at least 1, got 0'}
+    ${'SMA'}             | ${{ period: 20.5 }}              | ${'period must be a whole number, at least 1, got 20.5'}
+    ${'SMA'}             | ${{ src: 'Close' }}              | ${`src must be one of ${SOURCES}, got "Close"`}
+    ${'EMA'}             | ${{ period: '5' }}               | ${'period must be a whole number, at least 1, got "5"'}
+    ${'EMA'}             | ${{ period: null }}              | ${'period must be a whole number, at least 1, got null'}
+    ${'EMA'}             | ${{ src: null }}                 | ${`src must be one of ${SOURCES}, got null`}
+    ${'DEMA'}            | ${{}}                            | ${'period must be a whole number, at least 1, got undefined'}
+    ${'DEMA'}            | ${{ period: 3, src: 'hlc' }}     | ${`src must be one of ${SOURCES}, got "hlc"`}
+    ${'TEMA'}            | ${{ period: -1 }}                | ${'period must be a whole number, at least 1, got -1'}
+    ${'TEMA'}            | ${{ period: 3, src: 'typical' }} | ${`src must be one of ${SOURCES}, got "typical"`}
+    ${'WMA'}             | ${{ period: undefined }}         | ${'period must be a whole number, at least 1, got undefined'}
+    ${'WMA'}             | ${{ period: 2.5 }}               | ${'period must be a whole number, at least 1, got 2.5'}
+    ${'WMA'}             | ${{ period: 3, src: 'Open' }}    | ${`src must be one of ${SOURCES}, got "Open"`}
+    ${'SMMA'}            | ${{}}                            | ${'period must be a whole number, at least 1, got undefined'}
+    ${'SMMA'}            | ${undefined}                     | ${'period must be a whole number, at least 1, got undefined'}
+    ${'SMMA'}            | ${{ period: NaN }}               | ${'period must be a whole number, at least 1, got NaN'}
+    ${'SMMA'}            | ${{ period: 3, src: 'Close' }}   | ${`src must be one of ${SOURCES}, got "Close"`}
+    ${'WilderSmoothing'} | ${{ period: 0 }}                 | ${'period must be a whole number, at least 1, got 0'}
+    ${'WilderSmoothing'} | ${{ src: 'constructor' }}        | ${`src must be one of ${SOURCES}, got "constructor"`}
+    ${'EMARibbon'}       | ${{ count: 0 }}                  | ${'count must be a whole number, at least 1, got 0'}
+    ${'EMARibbon'}       | ${{ start: 1.5 }}                | ${'start must be a whole number, at least 1, got 1.5'}
+    ${'EMARibbon'}       | ${{ step: 1.5 }}                 | ${'step must be a whole number, at least 1, got 1.5'}
+    ${'EMARibbon'}       | ${{ step: 0 }}                   | ${'step must be a whole number, at least 1, got 0'}
+    ${'EMARibbon'}       | ${{ src: 'Close' }}              | ${`src must be one of ${SOURCES}, got "Close"`}
+  `('should refuse $parameters for the moving average $name', expectRefusal);
+
+  it.each`
+    name               | parameters                   | refusal
+    ${'MACD'}          | ${{ short: 26, long: 12 }}   | ${'short must be below long, got short 26 and long 12 (swapped periods give the opposite MACD, equal ones a MACD of 0)'}
+    ${'MACD'}          | ${{ short: 12, long: 12 }}   | ${'short must be below long, got short 12 and long 12 (swapped periods give the opposite MACD, equal ones a MACD of 0)'}
+    ${'MACD'}          | ${{ long: 5 }}               | ${'short must be below long, got short 12 and long 5 (swapped periods give the opposite MACD, equal ones a MACD of 0)'}
+    ${'MACD'}          | ${{ short: 0 }}              | ${'short must be a whole number, at least 1, got 0'}
+    ${'MACD'}          | ${{ long: 26.5 }}            | ${'long must be a whole number, at least 1, got 26.5'}
+    ${'MACD'}          | ${{ signal: null }}          | ${'signal must be a whole number, at least 1, got null'}
+    ${'MACD'}          | ${{ src: 'Close' }}          | ${`src must be one of ${SOURCES}, got "Close"`}
+    ${'PSAR'}          | ${{ acceleration: 0 }}       | ${'acceleration must be a number, above 0, got 0'}
+    ${'PSAR'}          | ${{ acceleration: '0.02' }}  | ${'acceleration must be a number, above 0, got "0.02"'}
+    ${'PSAR'}          | ${{ maxAcceleration: -0.2 }} | ${'maxAcceleration must be a number, above 0, got -0.2'}
+    ${'ROC'}           | ${{}}                        | ${'period must be a whole number, at least 1, got undefined'}
+    ${'ROC'}           | ${{ period: 0 }}             | ${'period must be a whole number, at least 1, got 0'}
+    ${'Stochastic'}    | ${{ fastKPeriod: 2.5 }}      | ${'fastKPeriod must be a whole number, at least 1, got 2.5'}
+    ${'Stochastic'}    | ${{ fastKPeriod: NaN }}      | ${'fastKPeriod must be a whole number, at least 1, got NaN'}
+    ${'Stochastic'}    | ${{ slowKPeriod: 0 }}        | ${'slowKPeriod must be a whole number, at least 1, got 0'}
+    ${'Stochastic'}    | ${{ slowKMaType: 'smma' }}   | ${`slowKMaType must be one of ${MA_TYPES}, got "smma"`}
+    ${'Stochastic'}    | ${{ slowDPeriod: 2.5 }}      | ${'slowDPeriod must be a whole number, at least 1, got 2.5'}
+    ${'Stochastic'}    | ${{ slowDMaType: null }}     | ${`slowDMaType must be one of ${MA_TYPES}, got null`}
+    ${'StochasticRSI'} | ${{ period: 0 }}             | ${'period must be a whole number, at least 1, got 0'}
+    ${'StochasticRSI'} | ${{ fastKPeriod: 1 }}        | ${'fastKPeriod must be a whole number, at least 2, got 1 (the range of a single RSI value is 0, so fastK would always be 0)'}
+    ${'StochasticRSI'} | ${{ fastDPeriod: 1.5 }}      | ${'fastDPeriod must be a whole number, at least 1, got 1.5'}
+    ${'StochasticRSI'} | ${{ slowMaType: 'SMA' }}     | ${`slowMaType must be one of ${MA_TYPES}, got "SMA"`}
+    ${'TRIX'}          | ${{ period: 0 }}             | ${'period must be a whole number, at least 1, got 0'}
+    ${'WilliamsR'}     | ${{ period: '14' }}          | ${'period must be a whole number, at least 1, got "14"'}
+  `('should refuse $parameters for the momentum indicator $name', expectRefusal);
+
+  it.each`
+    name           | parameters          | refusal
+    ${'ADX'}       | ${{}}               | ${'period must be a whole number, at least 1, got undefined'}
+    ${'ADX'}       | ${{ period: 0 }}    | ${'period must be a whole number, at least 1, got 0'}
+    ${'ADXRibbon'} | ${{ count: 0 }}     | ${'count must be a whole number, at least 1, got 0'}
+    ${'ADXRibbon'} | ${{ start: 0 }}     | ${'start must be a whole number, at least 1, got 0'}
+    ${'ADXRibbon'} | ${{ step: 1.5 }}    | ${'step must be a whole number, at least 1, got 1.5'}
+    ${'DX'}        | ${{ period: 2.5 }}  | ${'period must be a whole number, at least 1, got 2.5'}
+    ${'MinusDI'}   | ${{ period: null }} | ${'period must be a whole number, at least 1, got null'}
+    ${'PlusDI'}    | ${{}}               | ${'period must be a whole number, at least 1, got undefined'}
+    ${'MinusDM'}   | ${{ period: -14 }}  | ${'period must be a whole number, at least 1, got -14'}
+    ${'PlusDM'}    | ${{ period: '14' }} | ${'period must be a whole number, at least 1, got "14"'}
+  `('should refuse $parameters for the directional movement indicator $name', expectRefusal);
+
+  it.each`
+    name     | parameters                | refusal
+    ${'AO'}  | ${{ short: 34, long: 5 }} | ${'short must be below long, got short 34 and long 5 (swapped periods give the opposite AO, equal ones an AO of 0)'}
+    ${'AO'}  | ${{ short: 5, long: 5 }}  | ${'short must be below long, got short 5 and long 5 (swapped periods give the opposite AO, equal ones an AO of 0)'}
+    ${'AO'}  | ${{ short: 0 }}           | ${'short must be a whole number, at least 1, got 0'}
+    ${'AO'}  | ${{ long: 34.5 }}         | ${'long must be a whole number, at least 1, got 34.5'}
+    ${'CCI'} | ${{ period: 1 }}          | ${'period must be a whole number, at least 2, got 1 (the CCI of a single candle is always 0)'}
+    ${'CCI'} | ${{ period: 0 }}          | ${'period must be a whole number, at least 2, got 0 (the CCI of a single candle is always 0)'}
+    ${'RSI'} | ${{ period: 0 }}          | ${'period must be a whole number, at least 1, got 0'}
+    ${'RSI'} | ${{ src: 'hlc' }}         | ${`src must be one of ${SOURCES}, got "hlc"`}
+  `('should refuse $parameters for the oscillator $name', expectRefusal);
+
+  it.each`
+    name                | parameters                 | refusal
+    ${'ATR'}            | ${{}}                      | ${'period must be a whole number, at least 1, got undefined'}
+    ${'ATR'}            | ${{ period: 0 }}           | ${'period must be a whole number, at least 1, got 0'}
+    ${'ATRCD'}          | ${{ short: 26, long: 12 }} | ${'short must be below long, got short 26 and long 12 (swapped periods give the opposite ATRCD, equal ones an ATRCD of 0)'}
+    ${'ATRCD'}          | ${{ signal: 0 }}           | ${'signal must be a whole number, at least 1, got 0'}
+    ${'BollingerBands'} | ${{ period: 1 }}           | ${'period must be a whole number, at least 2, got 1 (the bands of a single candle are its close: its deviation is 0)'}
+    ${'BollingerBands'} | ${{ stdevUp: -2 }}         | ${'stdevUp must be a number, at least 0, got -2'}
+    ${'BollingerBands'} | ${{ stdevDown: NaN }}      | ${'stdevDown must be a number, at least 0, got NaN'}
+    ${'BollingerBands'} | ${{ maType: 'smma' }}      | ${`maType must be one of ${MA_TYPES}, got "smma"`}
+  `('should refuse $parameters for the volatility indicator $name', expectRefusal);
+
+  it.each`
+    name     | parameters              | refusal
+    ${'EFI'} | ${{ period: 0 }}        | ${'period must be a whole number, at least 1, got 0'}
+    ${'EFI'} | ${{ maType: 'SMA' }}    | ${`maType must be one of ${MA_TYPES}, got "SMA"`}
+    ${'EFI'} | ${{ src: 'Close' }}     | ${`src must be one of ${SOURCES}, got "Close"`}
+    ${'OBV'} | ${{ period: 1 }}        | ${'period must be a whole number, at least 2, got 1 (the bands of a single candle are the OBV itself: its deviation is 0)'}
+    ${'OBV'} | ${{ stdevDown: -2 }}    | ${'stdevDown must be a number, at least 0, got -2'}
+    ${'OBV'} | ${{ maType: 'wilder' }} | ${`maType must be one of ${MA_TYPES}, got "wilder"`}
+  `('should refuse $parameters for the volume indicator $name', expectRefusal);
+
+  it.each`
+    name                 | parameters
+    ${'SMA'}             | ${{ period: 1, src: undefined }}
+    ${'EMA'}             | ${{ period: 1 }}
+    ${'DEMA'}            | ${{ period: 1 }}
+    ${'TEMA'}            | ${{ period: 1 }}
+    ${'WMA'}             | ${{ period: 1 }}
+    ${'SMMA'}            | ${{ period: 1 }}
+    ${'WilderSmoothing'} | ${{ period: 1 }}
+    ${'EMARibbon'}       | ${{ count: 1, start: 1, step: 1 }}
+    ${'MACD'}            | ${{ short: 1, long: 2, signal: 1 }}
+    ${'PSAR'}            | ${{ acceleration: 0.001, maxAcceleration: 0.001 }}
+    ${'ROC'}             | ${{ period: 1 }}
+    ${'Stochastic'}      | ${{ fastKPeriod: 1, slowKPeriod: 1, slowDPeriod: 1 }}
+    ${'StochasticRSI'}   | ${{ period: 1, fastKPeriod: 2, fastDPeriod: 1 }}
+    ${'TRIX'}            | ${{ period: 1 }}
+    ${'WilliamsR'}       | ${{ period: 1 }}
+    ${'ADX'}             | ${{ period: 1 }}
+    ${'ADXRibbon'}       | ${{ count: 1, start: 1, step: 1 }}
+    ${'DX'}              | ${{ period: 1 }}
+    ${'MinusDI'}         | ${{ period: 1 }}
+    ${'PlusDI'}          | ${{ period: 1 }}
+    ${'MinusDM'}         | ${{ period: 1 }}
+    ${'PlusDM'}          | ${{ period: 1 }}
+    ${'AO'}              | ${{ short: 1, long: 2 }}
+    ${'CCI'}             | ${{ period: 2 }}
+    ${'RSI'}             | ${{ period: 1 }}
+    ${'ATR'}             | ${{ period: 1 }}
+    ${'ATRCD'}           | ${{ short: 1, long: 2, signal: 1 }}
+    ${'BollingerBands'}  | ${{ period: 2, stdevUp: 0, stdevDown: 0 }}
+    ${'TrueRange'}       | ${undefined}
+    ${'EFI'}             | ${{ period: 1 }}
+    ${'OBV'}             | ${{ period: 2, stdevUp: 0, stdevDown: 0 }}
+  `('should accept $parameters for $name, the smallest values it takes', ({ name, parameters }) => {
+    expect(() => create(name, parameters)).not.toThrow();
+  });
+
+  // A strategy may hand an indicator a block of its own parameters, keys the indicator does not take included
+  it('should ignore the keys an indicator does not take', () => {
+    expect(() => create('EMARibbon', { count: 5, start: 5, step: 2, src: 'ohlc4', spreadThreshold: 100, separator: 2 })).not.toThrow();
+  });
+
+  // The defaults the indicators document, which a strategy gets for every key it leaves out
+  it.each`
+    name                 | defaults
+    ${'SMA'}             | ${{ period: 30, src: 'close' }}
+    ${'EMA'}             | ${{ period: 30, src: 'close' }}
+    ${'WilderSmoothing'} | ${{ period: 14, src: 'close' }}
+    ${'EMARibbon'}       | ${{ count: 22, start: 3, step: 3, src: 'close' }}
+    ${'MACD'}            | ${{ short: 12, long: 26, signal: 9, src: 'close' }}
+    ${'PSAR'}            | ${{ acceleration: 0.02, maxAcceleration: 0.2 }}
+    ${'Stochastic'}      | ${{ fastKPeriod: 5, slowKPeriod: 3, slowKMaType: 'sma', slowDPeriod: 3, slowDMaType: 'sma' }}
+    ${'StochasticRSI'}   | ${{ period: 14, fastKPeriod: 5, fastDPeriod: 3, slowMaType: 'sma' }}
+    ${'TRIX'}            | ${{ period: 30 }}
+    ${'WilliamsR'}       | ${{ period: 14 }}
+    ${'ADXRibbon'}       | ${{ count: 19, start: 12, step: 3 }}
+    ${'AO'}              | ${{ short: 5, long: 34 }}
+    ${'CCI'}             | ${{ period: 14 }}
+    ${'RSI'}             | ${{ period: 14, src: 'close' }}
+    ${'ATRCD'}           | ${{ short: 12, long: 26, signal: 9 }}
+    ${'BollingerBands'}  | ${{ period: 5, stdevUp: 2, stdevDown: 2, maType: 'sma' }}
+    ${'EFI'}             | ${{ period: 13, maType: 'ema', src: 'close' }}
+    ${'OBV'}             | ${{ period: 14, stdevUp: 2, stdevDown: 2, maType: 'sma' }}
+  `('should take $defaults when $name is given no parameter', ({ name, defaults }) => {
+    expect(series(create(name, {}))).toEqual(series(create(name, defaults)));
   });
 });

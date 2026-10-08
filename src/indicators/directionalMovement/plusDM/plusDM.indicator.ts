@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { checkInteger } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 
 export class PlusDM extends Indicator<'PlusDM'> {
@@ -7,8 +8,10 @@ export class PlusDM extends Indicator<'PlusDM'> {
   private prevPlusDM: number;
   private lastCandle?: Candle;
 
+  /** @param period - Candles of the first sum, and the divisor of the smoothing: a whole number, at least 1. Required */
   constructor({ period }: IndicatorRegistry['PlusDM']['input']) {
     super();
+    checkInteger('PlusDM', 'period', period);
     this.period = period;
     this.age = 0;
     this.prevPlusDM = 0;

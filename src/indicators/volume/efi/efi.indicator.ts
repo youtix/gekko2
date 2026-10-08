@@ -1,5 +1,6 @@
+import { MOVING_AVERAGE_TYPES } from '@indicators/indicator.const';
 import { MovingAverageClasses } from '@indicators/indicator.types';
-import { getInputSource } from '@indicators/indicator.utils';
+import { checkInputSource, checkInteger, checkOneOf, getInputSource } from '@indicators/indicator.utils';
 import { DEMA } from '@indicators/movingAverages/dema/dema.indicator';
 import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
@@ -21,8 +22,16 @@ export class EFI extends Indicator<'EFI'> {
   private prevPrice?: number;
   private getPrice: (candle: Candle) => number;
 
+  /**
+   * @param period - Period of the moving average of the force: a whole number, at least 1. Default 13
+   * @param maType - Kind of that average: sma, ema, dema or wma. Default ema
+   * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
+   */
   constructor({ period = 13, maType = 'ema', src }: IndicatorRegistry['EFI']['input'] = {}) {
     super();
+    checkInteger('EFI', 'period', period);
+    checkOneOf('EFI', 'maType', maType, MOVING_AVERAGE_TYPES);
+    checkInputSource('EFI', src);
     // The average gets the force as the close of a made-up candle, so it reads the close whatever src says. It used to get src
     // too: with sma or ema and any src but close it read a field that candle lacks, and smoothed was NaN forever
     this.ma = new MOVING_AVERAGES[maType]({ period, src: 'close' });

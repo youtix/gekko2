@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { checkInteger } from '@indicators/indicator.utils';
 import { TrueRange } from '@indicators/volatility/trueRange/trueRange.indicator';
 import { Candle } from '@models/candle.types';
 import { MinusDM } from '../minusDM/minusDM.indicator';
@@ -10,8 +11,10 @@ export class MinusDI extends Indicator<'MinusDI'> {
   private prevTR: number;
   private trueRange: TrueRange;
 
+  /** @param period - Period of the smoothed −DM and true range: a whole number, at least 1. Required */
   constructor({ period }: IndicatorRegistry['MinusDI']['input']) {
     super();
+    checkInteger('MinusDI', 'period', period);
     this.age = 0;
     this.minusDM = new MinusDM({ period });
     this.period = period;

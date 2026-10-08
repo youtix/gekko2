@@ -1,3 +1,4 @@
+import { checkInputSource, checkInteger } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 import { Indicator } from '../../indicator';
@@ -8,8 +9,14 @@ export class TEMA extends Indicator<'TEMA'> {
   private ema2: EMA;
   private ema3: EMA;
 
+  /**
+   * @param period - Period of the three EMAs: a whole number, at least 1. Required
+   * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
+   */
   constructor({ period, src }: IndicatorRegistry['TEMA']['input']) {
     super();
+    checkInteger('TEMA', 'period', period);
+    checkInputSource('TEMA', src);
 
     // src goes to the first EMA only: the others smooth the EMA before them, fed to them as the close of a made-up candle. The TEMA
     // used to drop src and average the close

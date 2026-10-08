@@ -1,3 +1,4 @@
+import { checkInputSource, checkInteger } from '@indicators/indicator.utils';
 import { WilderSmoothing } from '../wilderSmoothing/wilderSmoothing.indicator';
 
 /**
@@ -5,8 +6,15 @@ import { WilderSmoothing } from '../wilderSmoothing/wilderSmoothing.indicator';
  * seeded through an SMA, so the two could drift apart; it now is that class and only declares its own input.
  */
 export class SMMA extends WilderSmoothing {
-  /** Only narrows the type: SMMA declares its period as required, WilderSmoothing as optional with a default of 14 */
+  /**
+   * @param period - Candles of the first mean, and the divisor of the smoothing: a whole number, at least 1. Required
+   * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
+   */
   constructor(parameters: IndicatorRegistry['SMMA']['input']) {
+    // Checked before WilderSmoothing's own checks, so that the message names SMMA, and so that a missing period is refused, as SMMA
+    // declares it required, rather than take WilderSmoothing's default of 14
+    checkInteger('SMMA', 'period', parameters?.period);
+    checkInputSource('SMMA', parameters?.src);
     super(parameters);
   }
 }

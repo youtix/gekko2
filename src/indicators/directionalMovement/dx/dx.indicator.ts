@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { checkInteger } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { MinusDI } from '../minusDI/minusDI.indicator';
 import { PlusDI } from '../plusDI/plusDI.indicator';
@@ -9,8 +10,10 @@ export class DX extends Indicator<'DX'> {
   private period: number;
   private plusDI: PlusDI;
 
+  /** @param period - Period of the two directional indicators: a whole number, at least 1. Required */
   constructor({ period }: IndicatorRegistry['DX']['input']) {
     super();
+    checkInteger('DX', 'period', period);
     this.age = 0;
     this.minusDI = new MinusDI({ period });
     this.period = period;

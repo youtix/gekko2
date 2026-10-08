@@ -1,3 +1,4 @@
+import { checkInteger } from '@indicators/indicator.utils';
 import { TrueRange } from '@indicators/volatility/trueRange/trueRange.indicator';
 import { Candle } from '@models/candle.types';
 import { Indicator } from '../../indicator';
@@ -10,8 +11,10 @@ export class PlusDI extends Indicator<'PlusDI'> {
   private prevTR: number;
   private trueRange: TrueRange;
 
+  /** @param period - Period of the smoothed +DM and true range: a whole number, at least 1. Required */
   constructor({ period }: IndicatorRegistry['PlusDI']['input']) {
     super();
+    checkInteger('PlusDI', 'period', period);
     this.age = 0;
     this.period = period;
     this.plusDM = new PlusDM({ period });

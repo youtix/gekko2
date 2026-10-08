@@ -1,5 +1,7 @@
 import { Indicator } from '@indicators/indicator';
+import { MOVING_AVERAGE_TYPES } from '@indicators/indicator.const';
 import { MovingAverageClasses } from '@indicators/indicator.types';
+import { checkInteger, checkOneOf } from '@indicators/indicator.utils';
 import { DEMA } from '@indicators/movingAverages/dema/dema.indicator';
 import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
@@ -29,6 +31,13 @@ export class Stochastic extends Indicator<'Stochastic'> {
   private maSlowK: MovingAverageClasses;
   private maSlowD: MovingAverageClasses;
 
+  /**
+   * @param fastKPeriod - Candles of the range the raw %K places the close in: a whole number, at least 1. Default 5
+   * @param slowKPeriod - Period of the average of the raw %K that makes k: a whole number, at least 1. Default 3
+   * @param slowKMaType - Kind of that average: sma, ema, dema or wma. Default sma
+   * @param slowDPeriod - Period of the average of k that makes d: a whole number, at least 1. Default 3
+   * @param slowDMaType - Kind of that average: sma, ema, dema or wma. Default sma
+   */
   constructor({
     fastKPeriod = 5,
     slowKPeriod = 3,
@@ -37,6 +46,11 @@ export class Stochastic extends Indicator<'Stochastic'> {
     slowDMaType = 'sma',
   }: IndicatorRegistry['Stochastic']['input'] = {}) {
     super();
+    checkInteger('Stochastic', 'fastKPeriod', fastKPeriod);
+    checkInteger('Stochastic', 'slowKPeriod', slowKPeriod);
+    checkOneOf('Stochastic', 'slowKMaType', slowKMaType, MOVING_AVERAGE_TYPES);
+    checkInteger('Stochastic', 'slowDPeriod', slowDPeriod);
+    checkOneOf('Stochastic', 'slowDMaType', slowDMaType, MOVING_AVERAGE_TYPES);
     this.fastKPeriod = fastKPeriod;
     this.maSlowK = new MOVING_AVERAGES[slowKMaType]({ period: slowKPeriod });
     this.maSlowD = new MOVING_AVERAGES[slowDMaType]({ period: slowDPeriod });

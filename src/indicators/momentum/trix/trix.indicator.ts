@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { checkInteger } from '@indicators/indicator.utils';
 import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
@@ -11,8 +12,10 @@ export class TRIX extends Indicator<'TRIX'> {
   private ema3: EMA;
   private roc: ROC;
 
+  /** @param period - Period of the three EMAs: a whole number, at least 1. Default 30 */
   constructor({ period = 30 }: IndicatorRegistry['TRIX']['input'] = {}) {
     super();
+    checkInteger('TRIX', 'period', period);
     this.ema1 = new EMA({ period });
     this.ema2 = new EMA({ period });
     this.ema3 = new EMA({ period });

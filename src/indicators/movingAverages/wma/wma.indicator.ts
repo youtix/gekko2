@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { getInputSource } from '@indicators/indicator.utils';
+import { checkInputSource, checkInteger, getInputSource } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 
 export class WMA extends Indicator<'WMA'> {
@@ -9,8 +9,14 @@ export class WMA extends Indicator<'WMA'> {
   private age: number;
   private getPrice: (candle: Candle) => number;
 
+  /**
+   * @param period - Candles averaged, weighted 1 for the oldest to period for the last: a whole number, at least 1. Required
+   * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
+   */
   constructor({ period, src }: IndicatorRegistry['WMA']['input']) {
     super();
+    checkInteger('WMA', 'period', period);
+    checkInputSource('WMA', src);
     this.period = period;
     this.fifo = [];
     // divider = period * (period + 1) / 2

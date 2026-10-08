@@ -1,4 +1,6 @@
 import { Indicator } from '@indicators/indicator';
+import { MOVING_AVERAGE_TYPES } from '@indicators/indicator.const';
+import { checkInteger, checkOneOf } from '@indicators/indicator.utils';
 import { RSI } from '@indicators/oscillators/rsi/rsi.indicator';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
@@ -13,8 +15,18 @@ export class StochasticRSI extends Indicator<'StochasticRSI'> {
   private rsi: RSI;
   private stoch: Stochastic;
 
+  /**
+   * @param period - Period of the RSI: a whole number, at least 1. Default 14
+   * @param fastKPeriod - RSI values in the range fastK places the RSI in: a whole number, at least 2. Default 5
+   * @param fastDPeriod - Period of the average of fastK that makes fastD: a whole number, at least 1. Default 3
+   * @param slowMaType - Kind of that average: sma, ema, dema or wma. Default sma
+   */
   constructor({ period = 14, fastKPeriod = 5, fastDPeriod = 3, slowMaType = 'sma' }: IndicatorRegistry['StochasticRSI']['input'] = {}) {
     super();
+    checkInteger('StochasticRSI', 'period', period);
+    checkInteger('StochasticRSI', 'fastKPeriod', fastKPeriod, 2, 'the range of a single RSI value is 0, so fastK would always be 0');
+    checkInteger('StochasticRSI', 'fastDPeriod', fastDPeriod);
+    checkOneOf('StochasticRSI', 'slowMaType', slowMaType, MOVING_AVERAGE_TYPES);
     this.rsi = new RSI({ period });
     this.stoch = new Stochastic({
       fastKPeriod,

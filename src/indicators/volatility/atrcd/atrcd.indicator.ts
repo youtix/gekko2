@@ -1,3 +1,4 @@
+import { checkBelow, checkInteger } from '@indicators/indicator.utils';
 import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
@@ -11,8 +12,17 @@ export class ATRCD extends Indicator<'ATRCD'> {
   private threshold: number;
   private age: number;
 
+  /**
+   * @param short - Period of the fast ATR: a whole number, at least 1, below long. Default 12
+   * @param long - Period of the slow ATR: a whole number above short. Default 26
+   * @param signal - Period of the signal line, the EMA of the ATRCD: a whole number, at least 1. Default 9
+   */
   constructor({ short = 12, long = 26, signal = 9 }: IndicatorRegistry['ATRCD']['input'] = {}) {
     super();
+    checkInteger('ATRCD', 'short', short);
+    checkInteger('ATRCD', 'long', long);
+    checkInteger('ATRCD', 'signal', signal);
+    checkBelow('ATRCD', 'short', short, 'long', long, 'swapped periods give the opposite ATRCD, equal ones an ATRCD of 0');
 
     this.emaFast = new ATR({ period: short });
     this.emaSlow = new ATR({ period: long });
