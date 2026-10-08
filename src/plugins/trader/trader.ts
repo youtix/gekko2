@@ -19,6 +19,7 @@ import { OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
 import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
+import { addPrecise } from '@utils/math/math.utils';
 import { clonePortfolio, createEmptyPortfolio, getAssetBalance } from '@utils/portfolio/portfolio.utils';
 import { addMinutes, differenceInMinutes } from 'date-fns';
 import { filter, isNil, noop, uniq } from 'lodash-es';
@@ -43,6 +44,17 @@ type RelayedOrder = OrderInitiatedEvent['order'];
 type OrderRejection = { reason: string; status: string; filled: boolean };
 /** What an order reports with ORDER_CANCELED_EVENT (see Order.orderCanceled): relayed as is */
 type OrderCancelation = { timestamp: EpochTimeStamp } & Pick<OrderCanceledEvent['order'], 'filled' | 'remaining'>;
+/** A SELL the balance read last may not show (see Trader.unreadSells) */
+type UnreadSell = { assetName: string; amount: number; synchronizationCount: number };
+/** The free balance of an asset a SELL can take (see Trader.getFreeBalanceLeft) */
+type FreeBalanceLeft = {
+  /** What the last synchronization read */
+  read: number;
+  /** What the SELLs placed since take from it */
+  taken: number;
+  /** What is left of it, never below 0 */
+  free: number;
+};
 
 export class Trader extends Plugin {
   private readonly orders: Map<UUID, TraderOrderMetadata>;
@@ -63,6 +75,13 @@ export class Trader extends Plugin {
    * its own failures.
    */
   private readonly pendingReports = new Set<Promise<void>>();
+  /**
+   * The SELLs placed since the balance was read, by id: what each one takes from the free balance of its asset, which that read does
+   * not show (see capToFreeBalance), and the count of synchronizations started when it was placed. A synchronization started after a
+   * SELL reads a balance that shows it, filled or reserved: the SELL is forgotten once that synchronization has read the balance. So is
+   * a SELL the strategy cancels: the exchange gets the cancelation before any order sent after it, and releases what the SELL reserved.
+   */
+  private readonly unreadSells = new Map<UUID, UnreadSell>();
 
   constructor(parameters?: { portfolioUpdates?: PortfolioUpdatesConfig }) {
     super(Trader.name);
@@ -113,10 +132,16 @@ export class Trader extends Plugin {
 
   private async runSynchronization() {
     const exchange = this.getExchange();
+    // The number of this synchronization, which startSynchronization has just counted
+    const synchronizationNumber = this.synchronizationCount;
     info('trader', `Synchronizing data with ${exchange.getExchangeName()}`);
 
     // Update portfolio, balance and prices
     this.portfolio = await exchange.fetchBalance();
+    // A balance that shows the SELLs placed before this synchronization started: they take nothing more from it (see unreadSells)
+    for (const [id, { synchronizationCount }] of this.unreadSells) {
+      if (synchronizationCount < synchronizationNumber) this.unreadSells.delete(id);
+    }
     const tickers = await exchange.fetchTickers(this.pairs);
     for (const symbol of this.pairs) {
       const price = tickers[symbol].bid;
@@ -190,18 +215,34 @@ export class Trader extends Plugin {
    * are paid in BNB. The account then holds that amount less the fee: the SELL of the whole was refused, an error counting towards the
    * circuit breaker, the position left unprotected. The simulated exchange takes its fees in the currency: a backtest never showed it.
    * The balance is the one the last synchronization read, which followed the end of the last order (see reportCompleted): the Trader
-   * does not read it again before placing an order. Left as asked for:
+   * does not read it again before placing an order. Read once, it is the balance of every SELL placed until the next synchronization,
+   * less what the SELLs placed before take from it (see getFreeBalanceLeft). Each SELL was capped against the whole of it: two SELLs of
+   * one asset, two trailing stops triggering on the same minute or a stop's and the strategy's, each fitted while together they sold
+   * more than was held, and the second was refused, its position left unprotected. Left as asked for:
    * - an amount within the balance, or not a finite number (refused as before, rather than turned into the sale of every unit held);
-   * - any amount while the balance is 0: maybe a portfolio not synchronized yet, and a SELL of 0 would be refused anyway.
+   * - any amount while the balance is 0: maybe a portfolio not synchronized yet, or one the SELLs placed before take whole, and a SELL
+   *   of 0 would be refused anyway.
    */
-  private capToFreeBalance({ id, type }: AdviceOrder, requestedAmount: number, freeBalance: number, assetName: string) {
-    const isAboveBalance = freeBalance > 0 && Number.isFinite(requestedAmount) && requestedAmount > freeBalance;
+  private capToFreeBalance({ id, type }: AdviceOrder, requestedAmount: number, balance: FreeBalanceLeft, assetName: string) {
+    const { read, taken, free } = balance;
+    const isAboveBalance = free > 0 && Number.isFinite(requestedAmount) && requestedAmount > free;
     if (!isAboveBalance) return requestedAmount;
-    warning(
-      'trader',
-      `[${id}] SELL ${type} order of ${requestedAmount} ${assetName} above the free balance: ${freeBalance} ${assetName} sent, all that can be sold`,
-    );
-    return freeBalance;
+    const asked = `[${id}] SELL ${type} order of ${requestedAmount} ${assetName} above the free balance`;
+    const sent = `${free} ${assetName} sent, all that can be sold`;
+    // The amount sent is then less than the free balance read: what the SELLs placed since take is said
+    const left = `${read} ${assetName} free at the last synchronization, less ${taken} ${assetName} for the SELLs placed since`;
+    warning('trader', taken > 0 ? `${asked}: ${sent} (${left})` : `${asked}: ${sent}`);
+    return free;
+  }
+
+  /**
+   * The free balance of an asset a SELL can take: the one the last synchronization read, less what the SELLs placed since take from it
+   * (see unreadSells), never below 0
+   */
+  private getFreeBalanceLeft(assetName: string): FreeBalanceLeft {
+    const read = getAssetBalance(this.portfolio, assetName).free;
+    const taken = filter([...this.unreadSells.values()], { assetName }).reduce((sum, { amount }) => addPrecise(sum, amount), 0);
+    return { read, taken, free: taken > 0 ? Math.max(addPrecise(read, -taken), 0) : read };
   }
 
   private checkOrderSummary({ id, symbol, type, orderCreationDate, summary }: CheckOrderSummaryParams): OrderCompletedEvent {
@@ -494,6 +535,9 @@ export class Trader extends Plugin {
         const orderMetadata = this.orders.get(id);
         if (!orderMetadata) return warning('trader', `[${id}] Impossible to cancel order: Unknown Order`);
         const { orderInstance, side, amount, type, orderCreationDate, requestedPrice, symbol } = orderMetadata;
+        // Kept, a SELL placed since the balance was read went on taking from it: an all-in SELL sent after the cancelation, to sell at the
+        // market instead, left out what the canceled SELL had reserved, which the exchange releases before that SELL reaches it
+        this.unreadSells.delete(id);
 
         // From now on its updates are no longer logged, and its end is relayed as the creation flow relays it: with the price the
         // strategy asked for, if any. Not the price the order was created with (see TraderOrderMetadata), the market price for an
@@ -535,14 +579,14 @@ export class Trader extends Plugin {
         }
 
         const [assetName, currencyName] = symbol.split('/');
-        const asset = getAssetBalance(this.portfolio, assetName);
+        const asset = this.getFreeBalanceLeft(assetName);
         const currency = getAssetBalance(this.portfolio, currencyName);
 
         // Price cannot be zero here because we call processOneMinuteBucket before events (plugins stream)
-        // We delegate the order validation (notional, lot, amount) to the exchange
+        // We delegate the order validation (notional, lot, amount) to the exchange. An all-in SELL sells what the SELLs before it left.
         const computedAmount = side === 'BUY' ? (currency.free / price) * (1 - DEFAULT_FEE_BUFFER) : asset.free;
         const requestedAmount = advice.amount ?? computedAmount;
-        const amount = side === 'SELL' ? this.capToFreeBalance(advice, requestedAmount, asset.free, assetName) : requestedAmount;
+        const amount = side === 'SELL' ? this.capToFreeBalance(advice, requestedAmount, asset, assetName) : requestedAmount;
 
         // Emit order initiated event
         const orderInitiated = { ...advice, amount, symbol };
@@ -552,6 +596,10 @@ export class Trader extends Plugin {
         // Create order
         const orderInstance = new ORDER_FACTORY[type](symbol, id, side, amount, price);
         this.orders.set(id, { amount, side, orderCreationDate, type, price, requestedPrice: advice.price, orderInstance, symbol });
+        // Until the balance is read again, the SELLs after it can only take what it leaves (see unreadSells). Not an amount that cannot
+        // be sold, which the exchange refuses.
+        if (side === 'SELL' && Number.isFinite(amount) && amount > 0)
+          this.unreadSells.set(id, { assetName, amount, synchronizationCount: this.synchronizationCount });
 
         // UPDATE EVENTS
         orderInstance.on(ORDER_PARTIALLY_FILLED_EVENT, filled =>

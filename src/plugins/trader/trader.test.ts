@@ -792,6 +792,176 @@ describe('Trader', () => {
       expect(getOrderInstance(advice.id)?.amount).toBe(amount);
     });
 
+    // Two BUYs of 0.5 and 0.3 BTC whose fees (0.1 %) the exchange took from the BTC bought: the account holds 0.7992 BTC, and their
+    // trailing stops trigger on the same minute. Each SELL was capped against the whole balance read: the SELL of 0.3 was refused.
+    describe('when SELLs of one asset are placed before the balance is read again', () => {
+      const sell = (id: number, amount?: number, type: AdviceOrder['type'] = 'MARKET', symbol: AdviceOrder['symbol'] = 'BTC/USDT') =>
+        buildAdvice({
+          id: `00000000-0000-4000-8000-00000000000${id}`,
+          side: 'SELL',
+          type,
+          amount,
+          symbol,
+          price: type === 'LIMIT' ? 120 : undefined,
+        });
+      const firstSell = sell(1, 0.5);
+      const secondSell = sell(2, 0.3);
+      const allInSell = sell(3);
+      const buy = buildAdvice({ id: '00000000-0000-4000-8000-000000000004', side: 'BUY', type: 'MARKET' });
+      const balance = (btcFree: number) =>
+        new Map<string, BalanceDetail>([
+          ['BTC', { free: btcFree, used: 0, total: btcFree }],
+          ['ETH', { free: 2, used: 0, total: 2 }],
+          ['USDT', { free: 1000, used: 0, total: 1000 }],
+        ]);
+      const getPlacedAmount = ({ id }: AdviceOrder) => getOrderInstance(id)?.amount;
+      const getInitiatedAmount = ({ id }: AdviceOrder) =>
+        (trader['addDeferredEmit'] as unknown as Mock).mock.calls.find(
+          ([event, { order }]) => event === ORDER_INITIATED_EVENT && order.id === id,
+        )?.[1].order.amount;
+
+      beforeEach(() => {
+        trader['portfolio'] = balance(0.7992);
+        trader['prices'].set('ETH/USDT', 10);
+      });
+
+      describe('in one batch', () => {
+        beforeEach(async () => {
+          await trader.onStrategyCreateOrder([firstSell, secondSell]);
+        });
+
+        it.each`
+          order       | advice        | amount
+          ${'first'}  | ${firstSell}  | ${0.5}
+          ${'second'} | ${secondSell} | ${0.2992}
+        `('places the $order for $amount', ({ advice, amount }) => {
+          expect(getPlacedAmount(advice)).toBe(amount);
+        });
+
+        it('relays what the first leaves as the amount of the second', () => {
+          expect(getInitiatedAmount(secondSell)).toBe(0.2992);
+        });
+
+        it('warns with the free balance read and what the SELLs placed since take from it', () => {
+          expect(logger.warning).toHaveBeenCalledWith(
+            'trader',
+            `[${secondSell.id}] SELL MARKET order of 0.3 BTC above the free balance: 0.2992 BTC sent, all that can be sold (0.7992 BTC free at the last synchronization, less 0.5 BTC for the SELLs placed since)`,
+          );
+        });
+      });
+
+      // The BUY's coins are not in the balance before it fills, and a BUY is sized from the currency
+      it.each`
+        order                | advice        | amount
+        ${'the BUY'}         | ${buy}        | ${9.5}
+        ${'the second SELL'} | ${secondSell} | ${0.2992}
+      `('places $order of a batch with a BUY between the SELLs for $amount', async ({ advice, amount }) => {
+        await trader.onStrategyCreateOrder([firstSell, buy, secondSell]);
+        expect(getPlacedAmount(advice)).toBe(amount);
+      });
+
+      // Two groups of one flush: a line the strategy logs from the hook of the first stop comes between the two SELLs
+      it('places the second of two batches for what the first leaves', async () => {
+        await trader.onStrategyCreateOrder([firstSell]);
+        await trader.onStrategyCreateOrder([secondSell]);
+        expect(getPlacedAmount(secondSell)).toBe(0.2992);
+      });
+
+      it.each`
+        description                                                  | before                             | advice        | amount
+        ${'an all-in SELL for what the SELLs before leave'}          | ${[firstSell]}                     | ${allInSell}  | ${0.2992}
+        ${'a SELL as asked once nothing is left'}                    | ${[sell(5, 0.7992)]}               | ${secondSell} | ${0.3}
+        ${'an all-in SELL for 0 once nothing is left'}               | ${[sell(5, 0.7992)]}               | ${allInSell}  | ${0}
+        ${'an all-in SELL for 0 once the SELLs before ask for more'} | ${[sell(5, 0.7992), sell(6, 0.3)]} | ${allInSell}  | ${0}
+      `('places $description', async ({ before, advice, amount }) => {
+        await trader.onStrategyCreateOrder([...before, advice]);
+        expect(getPlacedAmount(advice)).toBe(amount);
+      });
+
+      it('does not warn of an all-in SELL', async () => {
+        await trader.onStrategyCreateOrder([firstSell, allInSell]);
+        expect(logger.warning).not.toHaveBeenCalled();
+      });
+
+      // Added and subtracted as written, 0.7 - (0.1 + 0.2) is 0.3999999999999999
+      it('places an all-in SELL for what the SELLs before leave, to the decimal', async () => {
+        trader['portfolio'] = balance(0.7);
+        await trader.onStrategyCreateOrder([sell(1, 0.1), sell(2, 0.2), allInSell]);
+        expect(getPlacedAmount(allInSell)).toBe(0.4);
+      });
+
+      // Refused by the exchange, it takes nothing from the balance
+      it.each`
+        amount
+        ${NaN}
+        ${Infinity}
+        ${0}
+        ${-0.5}
+      `('places an all-in SELL for what the SELLs before leave when one asks for $amount', async ({ amount }) => {
+        await trader.onStrategyCreateOrder([sell(5, amount), firstSell, allInSell]);
+        expect(getPlacedAmount(allInSell)).toBe(0.2992);
+      });
+
+      it('places a SELL as asked after a SELL of another asset', async () => {
+        await trader.onStrategyCreateOrder([sell(1, 0.5, 'MARKET', 'ETH/USDT'), secondSell]);
+        expect(getPlacedAmount(secondSell)).toBe(0.3);
+      });
+
+      // Its read shows the first SELL, filled: taken from it a second time, that SELL would have left the next one short
+      describe('once a synchronization started after them has read the balance', () => {
+        beforeEach(async () => {
+          await trader.onStrategyCreateOrder([firstSell]);
+          fakeExchange.fetchBalance.mockResolvedValue(balance(0.2992));
+          await trader['synchronize']();
+          await trader.onStrategyCreateOrder([secondSell]);
+        });
+
+        it('places the next SELL against that balance alone', () => {
+          expect(getPlacedAmount(secondSell)).toBe(0.2992);
+        });
+
+        it('warns with that balance alone', () => {
+          expect(logger.warning).toHaveBeenCalledWith(
+            'trader',
+            `[${secondSell.id}] SELL MARKET order of 0.3 BTC above the free balance: 0.2992 BTC sent, all that can be sold`,
+          );
+        });
+      });
+
+      // The balance read before them is still the one held
+      it('places the next SELL for what the first leaves once a synchronization has failed to read the balance', async () => {
+        await trader.onStrategyCreateOrder([firstSell]);
+        fakeExchange.fetchBalance.mockRejectedValueOnce(new Error('network down'));
+        await trader['synchronize']().catch(noop);
+        await trader.onStrategyCreateOrder([secondSell]);
+        expect(getPlacedAmount(secondSell)).toBe(0.2992);
+      });
+
+      // It read the balance before the SELL reached the exchange
+      it('places the next SELL for what the first leaves once a synchronization started before them has read the balance', async () => {
+        const read = deferred<Portfolio>();
+        fakeExchange.fetchBalance.mockReturnValueOnce(read.promise);
+        const inFlight = trader['synchronize']();
+        await trader.onStrategyCreateOrder([firstSell]);
+        read.resolve(balance(0.7992));
+        await inFlight;
+        await trader.onStrategyCreateOrder([secondSell]);
+        expect(getPlacedAmount(secondSell)).toBe(0.2992);
+      });
+
+      // The exchange gets the cancelation first, and releases what the canceled SELL reserved
+      it.each`
+        description                                          | placed                                            | amount
+        ${'all it holds once the strategy cancels its SELL'} | ${[sell(1, 0.5, 'LIMIT')]}                        | ${0.7992}
+        ${'what the SELL it does not cancel leaves'}         | ${[sell(1, 0.5, 'LIMIT'), sell(2, 0.2, 'LIMIT')]} | ${0.5992}
+      `('places an all-in SELL for $description', async ({ placed, amount }) => {
+        await trader.onStrategyCreateOrder(placed);
+        await trader.onStrategyCancelOrder([placed[0].id]);
+        await trader.onStrategyCreateOrder([allInSell]);
+        expect(getPlacedAmount(allInSell)).toBe(amount);
+      });
+    });
+
     it('creates limit order with requested price', async () => {
       const advice = buildAdvice({ type: 'LIMIT', side: 'BUY', price: 95 });
 
