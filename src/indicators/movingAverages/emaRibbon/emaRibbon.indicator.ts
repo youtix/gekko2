@@ -25,13 +25,21 @@ export class EMARibbon extends Indicator<'EMARibbon'> {
   }
 
   public onNewCandle(candle: Candle) {
-    this.emas.forEach((ema: EMA) => ema.onNewCandle(candle));
-    const results = this.emas.map((ema: EMA) => ema.getResult());
-    if (!results.every<number>(isNumber)) return;
+    // One pass over the EMAs, which every candle used to go through with a closure, then scan again for numbers and spread twice
+    const results: number[] = [];
+    let highest = -Infinity;
+    let lowest = Infinity;
+    for (const ema of this.emas) {
+      ema.onNewCandle(candle);
+      const result = ema.getResult();
+      if (!isNumber(result)) continue;
+      results.push(result);
+      highest = Math.max(highest, result);
+      lowest = Math.min(lowest, result);
+    }
+    // Ready once every EMA is
+    if (results.length < this.emas.length) return;
 
-    this.result = {
-      results,
-      spread: Math.max(...results) - Math.min(...results),
-    };
+    this.result = { results, spread: highest - lowest };
   }
 }

@@ -1,7 +1,8 @@
 import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { InputSources } from '@models/inputSources.types';
-import { describe, expect, it } from 'vitest';
+import { RingBuffer } from '@utils/collection/ringBuffer';
+import { describe, expect, it, vi } from 'vitest';
 import * as indicators from './index';
 import { Indicator } from './indicator';
 import { INPUT_SOURCES } from './indicator.const';
@@ -182,6 +183,26 @@ describe('Indicator', () => {
       return structuredClone(indicator.getResult());
     });
     expect(updated).toEqual(onCloses);
+  });
+
+  // The indicators on a window of candles read it in place. ROC, WilliamsR and TRIX read the oldest or newest value of theirs through a
+  // copy of the whole window, and CCI and BollingerBands summed a copy of theirs, on every candle
+  it.each`
+    name                | parameters
+    ${'ROC'}            | ${{ period: 5 }}
+    ${'WilliamsR'}      | ${{ period: 5 }}
+    ${'TRIX'}           | ${{ period: 3 }}
+    ${'CCI'}            | ${{ period: 5 }}
+    ${'BollingerBands'} | ${{ period: 5 }}
+    ${'OBV'}            | ${{ period: 5 }}
+    ${'Stochastic'}     | ${{}}
+    ${'StochasticRSI'}  | ${{}}
+  `('should read its window in place rather than copy it on every candle, for $name $parameters', ({ name, parameters }) => {
+    const toArray = vi.spyOn(RingBuffer.prototype, 'toArray');
+
+    series(create(name, parameters));
+
+    expect(toArray).not.toHaveBeenCalled();
   });
 });
 

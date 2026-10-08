@@ -1,4 +1,3 @@
-import { MinusDM } from '@indicators/directionalMovement/minusDM/minusDM.indicator';
 import { checkAtMost, checkNumber } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { Indicator } from '../../indicator';
@@ -6,7 +5,6 @@ import { Indicator } from '../../indicator';
 export class PSAR extends Indicator<'PSAR'> {
   private acceleration: number;
   private maxAcceleration: number;
-  private minusDM: MinusDM;
   private prevCandle?: Candle;
   private sar: number;
   private af: number;
@@ -34,7 +32,6 @@ export class PSAR extends Indicator<'PSAR'> {
     );
     this.acceleration = acceleration;
     this.maxAcceleration = maxAcceleration;
-    this.minusDM = new MinusDM({ period: 1 });
     this.af = this.acceleration;
     this.sar = NaN;
     this.ep = NaN;
@@ -48,13 +45,16 @@ export class PSAR extends Indicator<'PSAR'> {
   public onNewCandle(candle: Candle) {
     if (!this.prevCandle) {
       this.prevCandle = candle;
-      return this.minusDM.onNewCandle(candle);
+      return;
     }
 
     if (isNaN(this.sar)) {
-      this.minusDM.onNewCandle(candle);
       const { high: prevHigh, low: prevLow } = this.prevCandle;
-      this.isLong = (this.minusDM.getResult() ?? 0) <= 0;
+      // As in TA-Lib, short when the candle's −DM is positive: its low fell from the previous candle's, and by more than its high rose.
+      // That move came from a MinusDM of period 1 kept for the whole run, which a restart after a NaN SAR, from a non-finite price,
+      // read from the candle of the previous start
+      const down = prevLow - candle.low;
+      this.isLong = !(down > 0 && down > candle.high - prevHigh);
       this.sar = this.isLong ? prevLow : prevHigh;
       this.ep = this.isLong ? candle.high : candle.low;
       this.prevCandle = candle;
@@ -62,7 +62,6 @@ export class PSAR extends Indicator<'PSAR'> {
 
     const { high: prevHigh, low: prevLow } = this.prevCandle;
     const { high: currentHigh, low: currentLow } = candle;
-    const newSar = this.sar;
 
     if (this.isLong) {
       if (currentLow <= this.sar) {
@@ -78,7 +77,7 @@ export class PSAR extends Indicator<'PSAR'> {
           this.ep = currentHigh;
           this.af = Math.min(this.af + this.acceleration, this.maxAcceleration);
         }
-        this.sar = Math.min(this.calcSar(newSar, this.ep, this.af), prevLow, currentLow);
+        this.sar = Math.min(this.calcSar(this.sar, this.ep, this.af), prevLow, currentLow);
       }
     } else {
       if (currentHigh >= this.sar) {
@@ -94,7 +93,7 @@ export class PSAR extends Indicator<'PSAR'> {
           this.ep = currentLow;
           this.af = Math.min(this.af + this.acceleration, this.maxAcceleration);
         }
-        this.sar = Math.max(this.calcSar(newSar, this.ep, this.af), prevHigh, currentHigh);
+        this.sar = Math.max(this.calcSar(this.sar, this.ep, this.af), prevHigh, currentHigh);
       }
     }
     this.prevCandle = candle;

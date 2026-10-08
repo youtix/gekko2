@@ -4,8 +4,11 @@ import { checkInteger, checkNumber, checkOneOf } from '@indicators/indicator.uti
 import { MOVING_AVERAGE_TYPES, MOVING_AVERAGES } from '@indicators/movingAverages/movingAverages.const';
 import { Candle } from '@models/candle.types';
 import { RingBuffer } from '@utils/collection/ringBuffer';
-import { compareWithTolerance, stdev } from '@utils/math/math.utils';
+import { compareWithTolerance } from '@utils/math/math.utils';
 import { isNil } from 'lodash-es';
+
+/** Adds a close's squared distance from the mean to the sum, as stdev() does. Made once: a closure over the mean is one per candle */
+const addSquare = (sum: number, close: number, mean: number) => sum + Math.pow(close - mean, 2);
 
 /**
  * TA-Lib's BBANDS: a middle band, the maType average of the close over period, and an upper and a lower band stdevUp and stdevDown
@@ -63,8 +66,12 @@ export class BollingerBands extends Indicator<'BollingerBands'> {
       return;
     }
 
-    // Compute standard deviation
-    const standardDeviation = stdev(this.ringBuffer.toArray());
+    // stdev()'s population deviation around the simple mean, with its operations in its order, on the window in place: stdev() took a
+    // copy of the window, and a mapped copy of that, on every candle. Its sum of squares starts from the first square and this one from
+    // 0, which is the same: a square is never -0
+    const mean = this.ringBuffer.sum() / this.ringBuffer.length;
+    const squares = this.ringBuffer.reduce(addSquare, 0, mean);
+    const standardDeviation = Math.sqrt(squares / this.ringBuffer.length);
 
     // Upper and Lower Bands
     const upper = middle + this.stdevUp * standardDeviation;

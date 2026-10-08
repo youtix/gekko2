@@ -26,7 +26,7 @@ export class ROC extends Indicator<'ROC'> {
     this.ringBuffer.push(close);
     if (!this.ringBuffer.isFull()) return;
 
-    const base = this.ringBuffer.first();
+    const base = this.ringBuffer.first()!;
     // A change from 0 has no value: null rather than TA-Lib's 0, which reads as no change, or the ±Infinity of the division
     this.result = base === 0 ? null : (close / base - 1) * 100;
   }

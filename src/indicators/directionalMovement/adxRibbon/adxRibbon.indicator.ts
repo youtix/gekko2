@@ -23,10 +23,21 @@ export class ADXRibbon extends Indicator<'ADXRibbon'> {
   }
 
   public onNewCandle(candle: Candle): void {
-    this.adxs.forEach((adx: ADX) => adx.onNewCandle(candle));
-    const results = this.adxs.map((adx: ADX) => adx.getResult());
-    if (!results.every<number>(isNumber)) return;
+    // One pass over the ADXs, which every candle used to go through with a closure, then scan again for numbers and spread twice
+    const results: number[] = [];
+    let highest = -Infinity;
+    let lowest = Infinity;
+    for (const adx of this.adxs) {
+      adx.onNewCandle(candle);
+      const result = adx.getResult();
+      if (!isNumber(result)) continue;
+      results.push(result);
+      highest = Math.max(highest, result);
+      lowest = Math.min(lowest, result);
+    }
+    // Ready once every ADX is
+    if (results.length < this.adxs.length) return;
 
-    this.result = { results, spread: Math.max(...results) - Math.min(...results) };
+    this.result = { results, spread: highest - lowest };
   }
 }

@@ -71,6 +71,25 @@ describe('PSAR', () => {
     expect(fixedFactor.getResult()).toBe(expected);
   });
 
+  // As in TA-Lib, the SAR starts short only when the second candle's −DM is positive: its low fell, and by more than its high rose.
+  // Long, it starts at the first low (8), and short at the first high (10). A second low already below that first low reverses a long
+  // start at once, to the highest high
+  it.each`
+    move                            | high   | low    | start      | expected
+    ${'up'}                         | ${11}  | ${9}   | ${'long'}  | ${8}
+    ${'down'}                       | ${9.5} | ${7}   | ${'short'} | ${10}
+    ${'as far down as up'}          | ${11}  | ${7}   | ${'long'}  | ${11}
+    ${'down, but further up'}       | ${12}  | ${7.5} | ${'long'}  | ${12}
+    ${'inside the first'}           | ${9.5} | ${8.5} | ${'long'}  | ${8}
+    ${'lower, without a lower low'} | ${8.6} | ${8.5} | ${'long'}  | ${8}
+  `('should start $start and return $expected when the second candle moves $move', ({ high, low, expected }) => {
+    const psar = new PSAR();
+    psar.onNewCandle({ start: 0, open: 9, high: 10, low: 8, close: 9, volume: 1 });
+    psar.onNewCandle({ start: 1, open: 9, high, low, close: low, volume: 1 });
+
+    expect(psar.getResult()).toBe(expected);
+  });
+
   // Such a pair used to restart the factor above its maximum after every reversal
   it('should refuse an acceleration above maxAcceleration', () => {
     expect(() => new PSAR({ acceleration: 0.3, maxAcceleration: 0.2 })).toThrow(

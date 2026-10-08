@@ -3,6 +3,7 @@ import type { MovingAverageClasses } from '@indicators/indicator.types';
 import { checkInteger, checkOneOf } from '@indicators/indicator.utils';
 import { MOVING_AVERAGE_TYPES, MOVING_AVERAGES } from '@indicators/movingAverages/movingAverages.const';
 import { Candle } from '@models/candle.types';
+import { RingBuffer } from '@utils/collection/ringBuffer';
 import { compareWithTolerance } from '@utils/math/math.utils';
 import { isNil } from 'lodash-es';
 
@@ -15,10 +16,8 @@ import { isNil } from 'lodash-es';
  * a d smoothed by one can leave [0, 100], as in TA-Lib.
  */
 export class Stochastic extends Indicator<'Stochastic'> {
-  private fastKPeriod: number;
-  private highs: number[] = [];
-  private lows: number[] = [];
-  private idxFast = 0;
+  private highs: RingBuffer<number>;
+  private lows: RingBuffer<number>;
   private maSlowK: MovingAverageClasses;
   private maSlowD: MovingAverageClasses;
 
@@ -42,7 +41,8 @@ export class Stochastic extends Indicator<'Stochastic'> {
     checkOneOf('Stochastic', 'slowKMaType', slowKMaType, MOVING_AVERAGE_TYPES);
     checkInteger('Stochastic', 'slowDPeriod', slowDPeriod);
     checkOneOf('Stochastic', 'slowDMaType', slowDMaType, MOVING_AVERAGE_TYPES);
-    this.fastKPeriod = fastKPeriod;
+    this.highs = new RingBuffer(fastKPeriod);
+    this.lows = new RingBuffer(fastKPeriod);
     this.maSlowK = new MOVING_AVERAGES[slowKMaType]({ period: slowKPeriod });
     this.maSlowD = new MOVING_AVERAGES[slowDMaType]({ period: slowDPeriod });
   }
@@ -58,16 +58,16 @@ export class Stochastic extends Indicator<'Stochastic'> {
 
   /** The high, low and close of the next candle, or a value as all three */
   private next(high: number, low: number, close: number) {
-    this.highs[this.idxFast] = high;
-    this.lows[this.idxFast] = low;
-    this.idxFast = (this.idxFast + 1) % this.fastKPeriod;
+    this.highs.push(high);
+    this.lows.push(low);
     // The raw %K used to be taken over the partial windows of the first candles, and d fed 0 while k was not ready: an ema or a dema
     // seeded on those values carried their error for many candles, and a warm-up count that assumed period − 1 lookbacks published
     // a dema-smoothed result too early. Each average now only gets real values, and the result waits for d.
-    if (this.highs.length < this.fastKPeriod) return;
+    if (!this.highs.isFull()) return;
 
-    const lowest = Math.min(...this.lows);
-    const highest = Math.max(...this.highs);
+    // Read in place: they used to be spread into Math.min and Math.max
+    const lowest = this.lows.min();
+    const highest = this.highs.max();
     const range = highest - lowest;
     // StochasticRSI feeds RSI values, which hold still over a flat stretch in exact arithmetic but wobble in their last bits: the range
     // used to be that wobble, and the raw %K 0 or 100 at random. Ends equal within the tolerance make a flat range.
