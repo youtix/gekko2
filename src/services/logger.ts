@@ -34,6 +34,9 @@ const resolveLogLevel = (value: string | undefined) => {
 
 const { level: logLevel, rejected: rejectedLogLevel } = resolveLogLevel(process.env.GEKKO_LOG_LEVEL);
 
+/** The levels winston prints: from the most severe down to GEKKO_LOG_LEVEL */
+const enabledLevels = new Set(LOG_LEVELS.slice(0, LOG_LEVELS.indexOf(logLevel) + 1));
+
 const logger = createLogger({
   level: logLevel,
   format: combine(timestamp(), json()),
@@ -69,6 +72,13 @@ export const warning = (tag: Tag, message: unknown) => {
 export const error = (tag: Tag, message: unknown) => {
   log({ tag, message, level: 'error' });
 };
+
+/**
+ * Whether winston prints the messages of `level`, as GEKKO_LOG_LEVEL decides it (`warning` read as `warn`, an unknown value as
+ * `error`). winston formats a message before its level filter drops it: a message that is only ever printed, and costs that format on
+ * every candle, can be skipped below it. Not a warning or an error, which the buffer keeps whatever GEKKO_LOG_LEVEL.
+ */
+export const isLevelEnabled = (level: LogLevel) => enabledLevels.has(level);
 
 /** The buffered warnings and errors, oldest first: the same entry objects on every call, so that a reader can find where it left off */
 export const getBufferedLogs = () => logBuffer.toArray();

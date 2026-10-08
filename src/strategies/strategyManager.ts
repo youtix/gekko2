@@ -26,7 +26,7 @@ import { StrategyInfo } from '@models/strategyInfo.types';
 import { Asset, TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { MarketData } from '@services/exchange/exchange.types';
-import { debug, error, info, warning } from '@services/logger';
+import { debug, error, info, isLevelEnabled, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
@@ -410,12 +410,20 @@ export class StrategyManager extends EventEmitter {
     return id;
   }
 
+  /**
+   * Logs a line of the strategy, printed if GEKKO_LOG_LEVEL lets its level through. An info, warn or error line is also relayed as
+   * strategy info (the strat_info notifications of the EventSubscriber), whatever GEKKO_LOG_LEVEL; a debug line is not. An error line
+   * then throws.
+   */
   private log(level: LogLevel, message: string) {
     let relayedLevel = level;
     switch (level) {
       case 'debug':
-        debug('strategy', message);
-        break;
+        // Not relayed: the built-in strategies log their indicator values at debug, up to four lines a candle (MACD), which reached the
+        // strat_info subscribers as as many Telegram messages. Not even formatted below GEKKO_LOG_LEVEL: winston formats a line before
+        // its level filter drops it, and with the relay that was most of the cost of a candle in a backtest.
+        if (isLevelEnabled('debug')) debug('strategy', message);
+        return;
       case 'info':
         info('strategy', message);
         break;

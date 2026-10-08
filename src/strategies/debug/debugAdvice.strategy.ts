@@ -40,7 +40,7 @@ export class DebugAdvice implements Strategy<DebugAdviceParams> {
     // Check for cancellations
     for (const [orderId, cancelAt] of this.cancelAt) {
       if (this.index < cancelAt) continue;
-      log('debug', `Cancelling order ${orderId} at index ${this.index}`);
+      log('info', `Cancelling order ${orderId} at index ${this.index}`);
       cancelOrder(orderId);
       this.cancelAt.delete(orderId);
     }
@@ -50,7 +50,7 @@ export class DebugAdvice implements Strategy<DebugAdviceParams> {
       for (const pair of candle.keys()) {
         log('debug', `Iteration: ${this.index} for ${pair}`);
         if (!side) continue;
-        log('debug', `Trigger ${side === 'SELL' ? 'SHORT' : 'LONG'} for ${pair}`);
+        log('info', `Trigger ${side === 'SELL' ? 'SHORT' : 'LONG'} for ${pair}`);
         const id = createOrder({ type: 'STICKY', side, amount: 1, symbol: pair });
         if (!isNil(cancelAfter)) this.cancelAt.set(id, this.index + cancelAfter);
       }
@@ -61,19 +61,19 @@ export class DebugAdvice implements Strategy<DebugAdviceParams> {
 
   onOrderCompleted(params: OnOrderCompletedEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {
     const { order, tools } = params;
-    tools.log('debug', `Order Completed: ${order.id}`);
+    tools.log('info', `Order Completed: ${order.id}`);
     this.cancelAt.delete(order.id);
   }
 
   onOrderCanceled(params: OnOrderCanceledEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {
     const { order, tools } = params;
-    tools.log('debug', `Order Canceled: ${order.id}`);
+    tools.log('info', `Order Canceled: ${order.id}`);
     this.cancelAt.delete(order.id);
   }
 
   onOrderErrored(params: OnOrderErroredEventParams<DebugAdviceParams>, ..._indicators: unknown[]): void {
     const { order, tools } = params;
-    tools.log('debug', `Order Errored: ${order.id}`);
+    tools.log('info', `Order Errored: ${order.id}`);
     this.cancelAt.delete(order.id);
   }
 }

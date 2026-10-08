@@ -1,3 +1,4 @@
+import { LogLevel } from '@models/logLevel.types';
 import { range } from 'lodash-es';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { transports } from 'winston';
@@ -5,6 +6,8 @@ import { transports } from 'winston';
 type PrintedLine = { level: string; message: string };
 type ConsoleTransport = { log: (line: PrintedLine, next: () => void) => void };
 type LogFunction = 'debug' | 'info' | 'warning' | 'error';
+
+const LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error'];
 
 const notice = (value: string) =>
   `Invalid GEKKO_LOG_LEVEL '${value}', falling back to 'error'. Valid levels: error, warn, info, http, verbose, debug, silly.`;
@@ -94,6 +97,24 @@ describe('logger', () => {
   `('prints the fallback notice once, at error level, when GEKKO_LOG_LEVEL is $logLevel', async ({ logLevel }) => {
     await logProbes(logLevel);
     expect(printed.filter(line => !isProbe(line))).toEqual([{ level: 'error', message: notice(logLevel) }]);
+  });
+
+  // The levels winston prints, as the probes above show: a caller can skip a message below them, which winston formats only to drop it
+  it.each`
+    logLevel     | levels
+    ${undefined} | ${['error']}
+    ${'error'}   | ${['error']}
+    ${'warning'} | ${['warn', 'error']}
+    ${'WARN'}    | ${['warn', 'error']}
+    ${' info '}  | ${['info', 'warn', 'error']}
+    ${'http'}    | ${['info', 'warn', 'error']}
+    ${'verbose'} | ${['info', 'warn', 'error']}
+    ${'Debug'}   | ${['debug', 'info', 'warn', 'error']}
+    ${'silly'}   | ${['debug', 'info', 'warn', 'error']}
+    ${'trace'}   | ${['error']}
+  `('enables the $levels levels when GEKKO_LOG_LEVEL is $logLevel', async ({ logLevel, levels }) => {
+    const { isLevelEnabled } = await loadLogger(logLevel);
+    expect(LOG_LEVELS.filter(level => isLevelEnabled(level))).toEqual(levels);
   });
 
   it('keeps the fallback notice out of the ring buffer', async () => {

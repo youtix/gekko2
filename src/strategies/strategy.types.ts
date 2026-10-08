@@ -27,7 +27,16 @@ export type Direction = 'short' | 'long';
  * later would only be fed from then on, and would give every hook one more argument.
  */
 export type AddIndicatorFn = <T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>) => void;
-/** Logs a message under the strategy tag. 'error' does not return: it throws a GekkoError, which stops the bot. */
+/**
+ * Logs a message under the strategy tag, printed if GEKKO_LOG_LEVEL lets its level through.
+ *
+ * 'info', 'warn' and 'error' lines are also relayed, whatever GEKKO_LOG_LEVEL, as the strategy info the EventSubscriber sends its
+ * strat_info subscribers: log a signal or an order outcome at info. 'debug' lines are not relayed: a subscriber does not want the
+ * indicator values of every candle. Below GEKKO_LOG_LEVEL a 'debug' line costs nothing but the message the strategy built.
+ *
+ * 'error' does not return: it relays the line, then throws a GekkoError, which stops the bot. A level outside these, which only an
+ * untyped strategy can pass, is logged and relayed at info, after one warning per level.
+ */
 export type LoggerFn = (level: LogLevel, msg: string) => void;
 export type Tools<T> = {
   /**

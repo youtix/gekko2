@@ -7,7 +7,10 @@ import { DebugAdviceParams } from './debugAdvice.types';
 
 const BTC: TradingPair = 'BTC/USDT';
 const ETH: TradingPair = 'ETH/USDT';
-const debugLines = (...messages: string[]): LoggedLine[] => messages.map(message => ({ level: 'debug', message }));
+/** A line DebugAdvice logs at debug, printed only: one per candle and pair */
+const debugLine = (message: string): LoggedLine => ({ level: 'debug', message });
+/** A line DebugAdvice logs at info, which the StrategyManager also relays to the strat_info subscribers: its advices and order outcomes */
+const infoLine = (message: string): LoggedLine => ({ level: 'info', message });
 
 describe('DebugAdvice', () => {
   let strategy: DebugAdvice;
@@ -71,20 +74,20 @@ describe('DebugAdvice', () => {
     });
 
     // The e2e flows look for these lines: from the candle wait on, each candle logs its index for each pair
-    const SELL_NOTHING_BUY = debugLines(
-      'Iteration: 0 for BTC/USDT',
-      'Trigger SHORT for BTC/USDT',
-      'Iteration: 1 for BTC/USDT',
-      'Iteration: 2 for BTC/USDT',
-      'Trigger LONG for BTC/USDT',
-    );
-    const WAIT_THEN_SELL = debugLines('Iteration: 2 for BTC/USDT', 'Trigger SHORT for BTC/USDT');
-    const TWO_PAIRS = debugLines(
-      'Iteration: 0 for BTC/USDT',
-      'Trigger SHORT for BTC/USDT',
-      'Iteration: 0 for ETH/USDT',
-      'Trigger SHORT for ETH/USDT',
-    );
+    const SELL_NOTHING_BUY = [
+      debugLine('Iteration: 0 for BTC/USDT'),
+      infoLine('Trigger SHORT for BTC/USDT'),
+      debugLine('Iteration: 1 for BTC/USDT'),
+      debugLine('Iteration: 2 for BTC/USDT'),
+      infoLine('Trigger LONG for BTC/USDT'),
+    ];
+    const WAIT_THEN_SELL = [debugLine('Iteration: 2 for BTC/USDT'), infoLine('Trigger SHORT for BTC/USDT')];
+    const TWO_PAIRS = [
+      debugLine('Iteration: 0 for BTC/USDT'),
+      infoLine('Trigger SHORT for BTC/USDT'),
+      debugLine('Iteration: 0 for ETH/USDT'),
+      infoLine('Trigger SHORT for ETH/USDT'),
+    ];
     it.each`
       case                       | each | wait | pairs         | count | expected
       ${'an advice, none, one'}  | ${2} | ${0} | ${[BTC]}      | ${3}  | ${SELL_NOTHING_BUY}
@@ -112,9 +115,9 @@ describe('DebugAdvice', () => {
 
     it('logs each cancellation with the index of the candle', () => {
       play(3, { each: 4, wait: 0, cancelAfter: 2 });
-      expect(logs.filter(({ message }) => message.startsWith('Cancelling'))).toEqual(
-        debugLines(`Cancelling order ${orders.ids[0]} at index 2`),
-      );
+      expect(logs.filter(({ message }) => message.startsWith('Cancelling'))).toEqual([
+        infoLine(`Cancelling order ${orders.ids[0]} at index 2`),
+      ]);
     });
 
     it.each`
@@ -140,6 +143,6 @@ describe('DebugAdvice', () => {
     play(1, { each: 1, wait: 0 });
     const outcomeLogs: LoggedLine[] = [];
     relayOrderOutcome(strategy, outcome, orders.created(1)!, { log: (level, line) => outcomeLogs.push({ level, message: line }) });
-    expect(outcomeLogs).toEqual(debugLines(`${message}: ${orders.ids[0]}`));
+    expect(outcomeLogs).toEqual([infoLine(`${message}: ${orders.ids[0]}`)]);
   });
 });

@@ -15,7 +15,7 @@ import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { MarketData } from '@services/exchange/exchange.types';
-import { debug, error, info, warning } from '@services/logger';
+import { debug, error, info, isLevelEnabled, warning } from '@services/logger';
 import { randomUUID, UUID } from 'node:crypto';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -79,6 +79,7 @@ vi.mock('@services/logger', () => ({
   info: vi.fn(),
   warning: vi.fn(),
   error: vi.fn(),
+  isLevelEnabled: vi.fn(),
 }));
 
 vi.mock('@services/configuration/configuration', () => {
@@ -95,6 +96,13 @@ vi.mock('@services/configuration/configuration', () => {
 
 /** A text in single quotes, as util.inspect shows a string */
 const quoted = (text: string) => `'${text}'`;
+
+/** The levels LogLevel names, the most severe first: winston prints those down to GEKKO_LOG_LEVEL */
+const LEVELS_BY_SEVERITY: LogLevel[] = ['error', 'warn', 'info', 'debug'];
+
+/** Has the logger's isLevelEnabled answer as it does with this GEKKO_LOG_LEVEL */
+const setGekkoLogLevel = (gekkoLogLevel: LogLevel) =>
+  vi.mocked(isLevelEnabled).mockImplementation(level => LEVELS_BY_SEVERITY.indexOf(level) <= LEVELS_BY_SEVERITY.indexOf(gekkoLogLevel));
 
 vi.mock('./debug/debugAdvice.strategy.ts', () => ({
   DebugAdvice: class {
@@ -141,6 +149,7 @@ describe('StrategyManager', () => {
   };
 
   beforeEach(() => {
+    setGekkoLogLevel('error'); // Its default
     manager = new StrategyManager(1);
     manager.setMarketData(defaultMarketData);
   });
@@ -2702,19 +2711,48 @@ describe('StrategyManager', () => {
     });
 
     describe('log', () => {
-      it.each`
-        level      | logger
-        ${'debug'} | ${debug}
-        ${'info'}  | ${info}
-        ${'warn'}  | ${warning}
-      `('calls $level logger', ({ level, logger }) => {
-        manager['log'](level, 'message');
-        expect(logger).toHaveBeenCalledWith('strategy', 'message');
-      });
+      // A debug line went to winston, which formats a line before its level filter drops it, and was relayed to the strat_info
+      // subscribers, whatever GEKKO_LOG_LEVEL: four a candle for MACD, most of the cost of a candle in a backtest, and as many Telegram
+      // messages in realtime. The other levels are relayed whatever GEKKO_LOG_LEVEL, and a warning or an error always reaches the
+      // logger, whose buffer keeps it for the log monitoring of Supervision.
+      describe.each`
+        level      | logger     | gekkoLogLevel | isLogged | relayed
+        ${'debug'} | ${debug}   | ${'error'}    | ${false} | ${[]}
+        ${'debug'} | ${debug}   | ${'info'}     | ${false} | ${[]}
+        ${'debug'} | ${debug}   | ${'debug'}    | ${true}  | ${[]}
+        ${'info'}  | ${info}    | ${'error'}    | ${true}  | ${['info']}
+        ${'info'}  | ${info}    | ${'debug'}    | ${true}  | ${['info']}
+        ${'warn'}  | ${warning} | ${'error'}    | ${true}  | ${['warn']}
+        ${'warn'}  | ${warning} | ${'debug'}    | ${true}  | ${['warn']}
+        ${'error'} | ${error}   | ${'error'}    | ${true}  | ${['error']}
+        ${'error'} | ${error}   | ${'debug'}    | ${true}  | ${['error']}
+      `('a $level line, with GEKKO_LOG_LEVEL $gekkoLogLevel', ({ level, logger, gekkoLogLevel, isLogged, relayed }) => {
+        let listener: Mock;
+        let failure: unknown;
 
-      it('calls error logger', () => {
-        expect(() => manager['log']('error', 'message')).toThrow(GekkoError);
-        expect(error).toHaveBeenCalledWith('strategy', 'message');
+        beforeEach(() => {
+          setGekkoLogLevel(gekkoLogLevel);
+          listener = vi.fn();
+          manager.on(STRATEGY_INFO_EVENT, listener);
+          failure = undefined;
+          try {
+            manager['log'](level, 'line');
+          } catch (caught) {
+            failure = caught;
+          }
+        });
+
+        it(isLogged ? 'hands it to the logger' : 'does not hand it to the logger', () => {
+          expect(vi.mocked(logger).mock.calls).toEqual(isLogged ? [['strategy', 'line']] : []);
+        });
+
+        it(relayed.length ? 'relays it, at its level' : 'does not relay it', () => {
+          expect(listener.mock.calls.map(([strategyInfo]) => strategyInfo.level)).toEqual(relayed);
+        });
+
+        it(level === 'error' ? 'then throws a GekkoError' : 'does not throw', () => {
+          expect(failure).toEqual(level === 'error' ? new GekkoError('strategy', 'line') : undefined);
+        });
       });
 
       it('emits STRATEGY_INFO_EVENT with metadata', () => {

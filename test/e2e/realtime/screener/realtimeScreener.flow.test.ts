@@ -31,6 +31,9 @@ const TELEGRAM_USERNAME = 'test-bot';
 
 // 1. Mock Winston
 mock.module('winston', () => MockWinston);
+// The flows read the strategy's debug lines from the winston mock: the logger hands a debug line to winston only when
+// GEKKO_LOG_LEVEL lets it through, and the logger is loaded after this, by the pipeline
+process.env.GEKKO_LOG_LEVEL = 'debug';
 
 // 2. Mock Time Constants
 mock.module('@constants/time.const', () => ({
@@ -247,15 +250,18 @@ describe('E2E: Realtime Screener Flow', () => {
     const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
     expect(calls.length).toBeGreaterThan(0);
 
-    // Look for strategy info messages
-    // EventSubscriber formats it as: "• 2026-02-07T17:24:27.000Z [DEBUG] (strategy)\nIteration: 0 for BTC/USDT\n------\n"
-    expect(calls.filter(call => call.payload.text.includes('[DEBUG] (strategy)')).length).toBeGreaterThan(5);
+    // Look for strategy info messages: the lines DebugAdvice logs at info, its signals and order outcomes
+    // EventSubscriber formats it as: "• 2026-02-07T17:24:27.000Z [INFO] (strategy)\nTrigger SHORT for BTC/USDT\n------\n"
+    expect(calls.filter(call => call.payload.text.includes('[INFO] (strategy)')).length).toBeGreaterThan(5);
 
     // Verify content of at least one message
     const sampleMessage = calls
-      .filter(call => call.payload.text.includes('[DEBUG] (strategy)'))
-      .find(call => call.payload.text.includes('Iteration:'));
+      .filter(call => call.payload.text.includes('[INFO] (strategy)'))
+      .find(call => call.payload.text.includes('Trigger'));
     expect(sampleMessage?.payload.text).toContain('BTC/USDT');
+
+    // Its debug lines (Iteration, on every candle) are not relayed
+    expect(calls.filter(call => call.payload.text.includes('[DEBUG] (strategy)')).length).toBe(0);
   });
 
   it('Scenario E: Order Cancellation', async () => {

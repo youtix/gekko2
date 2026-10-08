@@ -24,6 +24,9 @@ const TIMEOUT_MS = TARGET_CANDLES * FAST_MINUTE;
 
 // 1. Mock Winston
 mock.module('winston', () => MockWinston);
+// The flows read the strategy's debug lines from the winston mock: the logger hands a debug line to winston only when
+// GEKKO_LOG_LEVEL lets it through, and the logger is loaded after this, by the pipeline
+process.env.GEKKO_LOG_LEVEL = 'debug';
 
 // 2. Mock Time Constants
 mock.module('@constants/time.const', () => ({
