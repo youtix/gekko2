@@ -36,6 +36,15 @@ import { TrailingStopManager } from './trailingStopManager';
 import { TrailingStopState } from './trailingStopManager.types';
 
 /**
+ * What is wrong with the pair an order or an indicator names, or undefined when it is watched: a key of `marketData`, which the
+ * TradingAdvisor fills with every watched pair before the first candle. Gekko has no candle, price or balance of any other pair.
+ */
+const getPairProblem = (symbol: TradingPair, marketData: Map<TradingPair, MarketData>): string | undefined => {
+  if (marketData.has(symbol)) return;
+  return `symbol must be one of the watched pairs (${[...marketData.keys()].join(', ')}), got ${inspect(symbol)}`;
+};
+
+/**
  * What is wrong with the trailing stop an order asks for, or undefined when it asks for none or for a valid one: on a BUY only, within
  * the bounds the TrailingStopManager checks again as it arms the stop. A trigger left out (undefined, or null from an untyped strategy)
  * asks for a stop active as soon as it is armed.
@@ -61,6 +70,7 @@ export class StrategyManager extends EventEmitter {
   /** Set as the warmup event is emitted, never reset: createOrder refuses orders until then */
   private isWarmupCompleted = false;
   private indicators: { indicator: Indicator; symbol: TradingPair }[] = [];
+  /** The market data of every watched pair, set before the first candle: its keys are the pairs addIndicator and createOrder accept */
   private marketData = new Map<TradingPair, MarketData>();
   private portfolio = new Map<Asset, BalanceDetail>();
   private indicatorsResults: IndicatorResults[] = [];
@@ -138,11 +148,9 @@ export class StrategyManager extends EventEmitter {
     // Initialize strategy with time frame candle (do not use one minute candle)
     if (this.age === 0) this.strategy?.init?.({ ...params, addIndicator: this.addIndicator });
 
-    // Update indicators
+    // Update indicators: each is on a watched pair (see addIndicator), and a timeframe bucket holds a candle of every watched pair
     this.indicatorsResults = this.indicators.map<IndicatorResults>(({ indicator, symbol }) => {
-      const candle = bucket.get(symbol);
-      if (candle) indicator.onNewCandle(candle);
-      else warning('strategy', `Candle for ${symbol} not found in strategy manager`);
+      indicator.onNewCandle(bucket.get(symbol)!);
       return { results: indicator.getResult(), symbol };
     });
     // Call for each candle
@@ -259,6 +267,10 @@ export class StrategyManager extends EventEmitter {
   private addIndicator<T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>): void {
     const Indicator = indicators[name];
     if (!Indicator) throw new GekkoError('strategy', `${name} indicator not found.`);
+    // An indicator on a pair that is not watched never got a candle: its results stayed null for the whole run, so a strategy waiting
+    // for them never traded, with one warning per candle that the default log level hid
+    const pairProblem = getPairProblem(symbol, this.marketData);
+    if (pairProblem) throw new GekkoError('strategy', `Impossible to add the ${name} indicator on ${symbol}: ${pairProblem}`);
 
     // @ts-expect-error TODO fix complex typescript error
     const indicator = new Indicator(parameters);
@@ -360,12 +372,14 @@ export class StrategyManager extends EventEmitter {
   }
 
   /**
-   * Refuses, before anything is relayed, an order the strategy cannot have meant. The trailing stop of a BUY was only checked once the
-   * BUY had completed: an invalid one was refused then, with a warning, and the position the BUY had just opened kept no stop. One
-   * given to a SELL was dropped without a word.
+   * Refuses, before anything is relayed, an order the strategy cannot have meant. One on a pair that is not watched, given a price, was
+   * placed on a live exchange (an all-in BUY spending the currency of the watched pairs), though Gekko has no candle or balance of that
+   * pair: what it bought was missing from the portfolio and its stop never trailed. The trailing stop of a BUY was only checked once the
+   * BUY had completed: an invalid one was refused then, with a warning, and the position the BUY had just opened kept no stop. One given
+   * to a SELL was dropped without a word.
    */
   private checkOrder(order: StrategyOrder) {
-    const problem = getTrailingProblem(order);
+    const problem = getPairProblem(order.symbol, this.marketData) ?? getTrailingProblem(order);
     if (!problem) return;
     const { side, type, symbol } = order;
     throw new GekkoError('strategy', `Impossible to create the ${side} ${type} order on ${symbol}: ${problem}`);

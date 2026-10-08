@@ -14,6 +14,9 @@ export type Direction = 'short' | 'long';
 /**
  * Registers an indicator on a pair. It returns nothing: the StrategyManager keeps the indicator and feeds it, and its results reach
  * the hooks as their indicator arguments, in the order of the addIndicator calls.
+ *
+ * `symbol` must be a watched pair, a key of `tools.marketData`: an indicator on any other pair would never get a candle, its results
+ * null for the whole run. Any other symbol throws a GekkoError naming it and the watched pairs: the bot stops.
  */
 export type AddIndicatorFn = <T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>) => void;
 /** Logs a message under the strategy tag. 'error' does not return: it throws a GekkoError, which stops the bot. */
@@ -24,6 +27,7 @@ export type Tools<T> = {
    * whole top-level `strategy:` block, `name` included.
    */
   strategyParams: T;
+  /** The limits, precision and fees of each watched pair, by pair: its keys are the pairs createOrder and addIndicator accept */
   marketData: Map<TradingPair, MarketData>;
   log: LoggerFn;
   /**
@@ -32,6 +36,10 @@ export type Tools<T> = {
    *
    * Available once the warmup is over: from log and onTimeframeCandleAfterWarmup on the candle that completes it (the first one
    * with `warmup.candleCount: 0`), then from every hook. Before that, and so always in init, it throws a GekkoError: the bot stops.
+   *
+   * `symbol` must be a watched pair, a key of `marketData`: Gekko has no candle, price or balance of any other pair, so it could
+   * neither follow the position nor trail its stop, while a live exchange would still execute the order. Any other symbol throws a
+   * GekkoError naming it and the watched pairs, and the order is not sent: the bot stops.
    *
    * A `trailing` is checked before anything is relayed: on a BUY only, with a percentage above 0 and below 100 and a trigger above 0
    * or left out. Anything else throws a GekkoError and the order is not sent: the bot stops. The stop is armed, once the BUY

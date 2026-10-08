@@ -14,6 +14,7 @@ import { OrderSide } from '@models/order.types';
 import { BalanceDetail } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
+import { MarketData } from '@services/exchange/exchange.types';
 import { debug, error, info, warning } from '@services/logger';
 import { randomUUID, UUID } from 'node:crypto';
 import path from 'node:path';
@@ -114,6 +115,11 @@ vi.mock('./debug/debugAdvice.startegy.ts', () => ({
 describe('StrategyManager', () => {
   let manager: StrategyManager;
   const defaultMarketData = new Map([['BTC/USDT', { amount: { min: 1 } }]]) as any;
+  /** The market data of two watched pairs, as the TradingAdvisor sets it when watch.assets holds BTC and ETH */
+  const twoPairsMarketData = new Map<TradingPair, MarketData>([
+    ['BTC/USDT', { amount: { min: 0.0001 } }],
+    ['ETH/USDT', { amount: { min: 0.001 } }],
+  ]);
   const candle = {
     start: 1000,
     open: 1,
@@ -353,16 +359,24 @@ describe('StrategyManager', () => {
         expect(customManager['age']).toBe(1);
       });
 
-      it('should handle indicators for symbols missing in bucket (e.g. multi-timeframe)', () => {
-        const indicator = { onNewCandle: vi.fn(), getResult: vi.fn() };
-        manager['indicators'].push({ indicator, symbol: 'ETH/USDT' } as any); // ETH not in bucket
-        const strategy = { init: vi.fn(), onEachTimeframeCandle: vi.fn(), log: vi.fn(), onTimeframeCandleAfterWarmup: vi.fn() };
-        manager['strategy'] = strategy as any;
+      // An indicator is on a watched pair (addIndicator refuses any other), and a timeframe bucket holds a candle of every watched pair
+      it('feeds each indicator the candle of its own pair', () => {
+        const ethCandle = { ...candle, open: 3000, high: 3010, low: 2990, close: 3005 };
+        const btcIndicator = { onNewCandle: vi.fn(), getResult: vi.fn() };
+        const ethIndicator = { onNewCandle: vi.fn(), getResult: vi.fn() };
+        manager['indicators'].push(
+          { indicator: btcIndicator, symbol: 'BTC/USDT' } as any,
+          { indicator: ethIndicator, symbol: 'ETH/USDT' } as any,
+        );
 
-        manager.onTimeFrameCandle(bucket); // Bucket only has BTC
+        manager.onTimeFrameCandle(
+          new Map([
+            ['BTC/USDT', candle],
+            ['ETH/USDT', ethCandle],
+          ]),
+        );
 
-        expect(indicator.onNewCandle).not.toHaveBeenCalled();
-        expect(indicator.getResult).toHaveBeenCalled(); // Should still get result (e.g. previous)
+        expect(ethIndicator.onNewCandle).toHaveBeenCalledExactlyOnceWith(ethCandle);
       });
     });
 
@@ -585,6 +599,7 @@ describe('StrategyManager', () => {
         beforeEach(() => {
           strategy = { onOrderErrored: vi.fn() };
           target = new StrategyManager(0, 2);
+          target.setMarketData(defaultMarketData);
           target['strategy'] = strategy as any;
           target.onOneMinuteBucket(bucket);
           target.onTimeFrameCandle(bucket);
@@ -935,6 +950,9 @@ describe('StrategyManager', () => {
           `Trailing stop of BUY ${stopId} canceled: the strategy sold on BTC/USDT (SELL ${SELL_ID} completed), closing the position the stop protected`,
         ];
 
+        // Both pairs watched: the strategy trades on each
+        beforeEach(() => manager.setMarketData(twoPairsMarketData));
+
         // Two stops on the pair, one active (without trigger) and one dormant (its trigger not reached yet), and one on another pair
         describe('once a SELL it created completes there', () => {
           let listener: Mock;
@@ -1217,6 +1235,7 @@ describe('StrategyManager', () => {
         // minute at or below the stop price, and the refusals count towards the circuit breaker, which stops the run
         it('stops the run once the SELL of a stop is refused maxConsecutiveErrors times in a row', () => {
           const target = new StrategyManager(0, 3);
+          target.setMarketData(defaultMarketData);
           const sells: AdviceOrder[] = [];
           target.on(STRATEGY_CREATE_ORDER_EVENT, (advice: AdviceOrder) => sells.push(advice));
           target.onOneMinuteBucket(bucket);
@@ -1468,6 +1487,15 @@ describe('StrategyManager', () => {
 
   describe('functions used in trader strategies', () => {
     describe('addIndicator', () => {
+      /** Registers an SMA on `symbol`, and returns what it throws */
+      const addSmaOn = (symbol: TradingPair) => {
+        try {
+          manager['addIndicator']('SMA', symbol, { period: 10 });
+        } catch (caught) {
+          return caught;
+        }
+      };
+
       it('creates the indicator of the registry with its parameters', () => {
         manager['addIndicator']('SMA', 'BTC/USDT', { period: 10 });
         expect(indicatorMocks.IndicatorMock).toHaveBeenCalledWith({ period: 10 });
@@ -1484,6 +1512,56 @@ describe('StrategyManager', () => {
 
       it('throws when indicator is unknown', () => {
         expect(() => manager['addIndicator']('UNKNOWN' as any, 'BTC/USDT', {})).toThrow(GekkoError);
+      });
+
+      it('keeps an indicator on any watched pair, not only the first', () => {
+        manager.setMarketData(twoPairsMarketData);
+        manager['addIndicator']('SMA', 'ETH/USDT', { period: 10 });
+        expect(manager['indicators']).toEqual([{ indicator: indicatorMocks.IndicatorMock.mock.instances[0], symbol: 'ETH/USDT' }]);
+      });
+
+      // An indicator on a pair that is not watched never got a candle: its results stayed null for the whole run, so a strategy waiting
+      // for them never traded, with one warning per candle that the default log level hid
+      describe.each`
+        problem                                    | symbol        | shown
+        ${'an unwatched pair'}                     | ${'ETH/USDT'} | ${quoted('ETH/USDT')}
+        ${'the watched asset in another currency'} | ${'BTC/USDC'} | ${quoted('BTC/USDC')}
+        ${'a watched pair in lower case'}          | ${'btc/usdt'} | ${quoted('btc/usdt')}
+        ${'the exchange id of a watched pair'}     | ${'BTCUSDT'}  | ${quoted('BTCUSDT')}
+        ${'no pair (an untyped strategy)'}         | ${undefined}  | ${'undefined'}
+      `('on $problem', ({ symbol, shown }) => {
+        let failure: unknown;
+
+        beforeEach(() => {
+          failure = addSmaOn(symbol);
+        });
+
+        it('refuses the indicator with a GekkoError', () => {
+          expect(failure).toBeInstanceOf(GekkoError);
+        });
+
+        it('names the indicator and its pair, and lists the watched pairs', () => {
+          expect(failure).toHaveProperty(
+            'message',
+            `[STRATEGY] Impossible to add the SMA indicator on ${symbol}: symbol must be one of the watched pairs (BTC/USDT), got ${shown}`,
+          );
+        });
+
+        it('creates no indicator', () => {
+          expect(indicatorMocks.IndicatorMock).not.toHaveBeenCalled();
+        });
+
+        it('keeps no indicator', () => {
+          expect(manager['indicators']).toEqual([]);
+        });
+      });
+
+      it('lists every watched pair when it refuses one that is not', () => {
+        manager.setMarketData(twoPairsMarketData);
+        expect(addSmaOn('ETH/BTC')).toHaveProperty(
+          'message',
+          `[STRATEGY] Impossible to add the SMA indicator on ETH/BTC: symbol must be one of the watched pairs (BTC/USDT, ETH/USDT), got ${quoted('ETH/BTC')}`,
+        );
       });
     });
 
@@ -1512,6 +1590,84 @@ describe('StrategyManager', () => {
         manager['currentTimestamp'] = 0;
         const order = { side: 'BUY', type: 'STICKY', quantity: 1, symbol: 'BTC/USDT' } as const;
         expect(() => manager['createOrder'](order)).toThrow('No candle when relaying advice');
+      });
+
+      // An order on a pair that is not watched reached the Trader: given a price, a live exchange placed it (an all-in BUY spending the
+      // currency of the watched pairs), though Gekko has no candle or balance of that pair, while the simulator refused it
+      describe('on the pair it names', () => {
+        let listener: Mock;
+
+        /** Creates `order` as the strategy does, and returns what it throws */
+        const createOn = (order: StrategyOrder) => {
+          try {
+            manager['createOrder'](order);
+          } catch (caught) {
+            return caught;
+          }
+        };
+
+        beforeEach(() => {
+          listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+        });
+
+        // The last two ask for a stop: the pair is checked first, before anything is kept
+        describe.each`
+          problem                                                | order                                                                                | shown
+          ${'a priced LIMIT BUY on an unwatched pair'}           | ${{ symbol: 'ETH/USDT', side: 'BUY', type: 'LIMIT', price: 3000 }}                   | ${quoted('ETH/USDT')}
+          ${'a SELL of the watched asset in another currency'}   | ${{ symbol: 'BTC/USDC', side: 'SELL', type: 'MARKET', amount: 1 }}                   | ${quoted('BTC/USDC')}
+          ${'a STICKY BUY on the exchange id of a watched pair'} | ${{ symbol: 'BTCUSDT', side: 'BUY', type: 'STICKY' }}                                | ${quoted('BTCUSDT')}
+          ${'a BUY without a pair (an untyped strategy)'}        | ${{ side: 'BUY', type: 'MARKET' }}                                                   | ${'undefined'}
+          ${'a BUY with a stop on a watched pair in lower case'} | ${{ symbol: 'btc/usdt', side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } }}  | ${quoted('btc/usdt')}
+          ${'a SELL with a stop on an unwatched pair'}           | ${{ symbol: 'ETH/USDT', side: 'SELL', type: 'MARKET', trailing: { percentage: 2 } }} | ${quoted('ETH/USDT')}
+        `('when the strategy creates $problem', ({ order, shown }) => {
+          let failure: unknown;
+
+          beforeEach(() => {
+            failure = createOn(order);
+          });
+
+          it('refuses the order with a GekkoError', () => {
+            expect(failure).toBeInstanceOf(GekkoError);
+          });
+
+          it('names the order and its pair, and lists the watched pairs', () => {
+            expect(failure).toHaveProperty(
+              'message',
+              `[STRATEGY] Impossible to create the ${order.side} ${order.type} order on ${order.symbol}: symbol must be one of the watched pairs (BTC/USDT), got ${shown}`,
+            );
+          });
+
+          it('relays no order', () => {
+            expect(listener).not.toHaveBeenCalled();
+          });
+
+          it('keeps no trailing stop', () => {
+            expect(manager['pendingTrailingStops'].size).toBe(0);
+          });
+        });
+
+        it('lists every watched pair when it refuses one that is not', () => {
+          manager.setMarketData(twoPairsMarketData);
+          expect(createOn({ symbol: 'ETH/BTC', side: 'BUY', type: 'MARKET' })).toHaveProperty(
+            'message',
+            `[STRATEGY] Impossible to create the BUY MARKET order on ETH/BTC: symbol must be one of the watched pairs (BTC/USDT, ETH/USDT), got ${quoted('ETH/BTC')}`,
+          );
+        });
+
+        it('relays an order on any watched pair, not only the first', () => {
+          manager.setMarketData(twoPairsMarketData);
+          createOn({ symbol: 'ETH/USDT', side: 'BUY', type: 'LIMIT', amount: 1, price: 3000 });
+          expect(listener).toHaveBeenCalledExactlyOnceWith({
+            symbol: 'ETH/USDT',
+            side: 'BUY',
+            type: 'LIMIT',
+            amount: 1,
+            price: 3000,
+            id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
+            orderCreationDate: candle.start + ONE_MINUTE,
+          });
+        });
       });
 
       // The stop of a BUY was only checked once the BUY had completed: an invalid one was refused then, with a warning, and the position
@@ -1631,6 +1787,7 @@ describe('StrategyManager', () => {
 
       const createTarget = (warmupPeriod: number) => {
         target = new StrategyManager(warmupPeriod);
+        target.setMarketData(defaultMarketData);
         target['strategy'] = strategy as any;
         target.on(STRATEGY_CREATE_ORDER_EVENT, listener);
       };
