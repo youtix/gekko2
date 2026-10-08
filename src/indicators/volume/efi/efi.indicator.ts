@@ -1,20 +1,9 @@
-import { MOVING_AVERAGE_TYPES } from '@indicators/indicator.const';
-import { MovingAverageClasses } from '@indicators/indicator.types';
+import type { MovingAverageClasses } from '@indicators/indicator.types';
 import { checkInputSource, checkInteger, checkOneOf, getInputSource } from '@indicators/indicator.utils';
-import { DEMA } from '@indicators/movingAverages/dema/dema.indicator';
-import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
-import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
-import { WMA } from '@indicators/movingAverages/wma/wma.indicator';
+import { MOVING_AVERAGE_TYPES, MOVING_AVERAGES } from '@indicators/movingAverages/movingAverages.const';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 import { Indicator } from '../../indicator';
-
-const MOVING_AVERAGES = {
-  sma: SMA,
-  ema: EMA,
-  dema: DEMA,
-  wma: WMA,
-} as const;
 
 /** Elder's force index: the change of the src price times the volume (fi), and its maType moving average over period (smoothed) */
 export class EFI extends Indicator<'EFI'> {

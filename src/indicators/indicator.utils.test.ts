@@ -1,7 +1,7 @@
 import { GekkoError } from '@errors/gekko.error';
 import { describe, expect, it } from 'vitest';
-import { MOVING_AVERAGE_TYPES } from './indicator.const';
 import { checkAtMost, checkBelow, checkInputSource, checkInteger, checkNumber, checkOneOf, getInputSource } from './indicator.utils';
+import { MOVING_AVERAGE_TYPES } from './movingAverages/movingAverages.const';
 
 describe('getInputSource', () => {
   // Seven different prices, so that a source read from the wrong field cannot pass

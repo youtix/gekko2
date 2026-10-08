@@ -10,6 +10,3 @@ export const INPUT_SOURCES = {
   hlc3,
   ohlc4,
 } as const;
-
-/** The moving averages an indicator can smooth with, named by its maType parameter */
-export const MOVING_AVERAGE_TYPES = ['sma', 'ema', 'dema', 'wma'] as const;

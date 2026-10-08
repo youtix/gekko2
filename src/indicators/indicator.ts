@@ -1,5 +1,5 @@
 import { Candle } from '@models/candle.types';
-import { IndicatorNames } from './indicator.types';
+import type { IndicatorNames } from './indicator.types';
 
 /**
  * The result is null until the indicator has seen enough candles, then always a complete value of its output type: a number, or an

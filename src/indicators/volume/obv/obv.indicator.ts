@@ -1,5 +1,5 @@
-import { MOVING_AVERAGE_TYPES } from '@indicators/indicator.const';
 import { checkInteger, checkNumber, checkOneOf } from '@indicators/indicator.utils';
+import { MOVING_AVERAGE_TYPES } from '@indicators/movingAverages/movingAverages.const';
 import { BollingerBands } from '@indicators/volatility/bollingerBands/bollingerBands.indicator';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';

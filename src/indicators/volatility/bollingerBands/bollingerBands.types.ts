@@ -1,4 +1,4 @@
-import { MovingAverageTypes } from '@indicators/indicator.types';
+import type { MovingAverageTypes } from '@indicators/indicator.types';
 
 declare global {
   interface IndicatorRegistry {

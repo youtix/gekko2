@@ -1,22 +1,11 @@
 import { Indicator } from '@indicators/indicator';
-import { MOVING_AVERAGE_TYPES } from '@indicators/indicator.const';
-import { MovingAverageClasses } from '@indicators/indicator.types';
+import type { MovingAverageClasses } from '@indicators/indicator.types';
 import { checkInteger, checkNumber, checkOneOf } from '@indicators/indicator.utils';
-import { DEMA } from '@indicators/movingAverages/dema/dema.indicator';
-import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
-import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
-import { WMA } from '@indicators/movingAverages/wma/wma.indicator';
+import { MOVING_AVERAGE_TYPES, MOVING_AVERAGES } from '@indicators/movingAverages/movingAverages.const';
 import { Candle } from '@models/candle.types';
 import { RingBuffer } from '@utils/collection/ringBuffer';
 import { compareWithTolerance, stdev } from '@utils/math/math.utils';
 import { isNil } from 'lodash-es';
-
-const MOVING_AVERAGES = {
-  sma: SMA,
-  ema: EMA,
-  dema: DEMA,
-  wma: WMA,
-} as const;
 
 /**
  * TA-Lib's BBANDS: a middle band, the maType average of the close over period, and an upper and a lower band stdevUp and stdevDown

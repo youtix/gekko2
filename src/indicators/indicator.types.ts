@@ -1,10 +1,8 @@
-import { MOVING_AVERAGE_TYPES } from './indicator.const';
-import { DEMA } from './movingAverages/dema/dema.indicator';
-import { EMA } from './movingAverages/ema/ema.indicator';
-import { SMA } from './movingAverages/sma/sma.indicator';
-import { WMA } from './movingAverages/wma/wma.indicator';
+// Type imports, here and in indicator.ts that imports this file: the map's file loads the moving averages, which extend Indicator, so
+// a value import would close a cycle
+import type { MOVING_AVERAGES } from './movingAverages/movingAverages.const';
 
 export type IndicatorNames = keyof IndicatorRegistry;
 export type IndicatorParamaters<T extends IndicatorNames> = IndicatorRegistry[T]['input'];
-export type MovingAverageClasses = SMA | EMA | DEMA | WMA;
-export type MovingAverageTypes = (typeof MOVING_AVERAGE_TYPES)[number];
+export type MovingAverageClasses = InstanceType<(typeof MOVING_AVERAGES)[MovingAverageTypes]>;
+export type MovingAverageTypes = keyof typeof MOVING_AVERAGES;

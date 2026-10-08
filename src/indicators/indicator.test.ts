@@ -327,3 +327,51 @@ describe('Indicator parameters', () => {
     expect(series(create(name, {}))).toEqual(series(create(name, defaults)));
   });
 });
+
+// Each name a maType key takes stands for the moving average of that name. BollingerBands, EFI and Stochastic used to map the names to
+// the classes in a copy each, where a wrong class compiled unnoticed: each of their keys is checked here against that class, by name
+describe.each`
+  maType    | average
+  ${'sma'}  | ${'SMA'}
+  ${'ema'}  | ${'EMA'}
+  ${'dema'} | ${'DEMA'}
+  ${'wma'}  | ${'WMA'}
+`('Indicator maType $maType', ({ maType, average }) => {
+  /** What an indicator gets back from the average it feeds a value on each candle, null where it feeds none */
+  const smooth = (name: string, period: number, values: (number | null)[]) => {
+    const smoother = create(name, { period });
+    return values.map((value, index) => {
+      if (value === null) return null;
+      smoother.onNewCandle({ ...candles[index], close: value });
+      return smoother.getResult() as number | null;
+    });
+  };
+  // What they feed their averages: the close, the force from the second candle, and the raw %K of the last 3 candles from the third,
+  // which a flat range never makes 0 here since the zigzag has none
+  const closes = candles.map(({ close }) => close);
+  const forces = candles.map((candle, index) => (index === 0 ? null : (candle.close - candles[index - 1].close) * candle.volume));
+  const rawKs = candles.map((candle, index) => {
+    if (index < 2) return null;
+    const window = candles.slice(index - 2, index + 1);
+    const lowest = Math.min(...window.map(({ low }) => low));
+    const highest = Math.max(...window.map(({ high }) => high));
+    return ((candle.close - lowest) / (highest - lowest)) * 100;
+  });
+  /** Stochastic's k and d with 3-candle averages of these classes, published together once d is ready */
+  const stochastic = (kAverage: string, dAverage: string) => {
+    const ks = smooth(kAverage, 3, rawKs);
+    const ds = smooth(dAverage, 3, ks);
+    return { k: ks.map((k, index) => (ds[index] === null ? null : k)), d: ds };
+  };
+
+  it.each`
+    name                | key              | parameters                                            | field         | expected
+    ${'BollingerBands'} | ${'maType'}      | ${{ period: 5 }}                                      | ${'middle'}   | ${() => smooth(average, 5, closes)}
+    ${'EFI'}            | ${'maType'}      | ${{ period: 5 }}                                      | ${'smoothed'} | ${() => smooth(average, 5, forces)}
+    ${'Stochastic'}     | ${'slowKMaType'} | ${{ fastKPeriod: 3, slowKPeriod: 3, slowDPeriod: 3 }} | ${'k'}        | ${() => stochastic(average, 'SMA').k}
+    ${'Stochastic'}     | ${'slowDMaType'} | ${{ fastKPeriod: 3, slowKPeriod: 3, slowDPeriod: 3 }} | ${'d'}        | ${() => stochastic('SMA', average).d}
+  `('should smooth the $field of $name with the class its $key names', ({ name, key, parameters, field, expected }) => {
+    const indicator = create(name, { ...parameters, [key]: maType });
+    expect(series(indicator).map(result => (result === null ? null : (result as Record<string, number>)[field]))).toEqual(expected());
+  });
+});

@@ -1,6 +1,6 @@
 import { Indicator } from '@indicators/indicator';
-import { MOVING_AVERAGE_TYPES } from '@indicators/indicator.const';
 import { checkInteger, checkOneOf } from '@indicators/indicator.utils';
+import { MOVING_AVERAGE_TYPES } from '@indicators/movingAverages/movingAverages.const';
 import { RSI } from '@indicators/oscillators/rsi/rsi.indicator';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';

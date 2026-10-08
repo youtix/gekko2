@@ -1,4 +1,4 @@
-import { MovingAverageTypes } from '@indicators/indicator.types';
+import type { MovingAverageTypes } from '@indicators/indicator.types';
 import { InputSources } from '@models/inputSources.types';
 
 declare global {
