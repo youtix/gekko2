@@ -15,10 +15,11 @@ import { first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
 import { binanceExchangeSchema } from './binance/binance.schema';
 import { LIMITS, MAX_MY_TRADES_PAGES, PARAMS } from './exchange.const';
-import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback, Ticker } from './exchange.types';
+import { Exchange, FetchOHLCVParams, MarketData, OpenOrder, OrderSettledCallback, Ticker } from './exchange.types';
 import {
   checkMandatoryFeatures,
   createExchange,
+  mapCcxtOrderToOpenOrder,
   mapCcxtOrderToOrder,
   mapCcxtTradeToTrade,
   mapOhlcvToCandles,
@@ -42,8 +43,8 @@ const getTradeKey = ({ id, order, timestamp, side, price, amount }: CCXTTrade) =
 /**
  * A real exchange reached through ccxt. Every call goes through one of two wrappers of exchange.utils, which both translate the
  * ccxt errors into Gekko's:
- * - The reads (fetchTicker(s), fetchOHLCV, fetchMyTrades, fetchOrder, fetchBalance) go through retry, which sends them again after
- *   a ccxt NetworkError: they are idempotent.
+ * - The reads (fetchTicker(s), fetchOHLCV, fetchMyTrades, fetchOrder, fetchOpenOrders, fetchBalance) go through retry, which sends
+ *   them again after a ccxt NetworkError: they are idempotent.
  * - The writes (createLimitOrder, createMarketOrder, cancelOrder) go through translateErrors: sent once, never replayed. A
  *   NetworkError (timeout, 5xx, Binance -1007 "execution status unknown") is precisely the case where the exchange may have
  *   processed the request and only its response was lost. ccxt signs each call anew, with a new client order id (Binance) or
@@ -230,6 +231,20 @@ export class CCXTExchange implements Exchange {
     return retry<OrderState>(async () => {
       const order = await this.privateClient.fetchOrder(id, symbol);
       return mapCcxtOrderToOrder(order);
+    });
+  }
+
+  /**
+   * The orders open on the symbol, whoever placed them, oldest first as ccxt sorts them, each mapped by mapCcxtOrderToOpenOrder. The
+   * private client asks: Binance signs the request (GET /api/v3/openOrders, for the symbol), and Hyperliquid, whose open orders anyone
+   * may read, is told whose by the wallet address, which only that client has. ccxt 4.5.39 reads Hyperliquid's open orders on every
+   * market of the account at once (frontendOpenOrders, which gives their types) and keeps those of the market of the symbol, the one a
+   * symbol written with the name of a wrapped spot token resolves to (UBTC/USDC to BTC/USDC).
+   */
+  public async fetchOpenOrders(symbol: TradingPair) {
+    return retry<OpenOrder[]>(async () => {
+      const orders = await this.privateClient.fetchOpenOrders(symbol);
+      return orders.map(order => mapCcxtOrderToOpenOrder(order));
     });
   }
 

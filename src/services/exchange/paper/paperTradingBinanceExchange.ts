@@ -7,7 +7,7 @@ import { config } from '@services/configuration/configuration';
 import { info } from '@services/logger';
 import { CCXTExchange } from '../ccxtExchange';
 import { DummyCentralizedExchange } from '../dummy/dummyCentralizedExchange';
-import { DummyExchange, Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from '../exchange.types';
+import { DummyExchange, Exchange, FetchOHLCVParams, MarketData, OpenOrder, OrderSettledCallback } from '../exchange.types';
 import { PaperTradingBinanceExchangeConfig } from './paperTradingBinanceExchange.types';
 
 /**
@@ -131,6 +131,11 @@ export class PaperTradingBinanceExchange implements Exchange, DummyExchange {
 
   public async fetchMyTrades(symbol: TradingPair, from?: EpochTimeStamp): Promise<Trade[]> {
     return this.simulatedExchange.fetchMyTrades(symbol, from);
+  }
+
+  /** The simulated orders open on the pair, not Binance's: a paper session starts with none, its simulator being new */
+  public async fetchOpenOrders(symbol: TradingPair): Promise<OpenOrder[]> {
+    return this.simulatedExchange.fetchOpenOrders(symbol);
   }
 
   /* -------------------------------------------------------------------------- */

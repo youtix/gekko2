@@ -8,7 +8,7 @@ import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { DUMMY_CANDLE_BUFFER_SIZE, DUMMY_CANDLE_BUFFER_TRIM_MARGIN, LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
-import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback, Ticker } from '@services/exchange/exchange.types';
+import { Exchange, FetchOHLCVParams, MarketData, OpenOrder, OrderSettledCallback, Ticker } from '@services/exchange/exchange.types';
 import { assertOrderWithinLimits, getMarketOrderLimits } from '@utils/market/market.utils';
 import { clonePortfolio, initializePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
@@ -269,6 +269,19 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
+  /**
+   * The book of the pair, the limit orders neither filled nor canceled: the BUYs from the highest price down, then the SELLs from the
+   * lowest price up. A market order fills at once and is never open, and an order fills in full or not at all, so an open order has
+   * filled nothing yet. The books start empty: a backtest, or a paper session, has no open order until it places its own.
+   */
+  public async fetchOpenOrders(symbol: TradingPair): Promise<OpenOrder[]> {
+    return this.mutex.runExclusive(() => {
+      const orderBook = this.orderBooks.get(symbol);
+      if (!orderBook) return [];
+      return [...orderBook.BUY, ...orderBook.SELL].map(order => this.toOpenOrder(order));
+    });
+  }
+
   public getMarketData(symbol: TradingPair): MarketData {
     return this.marketData.get(symbol) ?? {};
   }
@@ -450,6 +463,12 @@ export class DummyCentralizedExchange implements Exchange {
   private cloneOrder(order: DummyInternalOrder): OrderState {
     const { id, status, filled, remaining, price, timestamp } = order;
     return { id, status, filled, remaining, price, timestamp };
+  }
+
+  /** An order of a book as fetchOpenOrders lists it: a limit order, whose fill and remaining amount createLimitOrder sets */
+  private toOpenOrder(order: DummyInternalOrder): OpenOrder {
+    const { id, side, type, price, amount, timestamp } = order;
+    return { id, side, type, price, amount, filled: order.filled ?? 0, remaining: order.remaining ?? amount, timestamp };
   }
 
   /**

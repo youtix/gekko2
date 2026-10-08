@@ -5,7 +5,7 @@ import { OrderSide } from '@models/order.types';
 import { TradingPair } from '@models/utility.types';
 import { DUMMY_CANDLE_BUFFER_SIZE, DUMMY_CANDLE_BUFFER_TRIM_MARGIN, LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder } from '@services/exchange/exchange.error';
-import { MarketData } from '@services/exchange/exchange.types';
+import { MarketData, OpenOrder } from '@services/exchange/exchange.types';
 import { map, omit, range } from 'lodash-es';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DummyCentralizedExchange } from './dummyCentralizedExchange';
@@ -489,6 +489,107 @@ describe('DummyCentralizedExchange', () => {
 
     it('throws when order not found', async () => {
       await expect(createExchange().fetchOrder(SYMBOL, 'invalid-id')).rejects.toThrow('Unknown order');
+    });
+  });
+
+  // The orders open on a pair are those of its book: a backtest, or a paper session, starts with none
+  describe('fetchOpenOrders', () => {
+    /** An exchange whose clock is at now: it has processed the candle of the last minute (low 90, high 110, close 100) */
+    const createStartedExchange = async (overrides: Partial<DummyCentralizedExchangeConfig> = {}) => {
+      const exchange = createExchange(overrides);
+      await exchange.processOneMinuteBucket(createBucket(Date.now() - 60_000));
+      return exchange;
+    };
+    const cancel = (exchange: DummyCentralizedExchange, id: string) => exchange.cancelOrder(SYMBOL, id);
+    // The default candle (low 90, high 110) reaches both prices it is used with
+    const fill = (exchange: DummyCentralizedExchange) => exchange.processOneMinuteBucket(createBucket(Date.now()));
+    const describeOrders = (orders: OpenOrder[]) => orders.map(({ side, price }) => `${side} ${price}`);
+
+    it('lists no order on an exchange that has placed none', async () => {
+      expect(await createExchange().fetchOpenOrders(SYMBOL)).toEqual([]);
+    });
+
+    it('lists a BUY and a SELL limit order, each with its whole amount left', async () => {
+      const exchange = await createStartedExchange();
+      const buy = await exchange.createLimitOrder(SYMBOL, 'BUY', 2, 95);
+      const sell = await exchange.createLimitOrder(SYMBOL, 'SELL', 1.5, 105);
+      expect(await exchange.fetchOpenOrders(SYMBOL)).toEqual([
+        { id: buy.id, side: 'BUY', type: 'LIMIT', price: 95, amount: 2, filled: 0, remaining: 2, timestamp: Date.now() },
+        { id: sell.id, side: 'SELL', type: 'LIMIT', price: 105, amount: 1.5, filled: 0, remaining: 1.5, timestamp: Date.now() },
+      ]);
+    });
+
+    // An order fills in full or not at all: one a candle did not reach is listed as it was placed, dated when it was placed
+    it('lists the order a candle did not reach with its whole amount left, and not the one it filled', async () => {
+      const exchange = await createStartedExchange();
+      await exchange.createLimitOrder(SYMBOL, 'BUY', 1, 95);
+      const { id } = await exchange.createLimitOrder(SYMBOL, 'BUY', 2, 80);
+      await fill(exchange);
+      expect(await exchange.fetchOpenOrders(SYMBOL)).toEqual([
+        { id, side: 'BUY', type: 'LIMIT', price: 80, amount: 2, filled: 0, remaining: 2, timestamp: Date.now() },
+      ]);
+    });
+
+    it.each`
+      side      | price  | settlement    | settle
+      ${'BUY'}  | ${95}  | ${'filled'}   | ${fill}
+      ${'SELL'} | ${105} | ${'filled'}   | ${fill}
+      ${'BUY'}  | ${95}  | ${'canceled'} | ${cancel}
+      ${'SELL'} | ${105} | ${'canceled'} | ${cancel}
+    `('does not list a $side limit order at $price once $settlement', async ({ side, price, settle }) => {
+      const exchange = await createStartedExchange();
+      const { id } = await exchange.createLimitOrder(SYMBOL, side, 1, price);
+      await settle(exchange, id);
+      expect(await exchange.fetchOpenOrders(SYMBOL)).toEqual([]);
+    });
+
+    it.each`
+      side
+      ${'BUY'}
+      ${'SELL'}
+    `('does not list a market $side order, which fills at once', async ({ side }) => {
+      const exchange = await createStartedExchange();
+      await exchange.createMarketOrder(SYMBOL, side, 1);
+      expect(await exchange.fetchOpenOrders(SYMBOL)).toEqual([]);
+    });
+
+    it('lists the BUYs from the highest price down, then the SELLs from the lowest price up', async () => {
+      const exchange = await createStartedExchange();
+      for (const [side, price] of [
+        ['SELL', 115],
+        ['BUY', 85],
+        ['SELL', 105],
+        ['BUY', 95],
+      ] as const)
+        await exchange.createLimitOrder(SYMBOL, side, 1, price);
+      expect(describeOrders(await exchange.fetchOpenOrders(SYMBOL))).toEqual(['BUY 95', 'BUY 85', 'SELL 105', 'SELL 115']);
+    });
+
+    // A BUY at 80 on BTC/USDT and a SELL at 30 on ETH/USDT. DOGE/USDT is not watched: it has no book.
+    it.each`
+      symbol         | expected
+      ${SYMBOL}      | ${['BUY 80']}
+      ${ETH_SYMBOL}  | ${['SELL 30']}
+      ${'DOGE/USDT'} | ${[]}
+    `('lists the orders of $symbol only: $expected', async ({ symbol, expected }) => {
+      const simulationBalance = new Map([
+        ['BTC', 10],
+        ['ETH', 10],
+        ['USDT', 50_000],
+      ]);
+      const exchange = createExchange({ simulationBalance });
+      await exchange.createLimitOrder(SYMBOL, 'BUY', 1, 80);
+      await exchange.createLimitOrder(ETH_SYMBOL, 'SELL', 1, 30);
+      expect(describeOrders(await exchange.fetchOpenOrders(symbol))).toEqual(expected);
+    });
+
+    it('returns copies: changing an order listed changes neither the book nor the next list', async () => {
+      const exchange = await createStartedExchange();
+      await exchange.createLimitOrder(SYMBOL, 'BUY', 2, 95);
+      const [listed] = await exchange.fetchOpenOrders(SYMBOL);
+      listed.remaining = 0;
+      const [again] = await exchange.fetchOpenOrders(SYMBOL);
+      expect(again.remaining).toBe(2);
     });
   });
 

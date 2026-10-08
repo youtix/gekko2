@@ -1,17 +1,18 @@
 import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
-import { OrderState } from '@models/order.types';
+import { OrderSide, OrderState } from '@models/order.types';
 import { Trade } from '@models/trade.types';
 import { debug, error, warning } from '@services/logger';
 import { getRetryDelay } from '@utils/fetch/fetch.utils';
 import { wait } from '@utils/process/process.utils';
 import ccxt, { Order as CCXTOrder, Trade as CCXTTrade, ConstructorArgs, Exchange, MarketInterface, OHLCV } from 'ccxt';
 import { HttpsProxyAgent } from 'https-proxy-agent';
+import { inspect } from 'node:util';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { CCXTExchangeConfig } from './ccxtExchange';
 import { BROKER_MANDATORY_FEATURES, BROKER_MAX_RETRIES_ON_FAILURE } from './exchange.const';
 import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from './exchange.error';
-import { DummyExchange } from './exchange.types';
+import { DummyExchange, OpenOrder, OpenOrderType } from './exchange.types';
 
 const selectAgent = (proxy: string) => {
   if (proxy.startsWith('socks')) {
@@ -181,6 +182,10 @@ const getFill = ({ amount, filled, remaining }: CCXTOrder): Pick<OrderState, 'fi
   };
 };
 
+/** The timestamp of a ccxt order, or, when ccxt leaves it undefined, the last update of the order, then now (see mapCcxtOrderToOrder) */
+const getOrderTimestamp = ({ timestamp, lastUpdateTimestamp }: CCXTOrder): EpochTimeStamp =>
+  [timestamp, lastUpdateTimestamp].find(isFiniteNumber) ?? Date.now();
+
 /**
  * Maps a ccxt order onto the state of a Gekko order, its fill and remaining amount completed by getFill. Its timestamp is never left
  * undefined, as ccxt 4.5.39 leaves it when the exchange gives none: createOrderSummary fetches the trades of the order from it
@@ -194,8 +199,61 @@ export const mapCcxtOrderToOrder = (order: CCXTOrder): OrderState => ({
   status: processStatus(order.status),
   ...getFill(order),
   price: order.price,
-  timestamp: [order.timestamp, order.lastUpdateTimestamp].find(isFiniteNumber) ?? Date.now(),
+  timestamp: getOrderTimestamp(order),
 });
+
+/** The side of a ccxt order, which ccxt writes in lower case, or undefined when it is neither a buy nor a sell */
+const getOrderSide = ({ side }: CCXTOrder): OrderSide | undefined => {
+  const upperCaseSide = side?.toUpperCase();
+  return upperCaseSide === 'BUY' || upperCaseSide === 'SELL' ? upperCaseSide : undefined;
+};
+
+/**
+ * The type of a ccxt order listed as open (see OpenOrderType). ccxt 4.5.39 writes the types it unifies in lower case, limit and
+ * market, and leaves the others as the exchange wrote them (Binance's stop_loss_limit, Hyperliquid's take profit market). It gives a
+ * conditional order the type it executes with once triggered, Hyperliquid's stop limit and Binance's take_profit as limit, along with
+ * its trigger price: an order with a trigger price is OTHER whatever its type, waiting off the book until the price reaches it.
+ */
+const getOpenOrderType = ({ type, triggerPrice }: CCXTOrder): OpenOrderType => {
+  if (isFiniteNumber(triggerPrice) && triggerPrice > 0) return 'OTHER';
+  const lowerCaseType = type?.toLowerCase();
+  if (lowerCaseType === 'limit') return 'LIMIT';
+  if (lowerCaseType === 'market') return 'MARKET';
+  return 'OTHER';
+};
+
+/**
+ * Maps a ccxt order the exchange lists as open onto an OpenOrder: its side and its type in Gekko's terms, its fill and remaining
+ * amount completed by getFill, its timestamp as mapCcxtOrderToOrder dates an order, and its price left undefined when ccxt gives none
+ * (a stop-loss executed at the market). An order whose side is neither buy nor sell, or whose amount, fill or remaining amount stays
+ * unknown, is refused with a GekkoError naming it: listed with made-up values, or left out, an order holding funds on the exchange
+ * would go unseen by whoever reads the list to know what is open there.
+ */
+export const mapCcxtOrderToOpenOrder = (order: CCXTOrder): OpenOrder => {
+  const { id, symbol, amount, price } = order;
+  const side = getOrderSide(order);
+  const { filled, remaining } = getFill(order);
+  const refuse = (problem: string) =>
+    new GekkoError(
+      'exchange',
+      `Open order ${id} on ${symbol} has ${problem}: the open orders of ${symbol} cannot be listed, check it on the exchange`,
+    );
+  if (!side) throw refuse(`no side Gekko knows (${inspect(order.side)})`);
+  if (!isFiniteNumber(amount) || !isFiniteNumber(filled) || !isFiniteNumber(remaining)) {
+    const given = `amount ${inspect(amount)}, filled ${inspect(order.filled)}, remaining ${inspect(order.remaining)}`;
+    throw refuse(`no known amount (${given})`);
+  }
+  return {
+    id,
+    side,
+    type: getOpenOrderType(order),
+    price: isFiniteNumber(price) ? price : undefined,
+    amount,
+    filled,
+    remaining,
+    timestamp: getOrderTimestamp(order),
+  };
+};
 
 export const mapOhlcvToCandles = (ohlcvList: OHLCV[]): Candle[] =>
   ohlcvList.map(ohlcv => ({

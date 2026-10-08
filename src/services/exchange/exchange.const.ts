@@ -38,6 +38,7 @@ export const BROKER_MANDATORY_FEATURES = [
   'fetchBalance',
   'fetchMyTrades',
   'fetchOHLCV',
+  'fetchOpenOrders',
   'fetchOrder',
   'fetchTicker',
   'fetchTickers',

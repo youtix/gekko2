@@ -3,7 +3,7 @@ import { config } from '@services/configuration/configuration';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { CCXTExchange } from '../ccxtExchange';
 import { DummyCentralizedExchange } from '../dummy/dummyCentralizedExchange';
-import { MarketData } from '../exchange.types';
+import { MarketData, OpenOrder } from '../exchange.types';
 import { PaperTradingBinanceExchange } from './paperTradingBinanceExchange';
 
 vi.mock('@services/configuration/configuration', () => ({
@@ -18,6 +18,7 @@ vi.mock('../ccxtExchange', () => {
   MockCCXT.prototype.fetchOHLCV = vi.fn().mockResolvedValue([]);
   MockCCXT.prototype.fetchTickers = vi.fn();
   MockCCXT.prototype.getMarketData = vi.fn();
+  MockCCXT.prototype.fetchOpenOrders = vi.fn();
   MockCCXT.prototype.onNewCandle = vi.fn().mockReturnValue(() => {});
   return { CCXTExchange: MockCCXT };
 });
@@ -30,6 +31,7 @@ vi.mock('../dummy/dummyCentralizedExchange', () => {
   MockDummy.prototype.cancelOrder = vi.fn().mockResolvedValue({ id: 'order-1', status: 'canceled' });
   MockDummy.prototype.fetchOrder = vi.fn().mockResolvedValue({ id: 'order-1', status: 'open' });
   MockDummy.prototype.fetchMyTrades = vi.fn().mockResolvedValue([]);
+  MockDummy.prototype.fetchOpenOrders = vi.fn();
   MockDummy.prototype.processOneMinuteBucket = vi.fn().mockResolvedValue(undefined);
   return { DummyCentralizedExchange: MockDummy };
 });
@@ -219,6 +221,25 @@ describe('PaperTradingBinanceExchange', () => {
     it('fetchMyTrades delegates to simulated exchange', async () => {
       await exchange.fetchMyTrades('BTC/USDT', 1000);
       expect(DummyCentralizedExchange.prototype.fetchMyTrades).toHaveBeenCalledWith('BTC/USDT', 1000);
+    });
+
+    it('fetchOpenOrders delegates to simulated exchange', async () => {
+      await exchange.fetchOpenOrders('BTC/USDT');
+      expect(DummyCentralizedExchange.prototype.fetchOpenOrders).toHaveBeenCalledWith('BTC/USDT');
+    });
+
+    it('fetchOpenOrders returns the open orders of the simulated exchange', async () => {
+      const openOrders: OpenOrder[] = [
+        { id: 'limit-order-1', side: 'BUY', type: 'LIMIT', price: 95, amount: 2, filled: 0, remaining: 2, timestamp: 1000 },
+      ];
+      vi.mocked(DummyCentralizedExchange.prototype.fetchOpenOrders).mockResolvedValue(openOrders);
+      expect(await exchange.fetchOpenOrders('BTC/USDT')).toBe(openOrders);
+    });
+
+    // A paper session has no Binance account: what is open on Binance is no order of its own
+    it('fetchOpenOrders does not read the open orders of Binance', async () => {
+      await exchange.fetchOpenOrders('BTC/USDT');
+      expect(CCXTExchange.prototype.fetchOpenOrders).not.toHaveBeenCalled();
     });
 
     it('processOneMinuteBucket delegates to simulated exchange', async () => {

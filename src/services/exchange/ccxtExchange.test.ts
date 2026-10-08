@@ -41,6 +41,7 @@ vi.mock('ccxt', async importOriginal => {
     fetchTicker: true,
     fetchMyTrades: true,
     fetchOrder: true,
+    fetchOpenOrders: true,
     fetchBalance: true,
     createOrder: true,
     createLimitOrder: true,
@@ -60,6 +61,7 @@ vi.mock('ccxt', async importOriginal => {
   MockExchange.prototype.fetchOHLCV = vi.fn();
   MockExchange.prototype.fetchMyTrades = vi.fn();
   MockExchange.prototype.fetchOrder = vi.fn();
+  MockExchange.prototype.fetchOpenOrders = vi.fn();
   MockExchange.prototype.fetchBalance = vi.fn();
   MockExchange.prototype.createOrder = vi.fn();
   MockExchange.prototype.cancelOrder = vi.fn();
@@ -500,6 +502,108 @@ describe('CCXTExchange', () => {
       (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
       expect(await exchange.fetchOrder('BTC/USDT', '1')).toEqual({ id: '1' });
       expect(instance.fetchOrder).toHaveBeenCalledWith('1', 'BTC/USDT');
+    });
+  });
+
+  describe('fetchOpenOrders', () => {
+    // As ccxt 4.5.39 parses the open orders of Binance (GET /api/v3/openOrders): a limit BUY of 2 at 95 with 0.5 filled, and a
+    // stop_loss_limit SELL waiting for its trigger price
+    const limitBuy = {
+      id: '28457',
+      symbol: 'BTC/USDT',
+      status: 'open',
+      type: 'limit',
+      side: 'buy',
+      price: 95,
+      amount: 2,
+      filled: 0.5,
+      remaining: 1.5,
+      timestamp: 1704346468838,
+    };
+    const stopLossLimitSell = {
+      id: '28458',
+      symbol: 'BTC/USDT',
+      status: 'open',
+      type: 'stop_loss_limit',
+      side: 'sell',
+      price: 89.5,
+      triggerPrice: 90,
+      amount: 1,
+      filled: 0,
+      remaining: 1,
+      timestamp: 1704346470000,
+    };
+    let exchange: CCXTExchange;
+
+    // Hyperliquid's open orders are public, but only the private client has the wallet address that tells whose to read
+    describe.each`
+      exchangeName     | exchangeConfig       | symbol
+      ${'binance'}     | ${binanceConfig}     | ${'BTC/USDT'}
+      ${'hyperliquid'} | ${hyperliquidConfig} | ${'UBTC/USDC'}
+    `('on $exchangeName', ({ exchangeConfig, symbol }) => {
+      let publicInstance: any;
+      let privateInstance: any;
+
+      beforeEach(() => {
+        exchange = new CCXTExchange(exchangeConfig);
+        // Spies of each client's own: the mocked ccxt shares those of its prototype between instances
+        [publicInstance, privateInstance] = (ccxt as any)[exchangeConfig.name].mock.instances.slice(-2);
+        publicInstance.fetchOpenOrders = vi.fn(async () => []);
+        privateInstance.fetchOpenOrders = vi.fn(async () => []);
+      });
+
+      it('asks the private client for the open orders of the symbol', async () => {
+        await exchange.fetchOpenOrders(symbol);
+        expect(privateInstance.fetchOpenOrders).toHaveBeenCalledExactlyOnceWith(symbol);
+      });
+
+      it('does not ask the public client', async () => {
+        await exchange.fetchOpenOrders(symbol);
+        expect(publicInstance.fetchOpenOrders).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('on binance', () => {
+      let instance: any;
+
+      beforeEach(() => {
+        exchange = new CCXTExchange(binanceConfig);
+        instance = (ccxt as any).binance.mock.instances.at(-1);
+      });
+
+      it('returns no order when the exchange lists none', async () => {
+        instance.fetchOpenOrders.mockResolvedValue([]);
+        expect(await exchange.fetchOpenOrders('BTC/USDT')).toEqual([]);
+      });
+
+      it('returns each order the exchange lists, in its order, mapped', async () => {
+        instance.fetchOpenOrders.mockResolvedValue([limitBuy, stopLossLimitSell]);
+        expect(await exchange.fetchOpenOrders('BTC/USDT')).toEqual([
+          { id: '28457', side: 'BUY', type: 'LIMIT', price: 95, amount: 2, filled: 0.5, remaining: 1.5, timestamp: 1704346468838 },
+          { id: '28458', side: 'SELL', type: 'OTHER', price: 89.5, amount: 1, filled: 0, remaining: 1, timestamp: 1704346470000 },
+        ]);
+      });
+
+      describe('listing an order without a side', () => {
+        beforeEach(() => {
+          instance.fetchOpenOrders.mockResolvedValue([limitBuy, { ...stopLossLimitSell, side: undefined }]);
+        });
+
+        it('rejects with a GekkoError naming that order', async () => {
+          await expect(exchange.fetchOpenOrders('BTC/USDT')).rejects.toStrictEqual(
+            new GekkoError(
+              'exchange',
+              'Open order 28458 on BTC/USDT has no side Gekko knows (undefined): the open orders of BTC/USDT cannot be listed, check it on the exchange',
+            ),
+          );
+        });
+
+        // A read is sent again after a NetworkError only
+        it('does not ask the exchange again', async () => {
+          await exchange.fetchOpenOrders('BTC/USDT').catch(() => undefined);
+          expect(instance.fetchOpenOrders).toHaveBeenCalledOnce();
+        });
+      });
     });
   });
 
@@ -1048,16 +1152,17 @@ describe('CCXTExchange', () => {
     });
 
     it.each`
-      method                 | clientMethod       | call
-      ${'fetchTickers'}      | ${'fetchTickers'}  | ${(e: CCXTExchange) => e.fetchTickers(['BTC/USDT'])}
-      ${'fetchTicker'}       | ${'fetchTicker'}   | ${(e: CCXTExchange) => e.fetchTicker('BTC/USDT')}
-      ${'fetchOHLCV'}        | ${'fetchOHLCV'}    | ${(e: CCXTExchange) => e.fetchOHLCV('BTC/USDT')}
-      ${'fetchMyTrades'}     | ${'fetchMyTrades'} | ${(e: CCXTExchange) => e.fetchMyTrades('BTC/USDT')}
-      ${'fetchOrder'}        | ${'fetchOrder'}    | ${(e: CCXTExchange) => e.fetchOrder('BTC/USDT', '1')}
-      ${'fetchBalance'}      | ${'fetchBalance'}  | ${(e: CCXTExchange) => e.fetchBalance()}
-      ${'createLimitOrder'}  | ${'createOrder'}   | ${(e: CCXTExchange) => e.createLimitOrder('BTC/USDT', 'BUY', 1, 100)}
-      ${'createMarketOrder'} | ${'createOrder'}   | ${(e: CCXTExchange) => e.createMarketOrder('BTC/USDT', 'BUY', 1)}
-      ${'cancelOrder'}       | ${'cancelOrder'}   | ${(e: CCXTExchange) => e.cancelOrder('BTC/USDT', '1')}
+      method                 | clientMethod         | call
+      ${'fetchTickers'}      | ${'fetchTickers'}    | ${(e: CCXTExchange) => e.fetchTickers(['BTC/USDT'])}
+      ${'fetchTicker'}       | ${'fetchTicker'}     | ${(e: CCXTExchange) => e.fetchTicker('BTC/USDT')}
+      ${'fetchOHLCV'}        | ${'fetchOHLCV'}      | ${(e: CCXTExchange) => e.fetchOHLCV('BTC/USDT')}
+      ${'fetchMyTrades'}     | ${'fetchMyTrades'}   | ${(e: CCXTExchange) => e.fetchMyTrades('BTC/USDT')}
+      ${'fetchOrder'}        | ${'fetchOrder'}      | ${(e: CCXTExchange) => e.fetchOrder('BTC/USDT', '1')}
+      ${'fetchOpenOrders'}   | ${'fetchOpenOrders'} | ${(e: CCXTExchange) => e.fetchOpenOrders('BTC/USDT')}
+      ${'fetchBalance'}      | ${'fetchBalance'}    | ${(e: CCXTExchange) => e.fetchBalance()}
+      ${'createLimitOrder'}  | ${'createOrder'}     | ${(e: CCXTExchange) => e.createLimitOrder('BTC/USDT', 'BUY', 1, 100)}
+      ${'createMarketOrder'} | ${'createOrder'}     | ${(e: CCXTExchange) => e.createMarketOrder('BTC/USDT', 'BUY', 1)}
+      ${'cancelOrder'}       | ${'cancelOrder'}     | ${(e: CCXTExchange) => e.cancelOrder('BTC/USDT', '1')}
     `('$method rejects with the error of Gekko translated from the ccxt one', async ({ clientMethod, call }) => {
       instance[clientMethod].mockRejectedValue(new ccxt.BadSymbol('binance {"code":-1121,"msg":"Invalid symbol."}'));
       await expect(call(exchange)).rejects.toBeInstanceOf(InvalidOrder);
@@ -1109,9 +1214,19 @@ describe('CCXTExchange', () => {
       });
     });
 
-    it('sends a read (fetchOrder) again after a timeout, up to BROKER_MAX_RETRIES_ON_FAILURE times', async () => {
-      await exchange.fetchOrder('BTC/USDT', '1').catch(() => undefined);
-      expect(instance.fetchOrder).toHaveBeenCalledTimes(BROKER_MAX_RETRIES_ON_FAILURE + 1);
+    it.each`
+      method               | call
+      ${'fetchOrder'}      | ${(e: CCXTExchange) => e.fetchOrder('BTC/USDT', '1')}
+      ${'fetchOpenOrders'} | ${(e: CCXTExchange) => e.fetchOpenOrders('BTC/USDT')}
+    `('sends a read ($method) again after a timeout, up to BROKER_MAX_RETRIES_ON_FAILURE times', async ({ method, call }) => {
+      instance[method].mockRejectedValue(timeout);
+      await call(exchange).catch(() => undefined);
+      expect(instance[method]).toHaveBeenCalledTimes(BROKER_MAX_RETRIES_ON_FAILURE + 1);
+    });
+
+    it('rejects a read of the open orders timing out on every attempt with an ExchangeNetworkError', async () => {
+      instance.fetchOpenOrders.mockRejectedValue(timeout);
+      await expect(exchange.fetchOpenOrders('BTC/USDT')).rejects.toBeInstanceOf(ExchangeNetworkError);
     });
 
     describe('createMarketOrder with a ticker timing out on every attempt', () => {

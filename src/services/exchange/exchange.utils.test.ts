@@ -325,6 +325,128 @@ describe('Exchange Utils', () => {
     });
   });
 
+  describe('mapCcxtOrderToOpenOrder', () => {
+    const now = 1704346500000;
+    // As ccxt 4.5.39 parses the open orders of Binance (GET /api/v3/openOrders: side and type in lower case, the fill executedQty,
+    // the remaining amount derived from it) and of Hyperliquid (frontendOpenOrders: the side read from A for ask, the amount origSz,
+    // the remaining amount sz)
+    const binanceLimitBuy: any = {
+      id: '28457',
+      symbol: 'BTC/USDT',
+      status: 'open',
+      type: 'limit',
+      side: 'buy',
+      price: 95,
+      amount: 2,
+      filled: 0.5,
+      remaining: 1.5,
+      timestamp: 1704346468838,
+      lastUpdateTimestamp: 1704346470000,
+      triggerPrice: undefined,
+    };
+    const hyperliquidLimitSell: any = {
+      id: '3991946565',
+      symbol: 'BTC/USDC',
+      status: 'open',
+      type: 'limit',
+      side: 'sell',
+      price: 105,
+      amount: 0.1,
+      filled: 0,
+      remaining: 0.1,
+      timestamp: 1704346468838,
+      lastUpdateTimestamp: undefined,
+      triggerPrice: undefined,
+    };
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each`
+      description                                      | order                   | expected
+      ${'maps a limit BUY of Binance, filled in part'} | ${binanceLimitBuy}      | ${{ id: '28457', side: 'BUY', type: 'LIMIT', price: 95, amount: 2, filled: 0.5, remaining: 1.5, timestamp: 1704346468838 }}
+      ${'maps a limit SELL of Hyperliquid, untouched'} | ${hyperliquidLimitSell} | ${{ id: '3991946565', side: 'SELL', type: 'LIMIT', price: 105, amount: 0.1, filled: 0, remaining: 0.1, timestamp: 1704346468838 }}
+    `('$description', ({ order, expected }) => {
+      expect(utils.mapCcxtOrderToOpenOrder(order)).toEqual(expected);
+    });
+
+    it.each`
+      side      | expected
+      ${'buy'}  | ${'BUY'}
+      ${'sell'} | ${'SELL'}
+      ${'BUY'}  | ${'BUY'}
+      ${'Sell'} | ${'SELL'}
+    `('maps the side $side to $expected', ({ side, expected }) => {
+      expect(utils.mapCcxtOrderToOpenOrder({ ...binanceLimitBuy, side }).side).toBe(expected);
+    });
+
+    // ccxt gives a conditional order the type it executes with once triggered, along with its trigger price: Hyperliquid's stop limit
+    // and Binance's take_profit as limit, Hyperliquid's stop market as market. It leaves the types it does not unify as the exchange
+    // wrote them.
+    it.each`
+      description                                                    | type                    | triggerPrice | expected
+      ${'a limit order'}                                             | ${'limit'}              | ${undefined} | ${'LIMIT'}
+      ${'a limit order whose type is written in upper case'}         | ${'LIMIT'}              | ${undefined} | ${'LIMIT'}
+      ${'a limit order with a trigger price of 0, which sets none'}  | ${'limit'}              | ${0}         | ${'LIMIT'}
+      ${'a market order'}                                            | ${'market'}             | ${undefined} | ${'MARKET'}
+      ${'a conditional order typed limit, a stop limit'}             | ${'limit'}              | ${0.6}       | ${'OTHER'}
+      ${'a conditional order typed market, a stop market'}           | ${'market'}             | ${90}        | ${'OTHER'}
+      ${'a stop_loss_limit of Binance'}                              | ${'stop_loss_limit'}    | ${90}        | ${'OTHER'}
+      ${'a take profit market of Hyperliquid'}                       | ${'take profit market'} | ${120}       | ${'OTHER'}
+      ${'an order of a type ccxt does not unify, without a trigger'} | ${'iceberg'}            | ${undefined} | ${'OTHER'}
+      ${'an order without a type'}                                   | ${undefined}            | ${undefined} | ${'OTHER'}
+    `('maps $description to the type $expected', ({ type, triggerPrice, expected }) => {
+      expect(utils.mapCcxtOrderToOpenOrder({ ...binanceLimitBuy, type, triggerPrice }).type).toBe(expected);
+    });
+
+    // Binance's stop_loss executes at the market once triggered: ccxt gives its price of "0.00000000" as undefined
+    it('leaves the price of an order without one undefined', () => {
+      const stopLoss = { ...binanceLimitBuy, type: 'stop_loss', price: undefined, triggerPrice: 90 };
+      expect(utils.mapCcxtOrderToOpenOrder(stopLoss).price).toBeUndefined();
+    });
+
+    it.each`
+      description                                                    | filled       | remaining    | expected
+      ${'derives the remaining amount from the amount and the fill'} | ${0.5}       | ${undefined} | ${{ filled: 0.5, remaining: 1.5 }}
+      ${'derives the fill from the amount and the remaining amount'} | ${undefined} | ${1.5}       | ${{ filled: 0.5, remaining: 1.5 }}
+    `('$description', ({ filled, remaining, expected }) => {
+      const order = utils.mapCcxtOrderToOpenOrder({ ...binanceLimitBuy, filled, remaining });
+      expect(pick(order, ['filled', 'remaining'])).toEqual(expected);
+    });
+
+    it.each`
+      description                                                               | timestamp        | lastUpdateTimestamp | expected
+      ${'dates an order by its timestamp'}                                      | ${1704346468838} | ${1704346470000}    | ${1704346468838}
+      ${'dates an order without timestamp by its last update'}                  | ${undefined}     | ${1704346470000}    | ${1704346470000}
+      ${'dates an order without timestamp or last update now, when it is read'} | ${undefined}     | ${undefined}        | ${now}
+    `('$description', ({ timestamp, lastUpdateTimestamp, expected }) => {
+      expect(utils.mapCcxtOrderToOpenOrder({ ...binanceLimitBuy, timestamp, lastUpdateTimestamp }).timestamp).toBe(expected);
+    });
+
+    // Listed with made-up values, or left out, an order holding funds on the exchange would go unseen
+    const quoted = (text: string) => `'${text}'`;
+    it.each`
+      description                                     | overrides                                      | problem
+      ${'without a side'}                             | ${{ side: undefined }}                         | ${'no side Gekko knows (undefined)'}
+      ${'of a side that is neither buy nor sell'}     | ${{ side: 'short' }}                           | ${`no side Gekko knows (${quoted('short')})`}
+      ${'without an amount'}                          | ${{ amount: undefined }}                       | ${'no known amount (amount undefined, filled 0.5, remaining 1.5)'}
+      ${'with neither a fill nor a remaining amount'} | ${{ filled: undefined, remaining: undefined }} | ${'no known amount (amount 2, filled undefined, remaining undefined)'}
+    `('refuses an open order $description with a GekkoError naming it', ({ overrides, problem }) => {
+      expect(() => utils.mapCcxtOrderToOpenOrder({ ...binanceLimitBuy, ...overrides })).toThrow(
+        new GekkoError(
+          'exchange',
+          `Open order 28457 on BTC/USDT has ${problem}: the open orders of BTC/USDT cannot be listed, check it on the exchange`,
+        ),
+      );
+    });
+  });
+
   describe('mapOhlcvToCandles', () => {
     it('should map candles correctly', () => {
       const input: any[] = [[1000, 10, 15, 5, 12, 100]];
@@ -519,6 +641,7 @@ describe('Exchange Utils', () => {
         fetchBalance: true,
         fetchMyTrades: true,
         fetchOHLCV: true,
+        fetchOpenOrders: true,
         fetchOrder: true,
         fetchTicker: true,
         fetchTickers: true,
@@ -529,9 +652,14 @@ describe('Exchange Utils', () => {
       expect(() => utils.checkMandatoryFeatures(baseExchange, false)).not.toThrow();
     });
 
-    it('should throw on missing feature', () => {
-      const ex = { ...baseExchange, has: { ...baseExchange.has, fetchOHLCV: false } };
-      expect(() => utils.checkMandatoryFeatures(ex, false)).toThrow(/Missing fetchOHLCV/);
+    // fetchOpenOrders: CCXTExchange.fetchOpenOrders reads the open orders of a pair through it
+    it.each`
+      feature
+      ${'fetchOHLCV'}
+      ${'fetchOpenOrders'}
+    `('should throw on missing $feature', ({ feature }) => {
+      const ex = { ...baseExchange, has: { ...baseExchange.has, [feature]: false } };
+      expect(() => utils.checkMandatoryFeatures(ex, false)).toThrow(`Missing ${feature} feature in ex exchange`);
     });
 
     it('should throw on missing sandbox if requested', () => {
