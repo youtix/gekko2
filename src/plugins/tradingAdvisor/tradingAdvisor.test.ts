@@ -7,6 +7,7 @@ import {
 } from '@constants/event.const';
 import { ONE_MINUTE } from '@constants/time.const';
 import { ApplicationStopError } from '@errors/applicationStop.error';
+import { GekkoError } from '@errors/gekko.error';
 import { IndicatorNames } from '@indicators/indicator.types';
 import { StrategyOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
@@ -23,7 +24,7 @@ import {
 import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
-import { Exchange, MarketData } from '@services/exchange/exchange.types';
+import { Exchange, MarketData, OpenOrder } from '@services/exchange/exchange.types';
 import { error } from '@services/logger';
 import {
   AddIndicatorFn,
@@ -116,10 +117,25 @@ const MARKET_DATA = new Map<TradingPair, MarketData>([
 const usdtPortfolio = (total: number): Portfolio => new Map([['USDT', { free: total, used: 0, total }]]);
 const FETCHED_BALANCE = usdtPortfolio(1000);
 
+// What an exchange lists as open at start-up: on BTC/USDT a BUY of 2 at 95 that filled 0.5, and a stop-loss without a price
+const OPEN_ORDERS = new Map<TradingPair, OpenOrder[]>([
+  [
+    'BTC/USDT',
+    [
+      { id: '28458', side: 'BUY', type: 'LIMIT', price: 95, amount: 2, filled: 0.5, remaining: 1.5, timestamp: START - ONE_MINUTE },
+      { id: '28459', side: 'SELL', type: 'OTHER', amount: 1, filled: 0, remaining: 1, timestamp: START - ONE_MINUTE },
+    ],
+  ],
+  ['ETH/USDT', []],
+]);
+
 // All that processInit asks of the exchange
-const exchange: Pick<Exchange, 'getMarketData' | 'fetchBalance'> = {
+type StartUpExchange = Pick<Exchange, 'getMarketData' | 'fetchBalance' | 'fetchOpenOrders'>;
+// No order open at start-up, as in a backtest or a paper session, whose simulator starts empty
+const exchange: StartUpExchange = {
   getMarketData: symbol => MARKET_DATA.get(symbol) ?? {},
   fetchBalance: async () => FETCHED_BALANCE,
+  fetchOpenOrders: async () => [],
 };
 
 const ORDER_IDS: UUID[] = ['3b0e8a52-4c1d-4f6e-9a7b-2d5c8e1f0a01', '3b0e8a52-4c1d-4f6e-9a7b-2d5c8e1f0a02'];
@@ -261,6 +277,47 @@ describe('TradingAdvisor', () => {
         ${'the candles of that bucket'}            | ${expect.objectContaining({ candle: oneMinuteBucket(0) })}
       `('gives the strategy $given', ({ expected }) => {
         expect(strategy.init).toHaveBeenCalledExactlyOnceWith(expected);
+      });
+    });
+
+    // A strategy keeps its orders in memory: restarted, GridBot could not tell the grid its previous run had left on the exchange, and
+    // built a second one beside it
+    describe('the orders open on the exchange at start-up', () => {
+      let fetchOpenOrders: Mock<Exchange['fetchOpenOrders']>;
+
+      /** An advisor on an exchange that lists the orders of OPEN_ORDERS as open */
+      const createAdvisorOnOpenOrders = () => {
+        const advisor = createAdvisor();
+        const listing: StartUpExchange = { ...exchange, fetchOpenOrders };
+        advisor.setExchange(listing as Exchange);
+        return advisor;
+      };
+
+      beforeEach(() => {
+        // A new list at each call, as the exchange maps a new one at each read
+        fetchOpenOrders = vi.fn(async (symbol: TradingPair) => structuredClone(OPEN_ORDERS.get(symbol) ?? []));
+      });
+
+      it('asks the exchange for those of each watched pair, once each, before any bucket', async () => {
+        await createAdvisorOnOpenOrders().processInitStream();
+        expect(fetchOpenOrders.mock.calls).toEqual([['BTC/USDT'], ['ETH/USDT']]);
+      });
+
+      it('gives init those of each watched pair', async () => {
+        const advisor = createAdvisorOnOpenOrders();
+        await advisor.processInitStream();
+        await sendBuckets(advisor, 1);
+        expect(strategy.init).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ openOrders: OPEN_ORDERS }));
+      });
+
+      // As a failed fetchBalance does: the strategy would start blind to the orders it was to check
+      it('rejects when the exchange cannot list those of a pair', async () => {
+        const unreadable = new GekkoError('exchange', 'Open order 28460 on ETH/USDT has no side Gekko knows (undefined)');
+        fetchOpenOrders.mockImplementation(async symbol => {
+          if (symbol === 'ETH/USDT') throw unreadable;
+          return [];
+        });
+        await expect(createAdvisorOnOpenOrders().processInitStream()).rejects.toBe(unreadable);
       });
     });
   });
@@ -676,12 +733,26 @@ describe('TradingAdvisor', () => {
         tools.marketData.get('BTC/USDT')!.fee!.taker = 0;
       });
       // As dummy-cex and paper trading do, the exchange hands out its own entry, the one its simulator charges fees with
-      const ownEntryExchange: Pick<Exchange, 'getMarketData' | 'fetchBalance'> = { ...exchange, getMarketData: () => entry };
+      const ownEntryExchange: StartUpExchange = { ...exchange, getMarketData: () => entry };
       const advisor = createAdvisor();
       advisor.setExchange(ownEntryExchange as Exchange);
       await advisor.processInitStream();
       await sendBuckets(advisor, 3);
       expect(entry).toEqual({ amount: { min: 0.0001 }, fee: { maker: 0.001, taker: 0.001 } });
+    });
+
+    // The list the exchange answered with, which the StrategyManager keeps
+    it('leaves the orders the exchange listed as open as they were', async () => {
+      const listed = structuredClone(OPEN_ORDERS.get('BTC/USDT')!);
+      strategy.init.mockImplementation(({ openOrders }) => {
+        openOrders!.get('BTC/USDT')![0].remaining = 0;
+        openOrders!.clear();
+      });
+      const advisor = createAdvisor();
+      advisor.setExchange({ ...exchange, fetchOpenOrders: async symbol => (symbol === 'BTC/USDT' ? listed : []) } as Exchange);
+      await advisor.processInitStream();
+      await sendBuckets(advisor, 1);
+      expect(listed).toEqual(OPEN_ORDERS.get('BTC/USDT'));
     });
 
     // Every plugin keeps the block: the PerformanceReporter makes its run id of it

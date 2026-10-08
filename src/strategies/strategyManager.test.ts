@@ -14,7 +14,7 @@ import { OrderSide } from '@models/order.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
-import { MarketData } from '@services/exchange/exchange.types';
+import { MarketData, OpenOrder } from '@services/exchange/exchange.types';
 import { debug, error, info, isLevelEnabled, warning } from '@services/logger';
 import { randomUUID, UUID } from 'node:crypto';
 import path from 'node:path';
@@ -128,6 +128,12 @@ describe('StrategyManager', () => {
     ['BTC/USDT', { amount: { min: 0.0001 } }],
     ['ETH/USDT', { amount: { min: 0.001 } }],
   ]);
+  /** The orders open at start-up on the two pairs watched here, as the TradingAdvisor reads them: a BUY of 2 that filled 0.5 on BTC */
+  const openOrdersAtStartUp = () =>
+    new Map<TradingPair, OpenOrder[]>([
+      ['BTC/USDT', [{ id: '28458', side: 'BUY', type: 'LIMIT', price: 95, amount: 2, filled: 0.5, remaining: 1.5, timestamp: 0 }]],
+      ['ETH/USDT', []],
+    ]);
   const candle = {
     start: 1000,
     open: 1,
@@ -354,6 +360,20 @@ describe('StrategyManager', () => {
           strategy.init.mockImplementation(({ addIndicator }) => addIndicator('SMA', 'ETH/USDT', { period: 10 }));
           manager.onOneMinuteBucket(firstMinute());
           expect(manager['indicators']).toEqual([{ indicator: indicatorMocks.IndicatorMock.mock.instances[0], symbol: 'ETH/USDT' }]);
+        });
+
+        // A strategy keeps its orders in memory: restarted, GridBot could not tell the grid its previous run had left on the exchange
+        describe('the orders open at start-up', () => {
+          it('gives init those set before it', () => {
+            manager.setOpenOrders(openOrdersAtStartUp());
+            manager.onOneMinuteBucket(firstMinute());
+            expect(initParams().openOrders).toEqual(openOrdersAtStartUp());
+          });
+
+          it('gives init none, an empty map, when none were set', () => {
+            manager.onOneMinuteBucket(firstMinute());
+            expect(initParams().openOrders).toEqual(new Map());
+          });
         });
 
         describe('then on the first timeframe candle', () => {
@@ -2213,6 +2233,27 @@ describe('StrategyManager', () => {
 
       it('emits the warmup event with the bucket as it was', () => {
         expect(warmupListener).toHaveBeenCalledExactlyOnceWith(new Map([['BTC/USDT', CANDLE]]));
+      });
+    });
+
+    describe('the orders open at start-up, which init gets', () => {
+      let openOrders: Map<TradingPair, OpenOrder[]>;
+
+      beforeEach(() => {
+        openOrders = openOrdersAtStartUp();
+        manager.setOpenOrders(openOrders);
+        manager['strategy'] = {
+          init: ({ openOrders: own }: InitParams<object>) => {
+            own!.get('BTC/USDT')![0].remaining = 0;
+            own!.delete('ETH/USDT');
+          },
+        };
+        manager.onOneMinuteBucket(bucket); // Runs init
+      });
+
+      // The TradingAdvisor's, holding the lists the exchange answered with
+      it('leaves the orders the manager was given as they were', () => {
+        expect(openOrders).toEqual(openOrdersAtStartUp());
       });
     });
 

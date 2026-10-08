@@ -5,8 +5,9 @@ import type { CandleBucket } from '@models/event.types';
 import type { LogLevel } from '@models/logLevel.types';
 import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
+import type { TradingPair } from '@models/utility.types';
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
-import type { MarketData } from '@services/exchange/exchange.types';
+import type { MarketData, OpenOrder, OpenOrderType } from '@services/exchange/exchange.types';
 import { ETH_IGNORED_WARNING, logsAtInit } from '@strategies/positionTracker.mock';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -179,6 +180,63 @@ describe('GridBot', () => {
         'BTC/USDT SELL 105',
         'BTC/USDT SELL 110',
       ]);
+    });
+  });
+
+  // GridBot keeps its grid in memory: restarted against an exchange that kept the grid of its previous run, it built a second grid
+  // beside it, whose fills never reached it, or, the old grid holding the funds, stopped for an insufficient portfolio at every restart
+  describe('orders open on the exchange at start-up', () => {
+    /** An order the exchange lists as open, `filled` of it executed already */
+    const openOrder = (id: string, type: OpenOrderType, side: OrderSide, remaining: number, price?: number, filled = 0): OpenOrder => ({
+      id,
+      side,
+      type,
+      price,
+      amount: remaining + filled,
+      filled,
+      remaining,
+      timestamp: 0,
+    });
+    const BUY_95 = openOrder('28458', 'LIMIT', 'BUY', 2, 95);
+    const SELL_105_HALF_FILLED = openOrder('28459', 'LIMIT', 'SELL', 1, 105, 1);
+    const STOP_LOSS = openOrder('28460', 'OTHER', 'SELL', 2);
+    const UNFOLLOWED = [
+      'GridBot keeps its grid in memory and follows only the orders it places: an order placed before this run, by a previous run,',
+      'by hand or by another bot, would trade beside the new grid without GridBot hearing of its fills.',
+      'Cancel the orders open on BTC/USDT on the exchange, then start again',
+    ].join(' ');
+
+    /** Runs init with the orders the exchange listed as open at start-up */
+    const initOn = (openOrders?: Map<TradingPair, OpenOrder[]>) => {
+      tools.strategyParams = defaultParams;
+      strategy.init({ candle: makeCandle(100), portfolio: balancedPortfolio, tools, addIndicator: vi.fn(), openOrders });
+    };
+
+    it.each`
+      description         | orders                                       | message
+      ${'one order'}      | ${[BUY_95]}                                  | ${`GridBot: 1 order is open on BTC/USDT at start-up: LIMIT BUY 2 at 95 (id 28458). ${UNFOLLOWED}`}
+      ${'several orders'} | ${[BUY_95, SELL_105_HALF_FILLED, STOP_LOSS]} | ${`GridBot: 3 orders are open on BTC/USDT at start-up: LIMIT BUY 2 at 95 (id 28458), LIMIT SELL 1 at 105 (id 28459), OTHER SELL 2 at market (id 28460). ${UNFOLLOWED}`}
+    `('says why it stops at error level, naming $description open on its pair', ({ orders, message }) => {
+      untilStopped(() => initOn(new Map([['BTC/USDT', orders]])));
+
+      expect(log.mock.calls.filter(([level]) => level === 'error')).toEqual([['error', message]]);
+    });
+
+    it('stops the run at init', () => {
+      expect(() => initOn(new Map([['BTC/USDT', [BUY_95]]]))).toThrow(GekkoError);
+    });
+
+    it.each`
+      description                      | openOrders
+      ${'no list of them'}             | ${undefined}
+      ${'none listed'}                 | ${new Map()}
+      ${'none on its pair'}            | ${new Map([['BTC/USDT', []]])}
+      ${'orders on another pair only'} | ${new Map([['ETH/USDT', [BUY_95, STOP_LOSS]], ['BTC/USDT', []]])}
+    `('starts with $description, and places its grid on the first candle after the warmup', ({ openOrders }) => {
+      initOn(openOrders);
+      afterWarmup(100);
+
+      expect(openBook()).toEqual(['BUY 90', 'BUY 95', 'SELL 105', 'SELL 110']);
     });
   });
 

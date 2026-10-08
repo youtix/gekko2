@@ -25,7 +25,7 @@ import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { Asset, TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
-import { MarketData } from '@services/exchange/exchange.types';
+import { MarketData, OpenOrder } from '@services/exchange/exchange.types';
 import { debug, error, info, isLevelEnabled, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { getBucketTimestamp, getFirstCandleFromBucket } from '@utils/candle/candle.utils';
@@ -139,6 +139,8 @@ export class StrategyManager extends EventEmitter {
    * strategy gets a copy (see setMarketData).
    */
   private marketData = new Map<TradingPair, MarketData>();
+  /** The orders open on each watched pair at start-up, set before the first candle (see setOpenOrders): init gets a copy */
+  private openOrders = new Map<TradingPair, OpenOrder[]>();
   /** The strategy's own copy of the last portfolio received (see onPortfolioChange), which the candle hooks get */
   private portfolio = new Map<Asset, BalanceDetail>();
   private indicatorsResults: IndicatorResults[] = [];
@@ -350,6 +352,14 @@ export class StrategyManager extends EventEmitter {
     this.tools.marketData = cloneDeep(marketData);
   }
 
+  /**
+   * Sets the orders open on each watched pair before the run placed any, which the TradingAdvisor reads from the exchange at start-up:
+   * init, which runs on the first bucket, gets them (see InitParams.openOrders)
+   */
+  public setOpenOrders(openOrders: Map<TradingPair, OpenOrder[]>) {
+    this.openOrders = openOrders;
+  }
+
   /* -------------------------------------------------------------------------- */
   /*                  FUNCTIONS USED IN TRADER STRATEGIES                       */
   /* -------------------------------------------------------------------------- */
@@ -479,10 +489,17 @@ export class StrategyManager extends EventEmitter {
    * Runs init, once, on the first one-minute bucket, given the strategy's own copy of it (see copyBucket): a candle of every watched
    * pair, all init needs to pick its pairs and register its indicators, which are fed from the first timeframe candle on. Run on that
    * candle instead, init came up to a day after start-up on 1d without warmup (a month on 1M): an indicator misspelt there, or a
-   * parameter its checks refused, stopped the bot only then. addIndicator is closed once init has returned.
+   * parameter its checks refused, stopped the bot only then. addIndicator is closed once init has returned. init also gets its own
+   * copy of the orders open at start-up, with which a strategy can refuse to start beside orders it cannot follow.
    */
   private initStrategy(bucket: CandleBucket) {
-    this.strategy?.init?.({ candle: copyBucket(bucket), portfolio: this.portfolio, tools: this.tools, addIndicator: this.addIndicator });
+    this.strategy?.init?.({
+      candle: copyBucket(bucket),
+      portfolio: this.portfolio,
+      tools: this.tools,
+      addIndicator: this.addIndicator,
+      openOrders: cloneDeep(this.openOrders),
+    });
     this.isInitialized = true;
   }
 

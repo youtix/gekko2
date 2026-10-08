@@ -13,7 +13,7 @@ import { StrategyInfo } from '@models/strategyInfo.types';
 import { TradingPair } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { CandleBucketBatcher } from '@services/core/batcher/candleBatcher/candleBucketBatcher';
-import { MarketData } from '@services/exchange/exchange.types';
+import { MarketData, OpenOrder } from '@services/exchange/exchange.types';
 import { error, info } from '@services/logger';
 import { StrategyManager } from '@strategies/strategyManager';
 import { bindAll, filter } from 'lodash-es';
@@ -147,6 +147,13 @@ export class TradingAdvisor extends Plugin {
     const allMarketData = new Map<TradingPair, MarketData>();
     for (const symbol of this.pairs) allMarketData.set(symbol, exchange.getMarketData(symbol));
     this.strategyManager?.setMarketData(allMarketData);
+
+    // The orders open on each watched pair before this run places any, which init gets (see InitParams.openOrders). A strategy keeps
+    // its orders in memory: restarted, GridBot could not tell the grid its previous run had left on the exchange, and built a second
+    // one beside it, whose fills never reached it, or stopped for want of free funds, again at every restart.
+    const openOrders = new Map<TradingPair, OpenOrder[]>();
+    for (const symbol of this.pairs) openOrders.set(symbol, await exchange.fetchOpenOrders(symbol));
+    this.strategyManager?.setOpenOrders(openOrders);
 
     const balance = await exchange.fetchBalance();
     this.strategyManager?.onPortfolioChange(balance);

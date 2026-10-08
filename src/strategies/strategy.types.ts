@@ -4,7 +4,7 @@ import { CandleBucket, ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, O
 import { LogLevel } from '@models/logLevel.types';
 import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
-import { MarketData } from '@services/exchange/exchange.types';
+import { MarketData, OpenOrder } from '@services/exchange/exchange.types';
 import { UUID } from 'node:crypto';
 import { z } from 'zod';
 import { TrailingStopState } from './trailingStopManager.types';
@@ -105,7 +105,7 @@ export type OnCandleEventParams<T> = {
 };
 /**
  * What init gets: the portfolio and the tools every timeframe candle hook gets (see OnCandleEventParams), a one-minute candle of every
- * watched pair, and addIndicator
+ * watched pair, addIndicator, and the orders open on the exchange at start-up
  */
 export type InitParams<T> = Omit<OnCandleEventParams<T>, 'candle'> & {
   /**
@@ -116,6 +116,14 @@ export type InitParams<T> = Omit<OnCandleEventParams<T>, 'candle'> & {
   candle: CandleBucket;
   /** Available here only (see AddIndicatorFn) */
   addIndicator: AddIndicatorFn;
+  /**
+   * The orders open on each watched pair when the run started, before it placed any: placed by a previous run, by hand or by another
+   * bot. The run does not follow them: the Trader follows the orders of this run only, so no hook hears of their fills or of their
+   * end. Read from the exchange once, at start-up, and never refreshed: the strategy's own copy. None in a backtest or a paper session,
+   * whose simulator starts empty. The StrategyManager always gives it: it is optional for the code that builds these parameters itself,
+   * as a strategy's tests do.
+   */
+  openOrders?: Map<TradingPair, OpenOrder[]>;
 };
 /** What an order hook gets */
 type OrderEventParams<Order, T> = {
@@ -132,9 +140,9 @@ export type OnOrderErroredEventParams<T> = OrderEventParams<OrderErroredEvent['o
  * The hooks of a strategy, each optional, which the StrategyManager calls.
  *
  * What a hook receives is the strategy's own copy: the candles, the portfolio, the indicator results, the order and the exchange event
- * of an order hook, the state of a trailing stop, `tools.strategyParams` and `tools.marketData`. Writing to it changes nothing
- * elsewhere: not the configuration, the exchange or its simulator, the indicators, the other plugins (the analyzers, the reporters), nor
- * what the StrategyManager itself goes by. Where each is declared says when its copy is made.
+ * of an order hook, the state of a trailing stop, the orders open at start-up, `tools.strategyParams` and `tools.marketData`. Writing
+ * to it changes nothing elsewhere: not the configuration, the exchange or its simulator, the indicators, the other plugins (the
+ * analyzers, the reporters), nor what the StrategyManager itself goes by. Where each is declared says when its copy is made.
  */
 export interface Strategy<T> {
   /**

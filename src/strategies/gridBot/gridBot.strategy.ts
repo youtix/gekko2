@@ -2,6 +2,7 @@ import { GekkoError } from '@errors/gekko.error';
 import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
+import type { OpenOrder } from '@services/exchange/exchange.types';
 import { pickTradedPair } from '@strategies/positionTracker';
 import {
   InitParams,
@@ -41,6 +42,8 @@ import {
  *
  * Places a grid of LIMIT orders around the current price.
  * - It trades the first pair watched (watch.assets), and warns once, at init, of the other pairs it ignores
+ * - It keeps its grid in memory and follows only the orders it places: it refuses to start, at init, while orders are open on its
+ *   pair, a previous run's grid for instance, naming each one for the user to cancel it on the exchange
  * - The grid is placed on the first timeframe candle after the warmup, centred on its close
  * - Buy levels are placed below the center price
  * - Sell levels are placed above the center price
@@ -111,8 +114,11 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private priceDecimals = 2;
   private priceStep?: number;
 
-  /** Reads the pair and the parameters only: the grid is started by the first candle after the warmup */
-  init({ candle, tools }: InitParams<GridBotStrategyParams>): void {
+  /**
+   * Reads the pair and the parameters, and refuses to start while orders are open on the pair (see refuseOpenOrders): the grid is
+   * started by the first candle after the warmup
+   */
+  init({ candle, tools, openOrders }: InitParams<GridBotStrategyParams>): void {
     // The first pair watched: the others used to be ignored without a word, while their candles are still required every minute
     this.pair = pickTradedPair(candle, tools);
     const [base, quote] = this.pair.split('/');
@@ -120,6 +126,12 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     this.quote = quote;
     this.reset();
     this.retryLimit = tools.strategyParams.retryOnError;
+
+    // The grid lives in memory only. Restarted against an exchange that kept the grid of its previous run, GridBot built a second grid
+    // beside it, whose fills never reached it, or, the old grid holding the funds, stopped for an insufficient portfolio, again at
+    // every restart under a supervisor. Those orders are not adopted: the Trader follows the orders of this run only.
+    const open = openOrders?.get(this.pair) ?? [];
+    if (open.length) this.refuseOpenOrders(open, tools);
   }
 
   onEachTimeframeCandle({ candle, tools }: OnCandleEventParams<GridBotStrategyParams>): void {
@@ -605,6 +617,21 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       'warn',
       `GridBot: ${order} may be live on the exchange without GridBot tracking it: ${left}. Check it there. Last error: ${reason}`,
     );
+  }
+
+  /**
+   * Stops the run on the orders open on the pair at start-up (see init), naming each one, as the exchange lists them, for the user to
+   * find it there and cancel it: its type, side, the amount it has left to execute, its price and its id
+   */
+  private refuseOpenOrders(orders: OpenOrder[], tools: Tools<GridBotStrategyParams>): never {
+    const count = orders.length === 1 ? '1 order is' : `${orders.length} orders are`;
+    const list = orders.map(({ id, side, type, price, remaining }) => `${type} ${side} ${remaining} at ${price ?? 'market'} (id ${id})`);
+    const unfollowed = [
+      'GridBot keeps its grid in memory and follows only the orders it places: an order placed before this run, by a previous run,',
+      'by hand or by another bot, would trade beside the new grid without GridBot hearing of its fills.',
+    ].join(' ');
+    const cancel = `Cancel the orders open on ${this.pair} on the exchange, then start again`;
+    this.stopRun(`${count} open on ${this.pair} at start-up: ${list.join(', ')}. ${unfollowed} ${cancel}`, tools);
   }
 
   /**
