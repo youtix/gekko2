@@ -418,6 +418,48 @@ strategy:
   longPeriod: 26           # Accessible via tools.strategyParams.longPeriod
 ```
 
+### Validating Your Parameters
+
+To have the block checked, give your class a static `schema`: a [zod](https://zod.dev) schema of its parameters. Gekko parses the block with it when it creates the strategy, before the first candle, and your strategy then gets the schema's output instead of the block. For the [Complete Example](#complete-example), with a default for `src`:
+
+```typescript
+import { Strategy } from '@strategies/strategy.types';
+import { z } from 'zod';
+
+const emaCrossoverSchema = z.strictObject({
+  src: z.enum(['close', 'open', 'high', 'low']).default('close'),
+  shortPeriod: z.number().int().positive(),
+  longPeriod: z.number().int().positive(),
+});
+
+// Replaces the EMACrossoverParams interface: what tools.strategyParams holds, src set to close when the block leaves it out
+type EMACrossoverParams = z.infer<typeof emaCrossoverSchema>;
+
+export class EMACrossover implements Strategy<EMACrossoverParams> {
+  static schema = emaCrossoverSchema;
+
+  // The rest of the class is unchanged
+}
+```
+
+- The schema gets the block without its `name`, which only labels the run and which Gekko checks against `strategyName`: leave `name` out of the schema, and out of what you read from `tools.strategyParams`.
+- Use `z.strictObject`, for nested objects too: `z.object` drops an unknown key without a word, so a misspelt parameter that has a default would quietly take it.
+- `tools.strategyParams` is the schema's output: its defaults applied, and its transforms if it has any. Deriving the parameters type from the schema with `z.infer`, as above, keeps the two in step.
+- Any problem stops Gekko before the first candle, with exit code 1, and the log lists every problem with the path of its parameter. With `shortPeriod: '12'` (quoted, so a string) and a misspelt `longPeriode`:
+
+  ```text
+  [TRADING ADVISOR] Invalid parameters for strategy EMACrossover (strategy block):
+  ✖ Unrecognized key: "longPeriode"
+  ✖ Invalid input: expected number, received string
+    → at shortPeriod
+  ✖ Invalid input: expected number, received undefined
+    → at longPeriod
+  ```
+
+Without a `schema`, the whole block, `name` included, reaches the strategy unchecked, and Gekko says so as it starts, in an `info` line.
+
+Your strategy imports `zod` itself, and like any package it is looked up from the strategy file's folder: unless the file sits inside a Gekko 2 checkout, whose `node_modules` has it, install it next to the strategy (`bun add zod` or `npm install zod` in its folder). Otherwise Gekko stops with `Cannot find package 'zod' from '…/emaCrossover.strategy.ts'`.
+
 ---
 
 ## Running with Executable

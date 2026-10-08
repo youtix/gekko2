@@ -38,7 +38,9 @@ vi.mock('@indicators/index', () => ({
   UNKNOWN: undefined,
 }));
 
-const strategyMocks = vi.hoisted(() => {
+const strategyMocks = await vi.hoisted(async () => {
+  const { z } = await import('zod');
+
   class DummyStrategy {
     init = vi.fn();
     onEachTimeframeCandle = vi.fn();
@@ -50,7 +52,13 @@ const strategyMocks = vi.hoisted(() => {
     end = vi.fn();
   }
 
-  return { DummyStrategy, UnknownStrategy: undefined };
+  // Declares its parameters, as every built-in strategy does: a period, and a source that defaults to close
+  class SchemaStrategy {
+    static schema = z.strictObject({ period: z.number(), src: z.enum(['open', 'close']).default('close') });
+    init = vi.fn();
+  }
+
+  return { DummyStrategy, SchemaStrategy, UnknownStrategy: undefined };
 });
 
 vi.mock('@strategies/index', () => strategyMocks);
@@ -89,6 +97,8 @@ vi.mock('./debug/debugAdvice.startegy.ts', () => ({
     log = vi.fn();
     end = vi.fn();
   },
+  // The same class as the registry's, loaded from a strategyPath
+  SchemaStrategy: strategyMocks.SchemaStrategy,
   MissingStrategy: undefined,
 }));
 
@@ -147,6 +157,83 @@ describe('StrategyManager', () => {
     it('throws when external module does not expose the strategy', async () => {
       const strategyPath = path.resolve(__dirname, './debug/debugAdvice.startegy.ts');
       await expect(manager.createStrategy('MissingStrategy', strategyPath)).rejects.toThrow(GekkoError);
+    });
+
+    describe.each`
+      origin               | strategyPath
+      ${'the registry'}    | ${undefined}
+      ${'a strategy path'} | ${path.resolve(__dirname, './debug/debugAdvice.startegy.ts')}
+    `('of a class from $origin that declares a schema', ({ strategyPath }) => {
+      describe('when the strategy block is valid', () => {
+        beforeEach(async () => {
+          vi.mocked(config.getStrategy).mockReturnValue({ name: 'SchemaStrategy', period: 14 });
+          manager = new StrategyManager(1);
+          await manager.createStrategy('SchemaStrategy', strategyPath);
+          manager.onTimeFrameCandle(bucket);
+        });
+
+        it('gives the strategy the output of its schema: the block without name, defaults applied', () => {
+          const strategy: any = manager['strategy'];
+          expect(strategy.init.mock.calls[0][0].tools.strategyParams).toEqual({ period: 14, src: 'close' });
+        });
+
+        it('keeps the parsed block as its own parameters', () => {
+          expect(manager['strategyParams']).toBe(manager['tools'].strategyParams);
+        });
+
+        it('does not say that the parameters are not validated', () => {
+          expect(info).not.toHaveBeenCalled();
+        });
+      });
+
+      describe.each`
+        problem                                      | block                                                 | issues
+        ${'a key of the block is unknown'}           | ${{ name: 'SchemaStrategy', period: 14, peroid: 14 }} | ${'✖ Unrecognized key: "peroid"'}
+        ${'a parameter is missing'}                  | ${{ name: 'SchemaStrategy', src: 'open' }}            | ${'✖ Invalid input: expected number, received undefined\n  → at period'}
+        ${'a number is quoted'}                      | ${{ name: 'SchemaStrategy', period: '14' }}           | ${'✖ Invalid input: expected number, received string\n  → at period'}
+        ${'the configuration has no strategy block'} | ${undefined}                                          | ${'✖ Invalid input: expected number, received undefined\n  → at period'}
+      `('when $problem', ({ block, issues }) => {
+        beforeEach(() => {
+          vi.mocked(config.getStrategy).mockReturnValue(block);
+          manager = new StrategyManager(1);
+        });
+
+        it('refuses the strategy with a GekkoError', async () => {
+          await expect(manager.createStrategy('SchemaStrategy', strategyPath)).rejects.toBeInstanceOf(GekkoError);
+        });
+
+        it('names the strategy, then gives each problem with the path of its parameter', async () => {
+          await expect(manager.createStrategy('SchemaStrategy', strategyPath)).rejects.toHaveProperty(
+            'message',
+            `[TRADING ADVISOR] Invalid parameters for strategy SchemaStrategy (strategy block):\n${issues}`,
+          );
+        });
+
+        it('does not create the strategy', async () => {
+          await manager.createStrategy('SchemaStrategy', strategyPath).catch(() => undefined);
+          expect(manager['strategy']).toBeUndefined();
+        });
+      });
+    });
+
+    describe('of a class that declares no schema', () => {
+      beforeEach(async () => {
+        vi.mocked(config.getStrategy).mockReturnValue({ name: 'DummyStrategy', each: 1, wait: 0 });
+        manager = new StrategyManager(1);
+        await manager.createStrategy('DummyStrategy');
+        manager.onTimeFrameCandle(bucket);
+      });
+
+      it('gives the strategy the whole block, name included', () => {
+        const strategy: any = manager['strategy'];
+        expect(strategy.init.mock.calls[0][0].tools.strategyParams).toEqual({ name: 'DummyStrategy', each: 1, wait: 0 });
+      });
+
+      it('says once, at info level, that its parameters are not validated', () => {
+        expect(vi.mocked(info).mock.calls).toEqual([
+          ['trading advisor', 'Strategy DummyStrategy declares no schema: its parameters (the strategy block) are not validated'],
+        ]);
+      });
     });
   });
 

@@ -28,14 +28,16 @@ import { bindAll, omit } from 'lodash-es';
 import { randomUUID, UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { isAbsolute, resolve } from 'node:path';
-import { IndicatorResults, Strategy, Tools } from './strategy.types';
+import { z } from 'zod';
+import { IndicatorResults, Strategy, StrategyConstructor, Tools } from './strategy.types';
 import { TrailingStopManager } from './trailingStopManager';
 import { TrailingStopState } from './trailingStopManager.types';
 
 export class StrategyManager extends EventEmitter {
   private readonly warmupPeriod: number;
   private readonly maxConsecutiveErrors: number;
-  private readonly strategyParams: object;
+  /** The strategy block, replaced by its parse when the strategy's class declares a schema; the same object as tools.strategyParams */
+  private strategyParams: object;
   private readonly trailingStopManager: TrailingStopManager;
 
   private age = 0;
@@ -80,16 +82,19 @@ export class StrategyManager extends EventEmitter {
   }
 
   public async createStrategy(strategyName: string, strategyPath?: string) {
+    // Annotated, not cast: the compiler checks that every export of the registry is a strategy class whose schema, if any, is a zod
+    // schema. The export of an external file is only known at run time.
+    let SelectedStrategy: StrategyConstructor | undefined;
     if (strategyPath) {
       const resolvedPath = isAbsolute(strategyPath) ? strategyPath : resolve(process.cwd(), strategyPath);
-      const SelectedStrategy = (await import(resolvedPath))[strategyName];
+      SelectedStrategy = (await import(resolvedPath))[strategyName];
       if (!SelectedStrategy) throw new GekkoError('trading advisor', `Cannot find external ${strategyName} strategy in ${resolvedPath}`);
-      this.strategy = new SelectedStrategy();
     } else {
-      const SelectedStrategy = strategies[strategyName as keyof typeof strategies];
+      SelectedStrategy = strategies[strategyName as keyof typeof strategies];
       if (!SelectedStrategy) throw new GekkoError('trading advisor', `Cannot find internal ${strategyName} strategy`);
-      this.strategy = new SelectedStrategy();
     }
+    this.parseStrategyParams(strategyName, SelectedStrategy);
+    this.strategy = new SelectedStrategy();
   }
 
   /* -------------------------------------------------------------------------- */
@@ -248,6 +253,26 @@ export class StrategyManager extends EventEmitter {
   /* -------------------------------------------------------------------------- */
   /*                            UTILS FUNCTIONS                                 */
   /* -------------------------------------------------------------------------- */
+
+  /**
+   * Checks the strategy block with the schema of the strategy's class, before the strategy exists. Unchecked, a misspelt or missing
+   * parameter was silently undefined: an indicator fell back to its default period, a comparison with undefined never held, or the
+   * strategy threw a TypeError once its indicators were ready, which can be hours into a realtime run.
+   */
+  private parseStrategyParams(strategyName: string, { schema }: StrategyConstructor) {
+    if (!schema) {
+      info('trading advisor', `Strategy ${strategyName} declares no schema: its parameters (the strategy block) are not validated`);
+      return;
+    }
+    // Without name, which only labels the run and which the configuration schema checks: the strategy gets what the schema outputs
+    const result = schema.safeParse(omit(this.strategyParams, 'name'));
+    if (!result.success) {
+      const issues = z.prettifyError(result.error);
+      throw new GekkoError('trading advisor', `Invalid parameters for strategy ${strategyName} (strategy block):\n${issues}`);
+    }
+    this.strategyParams = result.data;
+    this.tools.strategyParams = result.data;
+  }
 
   private emitWarmupCompletedEvent(bucket: CandleBucket) {
     // Use first available candle for logging timestamp
