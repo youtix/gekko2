@@ -352,87 +352,88 @@ describe('GridBot', () => {
   });
 
   describe('rebalancing', () => {
-    it('places STICKY rebalance order for unbalanced portfolio', () => {
-      startStrategy(100, {}, unbalancedPortfolio);
-
-      expect(createOrder).toHaveBeenCalledTimes(1);
-    });
-
-    it('uses correct side for rebalance when asset value is low', () => {
-      startStrategy(100, {}, unbalancedPortfolio);
-
-      expect(issuedOrders[0].type).toBe('STICKY');
-    });
-
-    it('builds grid after rebalance completion', () => {
-      startStrategy(100, {}, unbalancedPortfolio);
-
-      const rebalanceId = issuedOrders[0].id;
-      strategy.onOrderCompleted({
-        order: { id: rebalanceId, side: 'BUY' } as any,
-        exchange: { price: 100, portfolio: balancedPortfolio },
-        tools,
-      });
-
-      expect(createOrder).toHaveBeenCalledTimes(5);
-    });
-
-    // The rebalance aimed at 50/50, a BUY of 5 BTC: the grid built on 5 BTC and 500 USDT traded 2.5 a level, and its BUYs at 95 and
-    // 90 left 37.5 USDT idle for the whole run
-    it('builds, once the rebalance fills, a grid that the bought BTC and the USDT left fund alike: 2.59 a level', () => {
-      startStrategy(100, {}, unbalancedPortfolio);
-      const { id, amount } = issuedOrders[0];
-      const rebalanced: Portfolio = new Map<string, BalanceDetail>([
-        ['BTC', { free: amount, used: 0, total: amount }],
-        ['USDT', { free: 1000 - amount * 100, used: 0, total: 1000 - amount * 100 }],
+    // At 100, 1000 USDT or 10 BTC fund 1000 / (185 + 2 × 100) = 2.597… a level of the default grid once rebalanced: its SELLs take
+    // 5.19… BTC, its BUYs at 95 and 90 take 480.5… USDT. From all in USDT, a BUY of (1000 - 480.5…) / 100 = 5.19… BTC, 5.19 on the
+    // amount step; from all in BTC, a SELL of 10 - 5.19… = 4.80…, 4.8
+    const assetOnlyPortfolio: Portfolio = new Map<string, BalanceDetail>([
+      ['BTC', { free: 10, used: 0, total: 10 }],
+      ['USDT', { free: 0, used: 0, total: 0 }],
+    ]);
+    /** A portfolio of `btc` BTC and `usdt` USDT, all free */
+    const freePortfolio = (btc: number, usdt: number): Portfolio =>
+      new Map<string, BalanceDetail>([
+        ['BTC', { free: btc, used: 0, total: btc }],
+        ['USDT', { free: usdt, used: 0, total: usdt }],
       ]);
+    /** Ends the rebalance order placed last as the Trader reports a failure, the balances it left in the portfolio */
+    const endRebalance = (outcome: 'errored' | 'canceled', left: Portfolio) => {
+      const order = { id: issuedOrders[issuedOrders.length - 1].id, reason: 'Test error' } as any;
+      const exchange = { price: 100, portfolio: left };
+      if (outcome === 'errored') strategy.onOrderErrored({ order, exchange, tools });
+      else strategy.onOrderCanceled({ order, exchange, tools });
+    };
+
+    // The side of the rebalance used to be asserted on a BUY alone, the test named after the side checking the type of the order: a
+    // STICKY order hard-coded to BUY, rebalancing a portfolio rich in BTC by buying more of it, failed only a test of locked funds
+    it.each`
+      portfolio              | description      | expected
+      ${unbalancedPortfolio} | ${'all in USDT'} | ${{ type: 'STICKY', side: 'BUY', amount: 5.19, symbol: 'BTC/USDT' }}
+      ${assetOnlyPortfolio}  | ${'all in BTC'}  | ${{ type: 'STICKY', side: 'SELL', amount: 4.8, symbol: 'BTC/USDT' }}
+    `('rebalances a portfolio $description with a STICKY $expected.side of $expected.amount', ({ portfolio, expected }) => {
+      startStrategy(100, {}, portfolio);
+
+      expect(createOrder.mock.calls).toEqual([[expected]]);
+    });
+
+    // The rebalance aimed at 50/50, a BUY or a SELL of 5 BTC here: the grid built on 5 BTC and 500 USDT traded 2.5 a level, and its
+    // BUYs at 95 and 90 left 37.5 USDT idle for the whole run
+    it.each`
+      portfolio              | side
+      ${unbalancedPortfolio} | ${'BUY'}
+      ${assetOnlyPortfolio}  | ${'SELL'}
+    `('builds, once the $side rebalance fills, a grid that the BTC and the USDT it leaves fund alike: 2.59 a level', ({ portfolio }) => {
+      startStrategy(100, {}, portfolio);
+      const [{ id, side, amount }] = issuedOrders;
+      // Filled at 100, without fee
+      const bought = side === 'BUY' ? amount : -amount;
+      const rebalanced = freePortfolio(portfolio.get('BTC')!.free + bought, portfolio.get('USDT')!.free - bought * 100);
       strategy.onOrderCompleted({ order: { id } as any, exchange: { price: 100, portfolio: rebalanced }, tools });
 
       expect(amountsSentAfter(1)).toEqual(['BUY 90 x2.59', 'BUY 95 x2.59', 'SELL 105 x2.59', 'SELL 110 x2.59']);
     });
 
-    it('retries rebalance on error', () => {
-      startStrategy(100, {}, unbalancedPortfolio);
+    // The plan made again after a failure used to be checked by the count of orders sent. It is made on the balances the failure
+    // left, a partial fill included: 3 BTC and 700 USDT fund the same 2.597… a level, a BUY of (700 - 480.5…) / 100 = 2.19…, and 7 BTC
+    // and 300 USDT a SELL of 7 - 5.19… = 1.80…
+    it.each`
+      portfolio              | outcome       | left                     | description         | expected
+      ${unbalancedPortfolio} | ${'errored'}  | ${unbalancedPortfolio}   | ${'nothing bought'} | ${['STICKY BUY 5.19', 'STICKY BUY 5.19']}
+      ${unbalancedPortfolio} | ${'canceled'} | ${freePortfolio(3, 700)} | ${'3 BTC bought'}   | ${['STICKY BUY 5.19', 'STICKY BUY 2.19']}
+      ${assetOnlyPortfolio}  | ${'errored'}  | ${assetOnlyPortfolio}    | ${'nothing sold'}   | ${['STICKY SELL 4.8', 'STICKY SELL 4.8']}
+      ${assetOnlyPortfolio}  | ${'canceled'} | ${freePortfolio(7, 300)} | ${'3 BTC sold'}     | ${['STICKY SELL 4.8', 'STICKY SELL 1.8']}
+    `('places the rebalance again on its side once $outcome with $description', ({ portfolio, outcome, left, expected }) => {
+      startStrategy(100, {}, portfolio);
+      endRebalance(outcome, left);
 
-      const rebalanceId = issuedOrders[0].id;
-      strategy.onOrderErrored({
-        order: { id: rebalanceId, reason: 'Test error' } as any,
-        exchange: { price: 100, portfolio: unbalancedPortfolio },
-        tools,
-      });
-
-      expect(createOrder).toHaveBeenCalledTimes(2);
+      expect(issuedOrders.map(({ type, side, amount }) => `${type} ${side} ${amount}`)).toEqual(expected);
     });
 
-    it('builds grid if rebalance no longer needed after error', () => {
+    it('builds the grid once a failed rebalance leaves the balances at the split of the grid', () => {
       startStrategy(100, {}, unbalancedPortfolio);
+      endRebalance('errored', balancedPortfolio);
 
-      const rebalanceId = issuedOrders[0].id;
-      // Simulate error but with a balanced portfolio (e.g. price moved or partial fill logic not tracked here, but state update)
-      // Actually strictly speaking onOrderErrored uses the portfolio from exchange.
-      strategy.onOrderErrored({
-        order: { id: rebalanceId, reason: 'Test error' } as any,
-        exchange: { price: 100, portfolio: balancedPortfolio },
-        tools,
-      });
-
-      // Should skip retry and build grid immediately
-      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('Retrying'));
-      // But since no rebalance needed, it builds grid (4 orders)
-      expect(createOrder).toHaveBeenCalledTimes(5); // 1 initial sticky + 4 grid orders (no retry sticky)
+      expect(amountsSentAfter(1)).toEqual(['BUY 90 x2.5', 'BUY 95 x2.5', 'SELL 105 x2.5', 'SELL 110 x2.5']);
     });
 
-    it('handles rebalance order cancellation', () => {
+    it.each`
+      outcome       | reason
+      ${'errored'}  | ${'Test error'}
+      ${'canceled'} | ${'Order was canceled'}
+    `('warns that the attempt failed once the rebalance is $outcome', ({ outcome, reason }) => {
       startStrategy(100, {}, unbalancedPortfolio);
+      endRebalance(outcome, unbalancedPortfolio);
 
-      const rebalanceId = issuedOrders[0].id;
-      strategy.onOrderCanceled({
-        order: { id: rebalanceId } as any,
-        exchange: { price: 100, portfolio: unbalancedPortfolio },
-        tools,
-      });
-
-      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('failed'));
+      expect(log).toHaveBeenCalledWith('warn', `GridBot: Rebalance attempt 1 failed: ${reason}. Retrying...`);
     });
 
     // A rebalance used to be planned and placed again whatever the error: one lost on the network may be live on the exchange,

@@ -876,75 +876,6 @@ describe('gridBot.utils', () => {
   });
 
   describe('deriveLevelQuantity', () => {
-    // assetFree = 10, currencyFree = 1000
-    const marketData: MarketData = { precision: { amount: 0.01 } };
-
-    it('derives quantity from portfolio for symmetric levels', () => {
-      // deriveLevelQuantity(centerPrice, assetFree, currencyFree, buyLevels, sellLevels, priceDecimals, spacingType, spacingValue, marketData, priceStep?)
-      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketData);
-
-      expect(qty).toBeGreaterThan(0);
-    });
-
-    it('derives quantity from portfolio for asymmetric levels', () => {
-      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 3, 2, 2, 'fixed', 5, marketData);
-
-      expect(qty).toBeGreaterThan(0);
-    });
-
-    it('returns 0 for zero levels', () => {
-      expect(deriveLevelQuantity(100, 10, 1000, 0, 0, 2, 'fixed', 5, marketData).quantity).toBe(0);
-    });
-
-    it('handles only buy levels', () => {
-      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 0, 2, 'fixed', 5, marketData);
-
-      expect(qty).toBeGreaterThan(0);
-    });
-
-    it('handles only sell levels', () => {
-      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 0, 2, 2, 'fixed', 5, marketData);
-
-      expect(qty).toBe(5);
-    });
-
-    it('applies amount limits', () => {
-      const marketDataWithLimits: MarketData = { amount: { min: 0.1, max: 1 }, precision: { amount: 0.01 } };
-      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketDataWithLimits);
-
-      expect(qty).toBeLessThanOrEqual(1);
-    });
-
-    it('applies cost limits when bounds exist', () => {
-      const marketDataWithCostLimits: MarketData = {
-        cost: { min: 10, max: 1000 },
-        precision: { amount: 0.01 },
-      };
-      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketDataWithCostLimits);
-
-      expect(qty).toBeGreaterThan(0);
-    });
-
-    it('returns 0 for insufficient portfolio', () => {
-      // assetFree = 0, currencyFree = 0
-      const { quantity: qty } = deriveLevelQuantity(100, 0, 0, 2, 2, 2, 'fixed', 5, marketData);
-
-      expect(qty).toBe(0);
-    });
-
-    it('handles price step parameter', () => {
-      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketData, 0.5);
-
-      expect(qty).toBeGreaterThan(0);
-    });
-
-    it('handles negative level prices in calculation', () => {
-      // Low center price where some buy levels would be negative - should skip those
-      const { quantity: qty } = deriveLevelQuantity(10, 10, 1000, 5, 2, 2, 'fixed', 5, marketData);
-
-      expect(qty).toBeGreaterThanOrEqual(0);
-    });
-
     interface Grid {
       center: number;
       assetFree: number;
@@ -974,6 +905,74 @@ describe('gridBot.utils', () => {
         priceStep,
       );
     };
+
+    // 2/2 levels spaced by 5 around 100, its BUYs at 95 and 90 and its SELLs at 105 and 110, on a tick and an amount step of 0.01. On 10
+    // BTC and 1000 USDT, a SELL takes 10 / 2 = 5 and a BUY 1000 / (95 + 90) = 5.405…: the BTC binds, 5 a level
+    const twoByTwo: Grid = {
+      center: 100,
+      assetFree: 10,
+      currencyFree: 1000,
+      buyLevels: 2,
+      sellLevels: 2,
+      spacingType: 'fixed',
+      spacingValue: 5,
+      marketData: { precision: { price: 0.01, amount: 0.01 } },
+    };
+    // The USDT binds: 500 / 185 = 2.7027… a BUY, 2.7 on the step
+    const shortOfUsdt: Grid = { ...twoByTwo, currencyFree: 500 };
+    // 1000 / (95 + 90 + 85) = 3.7037… a BUY
+    const threeByTwo: Grid = { ...twoByTwo, buyLevels: 3 };
+    // 1000 / 185 = 5.405… a BUY, the BTC left idle
+    const buyLevelsOnly: Grid = { ...twoByTwo, sellLevels: 0 };
+    // 10 / 2 = 5 a SELL, the USDT left idle
+    const sellLevelsOnly: Grid = { ...twoByTwo, buyLevels: 0 };
+    // 500 / (185 × 1.001) = 2.7000027… a BUY, the maker fee of 0.1 % on top, where 500 / 185 is 2.7027 on an amount step of 0.0001
+    const withMakerFee: Grid = { ...shortOfUsdt, marketData: { precision: { price: 0.01, amount: 0.0001 }, fee: { maker: 0.001 } } };
+    // Spaced by 3.3 on a tick of 0.5, its BUYs are at 96.5 and 93.5, 96.7 and 93.4 rounded to the tick: 950 / 190 = 5 a BUY, where the
+    // prices off the tick give 950 / 190.1 = 4.997…
+    const onTickOfHalf: Grid = {
+      ...twoByTwo,
+      currencyFree: 950,
+      spacingValue: 3.3,
+      marketData: { precision: { price: 0.5, amount: 0.01 } },
+    };
+    // Around 10, the BUYs of 5 levels spaced by 5 would be at 5, 0, -5, -10 and -15: only the one above 0 is sized, 1000 / 5 = 200
+    const buyPricesDownToZero: Grid = { ...twoByTwo, center: 10, buyLevels: 5 };
+    // amount.max 1 caps the 5 a level, and amount.min 0.1 is the minimum, which every level funds
+    const amountLimits: Grid = { ...twoByTwo, marketData: { amount: { min: 0.1, max: 1 }, precision: { price: 0.01, amount: 0.01 } } };
+    // cost.max 300 at the highest price, 110, caps the 5 a level at 300 / 110 = 2.727…
+    const costMax: Grid = { ...twoByTwo, marketData: { cost: { max: 300 }, precision: { price: 0.01, amount: 0.01 } } };
+    // cost.min 10: 0.2 BTC and 20 USDT fund 0.1 a level, 0.2 / 2 and 20 / 185 = 0.108…, which costs 9 at 90, the lowest price. The
+    // minimum there is 10 / 90 = 0.111…, 0.12 on the step: the farthest level of each side is left out, and the 0.2 BTC fund one SELL
+    // of 0.2, the 20 USDT one BUY at 95 of 20 / 95 = 0.21, its minimum 10 / 95 = 0.105…, 0.11
+    const costMin: Grid = {
+      ...twoByTwo,
+      assetFree: 0.2,
+      currencyFree: 20,
+      marketData: { cost: { min: 10 }, precision: { price: 0.01, amount: 0.01 } },
+    };
+
+    // Every level trades the smaller of two shares, rounded down to the amount step: the free BTC split over the sell levels, and the
+    // free USDT split over the prices of the buy levels, the maker fee on top. These sizes used to be asserted above 0, at most 1 or at
+    // least 0, which held with the cost limits left out, or with every BUY sized at the center price.
+    it.each`
+      grid                                              | description                                             | expected
+      ${twoByTwo}                                       | ${'2/2 levels, limited by the BTC'}                     | ${{ quantity: 5, buyLevels: 2, sellLevels: 2, minimumAmount: 0.01 }}
+      ${shortOfUsdt}                                    | ${'2/2 levels, limited by the USDT'}                    | ${{ quantity: 2.7, buyLevels: 2, sellLevels: 2, minimumAmount: 0.01 }}
+      ${threeByTwo}                                     | ${'3/2 levels'}                                         | ${{ quantity: 3.7, buyLevels: 3, sellLevels: 2, minimumAmount: 0.01 }}
+      ${buyLevelsOnly}                                  | ${'buy levels only'}                                    | ${{ quantity: 5.4, buyLevels: 2, sellLevels: 0, minimumAmount: 0.01 }}
+      ${sellLevelsOnly}                                 | ${'sell levels only'}                                   | ${{ quantity: 5, buyLevels: 0, sellLevels: 2, minimumAmount: 0.01 }}
+      ${{ ...twoByTwo, buyLevels: 0, sellLevels: 0 }}   | ${'no level'}                                           | ${{ quantity: 0, buyLevels: 0, sellLevels: 0, minimumAmount: 0.01 }}
+      ${{ ...twoByTwo, assetFree: 0, currencyFree: 0 }} | ${'nothing free'}                                       | ${{ quantity: 0, buyLevels: 0, sellLevels: 0, minimumAmount: 0.01 }}
+      ${withMakerFee}                                   | ${'BUYs paying the maker fee on top'}                   | ${{ quantity: 2.7, buyLevels: 2, sellLevels: 2, minimumAmount: 0.0001 }}
+      ${onTickOfHalf}                                   | ${'BUYs at their prices rounded to the tick'}           | ${{ quantity: 5, buyLevels: 2, sellLevels: 2, minimumAmount: 0.01 }}
+      ${buyPricesDownToZero}                            | ${'the BUYs priced above 0 only'}                       | ${{ quantity: 5, buyLevels: 1, sellLevels: 2, minimumAmount: 0.01 }}
+      ${amountLimits}                                   | ${'levels capped by amount.max'}                        | ${{ quantity: 1, buyLevels: 2, sellLevels: 2, minimumAmount: 0.1 }}
+      ${costMax}                                        | ${'levels capped by cost.max at the highest price'}     | ${{ quantity: 2.72, buyLevels: 2, sellLevels: 2, minimumAmount: 0.01 }}
+      ${costMin}                                        | ${'the levels cost.min leaves out at the lowest price'} | ${{ quantity: 0.2, buyLevels: 1, sellLevels: 1, minimumAmount: 0.11 }}
+    `('sizes $description', ({ grid, expected }) => {
+      expect(sizeOf(grid)).toEqual(expected);
+    });
 
     // The simulator charges the maker fee in currency on top of each BUY. Sized on the prices alone, the BUYs of a grid limited by its
     // currency needed the whole free currency before their fees: the last one placed, the highest, was refused at every attempt
