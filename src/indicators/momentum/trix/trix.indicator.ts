@@ -27,15 +27,15 @@ export class TRIX extends Indicator<'TRIX'> {
     const ema1Result = this.ema1.getResult();
     if (isNil(ema1Result)) return;
 
-    this.ema2.onNewCandle({ close: ema1Result } as Candle);
+    this.ema2.update(ema1Result);
     const ema2Result = this.ema2.getResult();
     if (isNil(ema2Result)) return;
 
-    this.ema3.onNewCandle({ close: ema2Result } as Candle);
+    this.ema3.update(ema2Result);
     const ema3Result = this.ema3.getResult();
     if (isNil(ema3Result)) return;
 
-    this.roc.onNewCandle({ close: ema3Result } as Candle);
+    this.roc.update(ema3Result);
     this.result = this.roc.getResult();
   }
 }

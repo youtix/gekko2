@@ -140,6 +140,49 @@ describe('Indicator', () => {
     const priceAsClose = candles.map(candle => ({ ...candle, close: INPUT_SOURCES[src as InputSources](candle) }));
     expect(results(new IndicatorClass({ ...parameters, src }), candles)).toEqual(results(new IndicatorClass(parameters), priceAsClose));
   });
+
+  // An indicator built on another feeds it numbers through update. Each value used to go in as the close of a made-up candle cast to
+  // Candle, a cast that hid from tsc which fields the inner indicator read: given another src, an average read one that candle lacked
+  it.each`
+    name                 | parameters
+    ${'SMA'}             | ${{ period: 5, src: 'hl2' }}
+    ${'EMA'}             | ${{ period: 5, src: 'open' }}
+    ${'DEMA'}            | ${{ period: 5, src: 'hlc3' }}
+    ${'TEMA'}            | ${{ period: 5, src: 'ohlc4' }}
+    ${'WMA'}             | ${{ period: 5, src: 'high' }}
+    ${'SMMA'}            | ${{ period: 5, src: 'low' }}
+    ${'WilderSmoothing'} | ${{ period: 5 }}
+    ${'ROC'}             | ${{ period: 5 }}
+    ${'BollingerBands'}  | ${{ period: 5 }}
+    ${'BollingerBands'}  | ${{ period: 5, maType: 'dema' }}
+  `('should take through update the price it reads from each candle, for $name $parameters', ({ name, parameters }) => {
+    const read = INPUT_SOURCES[(parameters.src ?? 'close') as InputSources];
+    const fed = create(name, parameters) as Indicator & { update: (value: number) => void };
+    const updated = candles.map(candle => {
+      fed.update(read(candle));
+      return structuredClone(fed.getResult());
+    });
+    expect(updated).toEqual(series(create(name, parameters)));
+  });
+
+  // StochasticRSI feeds its RSI to a Stochastic: a series without a range within a candle, each value its own high, low and close
+  it.each`
+    parameters
+    ${{}}
+    ${{ fastKPeriod: 3, slowKPeriod: 2, slowKMaType: 'dema', slowDPeriod: 2, slowDMaType: 'wma' }}
+  `('should take a value through update as its own high, low and close, for Stochastic $parameters', ({ parameters }) => {
+    const fed = create('Stochastic', parameters) as Indicator & { update: (value: number) => void };
+    const updated = candles.map(({ close }) => {
+      fed.update(close);
+      return structuredClone(fed.getResult());
+    });
+    const indicator = create('Stochastic', parameters);
+    const onCloses = candles.map(candle => {
+      indicator.onNewCandle({ ...candle, high: candle.close, low: candle.close });
+      return structuredClone(indicator.getResult());
+    });
+    expect(updated).toEqual(onCloses);
+  });
 });
 
 // Constructors used to take any parameter and fail later: a missing or fractional period fell back to a default, never seeded, or gave

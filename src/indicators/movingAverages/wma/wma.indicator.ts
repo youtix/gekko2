@@ -1,6 +1,5 @@
-import { Indicator } from '@indicators/indicator';
-import { checkInputSource, checkInteger, getInputSource } from '@indicators/indicator.utils';
-import { Candle } from '@models/candle.types';
+import { checkInputSource, checkInteger } from '@indicators/indicator.utils';
+import { MovingAverage } from '@indicators/movingAverages/movingAverage';
 
 /**
  * The last period prices weighted 1 for the oldest to period for the last, over the sum of the weights, period × (period + 1) / 2.
@@ -8,7 +7,7 @@ import { Candle } from '@models/candle.types';
  * summed afresh, as it used to be, once every period candles: sliding sums pile up rounding errors without end, some 1e-8 of the price
  * over a year of 1-minute candles, and with the fresh sums the result stays within some 1e-14 of the full sum's on prices.
  */
-export class WMA extends Indicator<'WMA'> {
+export class WMA extends MovingAverage<'WMA'> {
   private period: number;
   private divider: number;
   private prices: number[];
@@ -20,16 +19,15 @@ export class WMA extends Indicator<'WMA'> {
   private lastPrice: number;
   /** Candles in a row at the last price, that one included */
   private flatCandles: number;
-  private getPrice: (candle: Candle) => number;
 
   /**
    * @param period - Candles averaged, weighted 1 for the oldest to period for the last: a whole number, at least 1. Required
    * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
    */
   constructor({ period, src }: IndicatorRegistry['WMA']['input']) {
-    super();
     checkInteger('WMA', 'period', period);
     checkInputSource('WMA', src);
+    super(src);
     this.period = period;
     this.divider = (period * (period + 1)) / 2;
     this.prices = [];
@@ -40,11 +38,9 @@ export class WMA extends Indicator<'WMA'> {
     // Equal to no price, so that the first one starts a run
     this.lastPrice = NaN;
     this.flatCandles = 0;
-    this.getPrice = getInputSource(src);
   }
 
-  public onNewCandle(candle: Candle): void {
-    const price = this.getPrice(candle);
+  public update(price: number): void {
     this.flatCandles = price === this.lastPrice ? this.flatCandles + 1 : 1;
     this.lastPrice = price;
     // Warming up phase

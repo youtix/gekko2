@@ -47,7 +47,7 @@ export class MACD extends Indicator<'MACD'> {
 
     if (isNil(fast) || isNil(slow)) return;
     const macdLine = fast - slow;
-    this.emaSignal.onNewCandle({ close: macdLine } as Candle);
+    this.emaSignal.update(macdLine);
     const signalNum = this.emaSignal.getResult();
 
     if (isNil(signalNum)) return;

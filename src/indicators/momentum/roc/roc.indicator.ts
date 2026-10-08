@@ -18,6 +18,11 @@ export class ROC extends Indicator<'ROC'> {
   }
 
   public onNewCandle({ close }: Candle): void {
+    this.update(close);
+  }
+
+  /** Takes the next close, or in its place a value of the indicator built on this one: TRIX gives its triple EMA */
+  public update(close: number): void {
     this.ringBuffer.push(close);
     if (!this.ringBuffer.isFull()) return;
 

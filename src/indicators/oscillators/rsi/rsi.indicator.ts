@@ -34,8 +34,8 @@ export class RSI extends Indicator<'RSI'> {
     const gain = change > 0 ? change : 0;
     const loss = change < 0 ? -change : 0;
 
-    this.wilderGain.onNewCandle({ close: gain } as Candle);
-    this.wilderLoss.onNewCandle({ close: loss } as Candle);
+    this.wilderGain.update(gain);
+    this.wilderLoss.update(loss);
 
     const avgGain = this.wilderGain.getResult();
     const avgLoss = this.wilderLoss.getResult();

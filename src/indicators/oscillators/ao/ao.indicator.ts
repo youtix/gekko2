@@ -26,8 +26,8 @@ export class AO extends Indicator<'AO'> {
     const hl2 = (high + low) / 2;
 
     // Update fast and slow SMAs
-    this.smaFast.onNewCandle({ close: hl2 } as Candle);
-    this.smaSlow.onNewCandle({ close: hl2 } as Candle);
+    this.smaFast.update(hl2);
+    this.smaSlow.update(hl2);
 
     const fastValue = this.smaFast.getResult();
     const slowValue = this.smaSlow.getResult();

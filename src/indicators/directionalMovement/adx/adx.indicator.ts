@@ -24,7 +24,7 @@ export class ADX extends Indicator<'ADX'> {
     if (isNil(dx)) return;
 
     // ADX is Wilder's smoothing of DX: it used to repeat the recurrence inline instead of sharing the class ATR and RSI use
-    this.smoothing.onNewCandle({ close: dx } as Candle);
+    this.smoothing.update(dx);
     this.result = this.smoothing.getResult();
   }
 }

@@ -5,9 +5,8 @@ import { INPUT_SOURCES } from './indicator.const';
 import type { IndicatorNames } from './indicator.types';
 
 /**
- * The price an indicator reads from each candle, named by its `src` parameter, or the close when it names none: the indicators built
- * on others feed them made-up candles that hold only a close. Every indicator with a `src` reads it through here, so that they agree
- * on it: DEMA, TEMA, WMA and Wilder's smoothing used to ignore it.
+ * The price an indicator reads from each candle, named by its `src` parameter, or the close when it names none. Every indicator with a
+ * `src` reads it through here, so that they agree on it: DEMA, TEMA, WMA and Wilder's smoothing used to ignore it.
  */
 export const getInputSource = (src: InputSources = 'close'): ((candle: Candle) => number) => INPUT_SOURCES[src];
 

@@ -24,7 +24,7 @@ export class ATR extends Indicator<'ATR'> {
     const tr = this.truerange.getResult();
     if (isNil(tr)) return;
 
-    this.smoothing.onNewCandle({ close: tr } as Candle);
+    this.smoothing.update(tr);
     this.result = this.smoothing.getResult();
   }
 }

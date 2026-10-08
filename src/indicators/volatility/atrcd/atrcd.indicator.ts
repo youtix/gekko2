@@ -45,7 +45,7 @@ export class ATRCD extends Indicator<'ATRCD'> {
 
     if (isNil(fast) || isNil(slow)) return;
     const atrcdLine = fast - slow;
-    this.emaSignal.onNewCandle({ close: atrcdLine } as Candle);
+    this.emaSignal.update(atrcdLine);
     const signalNum = this.emaSignal.getResult();
 
     if (isNil(signalNum)) return;

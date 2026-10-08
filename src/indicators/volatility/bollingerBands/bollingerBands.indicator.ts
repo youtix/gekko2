@@ -40,8 +40,13 @@ export class BollingerBands extends Indicator<'BollingerBands'> {
   }
 
   public onNewCandle({ close }: Candle): void {
+    this.update(close);
+  }
+
+  /** Takes the next close, or in its place a value of the indicator built on this one: OBV gives its OBV */
+  public update(close: number): void {
     //  Warmup phase
-    this.ma.onNewCandle({ close } as Candle);
+    this.ma.update(close);
     this.ringBuffer.push(close);
     if (!this.ringBuffer.isFull()) return;
 

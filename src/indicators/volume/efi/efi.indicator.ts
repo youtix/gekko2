@@ -21,9 +21,9 @@ export class EFI extends Indicator<'EFI'> {
     checkInteger('EFI', 'period', period);
     checkOneOf('EFI', 'maType', maType, MOVING_AVERAGE_TYPES);
     checkInputSource('EFI', src);
-    // The average gets the force as the close of a made-up candle, so it reads the close whatever src says. It used to get src
-    // too: with sma or ema and any src but close it read a field that candle lacks, and smoothed was NaN forever
-    this.ma = new MOVING_AVERAGES[maType]({ period, src: 'close' });
+    // The average is fed the force as a number, through update, and reads no candle. It used to get it as the close of a made-up
+    // candle, and EFI's src too: with sma or ema and any src but close it read a field that candle lacked, and smoothed was NaN forever
+    this.ma = new MOVING_AVERAGES[maType]({ period });
     this.getPrice = getInputSource(src);
   }
 
@@ -38,7 +38,7 @@ export class EFI extends Indicator<'EFI'> {
     const fi = (price - this.prevPrice) * candle.volume;
     this.prevPrice = price;
 
-    this.ma.onNewCandle({ close: fi } as Candle);
+    this.ma.update(fi);
     const smoothed = this.ma.getResult();
 
     // The force index alone went out while its moving average warmed up

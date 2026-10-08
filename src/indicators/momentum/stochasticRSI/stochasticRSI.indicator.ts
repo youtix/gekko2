@@ -43,7 +43,7 @@ export class StochasticRSI extends Indicator<'StochasticRSI'> {
     const rsiValue = this.rsi.getResult();
     if (isNil(rsiValue)) return;
 
-    this.stoch.onNewCandle({ high: rsiValue, low: rsiValue, close: rsiValue } as Candle);
+    this.stoch.update(rsiValue);
     const stoch = this.stoch.getResult();
 
     if (!isNil(stoch)) this.result = { fastK: stoch.k, fastD: stoch.d };

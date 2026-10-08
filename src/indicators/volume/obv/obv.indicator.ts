@@ -39,7 +39,7 @@ export class OBV extends Indicator<'OBV'> {
     else if (candle.close < this.prevClose) this.obv -= candle.volume;
     this.prevClose = candle.close;
 
-    this.bb.onNewCandle({ close: this.obv } as Candle);
+    this.bb.update(this.obv);
     const bands = this.bb.getResult();
     // The OBV alone went out while its bands warmed up
     if (isNil(bands)) return;

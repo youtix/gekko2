@@ -47,9 +47,19 @@ export class Stochastic extends Indicator<'Stochastic'> {
     this.maSlowD = new MOVING_AVERAGES[slowDMaType]({ period: slowDPeriod });
   }
 
-  public onNewCandle(candle: Candle) {
-    this.highs[this.idxFast] = candle.high;
-    this.lows[this.idxFast] = candle.low;
+  public onNewCandle({ high, low, close }: Candle) {
+    this.next(high, low, close);
+  }
+
+  /** Takes the next value of a series that has no range within a candle, as its own high, low and close: StochasticRSI gives its RSI */
+  public update(value: number) {
+    this.next(value, value, value);
+  }
+
+  /** The high, low and close of the next candle, or a value as all three */
+  private next(high: number, low: number, close: number) {
+    this.highs[this.idxFast] = high;
+    this.lows[this.idxFast] = low;
     this.idxFast = (this.idxFast + 1) % this.fastKPeriod;
     // The raw %K used to be taken over the partial windows of the first candles, and d fed 0 while k was not ready: an ema or a dema
     // seeded on those values carried their error for many candles, and a warm-up count that assumed period − 1 lookbacks published
@@ -61,13 +71,13 @@ export class Stochastic extends Indicator<'Stochastic'> {
     const range = highest - lowest;
     // StochasticRSI feeds RSI values, which hold still over a flat stretch in exact arithmetic but wobble in their last bits: the range
     // used to be that wobble, and the raw %K 0 or 100 at random. Ends equal within the tolerance make a flat range.
-    const rawK = compareWithTolerance(highest, lowest) === 0 ? 0 : ((candle.close - lowest) / range) * 100;
+    const rawK = compareWithTolerance(highest, lowest) === 0 ? 0 : ((close - lowest) / range) * 100;
 
-    this.maSlowK.onNewCandle({ close: rawK } as Candle);
+    this.maSlowK.update(rawK);
     const slowK = this.maSlowK.getResult();
     if (isNil(slowK)) return;
 
-    this.maSlowD.onNewCandle({ close: slowK } as Candle);
+    this.maSlowD.update(slowK);
     const slowD = this.maSlowD.getResult();
     if (!isNil(slowD)) this.result = { k: slowK, d: slowD };
   }

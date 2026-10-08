@@ -1,33 +1,29 @@
-import { checkInputSource, checkInteger, getInputSource } from '@indicators/indicator.utils';
-import { Candle } from '@models/candle.types';
-import { Indicator } from '../../indicator';
+import { checkInputSource, checkInteger } from '@indicators/indicator.utils';
+import { MovingAverage } from '@indicators/movingAverages/movingAverage';
 
-export class EMA extends Indicator<'EMA'> {
+export class EMA extends MovingAverage<'EMA'> {
   private period: number;
   private alpha: number;
   private age: number;
   private sum: number;
   private prevEma: number;
-  private getPrice: (candle: Candle) => number;
 
   /**
    * @param period - Candles averaged, with the weight 2 / (period + 1) on the last: a whole number, at least 1. Default 30
    * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
    */
   constructor({ period = 30, src }: IndicatorRegistry['EMA']['input'] = {}) {
-    super();
     checkInteger('EMA', 'period', period);
     checkInputSource('EMA', src);
+    super(src);
     this.period = period;
     this.alpha = 2 / (period + 1);
     this.age = 0;
     this.sum = 0;
     this.prevEma = 0;
-    this.getPrice = getInputSource(src);
   }
 
-  public onNewCandle(candle: Candle) {
-    const price = this.getPrice(candle);
+  public update(price: number) {
     if (this.age < this.period) {
       this.sum += price;
       this.age++;
