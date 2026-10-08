@@ -36,9 +36,21 @@ export type Tools<T> = {
    * A `trailing` is checked before anything is relayed: on a BUY only, with a percentage above 0 and below 100 and a trigger above 0
    * or left out. Anything else throws a GekkoError and the order is not sent: the bot stops. The stop is armed, once the BUY
    * completes, from a copy taken here: changing the object afterwards moves nothing.
+   *
+   * A stop protects the position its BUY opened until the strategy sells on that pair: once a SELL the strategy created completes
+   * there, every stop armed on the pair is canceled, whatever the amount sold, with a line at info level. So a strategy that scales
+   * out loses its stops at its first SELL. The SELL a stop sends cancels no other stop, and a stop whose BUY has not completed yet is
+   * kept: it protects the position that BUY opens.
    */
   createOrder: (order: StrategyOrder) => UUID;
   cancelOrder: (orderId: UUID) => void;
+  /**
+   * Cancels the trailing stop of the BUY `orderId` (TrailingStopState.id), before or after the BUY completes. A strategy that exits
+   * need not call it: its SELL cancels the stops of the pair once it completes (see createOrder). Until then they protect the
+   * position, and one may trigger while that SELL is pending: its own SELL is then refused if nothing is left to sell, an error
+   * counting towards the circuit breaker. Canceling the stops before sending the SELL rules that out, but leaves the position
+   * unprotected if that SELL fails.
+   */
   cancelTrailingOrder: (orderId: UUID) => void;
 };
 export type InitParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T>; addIndicator: AddIndicatorFn };

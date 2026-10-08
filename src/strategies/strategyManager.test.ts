@@ -12,6 +12,7 @@ import { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { OrderSide } from '@models/order.types';
 import { BalanceDetail } from '@models/portfolio.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
 import { randomUUID, UUID } from 'node:crypto';
@@ -846,6 +847,203 @@ describe('StrategyManager', () => {
 
         it('does not tell the strategy the stop triggered', () => {
           expect(strategy.onTrailingStopTriggered).not.toHaveBeenCalled();
+        });
+      });
+
+      // A stop outlived the position of its BUY once the strategy had sold it: it later sold a position the strategy opened afterwards
+      // (the Trader capping its SELL to what was free) or, the strategy being flat, sent a SELL that was refused and counted towards the
+      // circuit breaker
+      describe('when the strategy sells on a pair', () => {
+        const ETH: TradingPair = 'ETH/USDT';
+        const ACTIVE_ID: UUID = 'ac71e000-0000-4000-8000-000000000001';
+        const DORMANT_ID: UUID = 'd0e1a000-0000-4000-8000-000000000002';
+        const ETH_ID: UUID = 'e7e70000-0000-4000-8000-000000000003';
+        const PENDING_ID: UUID = 'be1d0000-0000-4000-8000-000000000004';
+        const SELL_ID: UUID = '5e115e11-0000-4000-8000-000000000005';
+        const STOP_SELL_ID: UUID = '5e115e11-0000-4000-8000-000000000006';
+        const exchange = { price: 50000, portfolio: new Map() };
+
+        /** Creates an order as the strategy does, createOrder drawing `id` for it */
+        const create = (id: UUID, order: StrategyOrder) => {
+          vi.mocked(randomUUID).mockReturnValueOnce(id);
+          manager['createOrder'](order);
+        };
+        /** Reports the fill of the order `id` as the Trader does */
+        const complete = (id: UUID, side: OrderSide, pair: TradingPair, amount: number) =>
+          manager.onOrderCompleted({
+            order: {
+              id,
+              symbol: pair,
+              side,
+              type: 'MARKET',
+              amount,
+              orderCreationDate,
+              orderExecutionDate: 61000,
+              effectivePrice: 50000,
+              fee: 0,
+            },
+            exchange,
+          });
+        /** Reports the cancelation of the SELL `id` on BTC/USDT after part of it filled */
+        const cancel = (id: UUID) =>
+          manager.onOrderCanceled({
+            order: {
+              id,
+              symbol,
+              side: 'SELL',
+              type: 'STICKY',
+              amount: 1,
+              filled: 0.4,
+              remaining: 0.6,
+              orderCreationDate,
+              orderCancelationDate: 61000,
+            },
+            exchange,
+          });
+        /** Reports the error of the SELL `id` on BTC/USDT */
+        const fail = (id: UUID) =>
+          manager.onOrderErrored({
+            order: {
+              id,
+              symbol,
+              side: 'SELL',
+              type: 'STICKY',
+              amount: 1,
+              reason: 'Insufficient balance',
+              orderCreationDate,
+              orderErrorDate: 61000,
+            },
+            exchange,
+          });
+        /** A BUY of 0.5 on `pair` asking for `trailing`, completed: its stop is armed */
+        const armStop = (id: UUID, pair: TradingPair, trailing: TrailingConfig) => {
+          create(id, { symbol: pair, side: 'BUY', type: 'MARKET', trailing });
+          complete(id, 'BUY', pair, 0.5);
+        };
+        /** An all-in MARKET SELL the strategy creates on `pair`, completed */
+        const sellAll = (pair: TradingPair) => {
+          create(SELL_ID, { symbol: pair, side: 'SELL', type: 'MARKET' });
+          complete(SELL_ID, 'SELL', pair, 1);
+        };
+        /** The stops armed, by the id of their BUY */
+        const armedStops = () => [...manager['trailingStopManager'].getOrders().keys()];
+        /** What the manager said at info level of the stops it canceled */
+        const cancelLines = () =>
+          vi.mocked(info).mock.calls.filter(([, message]) => typeof message === 'string' && message.startsWith('Trailing stop of BUY'));
+        const cancelLine = (stopId: UUID) => [
+          'strategy',
+          `Trailing stop of BUY ${stopId} canceled: the strategy sold on BTC/USDT (SELL ${SELL_ID} completed), closing the position the stop protected`,
+        ];
+
+        // Two stops on the pair, one active (without trigger) and one dormant (its trigger not reached yet), and one on another pair
+        describe('once a SELL it created completes there', () => {
+          let listener: Mock;
+
+          beforeEach(() => {
+            armStop(ACTIVE_ID, symbol, { percentage: 2 });
+            armStop(DORMANT_ID, symbol, { percentage: 2, trigger: 60000 });
+            armStop(ETH_ID, ETH, { percentage: 2 });
+            sellAll(symbol);
+            listener = vi.fn();
+            manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+          });
+
+          it.each`
+            stop                  | id
+            ${'the active stop'}  | ${ACTIVE_ID}
+            ${'the dormant stop'} | ${DORMANT_ID}
+          `('cancels $stop of the pair', ({ id }) => {
+            expect(armedStops()).not.toContain(id);
+          });
+
+          it('leaves the stop of another pair armed', () => {
+            expect(armedStops()).toContain(ETH_ID);
+          });
+
+          it('says at info level which stops it canceled, and why, one line each', () => {
+            expect(cancelLines()).toEqual([cancelLine(ACTIVE_ID), cancelLine(DORMANT_ID)]);
+          });
+
+          // A candle on which both would have triggered: the dormant one activated at its open
+          it('sends no SELL when the price then falls through their stop prices', () => {
+            manager.onOneMinuteBucket(minute(60000, 48000));
+            expect(listener).not.toHaveBeenCalled();
+          });
+        });
+
+        // The active stop triggers and the dormant one is not reached: the SELL of the stop sold what its own BUY filled
+        describe('once the SELL of a stop completes there', () => {
+          beforeEach(() => {
+            armStop(ACTIVE_ID, symbol, { percentage: 2 });
+            armStop(DORMANT_ID, symbol, { percentage: 2, trigger: 60000 });
+            vi.mocked(randomUUID).mockReturnValueOnce(STOP_SELL_ID);
+            manager.onOneMinuteBucket(minute(50000, 48000));
+            complete(STOP_SELL_ID, 'SELL', symbol, 0.5);
+          });
+
+          it('leaves the other stop of the pair armed', () => {
+            expect(armedStops()).toEqual([DORMANT_ID]);
+          });
+
+          it('says nothing of canceling a stop', () => {
+            expect(cancelLines()).toEqual([]);
+          });
+        });
+
+        // A LIMIT BUY below the market waits while the strategy sells its position: it opens a position after that SELL
+        describe('once a SELL it created completes there while a BUY asking for a stop is pending', () => {
+          beforeEach(() => {
+            armStop(ACTIVE_ID, symbol, { percentage: 2 });
+            create(PENDING_ID, { symbol, side: 'BUY', type: 'LIMIT', price: 49000, amount: 0.2, trailing: { percentage: 3 } });
+            sellAll(symbol);
+          });
+
+          it('keeps the stop of that BUY', () => {
+            expect(manager['pendingTrailingStops'].has(PENDING_ID)).toBe(true);
+          });
+
+          it('arms it when that BUY completes', () => {
+            complete(PENDING_ID, 'BUY', symbol, 0.2);
+            expect(armedStops()).toEqual([PENDING_ID]);
+          });
+        });
+
+        // Ended without completing, the SELL left the position held, in part at least: the stop keeps protecting it
+        it.each`
+          outcome       | end
+          ${'canceled'} | ${cancel}
+          ${'errored'}  | ${fail}
+        `('leaves the stop of the pair armed when a SELL it created is $outcome', ({ end }) => {
+          armStop(ACTIVE_ID, symbol, { percentage: 2 });
+          create(SELL_ID, { symbol, side: 'SELL', type: 'STICKY' });
+          end(SELL_ID);
+          expect(armedStops()).toEqual([ACTIVE_ID]);
+        });
+
+        // The stops still armed are canceled once the strategy has heard of its SELL: one it canceled itself then is not reported
+        it('says nothing of a stop the strategy canceled itself as it heard of that SELL', () => {
+          manager['strategy'] = {
+            onOrderCompleted: ({ order, tools }: { order: { side: OrderSide }; tools: Tools<object> }) => {
+              if (order.side === 'SELL') tools.cancelTrailingOrder(ACTIVE_ID);
+            },
+          } as any;
+          armStop(ACTIVE_ID, symbol, { percentage: 2 });
+          sellAll(symbol);
+          expect(cancelLines()).toEqual([]);
+        });
+
+        // Told apart from the SELLs the strategy created until its outcome arrives, the SELL of a stop is then forgotten
+        it.each`
+          outcome        | end
+          ${'completed'} | ${(id: UUID) => complete(id, 'SELL', symbol, 0.5)}
+          ${'canceled'}  | ${cancel}
+          ${'errored'}   | ${fail}
+        `('forgets the SELL of a stop once it is $outcome', ({ end }) => {
+          armStop(ACTIVE_ID, symbol, { percentage: 2 });
+          vi.mocked(randomUUID).mockReturnValueOnce(STOP_SELL_ID);
+          manager.onOneMinuteBucket(minute(50000, 48000));
+          end(STOP_SELL_ID);
+          expect(manager['trailingStopSellIds'].has(STOP_SELL_ID)).toBe(false);
         });
       });
     });

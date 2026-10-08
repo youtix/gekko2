@@ -65,6 +65,8 @@ export class StrategyManager extends EventEmitter {
   private indicatorsResults: IndicatorResults[] = [];
   private currentTimestamp: EpochTimeStamp = 0;
   private pendingTrailingStops = new Map<UUID, TrailingConfig>();
+  /** The SELLs the trailing stops sent, until their outcome: told apart from the SELLs the strategy created (see onOrderCompleted) */
+  private readonly trailingStopSellIds = new Set<UUID>();
   private consecutiveErrors = 0;
   /** The levels outside LogLevel the strategy logged at, each reported once */
   private readonly unknownLogLevels = new Set<unknown>();
@@ -172,12 +174,18 @@ export class StrategyManager extends EventEmitter {
       });
       this.pendingTrailingStops.delete(order.id);
     }
+
+    // A SELL the strategy created closed the position the stops of its pair protected. That of a stop sold what its own BUY filled: the
+    // other stops of the pair still protect theirs.
+    const isTrailingStopSell = this.trailingStopSellIds.delete(order.id);
+    if (order.side === 'SELL' && !isTrailingStopSell) this.cancelTrailingStopsOfPair(order);
   }
 
   public onOrderCanceled({ order, exchange }: OrderCanceledEvent) {
     this.consecutiveErrors = 0;
     this.strategy?.onOrderCanceled?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
     this.cancelTrailingOrder(order.id);
+    this.trailingStopSellIds.delete(order.id);
   }
 
   public onOrderErrored({ order, exchange }: OrderErroredEvent) {
@@ -194,6 +202,7 @@ export class StrategyManager extends EventEmitter {
       error('strategy', `The strategy's onOrderErrored failed on the error that trips the circuit breaker: ${reason}`);
     }
     this.cancelTrailingOrder(order.id);
+    this.trailingStopSellIds.delete(order.id);
     if (isConsecutiveErrorsReached) throw new ApplicationStopError(`Max consecutive order errors reached (${this.maxConsecutiveErrors})`);
   }
 
@@ -225,6 +234,7 @@ export class StrategyManager extends EventEmitter {
 
   private onTrailingStopTriggered(state: TrailingStopState) {
     const orderId = this.createOrder({ symbol: state.symbol, side: 'SELL', type: 'MARKET', amount: state.amount });
+    this.trailingStopSellIds.add(orderId);
     this.strategy?.onTrailingStopTriggered?.(orderId, state, this.tools);
   }
 
@@ -354,6 +364,26 @@ export class StrategyManager extends EventEmitter {
     if (!problem) return;
     const { side, type, symbol } = order;
     throw new GekkoError('strategy', `Impossible to create the ${side} ${type} order on ${symbol}: ${problem}`);
+  }
+
+  /**
+   * Cancels the trailing stops armed on the pair of a SELL the strategy created, once it completed: that SELL closed the position they
+   * protected. Left armed, a stop outlived its position: it later sold a position the strategy opened afterwards (the Trader capping its
+   * SELL to what was free), or, the strategy being flat, sent a SELL that was refused, an error counting towards the circuit breaker.
+   * Every stop of the pair, whatever the amount sold: every built-in strategy sells all it holds, and an all-in SELL sells less than
+   * its BUY filled when the exchange took the fee of the BUY from the asset bought, so a comparison of amounts would keep the stop. A
+   * stop whose BUY has not completed is kept: that BUY opens a position after this SELL. A SELL canceled or errored cancels nothing:
+   * the position is still held, in part at least.
+   */
+  private cancelTrailingStopsOfPair({ id: sellId, symbol }: OrderCompletedEvent['order']) {
+    const stopIds = [...this.trailingStopManager.getOrders().values()].filter(stop => stop.symbol === symbol).map(({ id }) => id);
+    for (const stopId of stopIds) {
+      this.cancelTrailingOrder(stopId);
+      info(
+        'strategy',
+        `Trailing stop of BUY ${stopId} canceled: the strategy sold on ${symbol} (SELL ${sellId} completed), closing the position the stop protected`,
+      );
+    }
   }
 
   private emitWarmupCompletedEvent(bucket: CandleBucket) {
