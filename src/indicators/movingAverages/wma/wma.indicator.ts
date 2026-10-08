@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { getInputSource } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 
 export class WMA extends Indicator<'WMA'> {
@@ -6,20 +7,23 @@ export class WMA extends Indicator<'WMA'> {
   private fifo: number[];
   private divider: number;
   private age: number;
+  private getPrice: (candle: Candle) => number;
 
-  constructor({ period }: IndicatorRegistry['WMA']['input']) {
+  constructor({ period, src }: IndicatorRegistry['WMA']['input']) {
     super();
     this.period = period;
     this.fifo = [];
     // divider = period * (period + 1) / 2
     this.divider = (this.period * (this.period + 1)) / 2;
     this.age = 0;
+    this.getPrice = getInputSource(src);
   }
 
-  public onNewCandle({ close }: Candle): void {
+  public onNewCandle(candle: Candle): void {
+    const price = this.getPrice(candle);
     // Warming up phase
     if (this.age < this.period) {
-      this.fifo.push(close);
+      this.fifo.push(price);
       this.age++;
       // Compute first value
       if (this.age === this.period) this.result = this.computeWMA();
@@ -27,7 +31,7 @@ export class WMA extends Indicator<'WMA'> {
     }
 
     this.fifo.shift();
-    this.fifo.push(close);
+    this.fifo.push(price);
     this.result = this.computeWMA();
   }
 

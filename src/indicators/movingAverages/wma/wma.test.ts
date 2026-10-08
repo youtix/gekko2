@@ -63,4 +63,26 @@ describe('WMA', () => {
     wma2.onNewCandle(candle);
     expect(wma2.getResult()).toBeCloseTo(expected, 13);
   });
+
+  // The WMA used to drop src and average the close
+  const wmaHl2 = new WMA({ period: 3, src: 'hl2' });
+  it.each`
+    candle                                                                                     | expected
+    ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}   | ${null}
+    ${{ close: 24, open: 81, high: 83.85720988022568, low: 21.142790119774318, volume: 814 }}  | ${null}
+    ${{ close: 75, open: 24, high: 76.94326596315126, low: 22.056734036848734, volume: 1064 }} | ${55.75}
+    ${{ close: 21, open: 75, high: 79.67167346434113, low: 16.328326535658874, volume: 330 }}  | ${49.25}
+    ${{ close: 34, open: 21, high: 34.711649023641215, low: 20.28835097635878, volume: 964 }}  | ${38}
+    ${{ close: 25, open: 34, high: 36.18138133787512, low: 22.818618662124877, volume: 214 }}  | ${31.916666666666668}
+    ${{ close: 72, open: 25, high: 73.33035016836122, low: 23.669649831638775, volume: 860 }}  | ${38.666666666666664}
+    ${{ close: 92, open: 72, high: 94.97523624952838, low: 69.02476375047162, volume: 486 }}   | ${62.083333333333336}
+    ${{ close: 99, open: 92, high: 101.5127586628106, low: 89.4872413371894, volume: 647 }}    | ${83.16666666666667}
+    ${{ close: 2, open: 99, high: 99.0804764241746, low: 1.9195235758253941, volume: 396 }}    | ${70.75}
+    ${{ close: 86, open: 2, high: 86.08306699694582, low: 1.916933003054178, volume: 252 }}    | ${54.75}
+    ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${64.58333333333333}
+  `('should return $expected with src hl2 when candle high to $candle.high and low to $candle.low', ({ candle, expected }) => {
+    wmaHl2.onNewCandle(candle);
+    if (expected === null) expect(wmaHl2.getResult()).toBeNull();
+    else expect(wmaHl2.getResult()).toEqual(expect.closeTo(expected, 13));
+  });
 });

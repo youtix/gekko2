@@ -1,5 +1,5 @@
 import { Indicator } from '@indicators/indicator';
-import { INPUT_SOURCES } from '@indicators/indicator.const';
+import { getInputSource } from '@indicators/indicator.utils';
 import { WilderSmoothing } from '@indicators/movingAverages/wilderSmoothing/wilderSmoothing.indicator';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
@@ -10,11 +10,11 @@ export class RSI extends Indicator<'RSI'> {
   private prevPrice?: number;
   private getPrice: (candle: Candle) => number;
 
-  constructor({ period = 14, src = 'close' }: IndicatorRegistry['RSI']['input'] = {}) {
+  constructor({ period = 14, src }: IndicatorRegistry['RSI']['input'] = {}) {
     super();
     this.wilderGain = new WilderSmoothing({ period });
     this.wilderLoss = new WilderSmoothing({ period });
-    this.getPrice = INPUT_SOURCES[src];
+    this.getPrice = getInputSource(src);
   }
 
   public onNewCandle(candle: Candle): void {

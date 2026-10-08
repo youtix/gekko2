@@ -150,4 +150,26 @@ describe('SMMA', () => {
   it('should be the Wilder smoothing under another name, not a second copy of its recurrence', () => {
     expect(new SMMA({ period: 5 })).toBeInstanceOf(WilderSmoothing);
   });
+
+  // The SMMA used to drop src and smooth the close
+  const smmaOpen = new SMMA({ period: 3, src: 'open' });
+  it.each`
+    candle                                                                                     | expected
+    ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}   | ${null}
+    ${{ close: 24, open: 81, high: 83.85720988022568, low: 21.142790119774318, volume: 814 }}  | ${null}
+    ${{ close: 75, open: 24, high: 76.94326596315126, low: 22.056734036848734, volume: 1064 }} | ${62}
+    ${{ close: 21, open: 75, high: 79.67167346434113, low: 16.328326535658874, volume: 330 }}  | ${66.33333333333333}
+    ${{ close: 34, open: 21, high: 34.711649023641215, low: 20.28835097635878, volume: 964 }}  | ${51.22222222222222}
+    ${{ close: 25, open: 34, high: 36.18138133787512, low: 22.818618662124877, volume: 214 }}  | ${45.48148148148149}
+    ${{ close: 72, open: 25, high: 73.33035016836122, low: 23.669649831638775, volume: 860 }}  | ${38.65432098765432}
+    ${{ close: 92, open: 72, high: 94.97523624952838, low: 69.02476375047162, volume: 486 }}   | ${49.769547325102884}
+    ${{ close: 99, open: 92, high: 101.5127586628106, low: 89.4872413371894, volume: 647 }}    | ${63.84636488340192}
+    ${{ close: 2, open: 99, high: 99.0804764241746, low: 1.9195235758253941, volume: 396 }}    | ${75.56424325560128}
+    ${{ close: 86, open: 2, high: 86.08306699694582, low: 1.916933003054178, volume: 252 }}    | ${51.042828837067525}
+    ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${62.695219224711686}
+  `('should return $expected with src open when candle open to $candle.open', ({ candle, expected }) => {
+    smmaOpen.onNewCandle(candle);
+    if (expected === null) expect(smmaOpen.getResult()).toBeNull();
+    else expect(smmaOpen.getResult()).toEqual(expect.closeTo(expected, 13));
+  });
 });

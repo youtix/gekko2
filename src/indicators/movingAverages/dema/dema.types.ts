@@ -1,6 +1,8 @@
+import { InputSources } from '@models/inputSources.types';
+
 declare global {
   interface IndicatorRegistry {
-    DEMA: { input: { period: number }; output: number | null };
+    DEMA: { input: { period: number; src?: InputSources }; output: number | null };
   }
 }
 

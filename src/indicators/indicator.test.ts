@@ -1,7 +1,9 @@
 import { Candle } from '@models/candle.types';
+import { InputSources } from '@models/inputSources.types';
 import { describe, expect, it } from 'vitest';
 import * as indicators from './index';
 import { Indicator } from './indicator';
+import { INPUT_SOURCES } from './indicator.const';
 
 const price = (index: number) => 100 + 10 * Math.sin(index / 3) + 5 * Math.sin(index / 7);
 // A zigzag without a flat window, so no indicator waits on a zero range or a zero middle band
@@ -64,6 +66,7 @@ describe('Indicator', () => {
     ${'TrueRange'}       | ${undefined}                                                               | ${2}
     ${'EFI'}             | ${{}}                                                                      | ${14}
     ${'EFI'}             | ${{ maType: 'dema' }}                                                      | ${26}
+    ${'EFI'}             | ${{ maType: 'sma', src: 'hl2' }}                                           | ${14}
     ${'OBV'}             | ${{}}                                                                      | ${15}
     ${'OBV'}             | ${{ maType: 'dema' }}                                                      | ${28}
   `(
@@ -81,4 +84,33 @@ describe('Indicator', () => {
       expect(results.map(readiness)).toEqual(results.map((_, candleCount) => (candleCount < firstComplete ? 'null' : 'complete')));
     },
   );
+
+  // src names the price an indicator reads in place of the close. DEMA, TEMA, WMA, SMMA and Wilder's smoothing used to ignore it, and
+  // EFI took the close for its force whatever src said, then smoothed NaN with an sma or an ema
+  it.each`
+    name                 | parameters                          | src
+    ${'SMA'}             | ${{ period: 5 }}                    | ${'open'}
+    ${'EMA'}             | ${{ period: 5 }}                    | ${'hl2'}
+    ${'DEMA'}            | ${{ period: 5 }}                    | ${'hlc3'}
+    ${'TEMA'}            | ${{ period: 5 }}                    | ${'ohlc4'}
+    ${'WMA'}             | ${{ period: 5 }}                    | ${'high'}
+    ${'SMMA'}            | ${{ period: 5 }}                    | ${'low'}
+    ${'WilderSmoothing'} | ${{ period: 5 }}                    | ${'open'}
+    ${'EMARibbon'}       | ${{ count: 3, start: 2, step: 2 }}  | ${'hl2'}
+    ${'RSI'}             | ${{ period: 5 }}                    | ${'hlc3'}
+    ${'MACD'}            | ${{ short: 3, long: 6, signal: 3 }} | ${'ohlc4'}
+    ${'EFI'}             | ${{ period: 5, maType: 'sma' }}     | ${'hl2'}
+    ${'EFI'}             | ${{ period: 5, maType: 'ema' }}     | ${'high'}
+    ${'EFI'}             | ${{ period: 5, maType: 'dema' }}    | ${'open'}
+    ${'EFI'}             | ${{ period: 5, maType: 'wma' }}     | ${'low'}
+  `('should read the $src price as it reads the close, for $name $parameters', ({ name, parameters, src }) => {
+    const IndicatorClass = indicators[name as keyof typeof indicators] as unknown as new (parameters?: object) => Indicator;
+    const results = (indicator: Indicator, series: Candle[]) =>
+      series.map(candle => {
+        indicator.onNewCandle(candle);
+        return structuredClone(indicator.getResult());
+      });
+    const priceAsClose = candles.map(candle => ({ ...candle, close: INPUT_SOURCES[src as InputSources](candle) }));
+    expect(results(new IndicatorClass({ ...parameters, src }), candles)).toEqual(results(new IndicatorClass(parameters), priceAsClose));
+  });
 });

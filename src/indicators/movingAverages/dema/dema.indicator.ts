@@ -7,10 +7,12 @@ export class DEMA extends Indicator<'DEMA'> {
   private inner: EMA;
   private outer: EMA;
 
-  constructor({ period }: IndicatorRegistry['DEMA']['input']) {
+  constructor({ period, src }: IndicatorRegistry['DEMA']['input']) {
     super();
 
-    this.inner = new EMA({ period });
+    // src goes to the first EMA only: the second smooths the first, fed to it as the close of a made-up candle. The DEMA used to
+    // drop src and average the close
+    this.inner = new EMA({ period, src });
     this.outer = new EMA({ period });
   }
 

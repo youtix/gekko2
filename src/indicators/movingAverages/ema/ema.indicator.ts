@@ -1,4 +1,4 @@
-import { INPUT_SOURCES } from '@indicators/indicator.const';
+import { getInputSource } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { Indicator } from '../../indicator';
 
@@ -10,14 +10,14 @@ export class EMA extends Indicator<'EMA'> {
   private prevEma: number;
   private getPrice: (candle: Candle) => number;
 
-  constructor({ period = 30, src = 'close' }: IndicatorRegistry['EMA']['input'] = {}) {
+  constructor({ period = 30, src }: IndicatorRegistry['EMA']['input'] = {}) {
     super();
     this.period = period;
     this.alpha = 2 / (period + 1);
     this.age = 0;
     this.sum = 0;
     this.prevEma = 0;
-    this.getPrice = INPUT_SOURCES[src];
+    this.getPrice = getInputSource(src);
   }
 
   public onNewCandle(candle: Candle) {

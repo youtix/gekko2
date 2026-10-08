@@ -8,10 +8,12 @@ export class TEMA extends Indicator<'TEMA'> {
   private ema2: EMA;
   private ema3: EMA;
 
-  constructor({ period }: IndicatorRegistry['TEMA']['input']) {
+  constructor({ period, src }: IndicatorRegistry['TEMA']['input']) {
     super();
 
-    this.ema1 = new EMA({ period });
+    // src goes to the first EMA only: the others smooth the EMA before them, fed to them as the close of a made-up candle. The TEMA
+    // used to drop src and average the close
+    this.ema1 = new EMA({ period, src });
     this.ema2 = new EMA({ period });
     this.ema3 = new EMA({ period });
   }
