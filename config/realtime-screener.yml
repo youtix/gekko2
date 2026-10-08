@@ -22,7 +22,7 @@ plugins:
   - name: TradingAdvisor
     strategyName: DebugAdvice
 
-  - name: Trader
+  - name: Trader # Simulates the orders (paper-binance); without it, a built-in strategy waits forever for its first order to end
 
   - name: EventSubscriber
     token: # Your telegram bot token

@@ -18,7 +18,7 @@ Plugins are the modular components that extend Gekko 2's functionality. Each plu
 | **Supervision**         | System monitoring and Telegram bot commands          | Realtime                    |
 
 > [!IMPORTANT]
-> Each entry under `plugins:` may only hold the options listed for its plugin below. An option the plugin does not know, misspelt (`maxConsecutiveError`) or meant for another plugin, stops Gekko at start-up with an `Unrecognized key` error naming it, instead of being ignored while the default applies. The top level of the file and its `watch`, `exchange` and `storage` sections refuse unknown keys the same way; only the `strategy` block is free-form, handed whole to the strategy, so a misspelt strategy parameter is not reported and is simply `undefined`.
+> Each entry under `plugins:` may only hold the options listed for its plugin below. An option the plugin does not know, misspelt (`maxConsecutiveError`) or meant for another plugin, stops Gekko at start-up with an `Unrecognized key` error naming it, instead of being ignored while the default applies. The top level of the file and its `watch`, `exchange` and `storage` sections refuse unknown keys the same way. The `strategy` block, whose `name` must equal the TradingAdvisor's `strategyName`, is checked by the strategy's own schema, which every built-in strategy declares: when the TradingAdvisor creates the strategy, at start-up, an unknown, missing or invalid parameter stops Gekko with an `Invalid parameters for strategy <name> (strategy block)` error listing every issue. A strategy that declares no schema, as a custom one may, gets the whole block unchecked (an `info` line says so), so a misspelt parameter is simply `undefined` there.
 
 ---
 
@@ -28,11 +28,14 @@ Plugins are the modular components that extend Gekko 2's functionality. Each plu
 
 ### How It Works
 
-1. Receives 1-minute candles from the market data stream
-2. Batches candles into your configured timeframe (e.g., 1h, 4h, 1d)
-3. Passes timeframe candles to your strategy
-4. Relays strategy signals (create order, cancel order) to other plugins
-5. Manages the strategy warmup period
+1. At start-up, creates your strategy, checks its `strategy` block, and reads from the exchange the balance and the orders open on each watched pair, which the strategy's `init` receives as `portfolio` and `openOrders`
+2. Receives 1-minute candles from the market data stream (the strategy's `init` runs on the first one)
+3. Batches candles into your configured timeframe (e.g., 1h, 4h, 1d)
+4. Passes timeframe candles to your strategy
+5. Relays strategy signals (create order, cancel order) to other plugins: the Trader executes the orders
+6. Manages the strategy warmup period
+
+The orders open at start-up are read once, and the run does not follow them: the Trader follows only the orders the strategy creates. There are none in a backtest or on `paper-binance`, whose simulator starts without any. GridBot refuses to start while any order is open on its pair, whatever placed it (a previous run's grid, an order placed by hand or by another bot): cancel them on the exchange, then start Gekko again.
 
 ### Configuration
 
@@ -41,40 +44,48 @@ plugins:
   - name: TradingAdvisor
     strategyName: RSI          # Name of the strategy to run
     strategyPath: ./custom     # Optional: path to custom strategy file
-    maxConsecutiveErrors: 5    # Optional: errored orders in a row that stop Gekko (-1: never)
+    maxConsecutiveErrors: 5    # Optional: errored orders in a row that stop Gekko (at least 1, or -1: never)
 ```
 
 ### Configuration Reference
 
-| Parameter              | Type     | Required | Default | Description                                                                     |
-|------------------------|----------|----------|---------|---------------------------------------------------------------------------------|
-| `name`                 | string   | Yes      | —       | Must be `TradingAdvisor`                                                        |
-| `strategyName`         | string   | Yes      | —       | Name of the strategy to use                                                     |
-| `strategyPath`         | string   | No       | —       | Path to custom strategy (for external strategies)                               |
-| `maxConsecutiveErrors` | integer  | No       | `5`     | Errored orders in a row after which Gekko stops (exit code 0); `-1` never stops |
+| Parameter              | Type     | Required | Default | Description                                                                                                   |
+|------------------------|----------|----------|---------|---------------------------------------------------------------------------------------------------------------|
+| `name`                 | string   | Yes      | —       | Must be `TradingAdvisor`                                                                                      |
+| `strategyName`         | string   | Yes      | —       | Name of the strategy to use                                                                                   |
+| `strategyPath`         | string   | No       | —       | Path to custom strategy (for external strategies)                                                             |
+| `maxConsecutiveErrors` | integer  | No       | `5`     | Errored orders in a row after which Gekko stops (exit code 0), at least `1`; `-1` never stops, `0` is refused |
+
+The strategy's `onOrderErrored` still runs for the error that trips the circuit breaker, before Gekko stops.
 
 ### Events
 
 **Listens to:**
-- `OrderCompleted` — Notifies strategy when orders are filled
-- `OrderCanceled` — Notifies strategy when orders are canceled
-- `OrderErrored` — Notifies strategy when orders fail
+- `OrderCompleted` — Notifies strategy when orders are filled, and gives its candle hooks the portfolio after the fill
+- `OrderCanceled` — Notifies strategy when orders are canceled, and gives its candle hooks the portfolio after the cancelation
+- `OrderErrored` — Notifies strategy when orders fail, and gives its candle hooks the portfolio after the error
 - `PortfolioChange` — Updates strategy with current portfolio state
 
+The candle hooks get the latest portfolio received, from the candle after it arrived: the balance the TradingAdvisor reads at start-up, then the one a `portfolioChange` or the end of an order carries. The end of an order carries the portfolio the Trader read after it, even when its `portfolioUpdates` filter holds back the `portfolioChange`.
+
 **Emits:**
-- `StrategyCreateOrder` — Signal to create a new order
+- `StrategyCreateOrder` — Signal to create a new order, which the Trader executes
 - `StrategyCancelOrder` — Signal to cancel an existing order
-- `StrategyInfo` — Informational messages from the strategy
+- `StrategyInfo` — The strategy's log lines (`tools.log`) at the `info`, `warn` and `error` levels, whatever `GEKKO_LOG_LEVEL`; its `debug` lines are only printed. An `error` line is delivered at once, not with the other events of its minute, so the line that stops the bot reaches the EventSubscriber's `strat_info`
 - `StrategyWarmupCompleted` — Indicates warmup period has ended
-- `TimeframeCandle` — Batched candle for the configured timeframe
+- `TimeframeCandle` — Batched candle for the configured timeframe, queued after the strategy's hooks of that candle, and so after the warmup event that candle completes
 
 ### Dependencies
 
-- Requires **exchange** injection: the market data of the watched pairs, and the balance it hands to the strategy at start-up
-- Credentials only on a real exchange (`binance` or `hyperliquid`, their sandbox included), whose balance needs them; `dummy-cex` and `paper-binance` need none
+- Requires **exchange** injection: the market data of the watched pairs, and the balance and the open orders it hands to the strategy at start-up
+- Credentials only on a real exchange (`binance` or `hyperliquid`, their sandbox included), whose balance and open orders need them; `dummy-cex` and `paper-binance` need none. A failed read stops Gekko at start-up
+- Requires a **Trader** as soon as the strategy creates orders (see below)
 
 > [!IMPORTANT]
 > The TradingAdvisor is required for any mode that involves running a strategy (backtest or realtime trading).
+
+> [!IMPORTANT]
+> Configure a **Trader** with it, for alerts only too. The Trader is the only plugin that executes the orders the strategy creates, and ends each one with `orderCompleted`, `orderCanceled` or `orderErrored`. Every built-in strategy waits for its order to end before it advises again: without a Trader, its first order never ends and it advises once per run. On `paper-binance` (realtime) and `dummy-cex` (backtest) the Trader only simulates the orders, from `simulationBalance`; `hyperliquid` has no paper exchange, so its Trader places them on the account, or on its testnet with `sandbox: true`. Without a Trader, Gekko warns at start-up (`warn` level, so set `GEKKO_LOG_LEVEL` to `warn` or `info` to see it): `TradingAdvisor emits strategyCreateOrder, but no configured plugin executes orders…`. Only a strategy that never creates orders can do without one.
 
 ---
 
@@ -102,12 +113,12 @@ plugins:
 
 ### Configuration Reference
 
-| Parameter                    | Type       | Required                   | Default | Description                                                              |
-|------------------------------|------------|----------------------------|---------|--------------------------------------------------------------------------|
-| `name`                       | string     | Yes                        | —       | Must be `Trader`                                                         |
-| `portfolioUpdates`           | object     | No                         | —       | Without it, the portfolio is emitted after every synchronization         |
-| `portfolioUpdates.threshold` | number ≥ 0 | Yes, in `portfolioUpdates` | —       | Change of an asset quantity, in % (`1` for 1%), that emits the portfolio |
-| `portfolioUpdates.dust`      | number ≥ 0 | Yes, in `portfolioUpdates` | —       | Value in quote currency below which an asset is ignored                  |
+| Parameter                    | Type       | Required                   | Default | Description                                                                                                                              |
+|------------------------------|------------|----------------------------|---------|------------------------------------------------------------------------------------------------------------------------------------------|
+| `name`                       | string     | Yes                        | —       | Must be `Trader`                                                                                                                         |
+| `portfolioUpdates`           | object     | No                         | —       | Without it, the portfolio is emitted after every synchronization; the end of an order carries the portfolio after it whatever the filter |
+| `portfolioUpdates.threshold` | number ≥ 0 | Yes, in `portfolioUpdates` | —       | Change of an asset quantity, in % (`1` for 1%), that emits the portfolio                                                                 |
+| `portfolioUpdates.dust`      | number ≥ 0 | Yes, in `portfolioUpdates` | —       | Value in quote currency below which an asset is ignored                                                                                  |
 
 ### Events
 
@@ -123,7 +134,7 @@ plugins:
 - `OrderErrored` — Order execution failed
 - `PortfolioChange` — Portfolio balances have changed
 
-A partial fill or a status change of an order is only logged (`info` level), not emitted.
+A partial fill or a status change of an order is only logged (`info` level), not emitted. Each order ends in one of `OrderCompleted`, `OrderCanceled` and `OrderErrored`, which no other plugin emits: a built-in strategy waits for that end before it advises again (see the TradingAdvisor).
 
 ### Dependencies
 
@@ -201,7 +212,7 @@ It watches a single pair: with more than one asset in `watch.assets`, Gekko stop
 - A SELL while flat ends no round trip. Before the first trade of the period, such as one that sells an asset held before it, it is not counted as a trade either.
 - Its `pnl` is the pair equity after the SELL that ends it minus its entry equity, and its `profit` the same in % of the entry equity: both are net of the fees of all its orders. Its maximum adverse excursion (MAE) is the deepest fall of a 1-minute low below its entry price (the weighted mean of its BUYs so far), from the end of the warmup until it ends, in % of the entry price.
 - Each round trip is logged at the `info` level (and printed as a table with `enableConsoleTable`) and emitted as `roundtripCompleted`, which the EventSubscriber can relay to Telegram.
-- The report covers the period only. The trades made during the warmup (such as an order the strategy's `init` places on the first timeframe candle) and the round trips they closed are left out, with their time, and an `info` line says so; those round trips are still logged and emitted as `roundtripCompleted` when they end, and the ids go on from them. A position still open when the warmup ends counts from the start of the period: its round trip is entered then, at the start price and with the start equity, so that its P&L, exposure and MAE measure the period (its amounts, and the prices of the SELLs it already made, are kept).
+- The report covers the period only, and no trade comes before it: until the warmup is over, the strategy cannot create an order (`tools.createOrder` stops Gekko with an error, even from `init`).
 - The exposure is the time spent in round trips during the period, the one still open at the end included.
 - A position still open at the end is logged with its unrealized P&L at the last close. The final balance and the exposure include it; the win rate, the ratios and the MAEs, which only count the closed round trips, leave it out.
 
@@ -261,7 +272,7 @@ The report holds the fields of `Report` (`src/models/event.types.ts`), and those
 | `interruption`                               | Both      | Message of the error that stopped the run before its end (a crash, missing candles, the circuit breaker), absent when it completed                         |
 | `startBalance`, `finalBalance`               | RoundTrip | Pair equity at the start and at the end, a position still open included                                                                                    |
 | `winRate`                                    | RoundTrip | Share of the closed round trips with a positive P&L (%), `null` without any                                                                                |
-| `tradeCount`                                 | RoundTrip | Trades of the period: orders completed and canceled ones that filled in part, from the first BUY on (or the first SELL of a position the warmup left open) |
+| `tradeCount`                                 | RoundTrip | Trades of the period: orders completed and canceled ones that filled in part, from the first BUY on                                                        |
 | `topMAEs`                                    | RoundTrip | The 10 largest maximum adverse excursions (%), largest first                                                                                               |
 | `startEquity`, `endEquity`                   | Portfolio | Portfolio value at the start and at the end                                                                                                                |
 | `equityCurve`                                | Portfolio | The points of the equity curve, `{ date, totalValue }`                                                                                                     |
@@ -454,7 +465,7 @@ plugins:
 ### Events
 
 **Listens to:**
-- `StrategyInfo` — Strategy log messages
+- `StrategyInfo` — The strategy's log lines at the `info`, `warn` and `error` levels
 - `StrategyCreateOrder` — New order signals from strategy
 - `StrategyCancelOrder` — Order cancellation signals from strategy
 - `OrderInitiated` — Orders submitted to exchange
@@ -481,16 +492,16 @@ Control your subscriptions via Telegram commands:
 
 ### Available Event Types
 
-| Event Type           | Description                                                        |
-|----------------------|--------------------------------------------------------------------|
-| `strat_info`         | Log messages from strategy                                         |
-| `strat_create`       | New order signals from strategy                                    |
-| `strat_cancel`       | Order cancellation signals from strategy                           |
-| `order_init`         | Order submitted to exchange                                        |
-| `order_cancel`       | Order cancellation confirmed                                       |
-| `order_error`        | Order execution failed                                             |
-| `order_complete`     | Order fully executed                                               |
-| `roundtrip_complete` | Round trip closed, with its PnL (needs the `RoundTripAnalyzer`)    |
+| Event Type           | Description                                                                                                                                  |
+|----------------------|----------------------------------------------------------------------------------------------------------------------------------------------|
+| `strat_info`         | The strategy's log lines at `info`, `warn` and `error` (not `debug`), whatever `GEKKO_LOG_LEVEL`, the error line that stops the bot included |
+| `strat_create`       | New order signals from strategy                                                                                                              |
+| `strat_cancel`       | Order cancellation signals from strategy                                                                                                     |
+| `order_init`         | Order submitted to exchange                                                                                                                  |
+| `order_cancel`       | Order cancellation confirmed                                                                                                                 |
+| `order_error`        | Order execution failed                                                                                                                       |
+| `order_complete`     | Order fully executed                                                                                                                         |
+| `roundtrip_complete` | Round trip closed, with its PnL (needs the `RoundTripAnalyzer`)                                                                              |
 
 ### Example Notifications
 
@@ -668,11 +679,12 @@ graph TD
     
     TA -->|"StrategyCreateOrder<br>StrategyCancelOrder"| TR
     TA -->|"TimeframeCandle"| SU
-    TR -->|"OrderCompleted<br>PortfolioChange"| TA
+    TR -->|"OrderCompleted<br>OrderCanceled<br>OrderErrored<br>PortfolioChange"| TA
     TA -->|"StrategyWarmupCompleted<br>TimeframeCandle"| AN
     TR -->|"OrderCompleted<br>OrderCanceled<br>OrderErrored<br>PortfolioChange"| AN
     AN -->|"PerformanceReport"| PR
     AN -->|"RoundtripCompleted<br>(RoundTripAnalyzer)"| ES
+    TA -->|"StrategyInfo<br>StrategyCreateOrder<br>StrategyCancelOrder"| ES
     TR -->|"Order Events"| ES
     
     style TA fill:#4CAF50,color:white
@@ -714,15 +726,27 @@ plugins:
 ### Realtime Screener (Alerts Only)
 
 ```yaml
+exchange:
+  name: paper-binance           # Real Binance prices, simulated orders: no API key
+  simulationBalance:            # Simulated balances, required by paper-binance
+    - assetName: BTC
+      balance: 1
+    - assetName: USDT
+      balance: 10000
+
 plugins:
   - name: TradingAdvisor
     strategyName: RSI
+
+  - name: Trader                # Simulates the orders, whose end the strategy waits for
 
   - name: EventSubscriber
     token: YOUR_TOKEN
     botUsername: YOUR_BOT
     chatId: 123456789           # Your chat id
 ```
+
+Keep the Trader, even for alerts: without it, the first order of the strategy never ends, and a built-in strategy advises once per run (see the TradingAdvisor above). On `paper-binance` it trades nothing for real: the orders are simulated from `simulationBalance`.
 
 ### Realtime Trading
 

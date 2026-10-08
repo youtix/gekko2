@@ -1,6 +1,14 @@
+import {
+  ORDER_CANCELED_EVENT,
+  ORDER_COMPLETED_EVENT,
+  ORDER_ERRORED_EVENT,
+  STRATEGY_CREATE_ORDER_EVENT,
+  STRATEGY_INFO_EVENT,
+} from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { config } from '@services/configuration/configuration';
 import * as injecter from '@services/injecter/injecter';
+import { warning } from '@services/logger';
 import { CandleDateranges } from '@services/storage/storage.types';
 import { SequentialEventEmitter } from '@utils/event/sequentialEventEmitter';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,6 +36,7 @@ vi.mock('@services/injecter/injecter', () => ({
 
 vi.mock('@services/logger', () => ({
   debug: vi.fn(),
+  warning: vi.fn(),
 }));
 
 vi.mock('./pipeline.utils', () => ({
@@ -218,6 +227,57 @@ describe('Pipeline Service', () => {
 
       const result = await pipelineModule.checkPluginsDuplicateEvents(context);
       expect(result).toBe(context);
+    });
+  });
+
+  describe('checkPluginsOrderExecution', () => {
+    // The events their static configurations declare, those that matter here
+    const advisor = { name: 'TradingAdvisor', eventsEmitted: [STRATEGY_INFO_EVENT, STRATEGY_CREATE_ORDER_EVENT] };
+    const trader = { name: 'Trader', eventsEmitted: [ORDER_CANCELED_EVENT, ORDER_COMPLETED_EVENT, ORDER_ERRORED_EVENT] };
+    // Handles the orders the strategy creates, to notify them, and executes none
+    const subscriber = { name: 'EventSubscriber', eventsEmitted: [], eventsHandlers: ['onStrategyCreateOrder', 'onOrderCompleted'] };
+    const writer = { name: 'CandleWriter', eventsEmitted: [] };
+    // Would end the orders that complete, never the others
+    const completer = { name: 'Completer', eventsEmitted: [ORDER_COMPLETED_EVENT] };
+
+    it.each`
+      configured                                        | context
+      ${'a Trader with the plugin that creates orders'} | ${[advisor, trader, subscriber]}
+      ${'no plugin that creates orders'}                | ${[writer, subscriber]}
+    `('should not warn with $configured', async ({ context }) => {
+      await pipelineModule.checkPluginsOrderExecution(context);
+      expect(warning).not.toHaveBeenCalled();
+    });
+
+    it.each`
+      configured                                             | context
+      ${'only a plugin that notifies the orders (screener)'} | ${[advisor, subscriber]}
+      ${'no other plugin'}                                   | ${[advisor]}
+      ${'only a plugin that would end completed orders'}     | ${[advisor, completer]}
+    `('should warn once with $configured', async ({ context }) => {
+      await pipelineModule.checkPluginsOrderExecution(context);
+      expect(warning).toHaveBeenCalledTimes(1);
+    });
+
+    it('should name the plugin, say why the strategy advises once and what to do', async () => {
+      await pipelineModule.checkPluginsOrderExecution([advisor, subscriber]);
+      expect(warning).toHaveBeenCalledWith(
+        'pipeline',
+        [
+          'TradingAdvisor emits strategyCreateOrder, but no configured plugin executes orders and ends each one with orderCompleted,',
+          'orderCanceled or orderErrored, as the Trader does. Every order of the strategy stays pending, so a strategy that waits for its',
+          'order to end before it advises again, as every built-in strategy does, advises once per run. Add a Trader (on paper-binance or',
+          'dummy-cex, it only simulates the orders), unless the strategy never creates orders.',
+        ].join(' '),
+      );
+    });
+
+    it.each`
+      when                                | context
+      ${'it warns'}                       | ${[advisor, subscriber]}
+      ${'a Trader executes their orders'} | ${[advisor, trader]}
+    `('should resolve with the context when $when', async ({ context }) => {
+      await expect(pipelineModule.checkPluginsOrderExecution(context)).resolves.toBe(context);
     });
   });
 
@@ -474,7 +534,7 @@ describe('Pipeline Service', () => {
     const registry = allPlugin as Record<string, unknown>;
     const journal: string[] = [];
     // What the steps leave in the journal, in the documented order. The checks of the modes, the dependencies and the
-    // duplicate emitters leave nothing: the failure cases below place them.
+    // duplicate emitters leave nothing, nor does the check of the order execution unless it warns: the cases below place them.
     const documentedOrder = [
       'checkDateRange: BTC/USDT',
       'getPluginsStaticConfiguration: Sender',
@@ -607,6 +667,9 @@ describe('Pipeline Service', () => {
       vi.mocked(streamPipelines.backtest).mockImplementation(async () => {
         journal.push('launchStream: backtest');
       });
+      vi.mocked(warning).mockImplementation(() => {
+        journal.push('checkPluginsOrderExecution: warning');
+      });
     });
 
     afterEach(() => {
@@ -647,6 +710,22 @@ describe('Pipeline Service', () => {
       });
     });
 
+    describe('when a plugin creates orders that no plugin executes', () => {
+      beforeEach(async () => {
+        changeReceiver({ eventsEmitted: [STRATEGY_CREATE_ORDER_EVENT] })();
+        await pipelineModule.gekkoPipeline();
+      });
+
+      it('should warn before the markets are loaded, and go on', () => {
+        const preloadStep = documentedOrder.indexOf('preloadMarkets');
+        expect(journal).toEqual([
+          ...documentedOrder.slice(0, preloadStep),
+          'checkPluginsOrderExecution: warning',
+          ...documentedOrder.slice(preloadStep),
+        ]);
+      });
+    });
+
     describe.each`
       failure                                   | breakIt                                                                                   | error                                                                  | lastStep
       ${'a plugin does not support the mode'}   | ${changeReceiver({ modes: ['realtime'] })}                                                | ${'Plugin Receiver does not support backtest mode.'}                   | ${'getPluginsStaticConfiguration: Receiver'}
@@ -654,6 +733,7 @@ describe('Pipeline Service', () => {
       ${'a dependency is missing'}              | ${changeReceiver({ dependencies: ['non-existent-dep-xyz'] })}                             | ${'Dependency non-existent-dep-xyz not installed for plugin Receiver'} | ${'validatePluginsSchema: Receiver'}
       ${'two plugins emit the same event'}      | ${changeReceiver({ eventsEmitted: ['myEvent'] })}                                         | ${PluginsEmitSameEventError}                                           | ${'validatePluginsSchema: Receiver'}
       ${'dependency and duplicate checks fail'} | ${changeReceiver({ dependencies: ['non-existent-dep-xyz'], eventsEmitted: ['myEvent'] })} | ${'Dependency non-existent-dep-xyz not installed for plugin Receiver'} | ${'validatePluginsSchema: Receiver'}
+      ${'a duplicate emitter creates orders'}   | ${changeReceiver({ eventsEmitted: ['myEvent', STRATEGY_CREATE_ORDER_EVENT] })}            | ${PluginsEmitSameEventError}                                           | ${'validatePluginsSchema: Receiver'}
       ${'the markets cannot be loaded'}         | ${() => exchange.loadMarkets.mockRejectedValue(unavailable)}                              | ${unavailable}                                                         | ${'validatePluginsSchema: Receiver'}
     `('when $failure', ({ breakIt, error, lastStep }) => {
       let pipeline: Promise<unknown>;

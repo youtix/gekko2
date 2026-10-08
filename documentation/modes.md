@@ -185,7 +185,7 @@ plugins:
 > Always use `dummy-cex` as the exchange for backtesting. This simulated exchange handles order execution without real API calls.
 
 > [!TIP]
-> Set `warmup.candleCount` based on your strategy's indicator requirements. For example, a 200-period moving average needs at least 200 warmup candles.
+> Set `warmup.candleCount` based on your strategy's indicator requirements. For example, a 200-period moving average needs at least 200 warmup candles. The strategy trades from the candle after the warmup, so `watch.daterange` must hold more whole `timeframe` candles than `warmup.candleCount`, counted from the first timeframe boundary at or after its start (in UTC: a `1w` candle starts on a Monday, a `1M` candle on the 1st); otherwise Gekko refuses the configuration.
 
 > [!NOTE]
 > Backtesting runs at maximum speed — years of data can be processed in seconds.
@@ -235,7 +235,7 @@ Realtime mode supports several use cases depending on your plugin configuration:
 
 #### 1. Screener (Alerts Only)
 
-Monitor markets and receive Telegram alerts when your strategy emit signals.
+Monitor markets and receive Telegram alerts when your strategy emits signals.
 
 ```yaml
 watch:
@@ -268,13 +268,18 @@ plugins:
   - name: TradingAdvisor
     strategyName: RSI
 
-  - name: Trader # Your strategy sometimes waits for events from trader plugin to emit signals, so we need to include it here
+  - name: Trader                 # Simulates the orders, whose end the strategy waits for (see below)
 
   - name: EventSubscriber        # Telegram alerts
     token: YOUR_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
     # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 ```
+
+> [!IMPORTANT]
+> Keep the `Trader`, even for alerts: it is the only plugin that executes the orders the strategy creates, and every built-in strategy waits for its order to end (completed, canceled or errored) before it advises again. Without a Trader, the first order never ends, the strategy advises once per run, and Gekko warns at start-up (`warn` level, so set `GEKKO_LOG_LEVEL` to `warn` or `info` to see it). On `paper-binance` the orders are only simulated, from `simulationBalance`. `hyperliquid` has no paper exchange: there, the Trader places the orders on the account, or on its testnet with `sandbox: true`.
+
+The alerts are the strategy's orders (`/sub_strat_create`) and its log lines at the `info`, `warn` and `error` levels (`/sub_strat_info`), the error line that stops the bot included; its `debug` lines are not sent.
 
 #### 2. Sandbox Trading (Paper Money)
 
