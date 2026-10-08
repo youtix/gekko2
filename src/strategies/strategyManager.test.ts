@@ -8,10 +8,10 @@ import { ONE_MINUTE } from '@constants/time.const';
 import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder, StrategyOrder, TrailingConfig } from '@models/advice.types';
-import { CandleBucket } from '@models/event.types';
+import { CandleBucket, ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { OrderSide } from '@models/order.types';
-import { BalanceDetail } from '@models/portfolio.types';
+import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { MarketData } from '@services/exchange/exchange.types';
@@ -19,7 +19,7 @@ import { debug, error, info, warning } from '@services/logger';
 import { randomUUID, UUID } from 'node:crypto';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { Tools } from './strategy.types';
+import { IndicatorResults, InitParams, OnCandleEventParams, Tools } from './strategy.types';
 import { StrategyManager } from './strategyManager';
 import { TrailingStopState } from './trailingStopManager.types';
 
@@ -293,7 +293,7 @@ describe('StrategyManager', () => {
 
         expect(strategy.init).toHaveBeenCalledTimes(1);
         const initArgs = strategy.init.mock.calls[0]?.[0];
-        expect(initArgs.candle).toBe(bucket);
+        expect(initArgs.candle).toEqual(bucket);
         expect(initArgs.portfolio).toBeInstanceOf(Map);
         expect(initArgs.portfolio.size).toBe(0);
         expect(initArgs.addIndicator).toBe(manager['addIndicator']);
@@ -310,7 +310,7 @@ describe('StrategyManager', () => {
         expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(1);
 
         const [params, indicatorResult] = strategy.onEachTimeframeCandle.mock.calls[0] as [any, any];
-        expect(params.candle).toBe(bucket);
+        expect(params.candle).toEqual(bucket);
         expect(indicatorResult).toEqual({ results: 42, symbol: 'BTC/USDT' });
 
         // Log/AfterWarmup NOT called yet, as age was 0 during execution, now incremented to 1
@@ -1832,7 +1832,7 @@ describe('StrategyManager', () => {
 
   describe('setters function', () => {
     describe('onPortfolioChange', () => {
-      it('updates the portfolio reference used by tools', () => {
+      it('gives the candle hooks the portfolio received', () => {
         const portfolio = new Map<any, BalanceDetail>();
         portfolio.set('BTC', { free: 2, used: 0, total: 2 });
         portfolio.set('USDT', { free: 3, used: 0, total: 3 });
@@ -1849,7 +1849,7 @@ describe('StrategyManager', () => {
         manager.onTimeFrameCandle(bucket);
 
         const params = strategy.onEachTimeframeCandle.mock.calls[0]?.[0];
-        expect(params?.portfolio).toBe(portfolio);
+        expect(params?.portfolio).toEqual(portfolio);
       });
     });
     describe('setMarketData', () => {
@@ -1860,6 +1860,247 @@ describe('StrategyManager', () => {
 
         const tools = manager['tools'];
         expect(tools.marketData).toEqual(marketData);
+      });
+    });
+  });
+
+  // What a hook received was the engine's own object: what the strategy wrote there changed the configuration, the exchange, an
+  // indicator, what the other plugins received, or what the manager itself went by. Each test has the strategy write into what it
+  // receives, then reads the original.
+  describe('what the strategy receives, its own copy', () => {
+    describe('tools.strategyParams', () => {
+      let block: { name: string; each: number; thresholds: { up: number } };
+
+      beforeEach(async () => {
+        block = { name: 'DummyStrategy', each: 1, thresholds: { up: 1 } };
+        vi.mocked(config.getStrategy).mockReturnValue(block);
+        manager = new StrategyManager(1);
+        manager.setMarketData(defaultMarketData);
+        await manager.createStrategy('DummyStrategy');
+        const strategy: any = manager['strategy'];
+        strategy.init.mockImplementation(({ tools }: InitParams<typeof block>) => {
+          tools.strategyParams.each = 2;
+          tools.strategyParams.thresholds.up = 9;
+        });
+        manager.onTimeFrameCandle(bucket);
+      });
+
+      // A strategy without schema got the block itself, which every plugin keeps: the PerformanceReporter makes its run id of it
+      it('leaves the block of the configuration as it was', () => {
+        expect(block).toEqual({ name: 'DummyStrategy', each: 1, thresholds: { up: 1 } });
+      });
+
+      it('keeps what the strategy wrote in its own copy', () => {
+        expect(manager['tools'].strategyParams).toEqual({ name: 'DummyStrategy', each: 2, thresholds: { up: 9 } });
+      });
+    });
+
+    describe('tools.marketData', () => {
+      let entry: MarketData;
+
+      beforeEach(() => {
+        entry = { amount: { min: 0.0001 }, fee: { maker: 0.001, taker: 0.001 } };
+        manager.setMarketData(new Map([['BTC/USDT', entry]]));
+        manager['strategy'] = {
+          init: ({ tools }: InitParams<object>) => {
+            tools.marketData.get('BTC/USDT')!.fee!.taker = 0;
+            tools.marketData.set('ETH/USDT', { amount: { min: 0.001 } });
+          },
+        };
+        manager.onTimeFrameCandle(bucket);
+      });
+
+      // On dummy-cex and paper trading the entry is the one the simulator charges and checks orders with
+      it('leaves the entry of the exchange as it was', () => {
+        expect(entry).toEqual({ amount: { min: 0.0001 }, fee: { maker: 0.001, taker: 0.001 } });
+      });
+
+      it('keeps the pairs it checks orders and indicators against', () => {
+        expect([...manager['marketData'].keys()]).toEqual(['BTC/USDT']);
+      });
+
+      it('refuses an order on a pair the strategy added to its copy', () => {
+        completeWarmup();
+        expect(() => manager['createOrder']({ symbol: 'ETH/USDT', side: 'BUY', type: 'MARKET' })).toThrow(
+          `symbol must be one of the watched pairs (BTC/USDT), got ${quoted('ETH/USDT')}`,
+        );
+      });
+    });
+
+    describe('the portfolio of the candle hooks', () => {
+      const balances = (): Portfolio =>
+        new Map([
+          ['USDT', { free: 1000, used: 0, total: 1000 }],
+          ['BTC', { free: 1, used: 0, total: 1 }],
+        ]);
+      let portfolio: Portfolio;
+
+      beforeEach(() => {
+        portfolio = balances();
+        manager.onPortfolioChange(portfolio);
+        manager['strategy'] = {
+          onEachTimeframeCandle: ({ portfolio: own }: OnCandleEventParams<object>) => {
+            own.get('USDT')!.free = 0;
+            own.delete('BTC');
+          },
+        };
+        manager.onTimeFrameCandle(bucket);
+      });
+
+      // One clone is shared by every plugin listening to the change of portfolio, the analyzers keeping it as their latest
+      it('leaves the portfolio the other plugins received as it was', () => {
+        expect(portfolio).toEqual(balances());
+      });
+
+      it('keeps what the strategy wrote in its own copy until the next change', () => {
+        expect(manager['portfolio']).toEqual(new Map([['USDT', { free: 0, used: 0, total: 1000 }]]));
+      });
+    });
+
+    describe('the event of an order hook', () => {
+      const ORDER_ID: UUID = '0e0e0e0e-0000-4000-8000-000000000001';
+      const order = { id: ORDER_ID, symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', amount: 0.5, orderCreationDate: 60000 } as const;
+      const exchangeEvent = (): ExchangeEvent => ({ price: 100, portfolio: new Map([['BTC', { free: 0.5, used: 0, total: 0.5 }]]) });
+      // A BUY of 0.5 that completes, is canceled after filling 0.2, or errors after filling 0.2
+      const EVENTS = {
+        onOrderCompleted: (): OrderCompletedEvent => ({
+          order: { ...order, orderExecutionDate: 60000, effectivePrice: 100, fee: 0.05 },
+          exchange: exchangeEvent(),
+        }),
+        onOrderCanceled: (): OrderCanceledEvent => ({
+          order: { ...order, orderCancelationDate: 60000, filled: 0.2, remaining: 0.3 },
+          exchange: exchangeEvent(),
+        }),
+        onOrderErrored: (): OrderErroredEvent => ({
+          order: { ...order, orderErrorDate: 60000, reason: 'Insufficient balance', filled: 0.2 },
+          exchange: exchangeEvent(),
+        }),
+      };
+      type Handler = keyof typeof EVENTS;
+      type OrderHookParams = { order: { side: OrderSide; amount: number; filled?: number }; exchange: ExchangeEvent };
+      /** What a strategy could write in any of its order hooks */
+      const rewrite = ({ order: own, exchange }: OrderHookParams) => {
+        own.side = 'SELL';
+        own.amount = 99;
+        own.filled = 0.4;
+        exchange.portfolio.clear();
+        exchange.price = 0;
+      };
+
+      describe.each`
+        handler
+        ${'onOrderCompleted'}
+        ${'onOrderCanceled'}
+        ${'onOrderErrored'}
+      `('$handler', ({ handler }: { handler: Handler }) => {
+        let event: ReturnType<(typeof EVENTS)[Handler]>;
+
+        beforeEach(() => {
+          manager['strategy'] = { [handler]: rewrite };
+          event = EVENTS[handler]();
+          manager[handler](event as any);
+        });
+
+        // One clone is shared by every plugin listening to the event, the analyzers reading it after the strategy
+        it('leaves the order the other plugins receive as it was', () => {
+          expect(event.order).toEqual(EVENTS[handler]().order);
+        });
+
+        it('leaves the portfolio and the price of the event as they were', () => {
+          expect(event.exchange).toEqual(exchangeEvent());
+        });
+      });
+
+      // The manager reads the event again once the hook has run: a BUY rewritten to a SELL canceled the stop it had just armed, and a
+      // fill rewritten armed the stop for that amount
+      it.each`
+        outcome                  | handler               | armed
+        ${'completes'}           | ${'onOrderCompleted'} | ${0.5}
+        ${'errors after a fill'} | ${'onOrderErrored'}   | ${0.2}
+      `(
+        'arms the stop of a BUY that $outcome for what it filled, whatever the strategy wrote to its order',
+        ({ handler, armed }: { handler: Handler; armed: number }) => {
+          vi.mocked(randomUUID).mockReturnValueOnce(ORDER_ID);
+          completeWarmup();
+          manager['createOrder']({ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+          manager['strategy'] = { [handler]: rewrite };
+          manager[handler](EVENTS[handler]() as any);
+          expect(manager['trailingStopManager'].getOrders().get(ORDER_ID)?.amount).toBe(armed);
+        },
+      );
+    });
+
+    describe('the results of an indicator', () => {
+      let macd: { macd: number; signal: number; hist: number };
+      let ribbon: { results: number[]; spread: number };
+
+      beforeEach(() => {
+        macd = { macd: 1, signal: 2, hist: -1 };
+        ribbon = { results: [3, 2, 1], spread: 2 };
+        manager['indicators'].push(
+          { indicator: { onNewCandle: vi.fn(), getResult: vi.fn(() => macd) }, symbol: 'BTC/USDT' } as any,
+          { indicator: { onNewCandle: vi.fn(), getResult: vi.fn(() => ribbon) }, symbol: 'BTC/USDT' } as any,
+        );
+        manager['strategy'] = {
+          onEachTimeframeCandle: (_params: OnCandleEventParams<object>, ...indicators: IndicatorResults[]) => {
+            const [ownMacd, ownRibbon] = indicators as [IndicatorResults<typeof macd>, IndicatorResults<typeof ribbon>];
+            ownMacd.results.hist = 42;
+            ownRibbon.results.results.sort((a, b) => a - b);
+          },
+        };
+        manager.onTimeFrameCandle(bucket);
+      });
+
+      it('leaves the result object of the indicator as it was', () => {
+        expect(macd).toEqual({ macd: 1, signal: 2, hist: -1 });
+      });
+
+      it('leaves the array of a ribbon in its order', () => {
+        expect(ribbon.results).toEqual([3, 2, 1]);
+      });
+    });
+
+    describe('the candles of a timeframe bucket', () => {
+      const CANDLE = { start: 1000, open: 1, high: 2, low: 0, close: 1, volume: 1 };
+      let timeframeBucket: CandleBucket;
+      let indicator: { onNewCandle: Mock; getResult: Mock };
+      let warmupListener: Mock;
+
+      beforeEach(() => {
+        // Without warmup the first candle completes it: its warmup event follows init and onEachTimeframeCandle
+        manager = new StrategyManager(0);
+        manager.setMarketData(defaultMarketData);
+        indicator = { onNewCandle: vi.fn(), getResult: vi.fn(() => null) };
+        manager['indicators'].push({ indicator, symbol: 'BTC/USDT' } as any);
+        warmupListener = vi.fn();
+        manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);
+        manager['strategy'] = {
+          // Before the indicators are fed
+          init: ({ candle }: InitParams<object>) => {
+            candle.get('BTC/USDT')!.close = 0;
+          },
+          // After them
+          onEachTimeframeCandle: ({ candle }: OnCandleEventParams<object>) => {
+            candle.get('BTC/USDT')!.high = 99;
+            candle.delete('BTC/USDT');
+          },
+        };
+        timeframeBucket = new Map([['BTC/USDT', { ...CANDLE }]]);
+        manager.onTimeFrameCandle(timeframeBucket);
+      });
+
+      // The TradingAdvisor queues it as the timeframe candle event once the hooks have run
+      it('leaves the bucket as it was', () => {
+        expect(timeframeBucket).toEqual(new Map([['BTC/USDT', CANDLE]]));
+      });
+
+      // TrueRange, PSAR and ±DM keep the candle they are fed, and read it again on the next one
+      it('feeds the indicators the candle as it was', () => {
+        expect(indicator.onNewCandle).toHaveBeenCalledExactlyOnceWith(CANDLE);
+      });
+
+      it('emits the warmup event with the bucket as it was', () => {
+        expect(warmupListener).toHaveBeenCalledExactlyOnceWith(new Map([['BTC/USDT', CANDLE]]));
       });
     });
   });

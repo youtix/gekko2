@@ -9,6 +9,11 @@ import { UUID } from 'node:crypto';
 import { z } from 'zod';
 import { TrailingStopState } from './trailingStopManager.types';
 
+/**
+ * What an indicator gives the hooks, in the order of the addIndicator calls: its results and its pair. `results` is the strategy's own
+ * copy, made once per timeframe candle and shared by the hooks of that candle, then by the order hooks until the next one: writing to
+ * it changes nothing in the indicator.
+ */
 export type IndicatorResults<T = unknown> = { results: T; symbol: TradingPair };
 export type Direction = 'short' | 'long';
 /**
@@ -24,10 +29,15 @@ export type LoggerFn = (level: LogLevel, msg: string) => void;
 export type Tools<T> = {
   /**
    * The parameters of the strategy: the output of its class's schema (see StrategyConstructor), or, for a class without one, the
-   * whole top-level `strategy:` block, `name` included.
+   * whole top-level `strategy:` block, `name` included. The strategy's own copy, made when the strategy is created: writing to it
+   * changes neither the configuration nor what the other plugins read there (the run id of the PerformanceReporter).
    */
   strategyParams: T;
-  /** The limits, precision and fees of each watched pair, by pair: its keys are the pairs createOrder and addIndicator accept */
+  /**
+   * The limits, precision and fees of each watched pair, by pair: its keys are the pairs createOrder and addIndicator accept. The
+   * strategy's own copy, made before the first candle: writing to it changes neither the exchange (the fees and limits its simulator
+   * applies in backtest and paper trading) nor the pairs those two accept.
+   */
   marketData: Map<TradingPair, MarketData>;
   log: LoggerFn;
   /**
@@ -70,23 +80,34 @@ export type Tools<T> = {
    */
   cancelTrailingOrder: (orderId: UUID) => void;
 };
-export type InitParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T>; addIndicator: AddIndicatorFn };
-export type OnCandleEventParams<T> = { candle: CandleBucket; portfolio: Portfolio; tools: Tools<T> };
-export type OnOrderCompletedEventParams<T> = {
-  order: OrderCompletedEvent['order'];
+export type OnCandleEventParams<T> = {
+  /** The timeframe candle of every watched pair: the strategy's own copy, made once per candle and shared by the hooks of that candle */
+  candle: CandleBucket;
+  /** The last portfolio received: the strategy's own copy, made when the portfolio changed and kept until the next change */
+  portfolio: Portfolio;
+  tools: Tools<T>;
+};
+/** What init gets: what every timeframe candle hook gets (see OnCandleEventParams), and addIndicator */
+export type InitParams<T> = OnCandleEventParams<T> & { addIndicator: AddIndicatorFn };
+/** What an order hook gets */
+type OrderEventParams<Order, T> = {
+  /** The order: the strategy's own copy of the event, which every other plugin listening to it receives as it was */
+  order: Order;
+  /** The portfolio after the order and the price of its pair, in that copy too */
   exchange: ExchangeEvent;
   tools: Tools<T>;
 };
-export type OnOrderCanceledEventParams<T> = {
-  order: OrderCanceledEvent['order'];
-  exchange: ExchangeEvent;
-  tools: Tools<T>;
-};
-export type OnOrderErroredEventParams<T> = {
-  order: OrderErroredEvent['order'];
-  exchange: ExchangeEvent;
-  tools: Tools<T>;
-};
+export type OnOrderCompletedEventParams<T> = OrderEventParams<OrderCompletedEvent['order'], T>;
+export type OnOrderCanceledEventParams<T> = OrderEventParams<OrderCanceledEvent['order'], T>;
+export type OnOrderErroredEventParams<T> = OrderEventParams<OrderErroredEvent['order'], T>;
+/**
+ * The hooks of a strategy, each optional, which the StrategyManager calls.
+ *
+ * What a hook receives is the strategy's own copy: the candles, the portfolio, the indicator results, the order and the exchange event
+ * of an order hook, the state of a trailing stop, `tools.strategyParams` and `tools.marketData`. Writing to it changes nothing
+ * elsewhere: not the configuration, the exchange or its simulator, the indicators, the other plugins (the analyzers, the reporters), nor
+ * what the StrategyManager itself goes by. Where each is declared says when its copy is made.
+ */
 export interface Strategy<T> {
   /** Executed once at the beginning of the strategy, on the first timeframe candle, before the warmup is over: no orders here */
   init?(params: InitParams<T>): void;

@@ -33,8 +33,9 @@ import { toISOString } from '@utils/date/date.utils';
 import { getMarketOrderLimits } from '@utils/market/market.utils';
 import { isFiniteNumber } from '@utils/math/math.utils';
 import { round } from '@utils/math/round.utils';
+import { clonePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
-import { bindAll, isNil, omit } from 'lodash-es';
+import { bindAll, cloneDeep, isNil, omit } from 'lodash-es';
 import { randomUUID, UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { isAbsolute, resolve } from 'node:path';
@@ -85,10 +86,49 @@ const isSellable = (amount: number, price: number, marketData: MarketData = {}) 
   return !(price > 0) || !isBelowMinimum(sent * price, limits.cost?.min);
 };
 
+/**
+ * The strategy's own copy of a timeframe bucket. The bucket is the TradingAdvisor's, queued as the timeframe candle event once the
+ * hooks have run, and its candles are those the indicators are fed, which some keep (the previous candle of TrueRange, PSAR and ±DM,
+ * the window of CCI): a close the strategy overwrote reached the analyzers, the warmup event and every later ATR. A candle holds
+ * numbers only, so a spread copies it.
+ */
+const copyBucket = (bucket: CandleBucket): CandleBucket => {
+  const copy: CandleBucket = new Map();
+  for (const [pair, candle] of bucket) copy.set(pair, { ...candle });
+  return copy;
+};
+
+/**
+ * The strategy's own copy of an indicator's result: a number or null as it is, an object or an array copied with what it holds (the
+ * array of a ribbon). Handed out as it was, the result was the indicator's own object: a write by one hook reached the hooks after it,
+ * and the next candles while the indicator handed that object out again, as MACD and Stochastic did while warming up.
+ */
+const copyResult = (result: unknown): unknown => {
+  if (Array.isArray(result)) return result.map(copyResult);
+  // Not lodash's isPlainObject, which doubled the cost of a copy: a result is declared as numbers, objects and arrays of them
+  if (result === null || typeof result !== 'object') return result;
+  const source = result as Record<string, unknown>;
+  const copy: Record<string, unknown> = {};
+  for (const key in source) copy[key] = copyResult(source[key]);
+  return copy;
+};
+
+/**
+ * The strategy's own copy of an order event. The event is one clone shared by every plugin listening to it, the analyzers reading its
+ * order and its portfolio after the strategy, and the StrategyManager reads it again once the hook has run: a BUY whose side the
+ * strategy rewrote to SELL canceled the stop it had just armed. structuredClone copies whatever the event holds: it passed through it
+ * when it was queued.
+ */
+const copyOrderEvent = <O extends OrderInitiatedEvent['order']>(order: O, exchange: ExchangeEvent) => structuredClone({ order, exchange });
+
 export class StrategyManager extends EventEmitter {
   private readonly warmupPeriod: number;
   private readonly maxConsecutiveErrors: number;
-  /** The strategy block, replaced by its parse when the strategy's class declares a schema; the same object as tools.strategyParams */
+  /**
+   * A copy of the strategy block, replaced by its parse when the strategy's class declares a schema; the same object as
+   * tools.strategyParams. The block itself is the configuration's, which every plugin keeps: a strategy without schema got that very
+   * object, and what it wrote there changed the run id of the PerformanceReporter.
+   */
   private strategyParams: object;
   private readonly trailingStopManager: TrailingStopManager;
 
@@ -96,8 +136,12 @@ export class StrategyManager extends EventEmitter {
   /** Set as the warmup event is emitted, never reset: createOrder refuses orders until then */
   private isWarmupCompleted = false;
   private indicators: { indicator: Indicator; symbol: TradingPair }[] = [];
-  /** The market data of every watched pair, set before the first candle: its keys are the pairs addIndicator and createOrder accept */
+  /**
+   * The market data of every watched pair, set before the first candle: its keys are the pairs addIndicator and createOrder accept. The
+   * strategy gets a copy (see setMarketData).
+   */
   private marketData = new Map<TradingPair, MarketData>();
+  /** The strategy's own copy of the last portfolio received (see onPortfolioChange), which the candle hooks get */
   private portfolio = new Map<Asset, BalanceDetail>();
   private indicatorsResults: IndicatorResults[] = [];
   private currentTimestamp: EpochTimeStamp = 0;
@@ -118,7 +162,8 @@ export class StrategyManager extends EventEmitter {
     super();
     this.warmupPeriod = warmupPeriod;
     this.maxConsecutiveErrors = maxConsecutiveErrors;
-    this.strategyParams = config.getStrategy() ?? {};
+    // Copied before the schema parses it: what the schema passes through as it is comes from the copy too
+    this.strategyParams = cloneDeep(config.getStrategy() ?? {});
 
     bindAll(this, [
       this.addIndicator.name,
@@ -175,15 +220,17 @@ export class StrategyManager extends EventEmitter {
   }
 
   public onTimeFrameCandle(bucket: CandleBucket) {
-    const params = { candle: bucket, portfolio: this.portfolio, tools: this.tools };
+    // The hooks of the candle share one copy of the bucket (see copyBucket): the bucket itself feeds the indicators and the warmup event
+    const params = { candle: copyBucket(bucket), portfolio: this.portfolio, tools: this.tools };
 
     // Initialize strategy with time frame candle (do not use one minute candle)
     if (this.age === 0) this.strategy?.init?.({ ...params, addIndicator: this.addIndicator });
 
-    // Update indicators: each is on a watched pair (see addIndicator), and a timeframe bucket holds a candle of every watched pair
+    // Update indicators: each is on a watched pair (see addIndicator), and a timeframe bucket holds a candle of every watched pair. The
+    // hooks get a copy of each result, made once per candle (see copyResult).
     this.indicatorsResults = this.indicators.map<IndicatorResults>(({ indicator, symbol }) => {
       indicator.onNewCandle(bucket.get(symbol)!);
-      return { results: indicator.getResult(), symbol };
+      return { results: copyResult(indicator.getResult()), symbol };
     });
     // Call for each candle
     this.strategy?.onEachTimeframeCandle?.(params, ...this.indicatorsResults);
@@ -203,7 +250,8 @@ export class StrategyManager extends EventEmitter {
 
   public onOrderCompleted({ order, exchange }: OrderCompletedEvent) {
     this.consecutiveErrors = 0;
-    this.strategy?.onOrderCompleted?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
+    // The hook gets its own copy of the event (see copyOrderEvent): what follows reads the event itself
+    this.strategy?.onOrderCompleted?.({ ...copyOrderEvent(order, exchange), tools: this.tools }, ...this.indicatorsResults);
 
     this.armPendingTrailingStop(order, order.amount);
 
@@ -217,7 +265,7 @@ export class StrategyManager extends EventEmitter {
 
   public onOrderCanceled({ order, exchange }: OrderCanceledEvent) {
     this.consecutiveErrors = 0;
-    this.strategy?.onOrderCanceled?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
+    this.strategy?.onOrderCanceled?.({ ...copyOrderEvent(order, exchange), tools: this.tools }, ...this.indicatorsResults);
     // A BUY canceled drops the stop it asked for, even after a partial fill
     this.cancelTrailingOrder(order.id);
     if (this.trailingStopSellIds.delete(order.id)) {
@@ -236,7 +284,7 @@ export class StrategyManager extends EventEmitter {
     // Thrown before the hook and the trailing clean-up, the breaker kept the error that trips it from the strategy, which ended holding
     // the order as pending
     try {
-      this.strategy?.onOrderErrored?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
+      this.strategy?.onOrderErrored?.({ ...copyOrderEvent(order, exchange), tools: this.tools }, ...this.indicatorsResults);
     } catch (hookError) {
       if (!isConsecutiveErrorsReached) throw hookError;
       // The orderly stop prevails, as in PluginsStream: a restart-on-failure supervisor leaves the bot stopped
@@ -270,7 +318,9 @@ export class StrategyManager extends EventEmitter {
   }
 
   public onPortfolioChange(portfolio: Portfolio) {
-    this.portfolio = portfolio;
+    // A copy: the portfolio is one clone shared by every plugin listening to it, the analyzers keeping it as their latest, and what the
+    // strategy wrote there skewed their equity until the next change
+    this.portfolio = clonePortfolio(portfolio);
   }
 
   // Given the state alone, the trailing hooks could neither cancel a stop, log nor order unless the strategy had kept the tools of an
@@ -295,7 +345,9 @@ export class StrategyManager extends EventEmitter {
 
   public setMarketData(marketData: Map<TradingPair, MarketData>) {
     this.marketData = marketData;
-    this.tools.marketData = marketData;
+    // A copy: on dummy-cex and paper trading the entries are those the simulator charges and checks orders with, and a fee the strategy
+    // zeroed there made every fill free. What it adds to its copy is no watched pair either: the checks read this.marketData.
+    this.tools.marketData = cloneDeep(marketData);
   }
 
   /* -------------------------------------------------------------------------- */

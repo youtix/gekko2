@@ -132,6 +132,8 @@ export class TradingAdvisor extends Plugin {
 
     const timeframeBucket = this.bucketBatcher.addBucket(bucket);
     if (timeframeBucket) {
+      // Queued after the hooks, and so after the warmup event of the same candle, which the PortfolioAnalyzer waits for before it marks
+      // a candle. The hooks got their own copy of the bucket (see StrategyManager.onTimeFrameCandle): what they wrote is not in this one.
       this.strategyManager?.onTimeFrameCandle(timeframeBucket);
       this.addDeferredEmit<CandleBucket>(TIMEFRAME_CANDLE_EVENT, timeframeBucket);
     }

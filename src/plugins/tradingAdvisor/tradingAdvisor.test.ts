@@ -17,6 +17,7 @@ import { config } from '@services/configuration/configuration';
 import { Exchange, MarketData } from '@services/exchange/exchange.types';
 import { error } from '@services/logger';
 import {
+  IndicatorResults,
   InitParams,
   OnCandleEventParams,
   OnOrderCanceledEventParams,
@@ -27,7 +28,7 @@ import {
 import { toTimestamp } from '@utils/date/date.utils';
 import { UUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { TradingAdvisor } from './tradingAdvisor';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 
@@ -36,8 +37,8 @@ import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 const { strategy, TestStrategy } = vi.hoisted(() => {
   const strategy = {
     init: vi.fn<(params: InitParams<object>) => void>(),
-    onEachTimeframeCandle: vi.fn<(params: OnCandleEventParams<object>) => void>(),
-    onTimeframeCandleAfterWarmup: vi.fn<(params: OnCandleEventParams<object>) => void>(),
+    onEachTimeframeCandle: vi.fn<(params: OnCandleEventParams<object>, ...indicators: IndicatorResults[]) => void>(),
+    onTimeframeCandleAfterWarmup: vi.fn<(params: OnCandleEventParams<object>, ...indicators: IndicatorResults[]) => void>(),
     onOrderCompleted: vi.fn<(params: OnOrderCompletedEventParams<object>) => void>(),
     onOrderCanceled: vi.fn<(params: OnOrderCanceledEventParams<object>) => void>(),
     onOrderErrored: vi.fn<(params: OnOrderErroredEventParams<object>) => void>(),
@@ -389,6 +390,99 @@ describe('TradingAdvisor', () => {
       advisor.onPortfolioChange([usdtPortfolio(900), usdtPortfolio(800)]);
       await sendBuckets(advisor, 3);
       expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ portfolio: usdtPortfolio(800) }));
+    });
+  });
+
+  // What the strategy received was the engine's own object, which the other plugins, the exchange or the configuration held too
+  describe('when the strategy writes to what it receives', () => {
+    describe('to its candles', () => {
+      let delivered: Map<string, unknown[]>;
+
+      beforeEach(async () => {
+        strategy.onEachTimeframeCandle.mockImplementation(({ candle }) => {
+          candle.get('BTC/USDT')!.close = 0;
+          candle.delete('ETH/USDT');
+        });
+        // Without warmup the first candle completes it: its warmup event is queued after onEachTimeframeCandle
+        const advisor = await startAdvisor();
+        await sendBuckets(advisor, 3);
+        delivered = await flushDeferredEvents(advisor);
+      });
+
+      it.each`
+        event
+        ${STRATEGY_WARMUP_COMPLETED_EVENT}
+        ${TIMEFRAME_CANDLE_EVENT}
+      `('queues $event with the bucket as the batcher built it', ({ event }) => {
+        expect(delivered.get(event)).toEqual([FIRST_3M_BUCKET]);
+      });
+    });
+
+    it('leaves the portfolio the other plugins received as it was', async () => {
+      const portfolio = usdtPortfolio(800);
+      strategy.onEachTimeframeCandle.mockImplementation(({ portfolio: own }) => {
+        own.get('USDT')!.free = 0;
+      });
+      const advisor = await startAdvisor();
+      advisor.onPortfolioChange([portfolio]);
+      await sendBuckets(advisor, 3);
+      expect(portfolio).toEqual(usdtPortfolio(800));
+    });
+
+    it.each`
+      handler               | orderEvent
+      ${'onOrderCompleted'} | ${orderCompleted}
+      ${'onOrderCanceled'}  | ${orderCanceled}
+      ${'onOrderErrored'}   | ${orderErrored}
+    `(
+      '$handler leaves the events of the batch, which the other plugins receive after it, as they were',
+      async ({ handler, orderEvent }: { handler: keyof typeof SEND_ORDER_BATCH; orderEvent: (id: UUID) => OrderCompletedEvent }) => {
+        // Each event with a portfolio of its own
+        const batch = () => batchOf(id => ({ ...orderEvent(id), exchange: { portfolio: usdtPortfolio(1000), price: 100 } }));
+        (strategy[handler] as Mock).mockImplementation(({ order, exchange }: { order: { amount: number }; exchange: ExchangeEvent }) => {
+          order.amount = 0;
+          exchange.portfolio.clear();
+        });
+        const sent = batch();
+        await (await startAdvisor())[handler](sent as never);
+        expect(sent).toEqual(batch());
+      },
+    );
+
+    it('leaves the market data of the exchange as it was', async () => {
+      const entry: MarketData = { amount: { min: 0.0001 }, fee: { maker: 0.001, taker: 0.001 } };
+      strategy.init.mockImplementation(({ tools }) => {
+        tools.marketData.get('BTC/USDT')!.fee!.taker = 0;
+      });
+      // As dummy-cex and paper trading do, the exchange hands out its own entry, the one its simulator charges fees with
+      const ownEntryExchange: Pick<Exchange, 'getMarketData' | 'fetchBalance'> = { ...exchange, getMarketData: () => entry };
+      const advisor = createAdvisor();
+      advisor.setExchange(ownEntryExchange as Exchange);
+      await advisor.processInitStream();
+      await sendBuckets(advisor, 3);
+      expect(entry).toEqual({ amount: { min: 0.0001 }, fee: { maker: 0.001, taker: 0.001 } });
+    });
+
+    // Every plugin keeps the block: the PerformanceReporter makes its run id of it
+    it('leaves the strategy block of the configuration as it was', async () => {
+      vi.mocked(config.getStrategy).mockReturnValue({ name: 'TestStrategy', thresholds: { up: 1 } });
+      strategy.init.mockImplementation(({ tools }) => {
+        (tools.strategyParams as { thresholds: { up: number } }).thresholds.up = 9;
+      });
+      await sendBuckets(await startAdvisor(), 3);
+      expect(config.getStrategy()).toEqual({ name: 'TestStrategy', thresholds: { up: 1 } });
+    });
+
+    // Two 3m candles closing at 103 and 106: the ribbon of an EMA(1) and an EMA(2) is ready on the second one
+    it('leaves the results of an indicator as it computed them', async () => {
+      strategy.init.mockImplementation(({ addIndicator }) => addIndicator('EMARibbon', 'BTC/USDT', { count: 2, start: 1, step: 1 }));
+      strategy.onEachTimeframeCandle.mockImplementation((_params, ribbon) => {
+        (ribbon.results as { results: number[] } | null)?.results.reverse();
+      });
+      const advisor = await startAdvisor();
+      await sendBuckets(advisor, 6);
+      const [{ indicator }] = advisor['strategyManager']!['indicators'];
+      expect(indicator.getResult()).toEqual({ results: [106, 104.5], spread: 1.5 });
     });
   });
 
