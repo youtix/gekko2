@@ -1,14 +1,8 @@
-import type { AdviceOrder } from '@models/advice.types';
+import type { StrategyOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-} from '@strategies/strategy.types';
+import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { omit } from 'lodash-es';
-import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RSI } from './rsi.strategy';
 import { RSIStrategyParams } from './rsi.types';
@@ -26,54 +20,34 @@ vi.mock('@services/configuration/configuration', () => {
 const symbol = 'BTC/USDT';
 // The RSI value (thresholds 70 / 30) of each step of the scenarios played below
 const RSI_VALUES = { high: 75, low: 20, neutral: 50 } as const;
-const UNKNOWN_ORDER_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 describe('RSI Strategy', () => {
   let strategy: RSI;
-  let advices: AdviceOrder[];
-  let orderIds: UUID[];
+  let orders: OrderRecorder;
+  let advices: StrategyOrder[];
   let tools: any;
   let bucket: CandleBucket;
   let addIndicator: any;
 
-  /**
-   * Plays the steps, separated by spaces: an RSI value (high, low, neutral) is a candle, '<outcome>:<n>' relays the outcome
-   * (completed, canceled, errored) of the n-th order created, '<outcome>:unknown' that of an order the strategy did not create.
-   */
-  const play = (steps: string) => {
-    for (const step of steps.split(' ')) {
-      const [kind, order] = step.split(':');
-      if (!order) {
-        strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-          results: RSI_VALUES[kind as keyof typeof RSI_VALUES],
-          symbol,
-        });
-        continue;
-      }
-      const id = order === 'unknown' ? UNKNOWN_ORDER_ID : orderIds[Number(order) - 1];
-      if (kind === 'completed') strategy.onOrderCompleted({ order: { id } } as unknown as OnOrderCompletedEventParams<RSIStrategyParams>);
-      if (kind === 'canceled') strategy.onOrderCanceled({ order: { id } } as unknown as OnOrderCanceledEventParams<RSIStrategyParams>);
-      if (kind === 'errored') strategy.onOrderErrored({ order: { id } } as unknown as OnOrderErroredEventParams<RSIStrategyParams>);
-    }
-  };
+  /** Plays the steps (see playSteps): an RSI value (high, low, neutral) is a candle */
+  const play = (steps: string) =>
+    playSteps(steps, strategy, orders, step =>
+      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
+        results: RSI_VALUES[step as keyof typeof RSI_VALUES],
+        symbol,
+      }),
+    );
   const sides = () => advices.map(({ side }) => side);
 
   beforeEach(() => {
     strategy = new RSI();
-    advices = [];
-    orderIds = [];
+    orders = new OrderRecorder();
+    advices = orders.advices;
     addIndicator = vi.fn();
-
-    const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, amount: order.amount ?? 1 });
-      const id = `00000000-0000-0000-0000-${String(advices.length).padStart(12, '0')}` as UUID;
-      orderIds.push(id);
-      return id;
-    });
 
     tools = {
       strategyParams: { period: 14, src: 'close', thresholds: { high: 70, low: 30, persistence: 2 } },
-      createOrder,
+      createOrder: orders.createOrder,
       cancelOrder: vi.fn(),
       log: vi.fn(),
     };

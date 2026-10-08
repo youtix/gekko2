@@ -1,4 +1,5 @@
 import { TradingPair } from '@models/utility.types';
+import { PositionTracker } from '@strategies/positionTracker';
 import {
   IndicatorResults,
   InitParams,
@@ -9,7 +10,6 @@ import {
   Strategy,
 } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
-import { UUID } from 'node:crypto';
 import { demaStrategySchema } from './dema.schema';
 import { DEMAStrategyParams } from './dema.types';
 
@@ -22,11 +22,9 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
   private isTrendAdviced = false;
   private pair?: TradingPair;
   // Every order is all-in: the strategy buys only when flat and sells only when long, never while its order is pending. Advised on
-  // each change of trend, its first SELL had nothing to sell, and it switched side while its STICKY order was still open.
-  private isLong = false;
-  private buyOrderId?: UUID;
-  private sellOrderId?: UUID;
-  private isPendingOrder = false;
+  // each change of trend, its first SELL had nothing to sell, and it switched side while its STICKY order was still open. The trend
+  // of an order canceled or errored stays adviced: the next order waits for the next trend.
+  private readonly position = new PositionTracker();
 
   init({ candle, tools, addIndicator }: InitParams<DEMAStrategyParams>): void {
     const [pair] = candle.keys();
@@ -55,11 +53,10 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
         this.currentTrend = 'up';
         this.isTrendAdviced = false;
       }
-      if (!this.isTrendAdviced && !this.isLong && !this.isPendingOrder) {
+      if (!this.isTrendAdviced && this.position.canBuy()) {
         this.isTrendAdviced = true;
         log('info', `Executing long advice due to detected uptrend: ${message}`);
-        this.buyOrderId = createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
-        this.isPendingOrder = true;
+        this.position.buy(createOrder, { type: 'STICKY', symbol: this.pair });
       }
     } else if (diff < strategyParams.thresholds.down) {
       log('debug', `We are currently in a downtrend: ${message}`);
@@ -68,11 +65,10 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
         this.currentTrend = 'down';
         this.isTrendAdviced = false;
       }
-      if (!this.isTrendAdviced && this.isLong && !this.isPendingOrder) {
+      if (!this.isTrendAdviced && this.position.canSell()) {
         this.isTrendAdviced = true;
         log('info', `Executing short advice due to detected downtrend: ${message}`);
-        this.sellOrderId = createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
-        this.isPendingOrder = true;
+        this.position.sell(createOrder, { type: 'STICKY', symbol: this.pair });
       }
     } else {
       log('debug', `We are currently not in an up or down trend: ${message}`);
@@ -90,39 +86,15 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
     );
   }
 
-  onOrderCompleted({ order }: OnOrderCompletedEventParams<DEMAStrategyParams>): void {
-    if (order.id === this.buyOrderId) {
-      this.isLong = true;
-      this.buyOrderId = undefined;
-      this.isPendingOrder = false;
-    } else if (order.id === this.sellOrderId) {
-      this.isLong = false;
-      this.sellOrderId = undefined;
-      this.isPendingOrder = false;
-    }
+  onOrderCompleted(params: OnOrderCompletedEventParams<DEMAStrategyParams>): void {
+    this.position.onOrderCompleted(params);
   }
 
-  onOrderCanceled({ order }: OnOrderCanceledEventParams<DEMAStrategyParams>): void {
-    this.handleOrderFailure(order.id);
+  onOrderCanceled(params: OnOrderCanceledEventParams<DEMAStrategyParams>): void {
+    this.position.onOrderCanceled(params);
   }
 
-  onOrderErrored({ order }: OnOrderErroredEventParams<DEMAStrategyParams>): void {
-    this.handleOrderFailure(order.id);
-  }
-
-  /**
-   * An order canceled or errored leaves the position as it was before it. The trend it was placed in is adviced: the next order waits
-   * for the next trend. What a canceled order filled is still held: the next all-in order completes it.
-   */
-  private handleOrderFailure(orderId: UUID) {
-    if (orderId === this.buyOrderId) {
-      this.isLong = false;
-      this.buyOrderId = undefined;
-      this.isPendingOrder = false;
-    } else if (orderId === this.sellOrderId) {
-      this.isLong = true;
-      this.sellOrderId = undefined;
-      this.isPendingOrder = false;
-    }
+  onOrderErrored(params: OnOrderErroredEventParams<DEMAStrategyParams>): void {
+    this.position.onOrderErrored(params);
   }
 }

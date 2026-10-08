@@ -1,14 +1,8 @@
-import type { AdviceOrder } from '@models/advice.types';
+import type { StrategyOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-} from '@strategies/strategy.types';
-import { UUID } from 'node:crypto';
+import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SMACrossover } from './smaCrossover.strategy';
 import { SMACrossoverStrategyParams } from './smaCrossover.types';
@@ -17,12 +11,11 @@ const symbol = 'BTC/USDT';
 const makeIndicator = (res: any) => [{ results: res, symbol }] as any;
 // The close of each step of the scenarios played below, against an SMA of 100. The first candle only records where the price is.
 const PRICES = { above: 110, below: 90 } as const;
-const UNKNOWN_ORDER_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 describe('SMACrossover Strategy', () => {
   let strategy: SMACrossover;
-  let advices: AdviceOrder[];
-  let orderIds: UUID[];
+  let orders: OrderRecorder;
+  let advices: StrategyOrder[];
   let logs: { level: LogLevel; message: string }[];
   let tools: any;
   let bucket: CandleBucket;
@@ -34,47 +27,27 @@ describe('SMACrossover Strategy', () => {
     bucket.set(symbol, createCandle(price));
   };
 
-  /**
-   * Plays the steps, separated by spaces: a price (above, below the SMA) is a candle, '<outcome>:<n>' relays the outcome (completed,
-   * canceled, errored) of the n-th order created, '<outcome>:unknown' that of an order the strategy did not create.
-   */
-  const play = (steps: string) => {
-    for (const step of steps.split(' ')) {
-      const [kind, order] = step.split(':');
-      if (!order) {
-        setBucket(PRICES[kind as keyof typeof PRICES]);
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-          ...makeIndicator(100),
-        );
-        continue;
-      }
-      const id = order === 'unknown' ? UNKNOWN_ORDER_ID : orderIds[Number(order) - 1];
-      const params = { order: { id } } as unknown;
-      if (kind === 'completed') strategy.onOrderCompleted(params as OnOrderCompletedEventParams<SMACrossoverStrategyParams>);
-      if (kind === 'canceled') strategy.onOrderCanceled(params as OnOrderCanceledEventParams<SMACrossoverStrategyParams>);
-      if (kind === 'errored') strategy.onOrderErrored(params as OnOrderErroredEventParams<SMACrossoverStrategyParams>);
-    }
-  };
+  /** Plays the steps (see playSteps): a price (above, below the SMA) is a candle */
+  const play = (steps: string) =>
+    playSteps(steps, strategy, orders, step => {
+      setBucket(PRICES[step as keyof typeof PRICES]);
+      strategy.onTimeframeCandleAfterWarmup(
+        { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
+        ...makeIndicator(100),
+      );
+    });
   const sides = () => advices.map(({ side }) => side);
 
   beforeEach(() => {
     strategy = new SMACrossover();
-    advices = [];
-    orderIds = [];
+    orders = new OrderRecorder();
+    advices = orders.advices;
     logs = [];
     addIndicator = vi.fn();
 
-    const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, amount: order.amount ?? 1 });
-      const id = `00000000-0000-0000-0000-${String(advices.length).padStart(12, '0')}` as UUID;
-      orderIds.push(id);
-      return id;
-    });
-
     tools = {
       strategyParams: { period: 20, src: 'close' },
-      createOrder,
+      createOrder: orders.createOrder,
       cancelOrder: vi.fn(),
       log: vi.fn((level: LogLevel, message: string) => logs.push({ level, message })),
     };

@@ -1,4 +1,5 @@
 import { TradingPair } from '@models/utility.types';
+import { PositionTracker } from '@strategies/positionTracker';
 import {
   IndicatorResults,
   InitParams,
@@ -10,7 +11,6 @@ import {
 } from '@strategies/strategy.types';
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
-import { UUID } from 'node:crypto';
 import { macdStrategySchema } from './macd.schema';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
 
@@ -21,11 +21,9 @@ export class MACD implements Strategy<MACDStrategyParams> {
   private pair?: TradingPair;
   // A trend starts again when the MACD crosses back, even for fewer candles than the persistence, and every order is all-in: the
   // strategy buys only when flat and sells only when long, never while its order is pending. A blip shorter than the persistence
-  // advised the same side again, a BUY sized from what the previous one left, or a SELL with nothing left to sell.
-  private isLong = false;
-  private buyOrderId?: UUID;
-  private sellOrderId?: UUID;
-  private isPendingOrder = false;
+  // advised the same side again, a BUY sized from what the previous one left, or a SELL with nothing left to sell. The trend of an
+  // order canceled or errored stays adviced: the next order waits for the next trend.
+  private readonly position = new PositionTracker();
 
   init({ candle, tools, addIndicator }: InitParams<MACDStrategyParams>): void {
     const { strategyParams } = tools;
@@ -56,10 +54,9 @@ export class MACD implements Strategy<MACDStrategyParams> {
       if (this.trend.duration >= strategyParams.thresholds.persistence) this.trend.persisted = true;
 
       // Left unadviced while long or while an order is pending: a SELL that fills during the trend is bought back on its next candle
-      if (this.trend.persisted && !this.trend.adviced && !this.isLong && !this.isPendingOrder) {
+      if (this.trend.persisted && !this.trend.adviced && this.position.canBuy()) {
         this.trend.adviced = true;
-        this.buyOrderId = createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
-        this.isPendingOrder = true;
+        this.position.buy(createOrder, { type: 'STICKY', symbol: this.pair });
       }
     } else if (macd.results[macdSrc] < strategyParams.thresholds.down) {
       if (this.trend?.direction !== 'down') {
@@ -71,10 +68,9 @@ export class MACD implements Strategy<MACDStrategyParams> {
 
       if (this.trend.duration >= strategyParams.thresholds.persistence) this.trend.persisted = true;
 
-      if (this.trend.persisted && !this.trend.adviced && this.isLong && !this.isPendingOrder) {
+      if (this.trend.persisted && !this.trend.adviced && this.position.canSell()) {
         this.trend.adviced = true;
-        this.sellOrderId = createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
-        this.isPendingOrder = true;
+        this.position.sell(createOrder, { type: 'STICKY', symbol: this.pair });
       }
     } else {
       log('debug', 'MACD: no trend detected');
@@ -94,40 +90,16 @@ export class MACD implements Strategy<MACDStrategyParams> {
     log('debug', `hist: ${macd.results.hist.toFixed(8)}`);
   }
 
-  onOrderCompleted({ order }: OnOrderCompletedEventParams<MACDStrategyParams>): void {
-    if (order.id === this.buyOrderId) {
-      this.isLong = true;
-      this.buyOrderId = undefined;
-      this.isPendingOrder = false;
-    } else if (order.id === this.sellOrderId) {
-      this.isLong = false;
-      this.sellOrderId = undefined;
-      this.isPendingOrder = false;
-    }
+  onOrderCompleted(params: OnOrderCompletedEventParams<MACDStrategyParams>): void {
+    this.position.onOrderCompleted(params);
   }
 
-  onOrderCanceled({ order }: OnOrderCanceledEventParams<MACDStrategyParams>): void {
-    this.handleOrderFailure(order.id);
+  onOrderCanceled(params: OnOrderCanceledEventParams<MACDStrategyParams>): void {
+    this.position.onOrderCanceled(params);
   }
 
-  onOrderErrored({ order }: OnOrderErroredEventParams<MACDStrategyParams>): void {
-    this.handleOrderFailure(order.id);
-  }
-
-  /**
-   * An order canceled or errored leaves the position as it was before it. The trend it was placed in is adviced: the next order waits
-   * for the next trend. What a canceled order filled is still held: the next all-in order completes it.
-   */
-  private handleOrderFailure(orderId: UUID) {
-    if (orderId === this.buyOrderId) {
-      this.isLong = false;
-      this.buyOrderId = undefined;
-      this.isPendingOrder = false;
-    } else if (orderId === this.sellOrderId) {
-      this.isLong = true;
-      this.sellOrderId = undefined;
-      this.isPendingOrder = false;
-    }
+  onOrderErrored(params: OnOrderErroredEventParams<MACDStrategyParams>): void {
+    this.position.onOrderErrored(params);
   }
 
   private isMacd(data: unknown): data is { macd: number; signal: number; hist: number } {

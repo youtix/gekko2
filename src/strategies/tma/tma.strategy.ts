@@ -1,4 +1,5 @@
 import { TradingPair } from '@models/utility.types';
+import { PositionTracker } from '@strategies/positionTracker';
 import {
   IndicatorResults,
   InitParams,
@@ -9,7 +10,6 @@ import {
   Strategy,
 } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
-import { UUID } from 'node:crypto';
 import { tmaStrategySchema } from './tma.schema';
 import { TMAStrategyParams } from './tma.types';
 
@@ -19,11 +19,9 @@ export class TMA implements Strategy<TMAStrategyParams> {
   private pair?: TradingPair;
   // An alignment holds for many candles in a row, and every order is all-in: the strategy buys once when flat and sells once when
   // long, never while its order is pending. Advised on every candle, each order after the first was sized from what the previous one
-  // left, then refused once nothing was left, until maxConsecutiveErrors stopped the bot.
-  private isLong = false;
-  private buyOrderId?: UUID;
-  private sellOrderId?: UUID;
-  private isPendingOrder = false;
+  // left, then refused once nothing was left, until maxConsecutiveErrors stopped the bot. An order canceled or errored is placed
+  // again by the next candle of its signal.
+  private readonly position = new PositionTracker();
 
   init({ candle, tools, addIndicator }: InitParams<TMAStrategyParams>): void {
     const { long, medium, short, src } = tools.strategyParams;
@@ -46,52 +44,26 @@ export class TMA implements Strategy<TMAStrategyParams> {
       (short.results < medium.results && medium.results > long.results) ||
       (short.results > medium.results && medium.results < long.results);
 
-    if (isUptrend && !this.isLong && !this.isPendingOrder) {
+    if (isUptrend && this.position.canBuy()) {
       log('info', `Executing long advice due to detected uptrend: ${smas}`);
-      this.buyOrderId = createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
-      this.isPendingOrder = true;
-    } else if (isDowntrend && this.isLong && !this.isPendingOrder) {
+      this.position.buy(createOrder, { type: 'STICKY', symbol: this.pair });
+    } else if (isDowntrend && this.position.canSell()) {
       log('info', `Executing short advice due to detected downtrend: ${smas}`);
-      this.sellOrderId = createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
-      this.isPendingOrder = true;
+      this.position.sell(createOrder, { type: 'STICKY', symbol: this.pair });
     } else if (!isUptrend && !isDowntrend) {
       log('debug', `No clear trend detected: ${smas}`);
     }
   }
 
-  onOrderCompleted({ order }: OnOrderCompletedEventParams<TMAStrategyParams>): void {
-    if (order.id === this.buyOrderId) {
-      this.isLong = true;
-      this.buyOrderId = undefined;
-      this.isPendingOrder = false;
-    } else if (order.id === this.sellOrderId) {
-      this.isLong = false;
-      this.sellOrderId = undefined;
-      this.isPendingOrder = false;
-    }
+  onOrderCompleted(params: OnOrderCompletedEventParams<TMAStrategyParams>): void {
+    this.position.onOrderCompleted(params);
   }
 
-  onOrderCanceled({ order }: OnOrderCanceledEventParams<TMAStrategyParams>): void {
-    this.handleOrderFailure(order.id);
+  onOrderCanceled(params: OnOrderCanceledEventParams<TMAStrategyParams>): void {
+    this.position.onOrderCanceled(params);
   }
 
-  onOrderErrored({ order }: OnOrderErroredEventParams<TMAStrategyParams>): void {
-    this.handleOrderFailure(order.id);
-  }
-
-  /**
-   * An order canceled or errored leaves the position as it was before it, and the next candle of the signal places it again. What a
-   * canceled order filled is still held: the next all-in order completes it (a BUY spends the rest, a SELL sells everything).
-   */
-  private handleOrderFailure(orderId: UUID) {
-    if (orderId === this.buyOrderId) {
-      this.isLong = false;
-      this.buyOrderId = undefined;
-      this.isPendingOrder = false;
-    } else if (orderId === this.sellOrderId) {
-      this.isLong = true;
-      this.sellOrderId = undefined;
-      this.isPendingOrder = false;
-    }
+  onOrderErrored(params: OnOrderErroredEventParams<TMAStrategyParams>): void {
+    this.position.onOrderErrored(params);
   }
 }

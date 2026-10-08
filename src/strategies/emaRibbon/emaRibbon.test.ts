@@ -1,8 +1,8 @@
-import type { AdviceOrder } from '@models/advice.types';
+import type { AdviceOrder, StrategyOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
+import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
 import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { omit } from 'lodash-es';
-import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMARibbon } from './emaRibbon.strategy';
 import { EMARibbonStrategyParams } from './emaRibbon.types';
@@ -14,7 +14,8 @@ describe('EMARibbon', () => {
   let strategy: EMARibbon;
   let addIndicator: any;
   let log: any;
-  let advices: AdviceOrder[];
+  let orders: OrderRecorder;
+  let advices: StrategyOrder[];
   let tools: any;
   let bucket: CandleBucket;
   const longAdvice = { type: 'STICKY', side: 'BUY', amount: 1, symbol } satisfies Partial<AdviceOrder>;
@@ -22,14 +23,11 @@ describe('EMARibbon', () => {
 
   beforeEach(() => {
     strategy = new EMARibbon();
-    advices = [];
+    orders = new OrderRecorder();
+    advices = orders.advices;
     addIndicator = vi.fn();
     log = vi.fn();
-    const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, amount: order.amount ?? 1 });
-      return '00000000-0000-0000-0000-000000000000' as UUID;
-    });
-    tools = { createOrder, log, strategyParams: { spreadCompressionThreshold: 1 } } as any;
+    tools = { createOrder: orders.createOrder, log, strategyParams: { spreadCompressionThreshold: 1 } } as any;
 
     bucket = new Map();
     bucket.set(symbol, { close: 100 } as any);
@@ -89,7 +87,7 @@ describe('EMARibbon', () => {
         { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
         ...makeIndicator([10, 9, 8, 7], 0.5),
       );
-      strategy.onOrderCompleted({ order: { id: '00000000-0000-0000-0000-000000000000' } } as any);
+      strategy.onOrderCompleted({ order: { id: orders.ids[0] } } as any);
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
         ...makeIndicator([10, 11, 9, 8], 0.2),
@@ -103,7 +101,7 @@ describe('EMARibbon', () => {
         { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
         ...makeIndicator([100, 90, 80], 0.5),
       );
-      strategy.onOrderCompleted({ order: { id: '00000000-0000-0000-0000-000000000000' } } as any);
+      strategy.onOrderCompleted({ order: { id: orders.ids[0] } } as any);
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
         ...makeIndicator([90, 80, 70], 0.5),
@@ -114,6 +112,41 @@ describe('EMARibbon', () => {
       );
 
       expect(advices).toEqual([longAdvice]);
+    });
+  });
+
+  describe('order outcomes', () => {
+    // Bullish ribbons (each EMA above the slower one) whose spread, below the threshold of 1, narrows from one to the next
+    const RIBBONS = { tight: [10.5, 10.25, 10], tighter: [10.2, 10.1, 10], tightest: [10.1, 10.05, 10] } as const;
+
+    /** Plays the steps (see playSteps): a ribbon (tight, tighter, tightest) is a candle, with the spread of its EMAs */
+    const play = (steps: string) =>
+      playSteps(steps, strategy, orders, step => {
+        const results = [...RIBBONS[step as keyof typeof RIBBONS]];
+        strategy.onTimeframeCandleAfterWarmup(
+          { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
+          ...makeIndicator(results, Math.max(...results) - Math.min(...results)),
+        );
+      });
+
+    beforeEach(() => {
+      strategy.init({ tools: { strategyParams: {} }, addIndicator, candle: bucket } as unknown as InitParams<EMARibbonStrategyParams>);
+    });
+
+    it.each`
+      case                                        | steps                                              | expectedSides
+      ${'a BUY completed: long, it sells'}        | ${'tight completed:1 tighter'}                     | ${['BUY', 'SELL']}
+      ${'a BUY canceled: flat, it buys again'}    | ${'tight canceled:1 tight'}                        | ${['BUY', 'BUY']}
+      ${'a BUY errored: flat, it buys again'}     | ${'tight errored:1 tight'}                         | ${['BUY', 'BUY']}
+      ${'a SELL completed: flat, it buys again'}  | ${'tight completed:1 tighter completed:2 tight'}   | ${['BUY', 'SELL', 'BUY']}
+      ${'a SELL canceled: long, it sells again'}  | ${'tight completed:1 tighter canceled:2 tightest'} | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored: long, it sells again'}   | ${'tight completed:1 tighter errored:2 tightest'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'another order completed: still pending'} | ${'tight completed:unknown tight tighter'}         | ${['BUY']}
+      ${'another order canceled: still pending'}  | ${'tight canceled:unknown tight tighter'}          | ${['BUY']}
+      ${'another order errored: still pending'}   | ${'tight errored:unknown tight tighter'}           | ${['BUY']}
+    `('should track $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
     });
   });
 

@@ -1,15 +1,9 @@
-import { AdviceOrder } from '@models/advice.types';
+import { StrategyOrder } from '@models/advice.types';
 import { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-} from '@strategies/strategy.types';
+import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { omit } from 'lodash-es';
-import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CCI } from './cci.strategy';
 import { CCIStrategyParams } from './cci.types';
@@ -25,56 +19,36 @@ vi.mock('@services/configuration/configuration', () => {
 
 // The CCI value of each step of the scenarios played below
 const CCI_VALUES = { over: 150, under: -150, neutral: 50 } as const;
-const UNKNOWN_ORDER_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 describe('CCI Strategy', () => {
   let strategy: CCI;
-  let advices: AdviceOrder[];
-  let orderIds: UUID[];
+  let orders: OrderRecorder;
+  let advices: StrategyOrder[];
   let logs: { level: LogLevel; message: string }[];
   let tools: any;
   let bucket: CandleBucket;
   let addIndicator: any;
 
-  /**
-   * Plays the steps, separated by spaces: a CCI value (over, under, neutral) is a candle, '<outcome>:<n>' relays the outcome
-   * (completed, canceled, errored) of the n-th order created, '<outcome>:unknown' that of an order the strategy did not create.
-   */
-  const play = (steps: string) => {
-    for (const step of steps.split(' ')) {
-      const [kind, order] = step.split(':');
-      if (!order) {
-        strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, {
-          results: CCI_VALUES[kind as keyof typeof CCI_VALUES],
-          symbol: 'BTC/USDT',
-        });
-        continue;
-      }
-      const id = order === 'unknown' ? UNKNOWN_ORDER_ID : orderIds[Number(order) - 1];
-      if (kind === 'completed') strategy.onOrderCompleted({ order: { id } } as unknown as OnOrderCompletedEventParams<CCIStrategyParams>);
-      if (kind === 'canceled') strategy.onOrderCanceled({ order: { id } } as unknown as OnOrderCanceledEventParams<CCIStrategyParams>);
-      if (kind === 'errored') strategy.onOrderErrored({ order: { id } } as unknown as OnOrderErroredEventParams<CCIStrategyParams>);
-    }
-  };
+  /** Plays the steps (see playSteps): a CCI value (over, under, neutral) is a candle */
+  const play = (steps: string) =>
+    playSteps(steps, strategy, orders, step =>
+      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, {
+        results: CCI_VALUES[step as keyof typeof CCI_VALUES],
+        symbol: 'BTC/USDT',
+      }),
+    );
   const sides = () => advices.map(({ side }) => side);
 
   beforeEach(() => {
     strategy = new CCI();
-    advices = [];
-    orderIds = [];
+    orders = new OrderRecorder();
+    advices = orders.advices;
     logs = [];
     addIndicator = vi.fn();
 
-    const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, amount: order.amount ?? 1 });
-      const id = `00000000-0000-0000-0000-${String(advices.length).padStart(12, '0')}` as UUID;
-      orderIds.push(id);
-      return id;
-    });
-
     tools = {
       strategyParams: { period: 14, thresholds: { up: 100, down: -100, persistence: 2 } },
-      createOrder,
+      createOrder: orders.createOrder,
       cancelOrder: vi.fn(),
       log: vi.fn((level: LogLevel, message: string) => logs.push({ level, message })),
     };

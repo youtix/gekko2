@@ -1,16 +1,9 @@
-import type { AdviceOrder } from '@models/advice.types';
+import type { StrategyOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import {
-  IndicatorResults,
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-} from '@strategies/strategy.types';
+import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { IndicatorResults, InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { omit } from 'lodash-es';
-import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TMA } from './tma.strategy';
 import { TMAStrategyParams } from './tma.types';
@@ -28,12 +21,11 @@ const ALIGNMENTS = {
   down: [3, 5, 2],
   bearish: [2, 5, 10],
 } as const;
-const UNKNOWN_ORDER_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 describe('TMA Strategy', () => {
   let strategy: TMA;
-  let advices: AdviceOrder[];
-  let orderIds: UUID[];
+  let orders: OrderRecorder;
+  let advices: StrategyOrder[];
   let logs: { level: LogLevel; message: string }[];
   let tools: any;
   let bucket: CandleBucket;
@@ -46,41 +38,19 @@ describe('TMA Strategy', () => {
       ...smas.map((results): IndicatorResults<number | null> => ({ results: results as number | null, symbol })),
     );
 
-  /**
-   * Plays the steps, separated by spaces: an alignment (up, down, bearish) is a candle, '<outcome>:<n>' relays the outcome (completed,
-   * canceled, errored) of the n-th order created, '<outcome>:unknown' that of an order the strategy did not create.
-   */
-  const play = (steps: string) => {
-    for (const step of steps.split(' ')) {
-      const [kind, order] = step.split(':');
-      if (!order) {
-        onCandle(...ALIGNMENTS[kind as keyof typeof ALIGNMENTS]);
-        continue;
-      }
-      const id = order === 'unknown' ? UNKNOWN_ORDER_ID : orderIds[Number(order) - 1];
-      if (kind === 'completed') strategy.onOrderCompleted({ order: { id } } as unknown as OnOrderCompletedEventParams<TMAStrategyParams>);
-      if (kind === 'canceled') strategy.onOrderCanceled({ order: { id } } as unknown as OnOrderCanceledEventParams<TMAStrategyParams>);
-      if (kind === 'errored') strategy.onOrderErrored({ order: { id } } as unknown as OnOrderErroredEventParams<TMAStrategyParams>);
-    }
-  };
+  /** Plays the steps (see playSteps): an alignment (up, down, bearish) is a candle */
+  const play = (steps: string) => playSteps(steps, strategy, orders, step => onCandle(...ALIGNMENTS[step as keyof typeof ALIGNMENTS]));
 
   beforeEach(() => {
     strategy = new TMA();
-    advices = [];
-    orderIds = [];
+    orders = new OrderRecorder();
+    advices = orders.advices;
     logs = [];
     addIndicator = vi.fn();
 
-    const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, amount: order.amount ?? 1 });
-      const id = `00000000-0000-0000-0000-${String(advices.length).padStart(12, '0')}` as UUID;
-      orderIds.push(id);
-      return id;
-    });
-
     tools = {
       strategyParams: { short: 3, medium: 5, long: 8, src: 'close' },
-      createOrder,
+      createOrder: orders.createOrder,
       cancelOrder: vi.fn(),
       log: vi.fn((level: LogLevel, message: string) => logs.push({ level, message })),
     };

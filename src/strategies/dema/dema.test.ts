@@ -1,15 +1,9 @@
-import { AdviceOrder } from '@models/advice.types';
+import { StrategyOrder } from '@models/advice.types';
 import { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-} from '@strategies/strategy.types';
+import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { omit } from 'lodash-es';
-import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEMA } from './dema.strategy';
 import { DEMAStrategyParams } from './dema.types';
@@ -25,58 +19,38 @@ vi.mock('@services/configuration/configuration', () => {
 
 // The DEMA and SMA results of each step of the scenarios played below: diff = SMA - DEMA against the thresholds 0.5 / -0.5
 const TRENDS = { up: { dema: 1, sma: 2 }, down: { dema: 1, sma: 0 }, neutral: { dema: 1, sma: 1 } } as const;
-const UNKNOWN_ORDER_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 describe('DEMA Strategy', () => {
   let strategy: DEMA;
-  let advices: AdviceOrder[];
-  let orderIds: UUID[];
+  let orders: OrderRecorder;
+  let advices: StrategyOrder[];
   let logs: { level: LogLevel; message: string }[];
   let tools: any;
   let bucket: CandleBucket;
   let addIndicator: any;
 
-  /**
-   * Plays the steps, separated by spaces: a trend (up, down, neutral) is a candle, '<outcome>:<n>' relays the outcome (completed,
-   * canceled, errored) of the n-th order created, '<outcome>:unknown' that of an order the strategy did not create.
-   */
-  const play = (steps: string) => {
-    for (const step of steps.split(' ')) {
-      const [kind, order] = step.split(':');
-      if (!order) {
-        const { dema, sma } = TRENDS[kind as keyof typeof TRENDS];
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<DEMAStrategyParams>,
-          { results: dema, symbol: 'BTC/USDT' },
-          { results: sma, symbol: 'BTC/USDT' },
-        );
-        continue;
-      }
-      const id = order === 'unknown' ? UNKNOWN_ORDER_ID : orderIds[Number(order) - 1];
-      if (kind === 'completed') strategy.onOrderCompleted({ order: { id } } as unknown as OnOrderCompletedEventParams<DEMAStrategyParams>);
-      if (kind === 'canceled') strategy.onOrderCanceled({ order: { id } } as unknown as OnOrderCanceledEventParams<DEMAStrategyParams>);
-      if (kind === 'errored') strategy.onOrderErrored({ order: { id } } as unknown as OnOrderErroredEventParams<DEMAStrategyParams>);
-    }
-  };
+  /** Plays the steps (see playSteps): a trend (up, down, neutral) is a candle */
+  const play = (steps: string) =>
+    playSteps(steps, strategy, orders, step => {
+      const { dema, sma } = TRENDS[step as keyof typeof TRENDS];
+      strategy.onTimeframeCandleAfterWarmup(
+        { candle: bucket, tools } as unknown as OnCandleEventParams<DEMAStrategyParams>,
+        { results: dema, symbol: 'BTC/USDT' },
+        { results: sma, symbol: 'BTC/USDT' },
+      );
+    });
   const sides = () => advices.map(({ side }) => side);
 
   beforeEach(() => {
     strategy = new DEMA();
-    advices = [];
-    orderIds = [];
+    orders = new OrderRecorder();
+    advices = orders.advices;
     logs = [];
     addIndicator = vi.fn();
 
-    const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, amount: order.amount ?? 1 });
-      const id = `00000000-0000-0000-0000-${String(advices.length).padStart(12, '0')}` as UUID;
-      orderIds.push(id);
-      return id;
-    });
-
     tools = {
       strategyParams: { period: 14, thresholds: { up: 0.5, down: -0.5 } },
-      createOrder,
+      createOrder: orders.createOrder,
       cancelOrder: vi.fn(),
       log: vi.fn((level: LogLevel, message: string) => logs.push({ level, message })),
     };

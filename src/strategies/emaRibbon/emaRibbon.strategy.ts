@@ -1,4 +1,5 @@
 import { TradingPair } from '@models/utility.types';
+import { PositionTracker } from '@strategies/positionTracker';
 import {
   IndicatorResults,
   InitParams,
@@ -8,18 +9,17 @@ import {
   OnOrderErroredEventParams,
   Strategy,
 } from '@strategies/strategy.types';
-import { UUID } from 'crypto';
+import { isSorted } from '@utils/collection/array.utils';
 import { emaRibbonStrategySchema } from './emaRibbon.schema';
 import type { EMARibbonStrategyParams } from './emaRibbon.types';
 
 export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
   static schema = emaRibbonStrategySchema;
 
-  private isLong: boolean = false;
   private pair?: TradingPair;
-  private buyOrderId?: UUID;
-  private sellOrderId?: UUID;
-  private isPendingOrder: boolean = false;
+  // Every order is all-in: the strategy buys only when flat and sells only when long, never while its order is pending. An order
+  // canceled or errored is placed again by the next candle that signals it.
+  private readonly position = new PositionTracker();
   private lastSpreadValue?: number;
 
   init({ candle, tools, addIndicator }: InitParams<EMARibbonStrategyParams>): void {
@@ -38,21 +38,17 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
     const { spreadCompressionThreshold } = strategyParams;
     if (!this.pair || emaRibbon.results === undefined || emaRibbon.results === null) return;
 
-    // A bullish signal occurs when the EMA ribbon is ordered in DESC order (each faster EMA is above the slower one).
-    const isBullish = emaRibbon.results.results.every((result, index, values) => !index || values[index - 1] > result);
+    // A bullish signal occurs when the EMA ribbon is in strictly descending order (each faster EMA is above the slower one).
+    const isBullish = isSorted(emaRibbon.results.results, 'SDesc');
     const isSpreadCompressed = emaRibbon.results.spread < spreadCompressionThreshold;
     const isSpreadCompressing = this.lastSpreadValue !== undefined && emaRibbon.results.spread < this.lastSpreadValue;
 
-    // console.log(emaRibbon.results.spread);
-
-    if (!this.isLong && isBullish && isSpreadCompressed && !isSpreadCompressing && !this.isPendingOrder) {
-      this.buyOrderId = createOrder({ type: 'STICKY', side: 'BUY', symbol: this.pair });
-      this.isPendingOrder = true;
+    if (isBullish && isSpreadCompressed && !isSpreadCompressing && this.position.canBuy()) {
+      this.position.buy(createOrder, { type: 'STICKY', symbol: this.pair });
     }
 
-    if (this.isLong && isSpreadCompressing && !this.isPendingOrder) {
-      this.sellOrderId = createOrder({ type: 'STICKY', side: 'SELL', symbol: this.pair });
-      this.isPendingOrder = true;
+    if (isSpreadCompressing && this.position.canSell()) {
+      this.position.sell(createOrder, { type: 'STICKY', symbol: this.pair });
     }
 
     this.lastSpreadValue = emaRibbon.results.spread;
@@ -69,39 +65,15 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
     log('debug', `Ribbon Spread: ${emaRibbon.results.spread}`);
   }
 
-  onOrderCompleted(params: OnOrderCompletedEventParams<EMARibbonStrategyParams>, ..._indicators: IndicatorResults[]): void {
-    if (params.order.id === this.sellOrderId) {
-      this.isLong = false;
-      this.sellOrderId = undefined;
-      this.isPendingOrder = false;
-    } else if (params.order.id === this.buyOrderId) {
-      this.isLong = true;
-      this.buyOrderId = undefined;
-      this.isPendingOrder = false;
-    }
+  onOrderCompleted(params: OnOrderCompletedEventParams<EMARibbonStrategyParams>): void {
+    this.position.onOrderCompleted(params);
   }
 
-  onOrderCanceled(params: OnOrderCanceledEventParams<EMARibbonStrategyParams>, ..._indicators: IndicatorResults[]): void {
-    if (params.order.id === this.buyOrderId) {
-      this.isLong = false;
-      this.buyOrderId = undefined;
-      this.isPendingOrder = false;
-    } else if (params.order.id === this.sellOrderId) {
-      this.isLong = true;
-      this.sellOrderId = undefined;
-      this.isPendingOrder = false;
-    }
+  onOrderCanceled(params: OnOrderCanceledEventParams<EMARibbonStrategyParams>): void {
+    this.position.onOrderCanceled(params);
   }
 
-  onOrderErrored(params: OnOrderErroredEventParams<EMARibbonStrategyParams>, ..._indicators: IndicatorResults[]): void {
-    if (params.order.id === this.buyOrderId) {
-      this.isLong = false;
-      this.buyOrderId = undefined;
-      this.isPendingOrder = false;
-    } else if (params.order.id === this.sellOrderId) {
-      this.isLong = true;
-      this.sellOrderId = undefined;
-      this.isPendingOrder = false;
-    }
+  onOrderErrored(params: OnOrderErroredEventParams<EMARibbonStrategyParams>): void {
+    this.position.onOrderErrored(params);
   }
 }

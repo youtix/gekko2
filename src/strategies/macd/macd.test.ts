@@ -1,15 +1,9 @@
-import type { AdviceOrder } from '@models/advice.types';
+import type { StrategyOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import {
-  InitParams,
-  OnCandleEventParams,
-  OnOrderCanceledEventParams,
-  OnOrderCompletedEventParams,
-  OnOrderErroredEventParams,
-} from '@strategies/strategy.types';
+import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { omit } from 'lodash-es';
-import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MACD } from './macd.strategy';
 import { MACDStrategyParams } from './macd.types';
@@ -30,53 +24,32 @@ const symbol = 'BTC/USDT';
 const makeIndicator = (res: any) => [{ results: res, symbol }] as any;
 // The MACD value (macdSrc: 'macd', thresholds 0.5 / -0.5) of each step of the scenarios played below
 const MACD_VALUES = { up: 1, down: -1, none: 0 } as const;
-const UNKNOWN_ORDER_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
 
 describe('MACD Strategy', () => {
   let strategy: MACD;
-  let advices: AdviceOrder[];
-  let orderIds: UUID[];
+  let orders: OrderRecorder;
+  let advices: StrategyOrder[];
   let logs: { level: LogLevel; message: string }[];
   let tools: any;
   let bucket: CandleBucket;
   let addIndicator: any;
 
-  /**
-   * Plays the steps, separated by spaces: a trend (up, down, none) is a candle, '<outcome>:<n>' relays the outcome (completed,
-   * canceled, errored) of the n-th order created, '<outcome>:unknown' that of an order the strategy did not create.
-   */
-  const play = (steps: string) => {
-    for (const step of steps.split(' ')) {
-      const [kind, order] = step.split(':');
-      if (!order) {
-        const macd = MACD_VALUES[kind as keyof typeof MACD_VALUES];
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<MACDStrategyParams>,
-          ...makeIndicator({ macd, signal: 0, hist: 0 }),
-        );
-        continue;
-      }
-      const id = order === 'unknown' ? UNKNOWN_ORDER_ID : orderIds[Number(order) - 1];
-      if (kind === 'completed') strategy.onOrderCompleted({ order: { id } } as unknown as OnOrderCompletedEventParams<MACDStrategyParams>);
-      if (kind === 'canceled') strategy.onOrderCanceled({ order: { id } } as unknown as OnOrderCanceledEventParams<MACDStrategyParams>);
-      if (kind === 'errored') strategy.onOrderErrored({ order: { id } } as unknown as OnOrderErroredEventParams<MACDStrategyParams>);
-    }
-  };
+  /** Plays the steps (see playSteps): a trend (up, down, none) is a candle */
+  const play = (steps: string) =>
+    playSteps(steps, strategy, orders, step =>
+      strategy.onTimeframeCandleAfterWarmup(
+        { candle: bucket, tools } as unknown as OnCandleEventParams<MACDStrategyParams>,
+        ...makeIndicator({ macd: MACD_VALUES[step as keyof typeof MACD_VALUES], signal: 0, hist: 0 }),
+      ),
+    );
   const sides = () => advices.map(({ side }) => side);
 
   beforeEach(() => {
     strategy = new MACD();
-    advices = [];
-    orderIds = [];
+    orders = new OrderRecorder();
+    advices = orders.advices;
     logs = [];
     addIndicator = vi.fn();
-
-    const createOrder = vi.fn((order: AdviceOrder) => {
-      advices.push({ ...order, amount: order.amount ?? 1 });
-      const id = `00000000-0000-0000-0000-${String(advices.length).padStart(12, '0')}` as UUID;
-      orderIds.push(id);
-      return id;
-    });
 
     tools = {
       strategyParams: {
@@ -86,7 +59,7 @@ describe('MACD Strategy', () => {
         macdSrc: 'macd',
         thresholds: { up: 0.5, down: -0.5, persistence: 2 },
       },
-      createOrder,
+      createOrder: orders.createOrder,
       cancelOrder: vi.fn(),
       log: vi.fn((level: LogLevel, message: string) => logs.push({ level, message })),
     };
