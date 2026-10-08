@@ -369,6 +369,41 @@ describe('Trader', () => {
       });
     });
 
+    // The filter holds back the portfolio change of a fill below its threshold, not the portfolio after it: the end of the order carries
+    // it all the same, and the TradingAdvisor and the analyzers take it as the latest
+    describe('when the portfolioUpdates filter holds back the portfolio change of a fill', () => {
+      const portfolioBefore = new Map<string, BalanceDetail>([
+        ['BTC', { free: 1, used: 0, total: 1 }],
+        ['USDT', { free: 100_000, used: 0, total: 100_000 }],
+      ]);
+      // A BUY of 0.005 at 100000, with a fee of 0.1 %: no balance moves by 1 % or more
+      const portfolioAfter = new Map<string, BalanceDetail>([
+        ['BTC', { free: 1.005, used: 0, total: 1.005 }],
+        ['USDT', { free: 99_499.5, used: 0, total: 99_499.5 }],
+      ]);
+
+      beforeEach(async () => {
+        trader = new Trader({ portfolioUpdates: { threshold: 1, dust: 10 } });
+        trader['currentTimestamp'] = 1_700_000_000_000;
+        trader['getExchange'] = vi.fn().mockReturnValue(fakeExchange);
+        trader['addDeferredEmit'] = vi.fn();
+        fakeExchange.fetchTickers.mockResolvedValue({ 'BTC/USDT': { bid: 100_000 } });
+        fakeExchange.fetchBalance.mockResolvedValueOnce(portfolioBefore).mockResolvedValue(portfolioAfter);
+        await trader['synchronize'](); // The first one, always emitted
+        const order = await prepareOrder('creation', buildAdvice({ type: 'MARKET', amount: 0.005 }));
+        await order.emitAndSettle(ORDER_COMPLETED_EVENT);
+      });
+
+      it('emits no portfolio change after the fill', () => {
+        const calls = (trader['addDeferredEmit'] as unknown as Mock).mock.calls;
+        expect(calls.filter(([event]) => event === PORTFOLIO_CHANGE_EVENT)).toEqual([[PORTFOLIO_CHANGE_EVENT, portfolioBefore]]);
+      });
+
+      it('relays the fill with the portfolio after it', () => {
+        expect(getCompletedEvent()?.exchange.portfolio).toEqual(portfolioAfter);
+      });
+    });
+
     // One synchronization at a time: two in flight could end in any order, the older one overwriting what the newer one read
     describe('Overlapping calls', () => {
       it('fetches the balance once for two calls made while a synchronization is in flight', async () => {

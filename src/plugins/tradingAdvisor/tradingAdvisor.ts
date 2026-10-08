@@ -7,7 +7,7 @@ import {
 } from '@constants/event.const';
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { AdviceOrder } from '@models/advice.types';
-import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
+import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
 import { Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
 import { TradingPair } from '@models/utility.types';
@@ -20,6 +20,13 @@ import { bindAll, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
+
+/**
+ * Whether the portfolio an order event carries was read from the exchange: until one of its synchronizations succeeds, the Trader
+ * relays the end of an order with the empty portfolio it starts with, while the balance of an exchange always lists the asset and the
+ * currency of every watched pair. The analyzers go by the same rule.
+ */
+const isFetchedPortfolio = (portfolio: Portfolio) => portfolio.size > 0;
 
 export class TradingAdvisor extends Plugin {
   private bucketBatcher: CandleBucketBatcher;
@@ -55,6 +62,17 @@ export class TradingAdvisor extends Plugin {
       .on(STRATEGY_INFO_EVENT, this.relayStrategyInfo);
   }
 
+  /**
+   * Gives the strategy the portfolio the last of these order events carries, which the Trader read once the order had ended: the candle
+   * hooks get it from the next candle on. Only a portfolio change refreshed it, which the Trader's portfolioUpdates filter holds back
+   * for a fill below its threshold: the candle hooks kept the balance from before the fill, and an all-in order sized on it was refused.
+   * The last event of a batch carries the latest portfolio: the Trader queues each one with the portfolio it read last.
+   */
+  private refreshPortfolio(payloads: OrderInitiatedEvent[]) {
+    const { portfolio } = payloads[payloads.length - 1].exchange;
+    if (isFetchedPortfolio(portfolio)) this.strategyManager?.onPortfolioChange(portfolio);
+  }
+
   /* -------------------------------------------------------------------------- */
   /*                           EVENTS EMITERS                                   */
   /* -------------------------------------------------------------------------- */
@@ -85,6 +103,7 @@ export class TradingAdvisor extends Plugin {
         this.strategyManager?.onOrderCompleted(order);
       }),
     );
+    this.refreshPortfolio(payloads);
   }
 
   public async onOrderCanceled(payloads: OrderCanceledEvent[]) {
@@ -93,6 +112,7 @@ export class TradingAdvisor extends Plugin {
         this.strategyManager?.onOrderCanceled(order);
       }),
     );
+    this.refreshPortfolio(payloads);
   }
 
   public async onOrderErrored(payloads: OrderErroredEvent[]) {
@@ -101,6 +121,7 @@ export class TradingAdvisor extends Plugin {
         this.strategyManager?.onOrderErrored(order);
       }),
     );
+    this.refreshPortfolio(payloads);
   }
 
   public onPortfolioChange(payloads: Portfolio[]) {

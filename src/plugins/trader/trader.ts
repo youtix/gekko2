@@ -123,7 +123,9 @@ export class Trader extends Plugin {
       this.prices.set(symbol, price);
     }
 
-    // Emit portfolio events if changes are detected
+    // Emit portfolio events if changes are detected. The filter holds back a change below its threshold, that of a fill included: the
+    // end of an order carries the portfolio after it all the same (see relayError), which the TradingAdvisor and the analyzers take as
+    // the latest
     if (this.portfolioUpdatesConfig) {
       const params: ShouldEmitPortfolioParams = {
         current: this.portfolio,
