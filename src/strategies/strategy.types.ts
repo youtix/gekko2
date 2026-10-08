@@ -26,6 +26,13 @@ export type Tools<T> = {
   strategyParams: T;
   marketData: Map<TradingPair, MarketData>;
   log: LoggerFn;
+  /**
+   * Relays an order to the Trader and returns its id at once: the outcome arrives through onOrderCompleted, onOrderCanceled or
+   * onOrderErrored. The order is dated (`orderCreationDate`) with the end of the minute being processed.
+   *
+   * Available once the warmup is over: from log and onTimeframeCandleAfterWarmup on the candle that completes it (the first one
+   * with `warmup.candleCount: 0`), then from every hook. Before that, and so always in init, it throws a GekkoError: the bot stops.
+   */
   createOrder: (order: StrategyOrder) => UUID;
   cancelOrder: (orderId: UUID) => void;
   cancelTrailingOrder: (orderId: UUID) => void;
@@ -48,9 +55,12 @@ export type OnOrderErroredEventParams<T> = {
   tools: Tools<T>;
 };
 export interface Strategy<T> {
-  /** Executed once at the beginning of the strategy */
+  /** Executed once at the beginning of the strategy, on the first timeframe candle, before the warmup is over: no orders here */
   init?(params: InitParams<T>): void;
-  /** On each timeframe candle from the beginning */
+  /**
+   * On each timeframe candle from the beginning, the warmup included, before log and onTimeframeCandleAfterWarmup: it can create
+   * orders from the candle after the one that completes the warmup (see Tools.createOrder).
+   */
   onEachTimeframeCandle?(params: OnCandleEventParams<T>, ...indicators: IndicatorResults[]): void;
   /** On each timeframe candle from the warmup event */
   onTimeframeCandleAfterWarmup?(params: OnCandleEventParams<T>, ...indicators: IndicatorResults[]): void;

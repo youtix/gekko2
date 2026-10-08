@@ -41,6 +41,8 @@ export class StrategyManager extends EventEmitter {
   private readonly trailingStopManager: TrailingStopManager;
 
   private age = 0;
+  /** Set as the warmup event is emitted, never reset: createOrder refuses orders until then */
+  private isWarmupCompleted = false;
   private indicators: { indicator: Indicator; symbol: TradingPair }[] = [];
   private marketData = new Map<TradingPair, MarketData>();
   private portfolio = new Map<Asset, BalanceDetail>();
@@ -129,7 +131,7 @@ export class StrategyManager extends EventEmitter {
     if (this.warmupPeriod === this.age) this.emitWarmupCompletedEvent(bucket);
 
     // Call log and onCandleAfterWarmup only after warm up is done
-    if (this.warmupPeriod <= this.age) {
+    if (this.isWarmupCompleted) {
       this.strategy?.log?.(params, ...this.indicatorsResults);
       this.strategy?.onTimeframeCandleAfterWarmup?.(params, ...this.indicatorsResults);
     }
@@ -222,8 +224,19 @@ export class StrategyManager extends EventEmitter {
 
   private createOrder(order: StrategyOrder): UUID {
     if (!this.currentTimestamp) throw new GekkoError('strategy', 'No candle when relaying advice');
+    // In realtime the warmup candles are history, replayed with the Trader active: an order created on one of them went to the
+    // exchange at once, priced or centred on a close that could be a year old (in backtest it traded on candles the reports leave out).
+    // The warmup event comes before log and onTimeframeCandleAfterWarmup on the candle that completes the warmup (the first candle
+    // when candleCount is 0): every order follows it, and none can come from init.
+    if (!this.isWarmupCompleted)
+      throw new GekkoError(
+        'strategy',
+        'Orders are not available until the warmup is over: create them from onTimeframeCandleAfterWarmup, log or an order hook, never from init',
+      );
     const id = randomUUID();
-    const orderCreationDate = addMinutes(this.currentTimestamp, 1).getTime();
+    // The clock is already the end of the minute being processed, where the Trader and the simulated exchange date fills and errors:
+    // a minute added to it dated every order after its own fill.
+    const orderCreationDate = this.currentTimestamp;
 
     // If it is a trailing stop order, add it to the waiting list, it will be created after order completion
     if (order.trailing && order.side === 'BUY') this.pendingTrailingStops.set(id, order.trailing); // Trailing stop order cannot be SELL order
@@ -275,6 +288,7 @@ export class StrategyManager extends EventEmitter {
   }
 
   private emitWarmupCompletedEvent(bucket: CandleBucket) {
+    this.isWarmupCompleted = true;
     // Use first available candle for logging timestamp
     const firstCandle = bucket.values().next().value;
     info('strategy', `Strategy warmup done ! Sending first candle bucket (${toISOString(firstCandle?.start)}) to strategy`);

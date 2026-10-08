@@ -4,16 +4,17 @@ import {
   STRATEGY_INFO_EVENT,
   STRATEGY_WARMUP_COMPLETED_EVENT,
 } from '@constants/event.const';
+import { ONE_MINUTE } from '@constants/time.const';
 import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
 import { CandleBucket } from '@models/event.types';
 import { BalanceDetail } from '@models/portfolio.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
-import { addMinutes } from 'date-fns';
 import { UUID } from 'node:crypto';
 import path from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { Tools } from './strategy.types';
 import { StrategyManager } from './strategyManager';
 
 const indicatorMocks = vi.hoisted(() => {
@@ -116,6 +117,14 @@ describe('StrategyManager', () => {
 
   const bucket: CandleBucket = new Map();
   bucket.set('BTC/USDT', candle);
+
+  /** Ends the warmup of the manager (one candle) as the TradingAdvisor would: the minute, then the 1m candle it completes, twice */
+  const completeWarmup = () => {
+    for (let candleNumber = 1; candleNumber <= 2; candleNumber++) {
+      manager.onOneMinuteBucket(bucket);
+      manager.onTimeFrameCandle(bucket);
+    }
+  };
 
   beforeEach(() => {
     manager = new StrategyManager(1);
@@ -510,7 +519,7 @@ describe('StrategyManager', () => {
       it('creates market order and forwards trigger back to strategy', () => {
         const strategy = { onTrailingStopTriggered: vi.fn() };
         manager['strategy'] = strategy as any;
-        manager['currentTimestamp'] = 5000; // Requires timestamp to create orders
+        completeWarmup(); // Orders wait for it
         const state = { symbol: 'BTC/USDT', amount: 2 };
 
         const createOrderSpy = vi.spyOn(manager as any, 'createOrder');
@@ -547,8 +556,8 @@ describe('StrategyManager', () => {
       beforeEach(() => {
         strategy = { onTrailingStopActivated: vi.fn(), onTrailingStopTriggered: vi.fn() };
         manager['strategy'] = strategy as any;
-        // The clock createOrder needs
-        manager.onOneMinuteBucket(bucket);
+        // The clock and the end of the warmup, which createOrder needs
+        completeWarmup();
       });
 
       it('activates a stop without trigger as soon as its BUY completes', () => {
@@ -683,28 +692,27 @@ describe('StrategyManager', () => {
     });
 
     describe('createOrder', () => {
+      // Orders are available once the warmup is over: the manager's is one candle, which the second candle completes
+      beforeEach(() => completeWarmup());
+
       it('createOrder emits the advice event', () => {
         const listener = vi.fn();
         manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
         const order = { side: 'BUY', type: 'STICKY', quantity: 1, symbol: 'BTC/USDT' } as const;
 
-        // Must set timestamp via candle first
-        manager['currentTimestamp'] = new Date('2025-01-01T00:00:00.000Z').getTime();
-        const timeBucket: CandleBucket = new Map();
-        manager.onTimeFrameCandle(timeBucket);
-
         const id = manager['createOrder'](order);
 
         expect(id).toBe('db2254e3-c749-448c-b7b6-aa28831bbae7');
+        // Dated with the clock as it is: already the end of the minute being processed (its bucket starts at candle.start), which is
+        // when the Trader and the simulated exchange date fills and errors. A minute added to it dated the order after its own fill.
         expect(listener).toHaveBeenCalledWith({
           ...order,
           id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
-          orderCreationDate: addMinutes(manager['currentTimestamp'], 1).getTime(),
+          orderCreationDate: candle.start + ONE_MINUTE,
         });
       });
 
       it('ignores trailing logic if order is SELL (buy only logic)', () => {
-        manager['currentTimestamp'] = 1000;
         const sellOrder = { side: 'SELL', type: 'MARKET', amount: 1, symbol: 'BTC/USDT', trailing: { percentage: 2 } } as any;
 
         manager['createOrder'](sellOrder);
@@ -716,6 +724,133 @@ describe('StrategyManager', () => {
         manager['currentTimestamp'] = 0;
         const order = { side: 'BUY', type: 'STICKY', quantity: 1, symbol: 'BTC/USDT' } as const;
         expect(() => manager['createOrder'](order)).toThrow('No candle when relaying advice');
+      });
+    });
+
+    // The manager is driven as the TradingAdvisor drives it, one minute after the other, each completing its 1m candle, and the
+    // strategy orders from one hook on one candle. Candle warmupPeriod + 1 completes the warmup (candle 1 without warmup): its warmup
+    // event comes after init and onEachTimeframeCandle, and before log and onTimeframeCandleAfterWarmup.
+    describe('createOrder during and after the warmup', () => {
+      type CandleHook = 'init' | 'onEachTimeframeCandle' | 'log' | 'onTimeframeCandleAfterWarmup';
+      const ORDER = { symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', amount: 1 } as const;
+      const REFUSAL =
+        '[STRATEGY] Orders are not available until the warmup is over: create them from onTimeframeCandleAfterWarmup, log or an order hook, never from init';
+      /** The bucket of the minute `index` minutes after 0: in 1m, the timeframe candle it completes too */
+      const minuteBucket = (index: number): CandleBucket => new Map([['BTC/USDT', { ...candle, start: index * ONE_MINUTE }]]);
+
+      const createTheOrder = ({ tools }: { tools: Tools<object> }) => tools.createOrder(ORDER);
+
+      let strategy: Record<CandleHook | 'onOrderCompleted', Mock>;
+      let listener: Mock;
+      let target: StrategyManager;
+
+      const createTarget = (warmupPeriod: number) => {
+        target = new StrategyManager(warmupPeriod);
+        target['strategy'] = strategy as any;
+        target.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+      };
+
+      /** Sends the candles numbered `from` to `to` (from 1), each as its minute, then as the candle it completes */
+      const sendCandles = (from: number, to: number) => {
+        for (let candleNumber = from; candleNumber <= to; candleNumber++) {
+          target.onOneMinuteBucket(minuteBucket(candleNumber - 1));
+          target.onTimeFrameCandle(minuteBucket(candleNumber - 1));
+        }
+      };
+
+      /** With a warmup of `warmupPeriod` candles, the strategy orders from `hook` on candle `candleNumber`: what that candle throws */
+      const orderFrom = (hook: CandleHook, warmupPeriod: number, candleNumber: number) => {
+        createTarget(warmupPeriod);
+        sendCandles(1, candleNumber - 1);
+        strategy[hook].mockImplementation(createTheOrder);
+        try {
+          sendCandles(candleNumber, candleNumber);
+        } catch (failure) {
+          return failure;
+        }
+      };
+
+      beforeEach(() => {
+        strategy = {
+          init: vi.fn(),
+          onEachTimeframeCandle: vi.fn(),
+          log: vi.fn(),
+          onTimeframeCandleAfterWarmup: vi.fn(),
+          onOrderCompleted: vi.fn(),
+        };
+        listener = vi.fn();
+      });
+
+      describe.each`
+        hook                       | warmupPeriod | candleNumber
+        ${'init'}                  | ${3}         | ${1}
+        ${'init'}                  | ${0}         | ${1}
+        ${'onEachTimeframeCandle'} | ${3}         | ${1}
+        ${'onEachTimeframeCandle'} | ${3}         | ${3}
+        ${'onEachTimeframeCandle'} | ${3}         | ${4}
+        ${'onEachTimeframeCandle'} | ${0}         | ${1}
+      `(
+        'when the strategy orders from $hook on candle $candleNumber, with a warmup of $warmupPeriod candles',
+        ({ hook, warmupPeriod, candleNumber }) => {
+          let failure: unknown;
+
+          beforeEach(() => {
+            failure = orderFrom(hook, warmupPeriod, candleNumber);
+          });
+
+          it('refuses the order with a GekkoError', () => {
+            expect(failure).toBeInstanceOf(GekkoError);
+          });
+
+          it('says that orders are not available until the warmup is over, and from which hooks to create them', () => {
+            expect(failure).toHaveProperty('message', REFUSAL);
+          });
+
+          it('relays no order', () => {
+            expect(listener).not.toHaveBeenCalled();
+          });
+        },
+      );
+
+      describe.each`
+        hook                              | warmupPeriod | candleNumber
+        ${'log'}                          | ${3}         | ${4}
+        ${'onTimeframeCandleAfterWarmup'} | ${3}         | ${4}
+        ${'onTimeframeCandleAfterWarmup'} | ${3}         | ${5}
+        ${'onEachTimeframeCandle'}        | ${3}         | ${5}
+        ${'log'}                          | ${0}         | ${1}
+        ${'onTimeframeCandleAfterWarmup'} | ${0}         | ${1}
+        ${'onEachTimeframeCandle'}        | ${0}         | ${2}
+      `(
+        'when the strategy orders from $hook on candle $candleNumber, with a warmup of $warmupPeriod candles',
+        ({ hook, warmupPeriod, candleNumber }) => {
+          let failure: unknown;
+
+          beforeEach(() => {
+            failure = orderFrom(hook, warmupPeriod, candleNumber);
+          });
+
+          it('accepts the order', () => {
+            expect(failure).toBeUndefined();
+          });
+
+          // Candle n is the minute starting n - 1 minutes after 0, and the clock is the end of the minute being processed
+          it('relays the order, dated with the end of the minute that completed its candle', () => {
+            expect(listener).toHaveBeenCalledExactlyOnceWith({
+              ...ORDER,
+              id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
+              orderCreationDate: candleNumber * ONE_MINUTE,
+            });
+          });
+        },
+      );
+
+      it('relays an order created from an order hook once the warmup is over', () => {
+        createTarget(3);
+        sendCandles(1, 4);
+        strategy.onOrderCompleted.mockImplementation(createTheOrder);
+        target.onOrderCompleted({ order: { id: 'db2254e3-c749-448c-b7b6-aa28831bbae7' }, exchange: {} } as any);
+        expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(ORDER));
       });
     });
 

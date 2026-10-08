@@ -284,6 +284,23 @@ describe('TradingAdvisor', () => {
       await expect(sendBuckets(advisor, 3)).rejects.toThrow('Indicator out of range');
     });
 
+    // In realtime the warmup candles are history, replayed with the Trader active: an order created on them is refused, which stops
+    // the run before the Trader hears of it
+    it.each`
+      hook
+      ${'init'}
+      ${'onEachTimeframeCandle'}
+    `(
+      'rejects when the strategy creates an order from $hook during the warmup',
+      async ({ hook }: { hook: 'init' | 'onEachTimeframeCandle' }) => {
+        strategy[hook].mockImplementation(({ tools }) => {
+          tools.createOrder(BUY_ORDER);
+        });
+        const advisor = await startAdvisor({ warmupCandleCount: 1 });
+        await expect(sendBuckets(advisor, 3)).rejects.toThrow('[STRATEGY] Orders are not available until the warmup is over');
+      },
+    );
+
     describe('on a complete timeframe candle after the warmup', () => {
       let createdOrderId: UUID | undefined;
       let delivered: Map<string, unknown[]>;
@@ -304,10 +321,11 @@ describe('TradingAdvisor', () => {
         expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ candle: FIRST_3M_BUCKET }));
       });
 
-      // The last bucket starts at START + 2 min: the strategy's clock is its close, START + 3 min, and an order is dated a minute later
+      // The last bucket starts at START + 2 min: the strategy's clock is its close, START + 3 min, which dates the order as the Trader
+      // and the simulated exchange date the fills and the errors of that bucket
       it('queues the order the strategy created', () => {
         expect(delivered.get(STRATEGY_CREATE_ORDER_EVENT)).toEqual([
-          { ...BUY_ORDER, id: createdOrderId, orderCreationDate: START + 4 * ONE_MINUTE },
+          { ...BUY_ORDER, id: createdOrderId, orderCreationDate: START + 3 * ONE_MINUTE },
         ]);
       });
 
