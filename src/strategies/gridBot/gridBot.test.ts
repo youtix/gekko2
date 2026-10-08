@@ -99,6 +99,19 @@ describe('GridBot', () => {
     return undefined;
   };
 
+  /** The order a level holds now at that price and side: a level armed or placed again gets a new order at the same price */
+  const liveOrderId = (price: number, side: OrderSide): UUID | undefined =>
+    issuedOrders.findLast(order => order.price === price && order.side === side)?.id;
+
+  /** Delivers the outcome of the live order at that price and side, as the Trader reports it */
+  const settle = (outcome: 'completed' | 'canceled' | 'errored', price: number, side: OrderSide) => {
+    const order = { id: liveOrderId(price, side), symbol: 'BTC/USDT', side, type: 'LIMIT', price } as any;
+    const exchange = { price, portfolio: balancedPortfolio };
+    if (outcome === 'completed') strategy.onOrderCompleted({ order, exchange, tools });
+    if (outcome === 'canceled') strategy.onOrderCanceled({ order, exchange, tools });
+    if (outcome === 'errored') strategy.onOrderErrored({ order: { ...order, reason: 'Test error' }, exchange, tools });
+  };
+
   // GridBot placed its grid from init, on the first candle of the warmup: in realtime a candle of the history replayed at start-up,
   // so the Trader sent live a grid centred on a stale close, a year old with 365 daily candles
   describe('warmup', () => {
@@ -492,6 +505,59 @@ describe('GridBot', () => {
       });
 
       expect(createOrder).toHaveBeenCalledTimes(5);
+    });
+  });
+
+  // A fill arms its neighbour on the opposite side, but the level kept the side the grid was built with: a canceled or errored
+  // order came back on that side, the SELL armed below the center as a BUY above the market, the BUY armed above it as a SELL
+  // below the market. The one-side warning read the same stale sides
+  describe('a level armed on the opposite side by a fill', () => {
+    // BUY 95 fills while SELL 105 still holds the level above it, then BUY 90 fills and arms SELL 95 on the level BUY 95 left; the
+    // mirror above the center: SELL 110 arms BUY 105
+    const sellArmedAt95 = [
+      [95, 'BUY'],
+      [90, 'BUY'],
+    ];
+    const buyArmedAt105 = [
+      [105, 'SELL'],
+      [110, 'SELL'],
+    ];
+
+    it.each`
+      fills            | side      | price  | outcomes                   | then                        | expected
+      ${sellArmedAt95} | ${'SELL'} | ${95}  | ${['canceled']}            | ${'canceled'}               | ${['LIMIT SELL 95']}
+      ${buyArmedAt105} | ${'BUY'}  | ${105} | ${['canceled']}            | ${'canceled'}               | ${['LIMIT BUY 105']}
+      ${sellArmedAt95} | ${'SELL'} | ${95}  | ${['errored']}             | ${'errored'}                | ${['LIMIT SELL 95']}
+      ${buyArmedAt105} | ${'BUY'}  | ${105} | ${['errored']}             | ${'errored'}                | ${['LIMIT BUY 105']}
+      ${sellArmedAt95} | ${'SELL'} | ${95}  | ${['canceled', 'errored']} | ${'canceled, then errored'} | ${['LIMIT SELL 95', 'LIMIT SELL 95']}
+    `('places the order a fill armed, $side $price, again on its side once $then', ({ fills, side, price, outcomes, expected }) => {
+      startStrategy(100);
+      fills.forEach(([fillPrice, fillSide]: [number, OrderSide]) => settle('completed', fillPrice, fillSide));
+      const sentBefore = issuedOrders.length;
+      outcomes.forEach((outcome: 'canceled' | 'errored') => settle(outcome, price, side));
+
+      expect(issuedOrders.slice(sentBefore).map(order => `${order.type} ${order.side} ${order.price}`)).toEqual(expected);
+    });
+
+    it.each`
+      fills            | book
+      ${sellArmedAt95} | ${'SELL 95, 105 and 110'}
+      ${buyArmedAt105} | ${'BUY 90, 95 and 105'}
+    `('warns that only one side remains once the fills leave $book', ({ fills }) => {
+      startStrategy(100);
+      fills.forEach(([price, side]: [number, OrderSide]) => settle('completed', price, side));
+
+      expect(log).toHaveBeenCalledWith('warn', 'GridBot: Only one side of the grid remains active');
+    });
+
+    it('does not warn once the fills of a buy-only grid leave BUY 85 and SELL 95', () => {
+      // All in currency, as a buy-only grid wants it: no rebalance
+      startStrategy(100, { buyLevels: 3, sellLevels: 0 }, unbalancedPortfolio);
+      settle('completed', 95, 'BUY'); // BUY 85 and 90 left: one side, which warns
+      const loggedBefore = log.mock.calls.length;
+      settle('completed', 90, 'BUY');
+
+      expect(log.mock.calls.slice(loggedBefore)).toEqual([]);
     });
   });
 

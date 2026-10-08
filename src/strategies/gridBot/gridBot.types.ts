@@ -11,11 +11,14 @@ export type GridSpacingType = GridBotStrategyParams['spacingType'];
 
 /** State of a single grid level */
 export interface LevelState {
-  /** Level index (negative for buy, positive for sell) */
+  /** Level index: negative below the center price, positive above */
   index: number;
   /** Price at this level */
   price: number;
-  /** Order side for this level */
+  /**
+   * Side of the order placed last on the level, the live one while orderId is set. The grid starts with BUYs below the center
+   * price and SELLs above it, and a fill arms its neighbour on the opposite side, so a level changes side over the run.
+   */
   side: OrderSide;
   /** Active order ID if order is placed */
   orderId?: UUID;

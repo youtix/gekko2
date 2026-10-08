@@ -306,7 +306,8 @@ export const deriveLevelQuantity = (
 };
 
 /**
- * Check if only one side has active orders (for warning purposes).
+ * Check if only one side has active orders (for warning purposes). It reads the side of each level holding an order, which is the
+ * side of that order: fills change it.
  */
 export const hasOnlyOneSide = (levels: Array<{ side: 'BUY' | 'SELL'; orderId?: string }>): boolean => {
   let hasBuy = false;

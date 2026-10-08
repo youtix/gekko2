@@ -395,7 +395,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     tools.log('info', `GridBot: Grid built around ${centerPrice} with ${buyLevels} buy / ${sellLevels} sell levels, qty=${this.quantity}`);
   }
 
-  /** Place a LIMIT order for a level */
+  /** Place a LIMIT order for a level, which takes the side of the order */
   private placeOrder(levelArrayIndex: number, side: OrderSide, tools: Tools<GridBotStrategyParams>): void {
     const level = this.levels[levelArrayIndex];
     if (!level || level.orderId) return;
@@ -408,7 +408,11 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       symbol: this.pair,
     });
 
+    // A fill arms its neighbour on the opposite side. The level used to keep the side the grid was built with, so a canceled or
+    // errored order a fill had armed came back on the other side: a BUY above the market or a SELL below it, which executed at once
+    // or, unfunded, was refused on every retry. The one-side warning read the same stale sides.
     level.orderId = orderId;
+    level.side = side;
     this.orderToLevel.set(orderId, levelArrayIndex);
   }
 }
