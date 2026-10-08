@@ -44,6 +44,8 @@ import {
  * - Sell levels are placed above the center price
  * - Spacing between levels is configurable: fixed, percent, or logarithmic. A spacing that rounds two adjacent prices of the grid to
  *   the same tick stops the run, and one under the round-trip fee, two maker fees, is warned of once
+ * - Prices are rounded to the tick of the market (precision.price) as they are written, in decimal, a tie upwards. A market that states
+ *   no tick has them rounded to 8 decimals, with a warning
  * - Each level trades back and forth between two adjacent prices of the grid: once its BUY fills it sells one step above, once its
  *   SELL fills it buys one step below
  * - Mandatory rebalancing ensures 50/50 portfolio allocation before grid building
@@ -125,9 +127,16 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
     const close = candle.get(this.pair)!.close;
     const marketData = tools.marketData.get(this.pair)!;
-    const { priceDecimals, priceStep } = inferPricePrecision(close, marketData);
+    const { priceDecimals, priceStep } = inferPricePrecision(marketData);
     this.priceDecimals = priceDecimals;
     this.priceStep = priceStep;
+    // Said before any refusal, which names the tick: a market that states none has its prices rounded to the default decimals, where
+    // they used to be rounded to the decimals of the close, whole units for a close of 100
+    if (!priceStep) {
+      const noTick = `The market data of ${this.pair} states no price tick (precision.price)`;
+      const rounded = `the prices of the grid are rounded to ${priceDecimals} decimals`;
+      tools.log('warn', `GridBot: ${noTick}: ${rounded}, which the exchange refuses if its own tick is coarser`);
+    }
 
     const centerPrice = roundPrice(close, priceDecimals, priceStep);
 

@@ -1,6 +1,7 @@
 import { OrderSide } from '@models/order.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
+import { checkOrderPrice } from '@utils/market/market.utils';
 import { addPrecise } from '@utils/math/math.utils';
 import { round } from '@utils/math/round.utils';
 import { minBy } from 'lodash-es';
@@ -42,7 +43,10 @@ export const getRebalanceOrderPrice = (side: OrderSide, price: number, marketDat
 export const getRebalanceBuyCost = (amount: number, price: number, marketData: MarketData): number =>
   amount * getRebalanceOrderPrice('BUY', price, marketData) * (1 + getMakerFee(marketData));
 
-/** A market limit is a bound only as a finite number above 0: Binance disables a filter bound by setting it to 0 (see market.utils) */
+/**
+ * A market limit is a bound only as a finite number above 0: Binance disables a filter bound by setting it to 0 (see market.utils). So
+ * is a precision a step: a precision of 0 states none.
+ */
 const toBound = (limit?: number): number | undefined => (limit !== undefined && Number.isFinite(limit) && limit > 0 ? limit : undefined);
 
 /**
@@ -50,6 +54,17 @@ const toBound = (limit?: number): number | undefined => (limit !== undefined && 
  * inferAmountPrecision), and of the prices when the market states no price step (see inferPricePrecision)
  */
 const getDecimalStep = (decimals: number): number => Number(`1e-${decimals}`);
+
+/**
+ * The decimals of a number as String writes it, as round reads them: the fewest that round leaves the number as it is at. 2 for 0.01
+ * and for 0.25, 8 for 1e-8, 0 for 1, for 10 and for a number that is not finite. Read through round, GridBot counts decimals as the
+ * rest of the code does: a count of its own, the third in the code, gave a number that is not finite 8 decimals.
+ */
+const getDecimals = (value: number): number => {
+  let decimals = 0;
+  while (Number.isFinite(value) && round(value, decimals) !== value) decimals++;
+  return decimals;
+};
 
 /**
  * The smallest amount of an order at `price` that the market takes: one amount step at least, amount.min and cost.min / price,
@@ -83,49 +98,41 @@ export const getMaximumAmount = (price: number, marketData: MarketData): number 
 };
 
 /**
- * Infer price precision from market data or use default.
- * Returns both the decimal count and optional price step for tick-based rounding.
+ * The precision of the market's prices: its tick (precision.price) and the decimals of that tick. A market that states no tick has its
+ * prices rounded to DEFAULT_PRICE_PRECISION decimals, without a step, which the strategy warns of. The decimals used to be read from
+ * the close then: a close of 100 put the prices of a grid spaced by 0.5 % at whole units, 99, 99, 100, 100, 101 and 101.
  */
-export const inferPricePrecision = (currentPrice: number, marketData: MarketData): { priceDecimals: number; priceStep?: number } => {
-  const priceStep = marketData.precision?.price;
-  if (priceStep && priceStep > 0) {
-    return { priceDecimals: countDecimals(priceStep), priceStep };
-  }
-  return { priceDecimals: countDecimals(currentPrice) };
+export const inferPricePrecision = (marketData: MarketData): { priceDecimals: number; priceStep?: number } => {
+  const priceStep = toBound(marketData.precision?.price);
+  return priceStep ? { priceDecimals: getDecimals(priceStep), priceStep } : { priceDecimals: DEFAULT_PRICE_PRECISION };
 };
 
 /**
- * Infer amount precision from market data or use default.
+ * The decimals of the market's amount step (precision.amount), which the amounts are rounded down to: DEFAULT_AMOUNT_PRECISION for a
+ * market that states no step
  */
 export const inferAmountPrecision = (marketData: MarketData): number => {
-  const precision = marketData.precision?.amount;
-  return precision && precision > 0 ? countDecimals(precision) : DEFAULT_AMOUNT_PRECISION;
+  const amountStep = toBound(marketData.precision?.amount);
+  return amountStep ? getDecimals(amountStep) : DEFAULT_AMOUNT_PRECISION;
 };
 
 /**
- * Count decimal places in a number, handling scientific notation.
- */
-export const countDecimals = (num: number): number => {
-  if (!Number.isFinite(num)) return DEFAULT_PRICE_PRECISION;
-  const str = num.toString();
-  if (str.includes('e')) {
-    const [base, exp] = str.split('e');
-    const baseDecimals = base.split('.')[1]?.length ?? 0;
-    return Math.max(0, baseDecimals - Number(exp));
-  }
-  return str.split('.')[1]?.length ?? 0;
-};
-
-/**
- * Round price to specified precision, optionally snapping to price step.
+ * Rounds a price to the nearest multiple of the price step, a tie to the one above, as round does, or to `priceDecimals` decimals
+ * without a step. The price is rounded as it is written: divided by the step in binary, a tie went the other way, 1.005 to 1 at a
+ * step of 0.01, 1.005 / 0.01 being 100.49999999999999. A step of one unit of its last decimal (0.01), as exchanges state their tick,
+ * rounds the price to those decimals. A step of several (0.05, 0.25) takes the nearest of the multiples around the binary quotient,
+ * which can be one off, the distances measured in decimal. A price that is not a finite number is 0.
  */
 export const roundPrice = (value: number, priceDecimals: number, priceStep?: number): number => {
   if (!Number.isFinite(value)) return 0;
-  if (priceStep && priceStep > 0) {
-    const steps = Math.round(value / priceStep);
-    return round(steps * priceStep, priceDecimals);
-  }
-  return round(value, priceDecimals);
+  const step = toBound(priceStep);
+  if (!step || step === getDecimalStep(priceDecimals)) return round(value, priceDecimals);
+
+  const stepDecimals = getDecimals(step);
+  const quotient = Math.round(value / step);
+  // The higher first: the first of two equal distances is kept, a tie going to the multiple above
+  const multiples = [quotient + 1, quotient, quotient - 1].map(multiple => round(multiple * step, stepDecimals));
+  return minBy(multiples, multiple => Math.abs(addPrecise(value, -multiple)))!;
 };
 
 /**
@@ -159,13 +166,20 @@ export const computeLevelPrice = (
   const direction = levelIndex > 0 ? 1 : -1;
   let price: number;
 
+  // A fixed or percent price is computed in decimal, for roundPrice to round the price as it is written. Computed in binary, 100.1 +
+  // 0.005 was 100.10499999999999 and 61235 × 1.005 was 61541.174999999996, rounded to 100.1 and 61541.17 where 100.105 and 61541.175
+  // round to 100.11 and 61541.18. Each product is rounded to the decimals its exact value has at most, those of its factors and 2
+  // more for a percent, then added in decimal.
   switch (spacingType) {
     case 'fixed':
-      price = centerPrice + direction * spacingValue * steps;
+      price = addPrecise(centerPrice, direction * round(spacingValue * steps, getDecimals(spacingValue)));
       break;
-    case 'percent':
-      price = centerPrice * (1 + (direction * spacingValue * steps) / 100);
+    case 'percent': {
+      const decimals = getDecimals(centerPrice) + getDecimals(spacingValue) + 2;
+      price = addPrecise(centerPrice, direction * round((centerPrice * spacingValue * steps) / 100, decimals));
       break;
+    }
+    // In binary: a power of the multiplier soon has more decimals than a number holds, and a division by it has no end of them
     case 'logarithmic': {
       const multiplier = 1 + spacingValue;
       if (multiplier <= 0) return 0;
@@ -231,7 +245,7 @@ export const isOutOfRange = (currentPrice: number, bounds: GridBounds): boolean 
 export const validateConfig = (params: GridBotStrategyParams, centerPrice: number, marketData: MarketData): string | null => {
   if (centerPrice <= 0) return 'Center price must be positive';
 
-  const { priceDecimals, priceStep } = inferPricePrecision(centerPrice, marketData);
+  const { priceDecimals, priceStep } = inferPricePrecision(marketData);
 
   // Check if lowest buy price would be positive
   const { buyLevels, spacingType, spacingValue } = params;
@@ -242,12 +256,12 @@ export const validateConfig = (params: GridBotStrategyParams, centerPrice: numbe
     }
   }
 
-  // Check against exchange price limits
-  if (marketData.price?.min && centerPrice < marketData.price.min) {
-    return `Center price ${centerPrice} is below exchange minimum ${marketData.price.min}`;
-  }
-  if (marketData.price?.max && centerPrice > marketData.price.max) {
-    return `Center price ${centerPrice} is above exchange maximum ${marketData.price.max}`;
+  // Against the exchange price limits, read as the order layer reads them for every order (see checkOrderPrice)
+  const priceLimits = checkOrderPrice(centerPrice, marketData);
+  if (!priceLimits.isValid) {
+    const { min, max } = priceLimits;
+    if (min !== undefined && centerPrice < min) return `Center price ${centerPrice} is below exchange minimum ${min}`;
+    return `Center price ${centerPrice} is above exchange maximum ${max}`;
   }
 
   // Last, so that a configuration refused before keeps its message
@@ -290,7 +304,7 @@ const toPercent = (ratio: number): string => `${Number((ratio * 100).toPrecision
  */
 export const checkRoundTripFee = (params: GridBotStrategyParams, centerPrice: number, marketData: MarketData): string | null => {
   const fee = getMakerFee(marketData);
-  const { priceDecimals, priceStep } = inferPricePrecision(centerPrice, marketData);
+  const { priceDecimals, priceStep } = inferPricePrecision(marketData);
   const prices = computeGridPrices(centerPrice, params, priceDecimals, priceStep);
   const levels = prices.slice(1).map((sellPrice, i) => ({ buyPrice: prices[i], sellPrice }));
   // A spacing under the round-trip fee used to be accepted without a word: at a maker fee of 0.0004, fixed 10 at 60000, 0.0167 % a

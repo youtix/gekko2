@@ -1219,6 +1219,66 @@ describe('GridBot', () => {
     });
   });
 
+  describe('price tick', () => {
+    /** The orders sent, as `side price` */
+    const pricesSent = () => issuedOrders.map(({ side, price }) => `${side} ${price}`);
+
+    // Divided by the tick in binary, a close on a tie fell under the half, 109.445 / 0.01 being 10944.499999999998: the grid was
+    // centred on 109.44 where round rounds the close to 109.45
+    it('centres the grid on a close on a tie rounded upwards, as round rounds it: 109.445 to 109.45', () => {
+      const balancedAt109: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: 5, used: 0, total: 5 }],
+        ['USDT', { free: 547.25, used: 0, total: 547.25 }],
+      ]);
+      startStrategy(109.445, {}, balancedAt109);
+
+      expect(pricesSent()).toEqual(['BUY 99.45', 'BUY 104.45', 'SELL 114.45', 'SELL 119.45']);
+    });
+
+    it('warns of no missing tick on a market that states one', () => {
+      startStrategy(100);
+
+      expect(log).not.toHaveBeenCalledWith('warn', expect.stringContaining('states no price tick'));
+    });
+
+    // The decimals were read from the close then: a close of 100 rounded the prices of a grid spaced by 0.5 % to whole units, 99, 99,
+    // 100, 100, 101 and 101, which the start refused, two levels buying and selling at one price
+    describe('on a market that states none', () => {
+      const halfPercent = { buyLevels: 3, sellLevels: 3, spacingType: 'percent', spacingValue: 0.5 } as const;
+
+      beforeEach(() => {
+        tools.marketData = new Map([['BTC/USDT', { amount: { min: 0.1 }, precision: { amount: 0.01 } }]]);
+      });
+
+      it('places the grid at its prices rounded to 8 decimals', () => {
+        startStrategy(100, halfPercent);
+
+        expect(pricesSent()).toEqual(['BUY 98.5', 'BUY 99', 'BUY 99.5', 'SELL 100.5', 'SELL 101', 'SELL 101.5']);
+      });
+
+      it('centres the grid on the close rounded to 8 decimals', () => {
+        startStrategy(100.123456789);
+
+        expect(pricesSent()).toEqual(['BUY 90.12345679', 'BUY 95.12345679', 'SELL 105.12345679', 'SELL 110.12345679']);
+      });
+
+      it('warns that it rounds the prices to 8 decimals, which a coarser tick refuses', () => {
+        startStrategy(100, halfPercent);
+
+        expect(log).toHaveBeenCalledWith(
+          'warn',
+          'GridBot: The market data of BTC/USDT states no price tick (precision.price): the prices of the grid are rounded to 8 decimals, which the exchange refuses if its own tick is coarser',
+        );
+      });
+
+      it('warns of the missing tick before a refusal at the start', () => {
+        untilStopped(() => startStrategy(1, { buyLevels: 1, sellLevels: 1, spacingType: 'percent', spacingValue: 1e-7 }));
+
+        expect(log.mock.calls.map(([level]) => level)).toEqual(['warn', 'error']);
+      });
+    });
+  });
+
   // A backtest's market data, parsed by the dummy-cex schema from the configuration of config/backtest.yml and the documentation,
   // whose precision is 8 decimals. Handed on as steps of 8, it rounded the grid prices to multiples of 8 and these amounts, below
   // 1 BTC, to 0: GridBot stopped the backtest at its first candle after warmup ('Insufficient portfolio for any grid levels').

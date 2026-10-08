@@ -15,7 +15,6 @@ import {
   computeGridPrices,
   computeLevelPrice,
   computeRebalancePlan,
-  countDecimals,
   deriveLevelQuantity,
   getMakerFee,
   getMaximumAmount,
@@ -61,49 +60,46 @@ const tenthPercentFeeMarketData: MarketData = {
 const binanceStepsMarketData: MarketData = { ...documentedMarketData, precision: { price: 0.01, amount: 0.00001 } };
 
 describe('gridBot.utils', () => {
-  describe('countDecimals', () => {
-    it.each`
-      num        | expected
-      ${100}     | ${0}
-      ${100.5}   | ${1}
-      ${100.55}  | ${2}
-      ${100.123} | ${3}
-      ${1e-7}    | ${7}
-      ${1.5e-3}  | ${4}
-      ${0.00001} | ${5}
-    `('returns $expected for $num', ({ num, expected }) => {
-      expect(countDecimals(num)).toBe(expected);
-    });
-
-    it('returns default for non-finite numbers', () => {
-      expect(countDecimals(Infinity)).toBe(8);
-    });
-  });
-
   describe('inferPricePrecision', () => {
-    it('uses market data precision when available', () => {
-      expect(inferPricePrecision(100, { precision: { price: 0.01 } })).toEqual({
-        priceDecimals: 2,
-        priceStep: 0.01,
-      });
+    it.each`
+      tick      | description                                    | expected
+      ${0.01}   | ${'a tick to the cent'}                        | ${{ priceDecimals: 2, priceStep: 0.01 }}
+      ${1e-8}   | ${'a tick of 8 decimals'}                      | ${{ priceDecimals: 8, priceStep: 1e-8 }}
+      ${1e-7}   | ${'a tick String writes with an exponent'}     | ${{ priceDecimals: 7, priceStep: 1e-7 }}
+      ${0.0015} | ${'a tick of 0.0015'}                          | ${{ priceDecimals: 4, priceStep: 0.0015 }}
+      ${0.25}   | ${'a tick of 0.25, not one unit of a decimal'} | ${{ priceDecimals: 2, priceStep: 0.25 }}
+      ${1}      | ${'a tick of 1'}                               | ${{ priceDecimals: 0, priceStep: 1 }}
+      ${10}     | ${'a tick of 10'}                              | ${{ priceDecimals: 0, priceStep: 10 }}
+    `('is $description and its decimals', ({ tick, expected }) => {
+      expect(inferPricePrecision({ precision: { price: tick } })).toEqual(expected);
     });
 
-    it('falls back to current price decimals', () => {
-      expect(inferPricePrecision(123.456, {})).toEqual({ priceDecimals: 3 });
-    });
-
-    it('handles zero precision in market data', () => {
-      expect(inferPricePrecision(100.5, { precision: { price: 0 } })).toEqual({ priceDecimals: 1 });
+    // The decimals used to be read from the close: a close of 100 put the prices of a grid spaced by 0.5 % at whole units, 99, 99,
+    // 100, 100, 101 and 101
+    it.each`
+      marketData                            | description
+      ${{}}                                 | ${'no precision'}
+      ${{ precision: { amount: 0.01 } }}    | ${'an amount precision only'}
+      ${{ precision: { price: 0 } }}        | ${'a tick of 0, as a disabled tick size reads'}
+      ${{ precision: { price: -0.01 } }}    | ${'a negative tick'}
+      ${{ precision: { price: NaN } }}      | ${'a tick that is not a number'}
+      ${{ precision: { price: Infinity } }} | ${'an infinite tick'}
+    `('is 8 decimals (DEFAULT_PRICE_PRECISION) without a tick for a market stating $description', ({ marketData }) => {
+      expect(inferPricePrecision(marketData)).toEqual({ priceDecimals: 8 });
     });
   });
 
   describe('inferAmountPrecision', () => {
-    it('uses market data precision when available', () => {
-      expect(inferAmountPrecision({ precision: { amount: 0.001 } })).toBe(3);
-    });
-
-    it('returns default when not available', () => {
-      expect(inferAmountPrecision({})).toBe(8);
+    it.each`
+      marketData                             | description                                        | expected
+      ${{ precision: { amount: 0.001 } }}    | ${'an amount step of 0.001'}                       | ${3}
+      ${{ precision: { amount: 1e-8 } }}     | ${'an amount step String writes with an exponent'} | ${8}
+      ${{ precision: { amount: 1 } }}        | ${'an amount step of 1'}                           | ${0}
+      ${{}}                                  | ${'no precision: DEFAULT_AMOUNT_PRECISION'}        | ${8}
+      ${{ precision: { amount: 0 } }}        | ${'an amount step of 0, which states none'}        | ${8}
+      ${{ precision: { amount: Infinity } }} | ${'an infinite amount step, which states none'}    | ${8}
+    `('is $expected decimals for $description', ({ marketData, expected }) => {
+      expect(inferAmountPrecision(marketData)).toBe(expected);
     });
   });
 
@@ -119,7 +115,45 @@ describe('gridBot.utils', () => {
       expect(roundPrice(value, decimals, step)).toBe(expected);
     });
 
-    it('returns 0 for non-finite values', () => {
+    // A price on a tie used to be divided by the step in binary, which put it under the half: 1.005 / 0.01 is 100.49999999999999,
+    // and 1.005 was rounded to 1 where round rounds it to 1.01
+    it.each`
+      value        | decimals | step     | description                                                       | expected
+      ${1.005}     | ${2}     | ${0.01}  | ${'1.005 / 0.01 being 100.49999999999999'}                        | ${1.01}
+      ${0.285}     | ${2}     | ${0.01}  | ${'0.285 / 0.01 being 28.499999999999996'}                        | ${0.29}
+      ${4.35}      | ${1}     | ${0.1}   | ${'4.35 / 0.1 being 43.49999999999999'}                           | ${4.4}
+      ${2752.0325} | ${3}     | ${0.001} | ${'2752.0325 / 0.001 being 2752032.4999999995'}                   | ${2752.033}
+      ${61234.465} | ${2}     | ${0.01}  | ${'61234.465 / 0.01 being 6123446.499999999'}                     | ${61234.47}
+      ${10.075}    | ${2}     | ${0.05}  | ${'on a step of 0.05, 10.075 / 0.05 being 201.49999999999997'}    | ${10.1}
+      ${10.125}    | ${2}     | ${0.25}  | ${'on a step of 0.25, halfway between 10 and 10.25'}              | ${10.25}
+      ${2.25}      | ${1}     | ${0.5}   | ${'on a step of 0.5, halfway between 2 and 2.5'}                  | ${2.5}
+      ${1235}      | ${0}     | ${10}    | ${'on a step of 10, halfway between 1230 and 1240'}               | ${1240}
+      ${-10.075}   | ${2}     | ${0.05}  | ${'below 0, to the multiple above, as round rounds -1.005 to -1'} | ${-10.05}
+    `('rounds a tie upwards, as round does: $description', ({ value, decimals, step, expected }) => {
+      expect(roundPrice(value, decimals, step)).toBe(expected);
+    });
+
+    it.each`
+      value      | decimals | step    | description                                                   | expected
+      ${10.124}  | ${2}     | ${0.25} | ${'10.124 on a step of 0.25, nearer to 10'}                   | ${10}
+      ${1234.5}  | ${0}     | ${10}   | ${'1234.5 on a step of 10, nearer to 1230'}                   | ${1230}
+      ${0.3}     | ${1}     | ${0.1}  | ${'0.3 on a step of 0.1, 0.3 / 0.1 being 2.9999999999999996'} | ${0.3}
+      ${0.01}    | ${2}     | ${0.05} | ${'0.01 on a step of 0.05, nearer to 0'}                      | ${0}
+      ${100.004} | ${2}     | ${0.01} | ${'100.004 to the cent'}                                      | ${100}
+    `('rounds to the nearest multiple of the step: $description', ({ value, decimals, step, expected }) => {
+      expect(roundPrice(value, decimals, step)).toBe(expected);
+    });
+
+    it.each`
+      value        | description
+      ${Infinity}  | ${'an infinite price'}
+      ${-Infinity} | ${'a price of -Infinity'}
+      ${NaN}       | ${'a price that is not a number'}
+    `('returns 0 for $description', ({ value }) => {
+      expect(roundPrice(value, 2, 0.01)).toBe(0);
+    });
+
+    it('returns 0 for a price that is not finite, without a step', () => {
       expect(roundPrice(Infinity, 2)).toBe(0);
     });
   });
@@ -188,6 +222,34 @@ describe('gridBot.utils', () => {
         expect(computeLevelPrice(center, 1, decimals, 'logarithmic', -2)).toBe(0);
       });
     });
+
+    // Computed in binary, a price on a tie could fall under the half before it was rounded: 100.1 + 0.005 was 100.10499999999999,
+    // rounded to 100.1, and 61235 × 1.005 was 61541.174999999996, rounded to 61541.17. So could a product left in binary, added in
+    // decimal: 0.035 × 7 is 0.24500000000000002, and 66127.4 × 1.5 % × 5 is 4959.554999999999
+    it.each`
+      centerPrice | index | spacingType  | spacingValue | description                                                 | expected
+      ${100.1}    | ${1}  | ${'fixed'}   | ${0.005}     | ${'100.105, 100.1 + 0.005 being 100.10499999999999'}        | ${100.11}
+      ${100.32}   | ${-3} | ${'fixed'}   | ${0.005}     | ${'100.305, 100.32 - 0.015 being 100.30499999999999'}       | ${100.31}
+      ${13865}    | ${7}  | ${'fixed'}   | ${0.035}     | ${'13865.245, 0.035 × 7 being 0.24500000000000002'}         | ${13865.25}
+      ${61235}    | ${1}  | ${'percent'} | ${0.5}       | ${'61541.175, 61235 × 1.005 being 61541.174999999996'}      | ${61541.18}
+      ${61235}    | ${-3} | ${'percent'} | ${1.5}       | ${'58479.425, 61235 × 0.955 being 58479.424999999996'}      | ${58479.43}
+      ${27985}    | ${5}  | ${'percent'} | ${0.3}       | ${'28404.775, 27985 × 1.015 being 28404.774999999998'}      | ${28404.78}
+      ${66127.4}  | ${5}  | ${'percent'} | ${1.5}       | ${'71086.955, 66127.4 × 1.5 % × 5 being 4959.554999999999'} | ${71086.96}
+    `(
+      'rounds a $spacingType price on a tie upwards, as round rounds it: $description',
+      ({ centerPrice, index, spacingType, spacingValue, expected }) => {
+        expect(computeLevelPrice(centerPrice, index, 2, spacingType, spacingValue, 0.01)).toBe(expected);
+      },
+    );
+
+    it.each`
+      spacingType  | centerPrice | spacingValue | description
+      ${'fixed'}   | ${100}      | ${NaN}       | ${'a fixed spacing that is not a number'}
+      ${'percent'} | ${100}      | ${NaN}       | ${'a percent spacing that is not a number'}
+      ${'percent'} | ${NaN}      | ${1}         | ${'a center price that is not a number'}
+    `('returns 0 for $description', ({ spacingType, centerPrice, spacingValue }) => {
+      expect(computeLevelPrice(centerPrice, 1, 2, spacingType, spacingValue, 0.01)).toBe(0);
+    });
   });
 
   describe('computeGridPrices', () => {
@@ -199,6 +261,24 @@ describe('gridBot.utils', () => {
       ${3}      | ${3}       | ${'percent'} | ${0.001}     | ${'a 3/3 grid spaced by 0.001 %, rounded to the cent'} | ${[100, 100, 100, 100, 100, 100, 100]}
     `('are $expected for $description around 100', ({ buyLevels, sellLevels, spacingType, spacingValue, expected }) => {
       expect(computeGridPrices(100, { buyLevels, sellLevels, spacingType, spacingValue }, 2, 0.01)).toEqual(expected);
+    });
+
+    // 61235 ± 0.5 % is 60928.825 and 61541.175, two ties at the cent and at 0.05, rounded upwards as round rounds them. Computed and
+    // divided in binary, they fell under the half, 60928.82 and 61541.17 at the cent. Without a tick, the decimals of the close made
+    // whole units of them.
+    it.each`
+      marketData                            | description                                        | expected
+      ${{ precision: { price: 0.01 } }}     | ${'to the cent'}                                   | ${[60622.65, 60928.83, 61235, 61541.18, 61847.35]}
+      ${{ precision: { price: 0.05 } }}     | ${'to a step of 0.05'}                             | ${[60622.65, 60928.85, 61235, 61541.2, 61847.35]}
+      ${{ precision: { price: 0.25 } }}     | ${'to a step of 0.25'}                             | ${[60622.75, 60928.75, 61235, 61541.25, 61847.25]}
+      ${{ precision: { price: 1 } }}        | ${'to whole units'}                                | ${[60623, 60929, 61235, 61541, 61847]}
+      ${{ precision: { price: 1e-8 } }}     | ${'to 8 decimals'}                                 | ${[60622.65, 60928.825, 61235, 61541.175, 61847.35]}
+      ${{ precision: { amount: 0.00001 } }} | ${'to 8 decimals on a market that states no tick'} | ${[60622.65, 60928.825, 61235, 61541.175, 61847.35]}
+    `('are $expected for a 2/2 grid spaced by 0.5 % around 61235, $description', ({ marketData, expected }) => {
+      const { priceDecimals, priceStep } = inferPricePrecision(marketData);
+      const halfPercent = { buyLevels: 2, sellLevels: 2, spacingType: 'percent', spacingValue: 0.5 } as const;
+
+      expect(computeGridPrices(61235, halfPercent, priceDecimals, priceStep)).toEqual(expected);
     });
   });
 
@@ -301,6 +381,7 @@ describe('gridBot.utils', () => {
       expect(validateConfig(validParams, 0, {})).toBe('Center price must be positive');
     });
 
+    // On a tick of 1, where the lowest of a logarithmic grid, 100 / 1.1 ** 60, 0.328, rounds to 0
     it.each`
       buyLevels | spacingType      | spacingValue | expected
       ${25}     | ${'fixed'}       | ${5}         | ${'the lowest of buyLevels 25, spaced by spacingValue 5 (fixed) below the center price 100, would be at -25'}
@@ -309,11 +390,27 @@ describe('gridBot.utils', () => {
     `(
       'returns error naming the parameters for non-positive buy prices ($spacingType spacing)',
       ({ buyLevels, spacingType, spacingValue, expected }) => {
-        expect(validateConfig({ ...validParams, buyLevels, spacingType, spacingValue }, 100, {})).toBe(
+        expect(validateConfig({ ...validParams, buyLevels, spacingType, spacingValue }, 100, { precision: { price: 1 } })).toBe(
           `Grid configuration would result in non-positive buy prices: ${expected}`,
         );
       },
     );
+
+    // The decimals of the close of 100 used to round a grid spaced by 0.5 % to whole units, 99, 99, 100, 100, 101 and 101: two levels
+    // bought and sold at one price
+    it('returns null for a grid spaced by 0.5 % around 100 on a market that states no tick, its prices to 8 decimals', () => {
+      const halfPercent = { ...validParams, buyLevels: 3, sellLevels: 3, spacingType: 'percent' as const, spacingValue: 0.5 };
+
+      expect(validateConfig(halfPercent, 100, {})).toBeNull();
+    });
+
+    it('returns error naming the tick of 8 decimals for two adjacent prices rounded together on a market that states no tick', () => {
+      const underTheDefaultTick = { ...validParams, buyLevels: 1, sellLevels: 1, spacingType: 'percent' as const, spacingValue: 1e-7 };
+
+      expect(validateConfig(underTheDefaultTick, 1, {})).toBe(
+        'Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 1e-7 (percent) around the center price 1, two adjacent prices of the grid would both round to 1 at the price tick 1e-8',
+      );
+    });
 
     // A spacing under the tick used to be accepted, the prices of the grid rounded onto each other: percent 0.001 at 100 put every
     // price of a 3/3 grid at 100, where its levels bought and sold at zero spread, two fees a round trip for nothing
@@ -355,6 +452,18 @@ describe('gridBot.utils', () => {
 
     it('returns error for price above exchange maximum', () => {
       expect(validateConfig(validParams, 1000, { price: { max: 500 } })).toBe('Center price 1000 is above exchange maximum 500');
+    });
+
+    // Read as the order layer reads them for every order (checkOrderPrice): a limit that is not a finite number above 0 sets none. Read
+    // by hand, a maximum of -1 refused every price, which the order layer would have taken
+    it.each`
+      price                     | description
+      ${{ min: 0, max: 0 }}     | ${'limits of 0, as Binance disables a filter bound'}
+      ${{ max: -1 }}            | ${'a negative maximum'}
+      ${{ min: Infinity }}      | ${'an infinite minimum'}
+      ${{ min: NaN, max: NaN }} | ${'limits that are not numbers'}
+    `('returns null for a center price within no limit: $description', ({ price }) => {
+      expect(validateConfig(validParams, 100, { price })).toBeNull();
     });
 
     // Checked last, the tick leaves every configuration refused before refused with the same message
@@ -693,7 +802,7 @@ describe('gridBot.utils', () => {
 
     /** The size of the grid, with the precision the strategy infers from the market data */
     const sizeOf = ({ center, assetFree, currencyFree, buyLevels, sellLevels, spacingType, spacingValue, marketData }: Grid) => {
-      const { priceDecimals, priceStep } = inferPricePrecision(center, marketData);
+      const { priceDecimals, priceStep } = inferPricePrecision(marketData);
       return deriveLevelQuantity(
         center,
         assetFree,
@@ -850,7 +959,7 @@ describe('gridBot.utils', () => {
       };
 
       const priceAtOf = ({ center, spacingType, spacingValue, marketData }: Grid) => {
-        const { priceDecimals, priceStep } = inferPricePrecision(center, marketData);
+        const { priceDecimals, priceStep } = inferPricePrecision(marketData);
         return (steps: number) => computeLevelPrice(center, steps, priceDecimals, spacingType, spacingValue, priceStep);
       };
       /** The lowest price an order of the grid is ever placed at: its lowest BUY, or the center price, where its lowest SELL buys back */
@@ -901,14 +1010,17 @@ describe('gridBot.utils', () => {
         expect(leftOnceEveryOrderIsPlaced(grid)).toBeGreaterThanOrEqual(0);
       });
 
-      // CCXTExchange truncates an amount to the step: one off the step was sent smaller than sized
+      // CCXTExchange truncates an amount to the step: one off the step was sent smaller than sized. On the step, it is a quantity that
+      // rounding down to the step leaves as it is
       it.each`
         grid                | description
         ${smallAccount}     | ${'0.0004 BTC and 25 USDT'}
         ${smallInAsset}     | ${'0.0004 BTC and 10000 USDT'}
         ${underMaximumCost} | ${'a grid capped by cost.max'}
       `('sizes $description on the amount step', ({ grid }) => {
-        expect(countDecimals(sizeOf(grid).quantity)).toBeLessThanOrEqual(inferAmountPrecision(grid.marketData));
+        const { quantity } = sizeOf(grid);
+
+        expect(roundAmount(quantity, inferAmountPrecision(grid.marketData))).toBe(quantity);
       });
     });
   });

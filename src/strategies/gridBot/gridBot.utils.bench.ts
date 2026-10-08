@@ -4,7 +4,6 @@ import {
   computeGridBounds,
   computeLevelPrice,
   computeRebalancePlan,
-  countDecimals,
   deriveLevelQuantity,
   getMaximumAmount,
   getMinimumAmount,
@@ -28,24 +27,16 @@ const marketData: MarketData = {
 };
 
 describe('gridBot.utils Performance', () => {
-  describe('countDecimals', () => {
-    bench('1000 decimal counts', () => {
-      for (let i = 0; i < 1000; i++) {
-        countDecimals(100.12345);
-      }
-    });
-
-    bench('1000 scientific notation counts', () => {
-      for (let i = 0; i < 1000; i++) {
-        countDecimals(1e-7);
-      }
-    });
-  });
-
   describe('roundPrice', () => {
     bench('10000 price roundings without step', () => {
       for (let i = 0; i < 10000; i++) {
         roundPrice(100.12345, 2);
+      }
+    });
+
+    bench('10000 price roundings to a tick of one unit of a decimal', () => {
+      for (let i = 0; i < 10000; i++) {
+        roundPrice(100.12345, 2, 0.01);
       }
     });
 
@@ -87,7 +78,7 @@ describe('gridBot.utils Performance', () => {
   describe('inferPricePrecision', () => {
     bench('10000 precision inferences', () => {
       for (let i = 0; i < 10000; i++) {
-        inferPricePrecision(100.12345, marketData);
+        inferPricePrecision(marketData);
       }
     });
   });
