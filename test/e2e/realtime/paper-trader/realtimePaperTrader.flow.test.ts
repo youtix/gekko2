@@ -12,7 +12,7 @@ import { MockWinston, clearLogs, logStore } from '../../mocks/winston.mock';
 // --------------------------------------------------------------------------
 // MOCKS SETUP
 // --------------------------------------------------------------------------
-const DEFAULT_MOCK_STRATEGY_CONFIG = { name: 'DebugAdvice', waittime: 0, each: 4 };
+const DEFAULT_MOCK_STRATEGY_CONFIG = { name: 'DebugAdvice', each: 2 };
 const DEFAULT_MOCK_STRATEGY_NAME = 'DebugAdvice';
 
 const FAST_MINUTE = 50;
@@ -247,5 +247,15 @@ describe('E2E: Realtime Paper Trader Flow', () => {
     // Verify the orders were completed (BUY order completed and then SELL order completed after trigger)
     const completedLogs = logStore.filter(log => typeof log.message === 'string' && log.message.includes('Trailing stop order completed'));
     expect(completedLogs.length).toBeGreaterThanOrEqual(2);
+
+    // The StrategyManager forwarded both hooks of the stop to the strategy, which logs them: the orders completed are the BUY, then the
+    // SELL the trigger hook was given
+    const lineStartingWith = (prefix: string) => logStore.find(log => typeof log.message === 'string' && log.message.startsWith(prefix));
+    expect(lineStartingWith('Trailing stop activated')).toBeDefined();
+    const [, buyId, sellId] = lineStartingWith('Trailing stop triggered')?.message.match(/BUY (\S+) .* MARKET SELL (\S+)/) ?? [];
+    expect(completedLogs.map(log => log.message)).toEqual([
+      `Trailing stop order completed: ${buyId}`,
+      `Trailing stop order completed: ${sellId}`,
+    ]);
   });
 });

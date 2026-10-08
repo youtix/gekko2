@@ -1,9 +1,11 @@
 import { OnCandleEventParams, Strategy } from '@strategies/strategy.types';
-import { z } from 'zod';
 import { debugRealtimeStrategySchema } from './debugRealtime.schema';
+import { DebugRealtimeParams } from './debugRealtime.types';
 
-type DebugRealtimeParams = z.infer<typeof debugRealtimeStrategySchema>;
-
+/**
+ * Debug strategy used in the realtime e2e tests, so be careful when modifying it: a MARKET BUY of 1 unit on every watched pair on the
+ * first candle after the warmup, a MARKET SELL on the second, then nothing. It tracks no position: its SELL does not wait for the BUY.
+ */
 export class DebugRealtime implements Strategy<DebugRealtimeParams> {
   static schema = debugRealtimeStrategySchema;
   private index = 0;

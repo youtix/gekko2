@@ -1,6 +1,6 @@
 export * from './cci/cci.strategy';
 export * from './custom/index';
-export * from './debug/debugAdvice.startegy';
+export * from './debug/debugAdvice.strategy';
 export * from './debug/debugBacktest.strategy';
 export * from './debug/debugRealtime.strategy';
 export * from './debug/debugTrailingStop.strategy';

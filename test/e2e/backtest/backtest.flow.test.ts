@@ -11,8 +11,9 @@ import { MockWinston, clearLogs, logStore } from '../mocks/winston.mock';
 // --------------------------------------------------------------------------
 // MOCKS SETUP
 // --------------------------------------------------------------------------
-const DEFAULT_MOCK_STRATEGY_CONFIG = { name: 'DebugBacktest', buyCandleIndex: 2, sellCandleIndex: 5 };
-const DEFAULT_MOCK_STRATEGY_NAME = 'DebugBacktestStrategy'; // Class name without 'Strategy' suffix if using pluginList convention, wait it resolves dynamically so 'DebugBacktest' if we export it correctly or 'debugBacktest'
+// DebugBacktest counts its candles from 0, the first after the warmup: with no warmup, index i is the candle seeded at i
+const DEFAULT_MOCK_STRATEGY_CONFIG = { name: 'DebugBacktest', buyCandleIndex: 1, sellCandleIndex: 4 };
+const DEFAULT_MOCK_STRATEGY_NAME = 'DebugBacktest';
 
 const FAST_MINUTE = 50;
 const TARGET_CANDLES = 10;
@@ -131,11 +132,6 @@ mock.module('@services/core/heart/heart', () => ({
   Heart: MockHeart,
 }));
 
-// 8. Mock Plugin List to include DebugBacktestStrategy
-// The dynamic import in TradingAdvisor looks up strategy file. We need to ensure it's available.
-// In actual Gekko, strategies/index.ts exports all strategies. I'll need to update it or mock it.
-// Assuming we'll modify the actual strategies/index.ts or the plugin loader can hit it.
-
 // --------------------------------------------------------------------------
 // TEST SUITE
 // --------------------------------------------------------------------------
@@ -177,11 +173,11 @@ describe('E2E: Backtest Flow', () => {
   });
   it('Scenario A: Complex PnL with Multiple Trades', async () => {
     // Override the mock strategy config for this test
-    mockStrategyConfig = { name: 'DebugBacktest', buyCandleIndex: [2, 6], sellCandleIndex: [4, 8] };
+    mockStrategyConfig = { name: 'DebugBacktest', buyCandleIndex: [1, 5], sellCandleIndex: [3, 7] };
 
     // 1. Seed Database with 10 exact candles
-    // Trade 1: Buy at 9000 (candle 2), Sell at 11000 (candle 4) => Win (Profit: 2000)
-    // Trade 2: Buy at 11000 (candle 6), Sell at 9000 (candle 8) => Loss (Profit: -2000)
+    // Trade 1: Buy at 9000 (candle 1), Sell at 11000 (candle 3) => Win (Profit: 2000)
+    // Trade 2: Buy at 11000 (candle 5), Sell at 9000 (candle 7) => Loss (Profit: -2000)
     // Net profit should be 0, Trade count: 2, Win rate: 50%
     const mockCandles = Array.from({ length: TARGET_CANDLES }).map((_, i) => {
       const time = startDate + i * 60 * 1000;
@@ -240,11 +236,11 @@ describe('E2E: Backtest Flow', () => {
       { symbol: 'BTC/USDT', base: 'BTC', quote: 'USDT' },
       { symbol: 'ETH/USDT', base: 'ETH', quote: 'USDT' },
     ];
-    // Override the mock strategy config for this test: buy on 2, sell on 4
-    mockStrategyConfig = { name: 'DebugBacktest', buyCandleIndex: 2, sellCandleIndex: 4 };
+    // Override the mock strategy config for this test: buy on 1, sell on 3
+    mockStrategyConfig = { name: 'DebugBacktest', buyCandleIndex: 1, sellCandleIndex: 3 };
 
     // 1. Seed Database with 10 exact candles for BTC/USDT
-    // Trade: Buy at 9000 (candle 2), Sell at 11000 (candle 4) => Win (Profit: 2000)
+    // Trade: Buy at 9000 (candle 1), Sell at 11000 (candle 3) => Win (Profit: 2000)
     const mockCandlesBTC = Array.from({ length: TARGET_CANDLES }).map((_, i) => {
       const time = startDate + i * 60 * 1000;
       let startPrice = 10000;
@@ -255,7 +251,7 @@ describe('E2E: Backtest Flow', () => {
     seedDatabaseWithCandles(storage, 'BTC/USDT', mockCandlesBTC);
 
     // 2. Seed Database with 10 exact candles for ETH/USDT
-    // Trade: Buy at 1800 (candle 2), Sell at 2200 (candle 4) => Win (Profit: 400)
+    // Trade: Buy at 1800 (candle 1), Sell at 2200 (candle 3) => Win (Profit: 400)
     const mockCandlesETH = Array.from({ length: TARGET_CANDLES }).map((_, i) => {
       const time = startDate + i * 60 * 1000;
       let startPrice = 2000;

@@ -15,8 +15,8 @@ exchange:
 
 strategy:
   name: DebugAdvice
-  each: 4
-  wait: 0
+  each: 2 # one advice every 2 candles: a SELL, then a BUY, and so on
+  wait: 0 # candles to let go by before the first advice
 
 plugins:
   - name: TradingAdvisor

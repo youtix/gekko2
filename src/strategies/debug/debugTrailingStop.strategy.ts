@@ -1,14 +1,12 @@
-import { OnCandleEventParams, OnOrderCompletedEventParams, Strategy } from '@strategies/strategy.types';
+import { OnCandleEventParams, OnOrderCompletedEventParams, Strategy, Tools } from '@strategies/strategy.types';
+import { TrailingStopState } from '@strategies/trailingStopManager.types';
 import { UUID } from 'node:crypto';
-import { z } from 'zod';
-import { TrailingStopState } from '../trailingStopManager.types';
 import { debugTrailingStopStrategySchema } from './debugTrailingStop.schema';
-
-type DebugTrailingStopParams = z.infer<typeof debugTrailingStopStrategySchema>;
+import { DebugTrailingStopParams } from './debugTrailingStop.types';
 
 /**
- * Debug strategy used exclusively in e2e tests to verify the trailing stop lifecycle.
- * Places a single BUY order with a trailing stop config, then logs each lifecycle event
+ * Debug strategy used exclusively in e2e tests to verify the trailing stop lifecycle. Places a single MARKET BUY of 1 unit on the first
+ * watched pair, with a trailing stop, then logs each lifecycle event (each order completed, the stop activated, the stop triggered)
  * so that tests can assert on logStore entries.
  */
 export class DebugTrailingStop implements Strategy<DebugTrailingStopParams> {
@@ -45,14 +43,18 @@ export class DebugTrailingStop implements Strategy<DebugTrailingStopParams> {
     params.tools.log('debug', `Trailing stop order completed: ${params.order.id}`);
   }
 
-  onTrailingStopActivated(state: TrailingStopState): void {
-    // This will be logged by the TrailingStopManager via the event system,
-    // but we also log from the strategy callback to verify the strategy hook works.
-    void state; // keep reference for clarity
+  // Both hooks did nothing, while their comments said they logged: the e2e flow could not tell whether the StrategyManager forwarded
+  // them. They log through the tools the manager passes them last.
+  onTrailingStopActivated(state: TrailingStopState, tools: Tools<DebugTrailingStopParams>): void {
+    const { id, symbol, highestPeak, stopPrice } = state;
+    tools.log('debug', `Trailing stop activated: BUY ${id} on ${symbol}, peak ${highestPeak}, stop price ${stopPrice}`);
   }
 
-  onTrailingStopTriggered(_orderId: UUID, _state: TrailingStopState): void {
-    // The triggered trailing stop automatically creates a SELL market order
-    // via strategyManager.onTrailingStopTriggered — no action needed here.
+  onTrailingStopTriggered(orderId: UUID, state: TrailingStopState, tools: Tools<DebugTrailingStopParams>): void {
+    const { id, symbol, amount, stopPrice } = state;
+    tools.log(
+      'debug',
+      `Trailing stop triggered: BUY ${id} on ${symbol} at stop price ${stopPrice}, its MARKET SELL ${orderId} of ${amount} sent`,
+    );
   }
 }

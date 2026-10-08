@@ -1,4 +1,5 @@
 import type { SQLiteStorage } from '@services/storage/sqlite.storage';
+import type { DebugAdviceParams } from '@strategies/debug/debugAdvice.types';
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test';
 import * as originalDateFns from 'date-fns';
 import { endRealtimeRun, trackRealtimeRuns } from '../../helpers/realtimeRun.helper';
@@ -12,7 +13,8 @@ import { MockWinston, clearLogs, logStore } from '../../mocks/winston.mock';
 // MOCKS SETUP
 // --------------------------------------------------------------------------
 
-const DEFAULT_MOCK_STRATEGY_CONFIG = { name: 'DebugAdvice', waittime: 0, each: 2 };
+// DebugAdvice advises on every candle (each: 1), a SELL then a BUY, on every pair
+const DEFAULT_MOCK_STRATEGY_CONFIG: { name: string } & Partial<DebugAdviceParams> = { name: 'DebugAdvice', each: 1 };
 
 // For realtime mode we use accelerated time (10ms = 1 minute)
 const FAST_MINUTE = 50;
@@ -188,7 +190,7 @@ describe('E2E: Realtime Screener Flow', () => {
     await Promise.race([pipelinePromise, new Promise<void>(resolve => setTimeout(resolve, TIMEOUT_MS))]);
 
     // Verify Telegram messages were sent
-    // We expect at least one message for order placement (DebugAdvice triggers every candle with each=1)
+    // We expect at least one message for order placement (DebugAdvice advises on every candle with each: 1, a SELL then a BUY)
     const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
     expect(calls.length).toBeGreaterThan(0);
 
@@ -261,11 +263,7 @@ describe('E2E: Realtime Screener Flow', () => {
     MockCCXTExchange.simulateOpenOrders = true;
 
     // Configure strategy to cancel orders after 1 candle
-    mockStrategyConfig = {
-      ...DEFAULT_MOCK_STRATEGY_CONFIG,
-      // @ts-expect-error - dynamic property added to debug advice
-      cancelAfter: 1,
-    };
+    mockStrategyConfig = { ...DEFAULT_MOCK_STRATEGY_CONFIG, cancelAfter: 1 };
 
     const { gekkoPipeline } = await import('@services/core/pipeline/pipeline');
     const { inject } = await import('@services/injecter/injecter');
@@ -353,11 +351,9 @@ describe('E2E: Realtime Screener Flow', () => {
 
       const calls = MockFetcherService.callHistory.filter(c => c.method === 'POST');
 
-      // DebugAdvice logs "Order Errored: <id>" when onOrderErrored is called.
-      // EventSubscriber picks this up as a strategy log.
-      // Since maxConsecutiveErrors defaults to 5, the first 4 errors are logged by the strategy.
-      // On the 5th error, the ApplicationStopError is thrown *before* the strategy onOrderErrored is called.
-      // Therefore, we expect exactly 4 strategy error logs.
+      // DebugAdvice logs "Order Errored: <id>" from onOrderErrored, which EventSubscriber posts as a strategy log, with the next bucket.
+      // maxConsecutiveErrors defaults to 5: the strategy's onOrderErrored runs on the 5th error too, before the breaker throws, but its
+      // line is still queued when the run stops, and is dropped with the failed bucket (PluginsStream). Hence exactly 4.
       const errorCalls = calls.filter(call => call.payload.text.includes('Order Errored'));
       expect(errorCalls.length).toBe(4);
     } finally {

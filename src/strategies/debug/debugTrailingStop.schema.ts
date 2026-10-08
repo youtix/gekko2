@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-// trigger and percentage are bounded as the TrailingStopManager checks them once the BUY has filled: out of bounds, the stop was refused
-// only then, with a warning, and the position kept no stop
+// trigger and percentage are bounded as createOrder checks a trailing: out of bounds, createOrder would refuse the BUY, and stop the
+// bot, only once the strategy placed it, where the schema refuses the block at start-up
 export const debugTrailingStopStrategySchema = z.strictObject({
   /** Number of candles to wait before placing the first order; left out, it is placed on the first candle, as with 0 */
   wait: z.number().int().nonnegative().default(0),

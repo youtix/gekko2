@@ -1,12 +1,11 @@
 import { z } from 'zod';
 
-// each, wait and cancelAfter count candles: whole numbers, and each above 0, as each 0 never advised (index % 0 is NaN)
+// each, wait and cancelAfter count timeframe candles: whole numbers, and each above 0, as each 0 never advised (n % 0 is NaN)
 export const debugAdviceStrategySchema = z.strictObject({
+  /** Advises every `each` candles, a SELL first, then a BUY, and so on: 1 advises on every candle */
   each: z.number().int().positive(),
-  // Left out, the strategy advised from the first candle (undefined > index never holds), as with 0
+  /** Candles let go by before the first advice; left out, 0: the first advice comes on the first candle after the warmup */
   wait: z.number().int().nonnegative().default(0),
-  // Left out, the strategy never cancels its orders
+  /** Candles after which an order the strategy created is canceled (0 cancels on the next candle, as 1 does); left out, never */
   cancelAfter: z.number().int().nonnegative().optional(),
-  // Read nowhere: the e2e flows pass it where they mean wait. Accepted so that they still run, until they and this schema drop it
-  waittime: z.number().optional(),
 });

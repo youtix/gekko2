@@ -96,7 +96,7 @@ vi.mock('@services/configuration/configuration', () => {
 /** A text in single quotes, as util.inspect shows a string */
 const quoted = (text: string) => `'${text}'`;
 
-vi.mock('./debug/debugAdvice.startegy.ts', () => ({
+vi.mock('./debug/debugAdvice.strategy.ts', () => ({
   DebugAdvice: class {
     init = vi.fn();
     onEachTimeframeCandle = vi.fn();
@@ -160,7 +160,7 @@ describe('StrategyManager', () => {
     });
 
     it('loads a strategy from a custom path', async () => {
-      const strategyPath = path.resolve(__dirname, './debug/debugAdvice.startegy.ts');
+      const strategyPath = path.resolve(__dirname, './debug/debugAdvice.strategy.ts');
       await manager.createStrategy('DebugAdvice', strategyPath);
       const strategy: any = manager['strategy'];
       expect(strategy).toBeDefined();
@@ -168,7 +168,7 @@ describe('StrategyManager', () => {
     });
 
     it('loads a strategy from an absolute custom path directly', async () => {
-      const absolutePath = path.resolve(__dirname, './debug/debugAdvice.startegy.ts');
+      const absolutePath = path.resolve(__dirname, './debug/debugAdvice.strategy.ts');
       await manager.createStrategy('DebugAdvice', absolutePath);
       expect(manager['strategy']).toBeDefined();
     });
@@ -178,14 +178,14 @@ describe('StrategyManager', () => {
     });
 
     it('throws when external module does not expose the strategy', async () => {
-      const strategyPath = path.resolve(__dirname, './debug/debugAdvice.startegy.ts');
+      const strategyPath = path.resolve(__dirname, './debug/debugAdvice.strategy.ts');
       await expect(manager.createStrategy('MissingStrategy', strategyPath)).rejects.toThrow(GekkoError);
     });
 
     describe.each`
       origin               | strategyPath
       ${'the registry'}    | ${undefined}
-      ${'a strategy path'} | ${path.resolve(__dirname, './debug/debugAdvice.startegy.ts')}
+      ${'a strategy path'} | ${path.resolve(__dirname, './debug/debugAdvice.strategy.ts')}
     `('of a class from $origin that declares a schema', ({ strategyPath }) => {
       describe('when the strategy block is valid', () => {
         beforeEach(async () => {
