@@ -4,6 +4,7 @@ import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 import { ROC } from '../roc/roc.indicator';
 
+/** The one-candle rate of change of a triple EMA, in percent. Its first value comes at candle 3 × (period − 1) + 2, as in TA-Lib. */
 export class TRIX extends Indicator<'TRIX'> {
   private ema1: EMA;
   private ema2: EMA;

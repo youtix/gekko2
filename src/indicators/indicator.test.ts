@@ -37,13 +37,14 @@ describe('Indicator', () => {
     ${'PlusDM'}          | ${{ period: 14 }}                                                          | ${14}
     ${'MACD'}            | ${{}}                                                                      | ${34}
     ${'PSAR'}            | ${{}}                                                                      | ${2}
-    ${'ROC'}             | ${{ period: 10 }}                                                          | ${10}
+    ${'ROC'}             | ${{ period: 10 }}                                                          | ${11}
+    ${'ROC'}             | ${{ period: 1 }}                                                           | ${2}
     ${'Stochastic'}      | ${{}}                                                                      | ${9}
     ${'Stochastic'}      | ${{ fastKPeriod: 1, slowKPeriod: 3, slowKMaType: 'dema', slowDPeriod: 1 }} | ${5}
     ${'Stochastic'}      | ${{ fastKPeriod: 1, slowKPeriod: 1, slowDPeriod: 3, slowDMaType: 'dema' }} | ${5}
     ${'StochasticRSI'}   | ${{}}                                                                      | ${21}
     ${'StochasticRSI'}   | ${{ fastKPeriod: 2, fastDPeriod: 5, slowMaType: 'dema' }}                  | ${23}
-    ${'TRIX'}            | ${{}}                                                                      | ${88}
+    ${'TRIX'}            | ${{}}                                                                      | ${89}
     ${'WilliamsR'}       | ${{}}                                                                      | ${14}
     ${'DEMA'}            | ${{ period: 10 }}                                                          | ${19}
     ${'EMA'}             | ${{}}                                                                      | ${30}
