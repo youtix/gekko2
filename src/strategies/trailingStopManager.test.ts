@@ -1,13 +1,13 @@
 import { TRAILING_STOP_ACTIVATED, TRAILING_STOP_TRIGGERED } from '@constants/event.const';
 import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
-import { warning } from '@services/logger';
+import { info, warning } from '@services/logger';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { TrailingStopManager } from './trailingStopManager';
 import { TrailingStopState } from './trailingStopManager.types';
 
-vi.mock('@services/logger', () => ({ warning: vi.fn() }));
+vi.mock('@services/logger', () => ({ info: vi.fn(), warning: vi.fn() }));
 
 /* -------------------------------------------------------------------------- */
 /*                                Test Helpers                                */
@@ -330,12 +330,13 @@ describe('TrailingStopManager', () => {
 
       manager.update(makeBucket('BTC/USDT', 50500, low, 50000));
 
+      // Triggered, the stop is kept until its SELL ends (see 'a stop that triggered')
       if (shouldTrigger) {
         expect(listener).toHaveBeenCalledOnce();
-        expect(manager.getOrders().has(defaultId)).toBe(false);
+        expect(manager.getOrders().get(defaultId)?.status).toBe('selling');
       } else {
         expect(listener).not.toHaveBeenCalled();
-        expect(manager.getOrders().has(defaultId)).toBe(true);
+        expect(manager.getOrders().get(defaultId)?.status).toBe('active');
       }
     });
   });
@@ -457,6 +458,229 @@ describe('TrailingStopManager', () => {
       manager.update(ohlc(49500, 50000, 49500, 50000)); // Peak 50000
       manager.update(ohlc(50000, 52000, 50000, 51500)); // Peak 52000
       expect(manager.getOrders().get(defaultId)?.stopPrice).toBe(50960);
+    });
+  });
+
+  /* -------------------------------------------------------------------------- */
+  /*                          a stop that triggered                             */
+  /* -------------------------------------------------------------------------- */
+
+  // Deleted at its trigger, a stop whose SELL failed (refused, an exchange error) left the position held without any stop, through the
+  // whole fall: it is kept, selling, until its SELL ends
+  describe('a stop that triggered', () => {
+    const SELL_ID = '5e115e11-0000-4000-8000-000000000001' as UUID;
+    const OTHER_SELL_ID = '5e115e11-0000-4000-8000-000000000002' as UUID;
+    const OTHER_ID = '07e40000-0000-4000-8000-000000000003' as UUID;
+    let triggered: Mock;
+
+    /** The stop, as the manager keeps it */
+    const stop = () => manager.getOrders().get(defaultId);
+
+    beforeEach(() => {
+      triggered = vi.fn();
+      manager.on(TRAILING_STOP_TRIGGERED, triggered);
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2 } }); // Active at once, for 0.5
+      manager.update(ohlc(100, 100, 100, 100)); // Peak 100, stop price 98
+      manager.update(ohlc(99, 99, 97, 97.5)); // Its low goes through 98
+    });
+
+    it('is kept, selling', () => {
+      expect(stop()?.status).toBe('selling');
+    });
+
+    it('announces its trigger with the state it sells in', () => {
+      expect(triggered).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ id: defaultId, status: 'selling', amount: 0.5, highestPeak: 100, stopPrice: 98 }),
+      );
+    });
+
+    // Its SELL is sent: trailed on, it sent another one on the next candle below its stop price
+    it('is not triggered again by a candle that falls further', () => {
+      manager.update(ohlc(96, 96, 90, 91));
+      expect(triggered).toHaveBeenCalledOnce();
+    });
+
+    it('keeps its peak on a candle that rises above it', () => {
+      manager.update(ohlc(100, 110, 100, 108));
+      expect(stop()?.highestPeak).toBe(100);
+    });
+
+    describe('setSellOrderId', () => {
+      it('records the SELL sent for it', () => {
+        manager.setSellOrderId(defaultId, SELL_ID);
+        expect(stop()?.sellOrderId).toBe(SELL_ID);
+      });
+
+      it('returns the stop selling through that SELL', () => {
+        expect(manager.setSellOrderId(defaultId, SELL_ID)).toEqual(
+          expect.objectContaining({ id: defaultId, status: 'selling', sellOrderId: SELL_ID }),
+        );
+      });
+
+      it('returns a copy of the stop, not the stop it keeps', () => {
+        expect(manager.setSellOrderId(defaultId, SELL_ID)).not.toBe(stop());
+      });
+
+      it.each`
+        desc                         | id
+        ${'a stop not selling'}      | ${OTHER_ID}
+        ${'a stop it does not keep'} | ${'ffffffff-0000-4000-8000-000000000009'}
+      `('returns nothing for $desc', ({ id }) => {
+        manager.addOrder({ ...defaultOrder, id: OTHER_ID, trailing: { percentage: 2 } });
+        expect(manager.setSellOrderId(id, SELL_ID)).toBeUndefined();
+      });
+
+      it('records no SELL on a stop that is not selling', () => {
+        manager.addOrder({ ...defaultOrder, id: OTHER_ID, trailing: { percentage: 2 } });
+        manager.setSellOrderId(OTHER_ID, SELL_ID);
+        expect(manager.getOrders().get(OTHER_ID)).not.toHaveProperty('sellOrderId');
+      });
+    });
+
+    describe('removeSellingStop, once its SELL completes', () => {
+      beforeEach(() => {
+        manager.setSellOrderId(defaultId, SELL_ID);
+      });
+
+      it('removes it', () => {
+        manager.removeSellingStop(SELL_ID);
+        expect(manager.getOrders().has(defaultId)).toBe(false);
+      });
+
+      it('says it removed one', () => {
+        expect(manager.removeSellingStop(SELL_ID)).toBe(true);
+      });
+
+      it('keeps it when another SELL completes', () => {
+        manager.removeSellingStop(OTHER_SELL_ID);
+        expect(stop()?.status).toBe('selling');
+      });
+
+      it('says it removed none for another SELL', () => {
+        expect(manager.removeSellingStop(OTHER_SELL_ID)).toBe(false);
+      });
+    });
+
+    // Errored (refused, an exchange error) or canceled, after it sold part of what the stop protected, or nothing reported
+    describe.each`
+      sold   | amount
+      ${0}   | ${0.5}
+      ${0.2} | ${0.3}
+      ${NaN} | ${0.5}
+    `('resumeSellingStop, once its SELL ends without completing, $sold sold', ({ sold, amount }) => {
+      let resumed: TrailingStopState | undefined;
+
+      beforeEach(() => {
+        manager.setSellOrderId(defaultId, SELL_ID);
+        resumed = manager.resumeSellingStop(SELL_ID, sold);
+      });
+
+      it('makes it active again', () => {
+        expect(stop()?.status).toBe('active');
+      });
+
+      it(`leaves it ${amount} to sell, what its SELL did not sell`, () => {
+        expect(stop()?.amount).toBe(amount);
+      });
+
+      it('keeps the peak and the stop price it triggered at', () => {
+        expect(stop()).toEqual(expect.objectContaining({ highestPeak: 100, stopPrice: 98 }));
+      });
+
+      it('forgets its SELL', () => {
+        expect(stop()).not.toHaveProperty('sellOrderId');
+      });
+
+      it('returns the stop active again', () => {
+        expect(resumed).toEqual(stop());
+      });
+
+      it('returns a copy of the stop, not the stop it keeps', () => {
+        expect(resumed).not.toBe(stop());
+      });
+
+      it('triggers it again on the open of the next candle at or below its stop price', () => {
+        manager.update(ohlc(98, 98.5, 97, 97.5));
+        expect(triggered).toHaveBeenCalledTimes(2);
+      });
+
+      it('announces that trigger for what its SELL did not sell', () => {
+        manager.update(ohlc(98, 98.5, 97, 97.5));
+        expect(triggered).toHaveBeenLastCalledWith(expect.objectContaining({ status: 'selling', amount }));
+      });
+
+      it('trails again: a new high raises its stop price', () => {
+        manager.update(ohlc(100, 150, 100, 149));
+        expect(stop()?.stopPrice).toBe(147);
+      });
+    });
+
+    describe.each`
+      sold
+      ${0.5}
+      ${0.6}
+    `('resumeSellingStop, once its SELL ends without completing after selling $sold, all of its 0.5', ({ sold }) => {
+      let resumed: TrailingStopState | undefined;
+
+      beforeEach(() => {
+        manager.setSellOrderId(defaultId, SELL_ID);
+        resumed = manager.resumeSellingStop(SELL_ID, sold);
+      });
+
+      it('removes it', () => {
+        expect(manager.getOrders().has(defaultId)).toBe(false);
+      });
+
+      it('returns nothing', () => {
+        expect(resumed).toBeUndefined();
+      });
+
+      it('says so at info level', () => {
+        expect(info).toHaveBeenCalledExactlyOnceWith(
+          'trailing stop',
+          `Trailing stop of BUY ${defaultId} over: its SELL ${SELL_ID} sold ${sold}, all of its 0.5`,
+        );
+      });
+    });
+
+    // 0.3 - 0.1 is 0.19999999999999998 in floating point: a SELL of that, truncated to the step of the market, left a step unsold
+    it('leaves what its SELL did not sell without the noise of floating point', () => {
+      manager.addOrder({ ...defaultOrder, id: OTHER_ID, amount: 0.3, trailing: { percentage: 2 } });
+      manager.update(ohlc(100, 100, 100, 100));
+      manager.update(ohlc(99, 99, 97, 97.5));
+      manager.setSellOrderId(OTHER_ID, OTHER_SELL_ID);
+      manager.resumeSellingStop(OTHER_SELL_ID, 0.1);
+      expect(manager.getOrders().get(OTHER_ID)?.amount).toBe(0.2);
+    });
+
+    it('resumeSellingStop returns nothing for a SELL no stop sells through', () => {
+      manager.setSellOrderId(defaultId, SELL_ID);
+      expect(manager.resumeSellingStop(OTHER_SELL_ID, 0)).toBeUndefined();
+    });
+
+    it('resumeSellingStop leaves as it is the stop selling through another SELL', () => {
+      manager.setSellOrderId(defaultId, SELL_ID);
+      manager.resumeSellingStop(OTHER_SELL_ID, 0);
+      expect(stop()?.status).toBe('selling');
+    });
+
+    // Canceled by the strategy while it sold: its SELL is the strategy's
+    describe('resumeSellingStop, once its SELL ends after the stop was removed', () => {
+      let resumed: TrailingStopState | undefined;
+
+      beforeEach(() => {
+        manager.setSellOrderId(defaultId, SELL_ID);
+        manager.removeOrder(defaultId);
+        resumed = manager.resumeSellingStop(SELL_ID, 0);
+      });
+
+      it('returns nothing', () => {
+        expect(resumed).toBeUndefined();
+      });
+
+      it('does not bring it back', () => {
+        expect(manager.getOrders().has(defaultId)).toBe(false);
+      });
     });
   });
 

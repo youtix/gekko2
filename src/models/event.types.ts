@@ -58,6 +58,13 @@ export type OrderErroredEvent = OrderInitiatedEvent & {
     reason: string;
     /** Order error date */
     orderErrorDate: EpochTimeStamp;
+    /**
+     * What the order executed before its error, as far as the exchange reported it (see Order.getFilledAmount): an error may follow
+     * fills, those of a STICKY order whose relaunch failed, or of an order whose poll or cancelation failed for good. 0 when none was
+     * reported, which does not prove that nothing executed: an order whose outcome is unknown may have. Left out by an emitter that
+     * does not know it.
+     */
+    filled?: number;
   };
 };
 /** Can return NaN values in price, amount,effectivePrice, fee, feePercent */

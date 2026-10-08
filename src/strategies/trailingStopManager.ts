@@ -2,7 +2,8 @@ import { TRAILING_STOP_ACTIVATED, TRAILING_STOP_TRIGGERED } from '@constants/eve
 import { StrategyOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
-import { warning } from '@services/logger';
+import { info, warning } from '@services/logger';
+import { addPrecise } from '@utils/math/math.utils';
 import { isNil } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -69,12 +70,53 @@ export class TrailingStopManager extends EventEmitter {
       if (!candle) continue;
 
       if (order.status === 'dormant') this.processDormant(id, order, candle);
-      else this.trail(id, order, [candle.open, candle.low, candle.high, candle.close]);
+      else if (order.status === 'active') this.trail(order, [candle.open, candle.low, candle.high, candle.close]);
+      // A stop selling trails no more: its SELL is sent, and how that SELL ends decides what follows (see resumeSellingStop)
     }
   }
 
   public removeOrder(id: UUID): boolean {
     return this.orders.delete(id);
+  }
+
+  /**
+   * Records the SELL sent for the stop `id`, which triggered (see trail): the stop sells until that SELL ends. Returns a copy of the
+   * stop, or undefined when it is not selling (removed since its trigger).
+   */
+  public setSellOrderId(id: UUID, sellOrderId: UUID): TrailingStopState | undefined {
+    const order = this.orders.get(id);
+    if (order?.status !== 'selling') return;
+    order.sellOrderId = sellOrderId;
+    return copyState(order);
+  }
+
+  /** Removes the stop whose SELL completed: the position it protected is sold. Returns whether a stop was selling through that SELL. */
+  public removeSellingStop(sellOrderId: UUID): boolean {
+    const order = this.findSellingStop(sellOrderId);
+    return order ? this.orders.delete(order.id) : false;
+  }
+
+  /**
+   * Makes the stop whose SELL ended without completing (errored, canceled) active again, for its amount less what that SELL sold
+   * (`sold`), with the peak and the stop price it triggered at: the first price at or below that stop price triggers it again, the
+   * open of the next candle included. Removed at its trigger, a stop whose SELL failed (refused, an exchange error) left the position
+   * held without any stop, and the strategy could not arm another one: only a BUY carries a trailing. A stop with nothing left to sell
+   * is removed. Returns a copy of the stop active again, or undefined: no stop sells through that SELL (removed while it sold), or
+   * nothing is left.
+   */
+  public resumeSellingStop(sellOrderId: UUID, sold: number): TrailingStopState | undefined {
+    const order = this.findSellingStop(sellOrderId);
+    if (!order) return;
+    const left = sold > 0 ? addPrecise(order.amount, -sold) : order.amount;
+    if (!(left > 0)) {
+      this.orders.delete(order.id);
+      info('trailing stop', `Trailing stop of BUY ${order.id} over: its SELL ${sellOrderId} sold ${sold}, all of its ${order.amount}`);
+      return;
+    }
+    order.status = 'active';
+    order.amount = left;
+    delete order.sellOrderId;
+    return copyState(order);
   }
 
   public getOrders(): ReadonlyMap<UUID, TrailingStopState> {
@@ -96,7 +138,7 @@ export class TrailingStopManager extends EventEmitter {
     this.emit<TrailingStopState>(TRAILING_STOP_ACTIVATED, copyState(order));
     // The strategy hears of the activation at once, and may cancel the stop then (tools.cancelTrailingOrder): a stop no longer listed
     // is over, and must not send the SELL of a stop the strategy has just canceled
-    if (this.orders.has(id)) this.trail(id, order, isActiveAtOpen ? [low, high, close] : [close]);
+    if (this.orders.has(id)) this.trail(order, isActiveAtOpen ? [low, high, close] : [close]);
   }
 
   /**
@@ -105,11 +147,13 @@ export class TrailingStopManager extends EventEmitter {
    * the candle reached after the peak it trails. Raised to the high before the low was tested, the peak made a candle that rose more
    * than the trailing percentage from its open trigger the stop on its own low.
    */
-  private trail(id: UUID, order: TrailingStopState, prices: number[]): void {
+  private trail(order: TrailingStopState, prices: number[]): void {
     for (const price of prices) {
       if (price <= order.stopPrice) {
+        // Kept, selling, until its SELL ends (see setSellOrderId and resumeSellingStop): deleted here, the stop was gone before its
+        // SELL went through, or did not
+        order.status = 'selling';
         this.emit<TrailingStopState>(TRAILING_STOP_TRIGGERED, copyState(order));
-        this.orders.delete(id);
         return;
       }
       this.raisePeak(order, price);
@@ -119,5 +163,10 @@ export class TrailingStopManager extends EventEmitter {
   private raisePeak(order: TrailingStopState, price: number): void {
     order.highestPeak = Math.max(order.highestPeak, price);
     order.stopPrice = order.highestPeak * (1 - order.config.percentage / 100);
+  }
+
+  /** The stop selling through the SELL `sellOrderId`, if any */
+  private findSellingStop(sellOrderId: UUID): TrailingStopState | undefined {
+    for (const order of this.orders.values()) if (order.status === 'selling' && order.sellOrderId === sellOrderId) return order;
   }
 }

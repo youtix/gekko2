@@ -311,8 +311,10 @@ export class Trader extends Plugin {
    * order is refused once its move has canceled the transaction before, releasing what it reserved. The synchronization is best
    * effort, here as in every report: a failure is logged, and the event leaves with the portfolio known, since the strategy waits
    * for it whatever happens.
+   * The event carries what the order had filled (`filled`, see Order.getFilledAmount): only a STICKY order's reason told it, in words,
+   * and a BUY that errored after a fill lost the trailing stop of the coins it had bought (see StrategyManager.onOrderErrored).
    */
-  private async relayError(order: RelayedOrder, reason: string, startedAfter: number) {
+  private async relayError(order: RelayedOrder, reason: string, startedAfter: number, filled: number) {
     this.orders.delete(order.id);
     try {
       await this.synchronize(startedAfter);
@@ -321,7 +323,7 @@ export class Trader extends Plugin {
     }
     const exchange = { price: this.prices.get(order.symbol) || 0, portfolio: this.portfolio };
     this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, {
-      order: { ...order, reason, orderErrorDate: this.currentTimestamp },
+      order: { ...order, reason, orderErrorDate: this.currentTimestamp, filled },
       exchange,
     });
   }
@@ -423,14 +425,14 @@ export class Trader extends Plugin {
     }
   }
 
-  /** The error, and the portfolio after it: the order may have executed before (see relayError) */
+  /** The error, what the order filled before it, and the portfolio after it: the order may have executed before (see relayError) */
   private async reportErrored(orderInstance: OrderInstance, order: RelayedOrder, reason: string) {
     const { id, side, type } = order;
     try {
       orderInstance.removeAllListeners();
       const startedAfter = this.synchronizationCount;
       error('trader', `[${id}] ${side} ${type} order: ${reason} (status: ERROR)`);
-      await this.relayError(order, reason, startedAfter);
+      await this.relayError(order, reason, startedAfter, orderInstance.getFilledAmount());
     } catch (err) {
       error('trader', `[${id}] Impossible to report the error of the ${side} ${type} order: ${getErrorMessage(err)}`);
     }
@@ -459,7 +461,7 @@ export class Trader extends Plugin {
         return;
       }
       info('trader', `[${id}] ${side} ${type} order: ${reason} (filled: ${filled}, status: ${status})`);
-      await this.relayError(order, reason, startedAfter);
+      await this.relayError(order, reason, startedAfter, filledAmount);
     } catch (err) {
       error('trader', `[${id}] Impossible to report the rejection of the ${side} ${type} order: ${getErrorMessage(err)}`);
     }
@@ -523,8 +525,8 @@ export class Trader extends Plugin {
           const reason = isNil(advice.price) ? `no price known for ${symbol}` : `invalid requested price ${advice.price}`;
           warning('trader', `[${id}] Impossible to create the ${side} ${type} order: ${reason}`);
           // The amount the strategy asked for, if any. Without one the order was all-in, to be sized as it is placed (a BUY from the
-          // price, missing or invalid here): never placed, it ordered nothing.
-          const order = { ...advice, amount: advice.amount ?? 0, reason, orderErrorDate: this.currentTimestamp };
+          // price, missing or invalid here): never placed, it ordered nothing, and filled nothing.
+          const order = { ...advice, amount: advice.amount ?? 0, reason, orderErrorDate: this.currentTimestamp, filled: 0 };
           const exchange = { price: this.prices.get(symbol) || 0, portfolio: this.portfolio };
           this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
           return;

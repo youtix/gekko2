@@ -7,7 +7,7 @@ import {
 import { ONE_MINUTE } from '@constants/time.const';
 import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
-import { StrategyOrder, TrailingConfig } from '@models/advice.types';
+import { AdviceOrder, StrategyOrder, TrailingConfig } from '@models/advice.types';
 import { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { OrderSide } from '@models/order.types';
@@ -1044,6 +1044,389 @@ describe('StrategyManager', () => {
           manager.onOneMinuteBucket(minute(50000, 48000));
           end(STOP_SELL_ID);
           expect(manager['trailingStopSellIds'].has(STOP_SELL_ID)).toBe(false);
+        });
+      });
+
+      // Deleted at its trigger, a stop whose SELL failed (refused, an exchange error) left the position held without any stop through the
+      // fall, and the strategy could not arm another one: only a BUY carries a trailing. The stop now sells until its SELL ends.
+      describe('until the SELL of its stop ends', () => {
+        const BUY_ID: UUID = '0b0b0b0b-0000-4000-8000-00000000000a';
+        const SELL_ID: UUID = '5e115e11-0000-4000-8000-00000000000b';
+        const NEXT_SELL_ID: UUID = '5e115e11-0000-4000-8000-00000000000c';
+        const DORMANT_ID: UUID = 'd0e1a000-0000-4000-8000-00000000000d';
+        const OWN_SELL_ID: UUID = '5e115e11-0000-4000-8000-00000000000e';
+        const exchange = { price: 48000, portfolio: new Map() };
+        let listener: Mock;
+
+        /** The stop of the BUY, as the trailing manager keeps it */
+        const stop = () => manager['trailingStopManager'].getOrders().get(BUY_ID);
+        /** Reports the error of the SELL of the stop, with what it sold, if the event says */
+        const sellErrored = (filled?: number) =>
+          manager.onOrderErrored({
+            order: {
+              id: SELL_ID,
+              symbol,
+              side: 'SELL',
+              type: 'MARKET',
+              amount: 0.5,
+              reason: 'Insufficient balance',
+              orderCreationDate,
+              orderErrorDate: 61000,
+              ...(filled !== undefined && { filled }),
+            },
+            exchange,
+          });
+        /** Reports the cancelation of the SELL of the stop, with what it sold */
+        const sellCanceled = (filled: number, remaining: number) =>
+          manager.onOrderCanceled({
+            order: {
+              id: SELL_ID,
+              symbol,
+              side: 'SELL',
+              type: 'MARKET',
+              amount: 0.5,
+              filled,
+              remaining,
+              orderCreationDate,
+              orderCancelationDate: 61000,
+            },
+            exchange,
+          });
+        /** Reports the fill of the SELL `id` on the pair */
+        const sellCompleted = (id: UUID) =>
+          manager.onOrderCompleted({
+            order: {
+              id,
+              symbol,
+              side: 'SELL',
+              type: 'MARKET',
+              amount: 0.5,
+              orderCreationDate,
+              orderExecutionDate: 61000,
+              effectivePrice: 48000,
+              fee: 0,
+            },
+            exchange,
+          });
+        /** What the manager said at warning level of the stop of the BUY */
+        const stopWarnings = () =>
+          vi.mocked(warning).mock.calls.filter(([, message]) => typeof message === 'string' && message.includes(`BUY ${BUY_ID}`));
+
+        beforeEach(() => {
+          vi.mocked(randomUUID).mockReturnValueOnce(BUY_ID).mockReturnValueOnce(SELL_ID);
+          manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+          completeBuy(BUY_ID, 0.5);
+          manager.onOneMinuteBucket(minute(50000, 48000)); // Peak 50000, stop price 49000, which its low goes through
+          listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+        });
+
+        it('keeps the stop, selling through that SELL', () => {
+          expect(stop()).toEqual(expect.objectContaining({ status: 'selling', sellOrderId: SELL_ID }));
+        });
+
+        it('gives onTrailingStopTriggered the stop selling through that SELL', () => {
+          expect(strategy.onTrailingStopTriggered).toHaveBeenCalledExactlyOnceWith(
+            SELL_ID,
+            expect.objectContaining({ id: BUY_ID, status: 'selling', sellOrderId: SELL_ID }),
+            manager['tools'],
+          );
+        });
+
+        it('sends no other SELL while that one is pending', () => {
+          manager.onOneMinuteBucket(minute(48000, 40000));
+          expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('says, if the strategy ends then, that the SELL of the stop had not ended', () => {
+          manager.onStrategyEnd();
+          expect(warning).toHaveBeenCalledWith('strategy', 'Strategy ended with 1 triggered trailing stop(s) whose SELL had not ended.');
+        });
+
+        it('does not count it, if the strategy ends then, among the stops that never triggered', () => {
+          manager.onStrategyEnd();
+          expect(warning).not.toHaveBeenCalledWith('strategy', expect.stringContaining('never triggered'));
+        });
+
+        describe('once it completes', () => {
+          beforeEach(() => {
+            sellCompleted(SELL_ID);
+          });
+
+          it('removes the stop', () => {
+            expect(stop()).toBeUndefined();
+          });
+
+          it('sends no SELL when the price falls further', () => {
+            manager.onOneMinuteBucket(minute(48000, 40000));
+            expect(listener).not.toHaveBeenCalled();
+          });
+        });
+
+        // Refused, failed on the exchange, or expired with what the book allowed: what it did not sell is held, and the stop protects it
+        // again, from the peak and the stop price it triggered at
+        describe.each`
+          outcome                         | end                             | amount | sale
+          ${'errors, no fill reported'}   | ${() => sellErrored()}          | ${0.5} | ${'errored, no fill reported (Insufficient balance)'}
+          ${'errors, 0 filled'}           | ${() => sellErrored(0)}         | ${0.5} | ${'errored, no fill reported (Insufficient balance)'}
+          ${'errors after selling 0.2'}   | ${() => sellErrored(0.2)}       | ${0.3} | ${'errored after selling 0.2 BTC (Insufficient balance)'}
+          ${'is canceled after 0.2 sold'} | ${() => sellCanceled(0.2, 0.3)} | ${0.3} | ${'was canceled after selling 0.2 BTC'}
+          ${'is canceled, nothing sold'}  | ${() => sellCanceled(0, 0.5)}   | ${0.5} | ${'was canceled, no fill reported'}
+          ${'is canceled, no fill told'}  | ${() => sellCanceled(0, 0)}     | ${0.5} | ${'was canceled, no fill reported'}
+        `('once it $outcome', ({ end, amount, sale }) => {
+          beforeEach(() => {
+            vi.mocked(randomUUID).mockReturnValueOnce(NEXT_SELL_ID);
+            end();
+          });
+
+          it('makes the stop active again', () => {
+            expect(stop()?.status).toBe('active');
+          });
+
+          it('keeps the peak and the stop price it triggered at', () => {
+            expect(stop()).toEqual(expect.objectContaining({ highestPeak: 50000, stopPrice: 49000 }));
+          });
+
+          it(`sends a SELL of ${amount}, what is left, on the next minute at or below its stop price`, () => {
+            manager.onOneMinuteBucket(minute(48500, 48000));
+            expect(listener).toHaveBeenCalledExactlyOnceWith(
+              expect.objectContaining({ id: NEXT_SELL_ID, symbol, side: 'SELL', type: 'MARKET', amount }),
+            );
+          });
+
+          it('gives onTrailingStopTriggered that new SELL', () => {
+            manager.onOneMinuteBucket(minute(48500, 48000));
+            expect(strategy.onTrailingStopTriggered).toHaveBeenLastCalledWith(
+              NEXT_SELL_ID,
+              expect.objectContaining({ id: BUY_ID, amount }),
+              manager['tools'],
+            );
+          });
+
+          it('says at warning level that the stop is active again, and for what', () => {
+            expect(stopWarnings()).toEqual([
+              [
+                'strategy',
+                `Trailing stop of BUY ${BUY_ID} active again: its SELL ${SELL_ID} ${sale}. It sells ${amount} BTC once a price reaches its stop price, 49000, trailing from its peak, 50000`,
+              ],
+            ]);
+          });
+        });
+
+        // Nothing left to sell (by hand on the exchange), or an amount out of the limits of the market: its SELL is sent again on each
+        // minute at or below the stop price, and the refusals count towards the circuit breaker, which stops the run
+        it('stops the run once the SELL of a stop is refused maxConsecutiveErrors times in a row', () => {
+          const target = new StrategyManager(0, 3);
+          const sells: AdviceOrder[] = [];
+          target.on(STRATEGY_CREATE_ORDER_EVENT, (advice: AdviceOrder) => sells.push(advice));
+          target.onOneMinuteBucket(bucket);
+          target.onTimeFrameCandle(bucket); // A warmup of none is over with the first candle
+          const ids: UUID[] = [
+            '0b0b0b0b-0000-4000-8000-0000000000f0',
+            '5e115e11-0000-4000-8000-0000000000f1',
+            '5e115e11-0000-4000-8000-0000000000f2',
+            '5e115e11-0000-4000-8000-0000000000f3',
+          ];
+          for (const id of ids) vi.mocked(randomUUID).mockReturnValueOnce(id);
+          const buyId = target['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+          target.onOrderCompleted({
+            order: {
+              id: buyId,
+              symbol,
+              side: 'BUY',
+              type: 'MARKET',
+              amount: 0.5,
+              orderCreationDate,
+              orderExecutionDate: 61000,
+              effectivePrice: 50000,
+              fee: 0,
+            },
+            exchange,
+          });
+          const refuseNextSell = () => {
+            target.onOneMinuteBucket(minute(48000, 47000));
+            const { id, orderCreationDate: createdAt } = sells.at(-1)!;
+            target.onOrderErrored({
+              order: {
+                id,
+                symbol,
+                side: 'SELL',
+                type: 'MARKET',
+                amount: 0.5,
+                reason: 'Insufficient balance',
+                orderCreationDate: createdAt,
+                orderErrorDate: 61000,
+                filled: 0,
+              },
+              exchange,
+            });
+          };
+          refuseNextSell();
+          refuseNextSell();
+          expect(refuseNextSell).toThrow(ApplicationStopError);
+        });
+
+        // The SELL already sent is the strategy's: a stop canceled is not brought back by its outcome
+        describe('when the strategy cancels the stop while it sells', () => {
+          beforeEach(() => {
+            vi.mocked(randomUUID).mockReturnValueOnce(DORMANT_ID);
+            manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2, trigger: 60000 } });
+            completeBuy(DORMANT_ID, 0.3);
+            manager['tools'].cancelTrailingOrder(BUY_ID);
+          });
+
+          it('removes it', () => {
+            expect(stop()).toBeUndefined();
+          });
+
+          it('does not bring it back when that SELL errors', () => {
+            sellErrored();
+            expect(stop()).toBeUndefined();
+          });
+
+          it('cancels no other stop of the pair when that SELL completes: it sold what the stop protected', () => {
+            sellCompleted(SELL_ID);
+            expect(manager['trailingStopManager'].getOrders().has(DORMANT_ID)).toBe(true);
+          });
+        });
+
+        // That SELL closed the position the stops of the pair protected, the one selling included
+        describe('when a SELL the strategy created completes on the pair while the stop sells', () => {
+          beforeEach(() => {
+            vi.mocked(randomUUID).mockReturnValueOnce(OWN_SELL_ID);
+            manager['createOrder']({ symbol, side: 'SELL', type: 'MARKET' });
+            sellCompleted(OWN_SELL_ID);
+          });
+
+          it('cancels the stop', () => {
+            expect(stop()).toBeUndefined();
+          });
+
+          it('does not bring it back when the SELL of the stop errors', () => {
+            sellErrored();
+            expect(stop()).toBeUndefined();
+          });
+        });
+      });
+
+      // A STICKY BUY whose relaunch failed, or an order whose poll or cancelation failed for good, errors after its fills: dropped, the
+      // stop the strategy asked for left the coins bought without protection
+      describe('when a BUY asking for a stop errors', () => {
+        const BUY_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000a1';
+        const OTHER_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000a2';
+        const OUTCOME_UNKNOWN =
+          'Outcome unknown: the order may be live on the exchange, check it before placing it again (Request timeout)';
+        const exchange = { price: 50000, portfolio: new Map() };
+        /** Reports the error of the BUY `id` of 1, with what it filled, if the event says */
+        const fail = (id: UUID, reason: string, filled?: number) =>
+          manager.onOrderErrored({
+            order: {
+              id,
+              symbol,
+              side: 'BUY',
+              type: 'STICKY',
+              amount: 1,
+              reason,
+              orderCreationDate,
+              orderErrorDate: 61000,
+              ...(filled !== undefined && { filled }),
+            },
+            exchange,
+          });
+
+        beforeEach(() => {
+          vi.mocked(randomUUID).mockReturnValueOnce(BUY_ID);
+          manager['createOrder']({ symbol, side: 'BUY', type: 'STICKY', amount: 1, trailing: { percentage: 2 } });
+        });
+
+        describe('after it filled part of its amount', () => {
+          beforeEach(() => {
+            fail(BUY_ID, 'Ticker unavailable (0.6 of 1 already filled)', 0.6);
+          });
+
+          it('arms its stop for what it filled', () => {
+            expect(manager['trailingStopManager'].getOrders().get(BUY_ID)?.amount).toBe(0.6);
+          });
+
+          it('keeps it pending no more', () => {
+            expect(manager['pendingTrailingStops'].has(BUY_ID)).toBe(false);
+          });
+
+          it('announces the activation of its stop, which has no trigger', () => {
+            expect(strategy.onTrailingStopActivated).toHaveBeenCalledExactlyOnceWith(
+              expect.objectContaining({ id: BUY_ID, amount: 0.6, status: 'active' }),
+              manager['tools'],
+            );
+          });
+
+          it('sells what it filled when the price falls through its stop price', () => {
+            const listener = vi.fn();
+            manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+            manager.onOneMinuteBucket(minute(50000, 48000));
+            expect(listener).toHaveBeenCalledExactlyOnceWith(
+              expect.objectContaining({ symbol, side: 'SELL', type: 'MARKET', amount: 0.6 }),
+            );
+          });
+
+          it('says so at warning level', () => {
+            expect(warning).toHaveBeenCalledExactlyOnceWith(
+              'strategy',
+              `BUY ${BUY_ID} errored after it filled 0.6 of 1 BTC (Ticker unavailable (0.6 of 1 already filled)): its trailing stop is armed for that part`,
+            );
+          });
+        });
+
+        // Its outcome unknown, its creation lost on the network, it may have executed all the same: nothing tells what to arm (nor does a
+        // fill that is not a number above 0), and kept pending the stop would never be armed, no completion following an error
+        describe.each`
+          report        | filled
+          ${'0 filled'} | ${0}
+          ${'no fill'}  | ${undefined}
+          ${'NaN'}      | ${NaN}
+          ${'Infinity'} | ${Infinity}
+        `('reporting $report', ({ filled }) => {
+          beforeEach(() => {
+            fail(BUY_ID, OUTCOME_UNKNOWN, filled);
+          });
+
+          it('arms no stop', () => {
+            expect(manager['trailingStopManager'].getOrders().size).toBe(0);
+          });
+
+          it('drops its pending stop', () => {
+            expect(manager['pendingTrailingStops'].has(BUY_ID)).toBe(false);
+          });
+
+          it('says at warning level that its stop is not armed, and what it means if the BUY executed all the same', () => {
+            expect(warning).toHaveBeenCalledExactlyOnceWith(
+              'strategy',
+              `Trailing stop of BUY ${BUY_ID} not armed: the BUY errored, no fill reported (${OUTCOME_UNKNOWN}). If it executed all the same, as an order whose outcome is unknown may have, what it bought has no stop`,
+            );
+          });
+        });
+
+        it('says nothing of a stop when an errored order asked for none', () => {
+          fail(OTHER_ID, 'Ticker unavailable (0.6 of 1 already filled)', 0.6);
+          expect(warning).not.toHaveBeenCalled();
+        });
+
+        // Kept as it was: a BUY canceled drops the stop it asked for, even after a partial fill
+        it('drops its stop when it is canceled after a partial fill', () => {
+          manager.onOrderCanceled({
+            order: {
+              id: BUY_ID,
+              symbol,
+              side: 'BUY',
+              type: 'STICKY',
+              amount: 1,
+              filled: 0.6,
+              remaining: 0.4,
+              orderCreationDate,
+              orderCancelationDate: 61000,
+            },
+            exchange,
+          });
+          expect([manager['pendingTrailingStops'].size, manager['trailingStopManager'].getOrders().size]).toEqual([0, 0]);
         });
       });
     });

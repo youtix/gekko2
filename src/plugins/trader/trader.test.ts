@@ -789,9 +789,10 @@ describe('Trader', () => {
         expect(logger.warning).toHaveBeenCalledWith('trader', `[${advice.id}] Impossible to create the BUY STICKY order: ${reason}`);
       });
 
-      it('emits a deferred ORDER_ERRORED_EVENT with the reason, the portfolio and the price known', () => {
+      // Never placed, it filled nothing
+      it('emits a deferred ORDER_ERRORED_EVENT with the reason, nothing filled, the portfolio and the price known', () => {
         expect(trader['addDeferredEmit']).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, {
-          order: { ...advice, amount: 0, reason, orderErrorDate: 1_700_000_000_000 },
+          order: { ...advice, amount: 0, reason, orderErrorDate: 1_700_000_000_000, filled: 0 },
           exchange: { price: marketPrice ?? 0, portfolio: trader['portfolio'] },
         });
       });
@@ -1509,6 +1510,47 @@ describe('Trader', () => {
       order.createSummary.mockRejectedValue(new Error('fetchMyTrades failed'));
       await order.emitAndSettle(ORDER_INVALID_EVENT, { ...rejection, filled: true });
       expect(getCompletedEvent()?.order.amount).toBe(2);
+    });
+
+    it.each`
+      flow
+      ${'creation'}
+      ${'cancelation'}
+    `('relays the refusal of an order of the $flow flow that filled nothing with nothing filled', async ({ flow }) => {
+      await refuse(flow, 0);
+      expect(getErroredEvent()?.order.filled).toBe(0);
+    });
+  });
+
+  // An error may follow fills: a STICKY order whose relaunch failed reported them in its reason only, in words, and the strategy, told
+  // nothing else, dropped the trailing stop of the coins a BUY had bought (see StrategyManager.onOrderErrored)
+  describe('the error of an order', () => {
+    const advice = buildAdvice({ type: 'STICKY', amount: 5 });
+
+    beforeEach(() => {
+      trader['prices'].set('BTC/USDT', 100);
+      vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+    });
+
+    it.each`
+      flow             | filled
+      ${'creation'}    | ${0}
+      ${'creation'}    | ${2}
+      ${'cancelation'} | ${0}
+      ${'cancelation'} | ${2}
+    `('relays the error of an order of the $flow flow with what it had filled, $filled', async ({ flow, filled }) => {
+      const order = await prepareOrder(flow, advice);
+      order.getFilledAmount.mockReturnValue(filled);
+      await order.emitAndSettle(ORDER_ERRORED_EVENT, 'ticker unavailable');
+      expect(getErroredEvent()?.order.filled).toBe(filled);
+    });
+
+    // Not a completion: the order may still be live on the exchange, its poll or its cancelation having failed for good
+    it('relays it as an error after a fill', async () => {
+      const order = await prepareOrder('creation', advice);
+      order.getFilledAmount.mockReturnValue(2);
+      await order.emitAndSettle(ORDER_ERRORED_EVENT, 'Invalid API key (2 of 5 already filled)');
+      expect(getRelayedEvents()).toEqual([ORDER_ERRORED_EVENT]);
     });
   });
 

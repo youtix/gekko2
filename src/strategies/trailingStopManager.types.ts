@@ -6,13 +6,22 @@ export type TrailingStopState = {
   id: UUID;
   symbol: TradingPair;
   /**
-   * The amount the BUY filled, as its ORDER_COMPLETED_EVENT reports it, an all-in BUY included: the MARKET SELL the stop sends when
-   * triggered sells that amount, not the whole balance.
+   * What the MARKET SELL the stop sends when triggered sells, not the whole balance: the amount its BUY filled, as its
+   * ORDER_COMPLETED_EVENT reports it (an all-in BUY included), or as the ORDER_ERRORED_EVENT of a BUY that errored after a fill
+   * does. A SELL of the stop that ended without completing after it sold part of it leaves the rest (see status).
    */
   amount: number;
   /** The BUY's `trailing`, copied as the stop is armed: a later change to the strategy's object, or to a state's, moves nothing */
   config: TrailingConfig;
-  status: 'dormant' | 'active';
+  /**
+   * - dormant: armed with a trigger the price has not reached yet.
+   * - active: trailing the price, from its arming without trigger, from the candle that reached its trigger, or again once its SELL
+   *   ended without completing.
+   * - selling: triggered, its MARKET SELL (sellOrderId) sent and not ended yet. It trails no more, and is kept until that SELL ends:
+   *   completed, the stop is over; errored or canceled, it is active again, from the peak and the stop price it triggered at, for
+   *   what that SELL left unsold.
+   */
+  status: 'dormant' | 'active' | 'selling';
   /**
    * The highest price the stop has met while active, 0 until it meets one. The order of a candle's low and high is unknown, so the
    * stop meets a candle's prices as open, low, high, close, testing each against stopPrice before it raises the peak: it triggers on a
@@ -27,4 +36,6 @@ export type TrailingStopState = {
   stopPrice: number;
   activationPrice?: number;
   createdAt: number;
+  /** The MARKET SELL the stop sent when it triggered, while it is selling */
+  sellOrderId?: UUID;
 };

@@ -41,15 +41,21 @@ export type Tools<T> = {
    * there, every stop armed on the pair is canceled, whatever the amount sold, with a line at info level. So a strategy that scales
    * out loses its stops at its first SELL. The SELL a stop sends cancels no other stop, and a stop whose BUY has not completed yet is
    * kept: it protects the position that BUY opens.
+   *
+   * A BUY that errors after filling part of its amount (`order.filled` in onOrderErrored) gets its stop for that part, with a
+   * warning. One that errors with no fill reported loses it, with a warning too: an order whose outcome is unknown may have executed
+   * all the same. A BUY canceled loses its stop, even after a partial fill.
    */
   createOrder: (order: StrategyOrder) => UUID;
   cancelOrder: (orderId: UUID) => void;
   /**
-   * Cancels the trailing stop of the BUY `orderId` (TrailingStopState.id), before or after the BUY completes. A strategy that exits
-   * need not call it: its SELL cancels the stops of the pair once it completes (see createOrder). Until then they protect the
-   * position, and one may trigger while that SELL is pending: its own SELL is then refused if nothing is left to sell, an error
-   * counting towards the circuit breaker. Canceling the stops before sending the SELL rules that out, but leaves the position
-   * unprotected if that SELL fails.
+   * Cancels the trailing stop of the BUY `orderId` (TrailingStopState.id), before or after the BUY completes, and while the stop
+   * sells: the SELL it sent is then the strategy's alone, and its failure no longer brings the stop back (see
+   * Strategy.onTrailingStopTriggered). A strategy that exits need not call it: its SELL cancels the stops of the pair once it
+   * completes (see createOrder). Until then they protect the position, and one may trigger while that SELL is pending: its own SELL
+   * is then refused if nothing is left to sell, and the stop, active again, sends it again on each minute at or below its stop price
+   * until the strategy's SELL ends, each refusal counting towards the circuit breaker. Canceling the stops before sending the SELL
+   * rules that out, but leaves the position unprotected if that SELL fails.
    */
   cancelTrailingOrder: (orderId: UUID) => void;
 };
@@ -86,7 +92,11 @@ export interface Strategy<T> {
   onOrderCompleted?(params: OnOrderCompletedEventParams<T>, ...indicators: IndicatorResults[]): void;
   /** On each order canceled, by the strategy (tools.cancelOrder) or by the exchange (expired, canceled from its interface) */
   onOrderCanceled?(params: OnOrderCanceledEventParams<T>, ...indicators: IndicatorResults[]): void;
-  /** On each order errored, or rejected by the exchange */
+  /**
+   * On each order errored, or rejected by the exchange. It may have executed part of its amount first: `order.filled` is what the
+   * exchange reported it filled, 0 when it reported nothing, which does not prove that nothing executed (an order whose outcome is
+   * unknown says so in its reason).
+   */
   onOrderErrored?(params: OnOrderErroredEventParams<T>, ...indicators: IndicatorResults[]): void;
   /**
    * On each trailing stop activated: when the high of a one-minute candle reaches its trigger, or, for a stop without one, as soon
@@ -102,10 +112,17 @@ export interface Strategy<T> {
    * On each trailing stop triggered: when a price of a one-minute candle, met as open, low, high, close, reaches the stop price (see
    * TrailingStopState.highestPeak). The state holds the peak and the stop price of that moment.
    *
-   * `orderId` is the MARKET SELL the StrategyManager has just created for the stop, of the amount its BUY filled (state.amount). From
+   * `orderId` is the MARKET SELL the StrategyManager has just created for the stop, of the amount the stop protects (state.amount). From
    * now on it is an order of the strategy's own: its outcome comes through onOrderCompleted, onOrderCanceled or onOrderErrored, under
    * that id, and a strategy that tracks its position adopts it as its pending SELL (see PositionTracker.adoptSell). Not adopted, it
    * leaves the strategy long once the stop has sold everything, and the SELL the strategy advises next is refused: nothing is left.
+   *
+   * The stop sells until that SELL ends (state.status 'selling', state.sellOrderId): completed, the stop is over. Errored or canceled,
+   * the stop is active again, with a warning and without onTrailingStopActivated, for what that SELL did not sell, from the peak and
+   * the stop price it triggered at: the next price at or below that stop price triggers it again, and this hook announces its new
+   * SELL, under a new id. A SELL refused every time (nothing left to sell, an amount out of the limits of the market) is so sent again
+   * on each such minute, each refusal counting towards the circuit breaker, which stops the bot. A strategy that takes over, with a
+   * SELL of its own once that one failed, cancels the stop first (tools.cancelTrailingOrder(state.id)).
    *
    * `tools` is the object every other hook gets, passed last so that a hook written without it still fits.
    */

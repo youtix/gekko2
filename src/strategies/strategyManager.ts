@@ -12,7 +12,7 @@ import * as indicators from '@indicators/index';
 import { Indicator } from '@indicators/indicator';
 import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
 import { AdviceOrder, StrategyOrder, TrailingConfig } from '@models/advice.types';
-import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
+import { CandleBucket, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent, OrderInitiatedEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { StrategyInfo } from '@models/strategyInfo.types';
@@ -23,6 +23,7 @@ import { debug, error, info, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
+import { isFiniteNumber } from '@utils/math/math.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, isNil, omit } from 'lodash-es';
 import { randomUUID, UUID } from 'node:crypto';
@@ -164,28 +165,26 @@ export class StrategyManager extends EventEmitter {
     this.consecutiveErrors = 0;
     this.strategy?.onOrderCompleted?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
 
-    if (this.pendingTrailingStops.has(order.id)) {
-      this.trailingStopManager.addOrder({
-        id: order.id,
-        symbol: order.symbol,
-        amount: order.amount,
-        trailing: this.pendingTrailingStops.get(order.id),
-        createdAt: order.orderCreationDate,
-      });
-      this.pendingTrailingStops.delete(order.id);
-    }
+    this.armPendingTrailingStop(order, order.amount);
 
-    // A SELL the strategy created closed the position the stops of its pair protected. That of a stop sold what its own BUY filled: the
-    // other stops of the pair still protect theirs.
+    // The SELL of a stop sold what its own BUY filled: that stop is over, and the other stops of the pair still protect theirs. A SELL
+    // the strategy created closed the position the stops of its pair protected.
     const isTrailingStopSell = this.trailingStopSellIds.delete(order.id);
-    if (order.side === 'SELL' && !isTrailingStopSell) this.cancelTrailingStopsOfPair(order);
+    if (isTrailingStopSell) this.trailingStopManager.removeSellingStop(order.id);
+    else if (order.side === 'SELL') this.cancelTrailingStopsOfPair(order);
   }
 
   public onOrderCanceled({ order, exchange }: OrderCanceledEvent) {
     this.consecutiveErrors = 0;
     this.strategy?.onOrderCanceled?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
+    // A BUY canceled drops the stop it asked for, even after a partial fill
     this.cancelTrailingOrder(order.id);
-    this.trailingStopSellIds.delete(order.id);
+    if (this.trailingStopSellIds.delete(order.id)) {
+      // What it sold before it expired (a MARKET SELL fills what the book allows), or 0 when its cancelation was answered without the
+      // fill: the stop then sells its whole amount again, which the Trader caps to what is free
+      const sold = isFiniteNumber(order.filled) && order.filled > 0 ? order.filled : 0;
+      this.resumeTrailingStop(order.id, 'was canceled', sold);
+    }
   }
 
   public onOrderErrored({ order, exchange }: OrderErroredEvent) {
@@ -201,8 +200,10 @@ export class StrategyManager extends EventEmitter {
       const reason = hookError instanceof Error ? hookError.message : inspect(hookError);
       error('strategy', `The strategy's onOrderErrored failed on the error that trips the circuit breaker: ${reason}`);
     }
-    this.cancelTrailingOrder(order.id);
-    this.trailingStopSellIds.delete(order.id);
+    // What the order executed before its error, as far as the exchange reported it
+    const filled = isFiniteNumber(order.filled) && order.filled > 0 ? order.filled : 0;
+    if (this.trailingStopSellIds.delete(order.id)) this.resumeTrailingStop(order.id, 'errored', filled, order.reason);
+    else this.settleTrailingStopOfErroredBuy(order, filled);
     if (isConsecutiveErrorsReached) throw new ApplicationStopError(`Max consecutive order errors reached (${this.maxConsecutiveErrors})`);
   }
 
@@ -215,9 +216,11 @@ export class StrategyManager extends EventEmitter {
         'strategy',
         `Strategy ended before its warmup was over, so it never traded: ${this.age} timeframe candle(s) processed, ${this.warmupPeriod + 1} needed (warmup.candleCount: ${this.warmupPeriod}, then one to trade on)`,
       );
-    const pendingOrders = this.trailingStopManager.getOrders();
-    if (pendingOrders.size > 0)
-      warning('strategy', `Strategy ended with ${pendingOrders.size} active trailing stop(s) that never triggered.`);
+    const stops = [...this.trailingStopManager.getOrders().values()];
+    const sellingCount = stops.filter(({ status }) => status === 'selling').length;
+    const armedCount = stops.length - sellingCount;
+    if (armedCount > 0) warning('strategy', `Strategy ended with ${armedCount} active trailing stop(s) that never triggered.`);
+    if (sellingCount > 0) warning('strategy', `Strategy ended with ${sellingCount} triggered trailing stop(s) whose SELL had not ended.`);
     this.trailingStopManager.removeAllListeners();
     this.strategy?.end?.();
   }
@@ -235,7 +238,9 @@ export class StrategyManager extends EventEmitter {
   private onTrailingStopTriggered(state: TrailingStopState) {
     const orderId = this.createOrder({ symbol: state.symbol, side: 'SELL', type: 'MARKET', amount: state.amount });
     this.trailingStopSellIds.add(orderId);
-    this.strategy?.onTrailingStopTriggered?.(orderId, state, this.tools);
+    // The stop sells until that SELL ends (see onOrderCompleted and resumeTrailingStop): the hook gets it with the id of its SELL
+    const selling = this.trailingStopManager.setSellOrderId(state.id, orderId) ?? state;
+    this.strategy?.onTrailingStopTriggered?.(orderId, selling, this.tools);
   }
 
   /* -------------------------------------------------------------------------- */
@@ -366,14 +371,75 @@ export class StrategyManager extends EventEmitter {
     throw new GekkoError('strategy', `Impossible to create the ${side} ${type} order on ${symbol}: ${problem}`);
   }
 
+  /** Arms the stop the BUY `order` asked for, if any, for `amount`: what that BUY filled */
+  private armPendingTrailingStop({ id, symbol, orderCreationDate }: OrderInitiatedEvent['order'], amount: number) {
+    const trailing = this.pendingTrailingStops.get(id);
+    if (!trailing) return;
+    this.pendingTrailingStops.delete(id);
+    this.trailingStopManager.addOrder({ id, symbol, amount, trailing, createdAt: orderCreationDate });
+  }
+
+  /**
+   * Settles the stop an errored BUY asked for. Armed for what the BUY filled when the exchange reported a fill: a STICKY order whose
+   * relaunch failed, or an order whose poll or cancelation failed for good, errors after its fills, and the stop, dropped, left the
+   * coins bought without protection. Dropped otherwise, with a warning: an order whose outcome is unknown (its creation lost on the
+   * network) may have executed all the same, but nothing tells what to arm, and kept pending the stop would never be armed, no
+   * completion following an error (the Trader relays the first end of an order only).
+   */
+  private settleTrailingStopOfErroredBuy(order: OrderErroredEvent['order'], filled: number) {
+    const { id, symbol, amount, reason } = order;
+    if (!this.pendingTrailingStops.has(id)) return;
+    if (filled > 0) {
+      const [asset] = symbol.split('/');
+      warning(
+        'strategy',
+        `BUY ${id} errored after it filled ${filled} of ${amount} ${asset} (${reason}): its trailing stop is armed for that part`,
+      );
+      this.armPendingTrailingStop(order, filled);
+      return;
+    }
+    warning(
+      'strategy',
+      [
+        `Trailing stop of BUY ${id} not armed: the BUY errored, no fill reported (${reason}).`,
+        'If it executed all the same, as an order whose outcome is unknown may have, what it bought has no stop',
+      ].join(' '),
+    );
+    this.cancelTrailingOrder(id);
+  }
+
+  /**
+   * Makes the stop whose SELL ended without completing active again, for what that SELL left unsold (see
+   * TrailingStopManager.resumeSellingStop), with a warning. A SELL refused every time (nothing left to sell, an amount out of the
+   * limits of the market) is then sent again on each minute whose price reaches the stop price, each refusal counting towards the
+   * circuit breaker, which stops the bot: rather than run on with the position held without any stop. A stop removed while it sold
+   * (canceled by the strategy, or by a SELL the strategy created) stays removed: that SELL is the strategy's.
+   */
+  private resumeTrailingStop(sellId: UUID, outcome: string, sold: number, reason?: string) {
+    const stop = this.trailingStopManager.resumeSellingStop(sellId, sold);
+    if (!stop) return;
+    const [asset] = stop.symbol.split('/');
+    const sale = sold > 0 ? ` after selling ${sold} ${asset}` : ', no fill reported';
+    const ending = `${outcome}${sale}${reason ? ` (${reason})` : ''}`;
+    warning(
+      'strategy',
+      [
+        `Trailing stop of BUY ${stop.id} active again: its SELL ${sellId} ${ending}.`,
+        `It sells ${stop.amount} ${asset} once a price reaches its stop price, ${stop.stopPrice},`,
+        `trailing from its peak, ${stop.highestPeak}`,
+      ].join(' '),
+    );
+  }
+
   /**
    * Cancels the trailing stops armed on the pair of a SELL the strategy created, once it completed: that SELL closed the position they
    * protected. Left armed, a stop outlived its position: it later sold a position the strategy opened afterwards (the Trader capping its
    * SELL to what was free), or, the strategy being flat, sent a SELL that was refused, an error counting towards the circuit breaker.
    * Every stop of the pair, whatever the amount sold: every built-in strategy sells all it holds, and an all-in SELL sells less than
    * its BUY filled when the exchange took the fee of the BUY from the asset bought, so a comparison of amounts would keep the stop. A
-   * stop whose BUY has not completed is kept: that BUY opens a position after this SELL. A SELL canceled or errored cancels nothing:
-   * the position is still held, in part at least.
+   * stop selling is canceled too: its SELL, sent already, is the strategy's, and is not resumed if it fails. A stop whose BUY has not
+   * completed is kept: that BUY opens a position after this SELL. A SELL canceled or errored cancels nothing: the position is still
+   * held, in part at least.
    */
   private cancelTrailingStopsOfPair({ id: sellId, symbol }: OrderCompletedEvent['order']) {
     const stopIds = [...this.trailingStopManager.getOrders().values()].filter(stop => stop.symbol === symbol).map(({ id }) => id);
