@@ -1,5 +1,5 @@
 import { MinusDM } from '@indicators/directionalMovement/minusDM/minusDM.indicator';
-import { checkNumber } from '@indicators/indicator.utils';
+import { checkAtMost, checkNumber } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { Indicator } from '../../indicator';
 
@@ -14,13 +14,24 @@ export class PSAR extends Indicator<'PSAR'> {
   private isLong: boolean;
 
   /**
-   * @param acceleration - First acceleration factor, and its increase at each new extreme point: a number above 0. Default 0.02
-   * @param maxAcceleration - Largest acceleration factor: a number above 0. Default 0.2
+   * @param acceleration - First acceleration factor, and its increase at each new extreme point: a number above 0, at most
+   * maxAcceleration. Default 0.02
+   * @param maxAcceleration - Largest acceleration factor: a number at least acceleration; equal to it, the factor is fixed. Default 0.2
    */
   constructor({ acceleration = 0.02, maxAcceleration = 0.2 }: IndicatorRegistry['PSAR']['input'] = {}) {
     super();
     checkNumber('PSAR', 'acceleration', acceleration, { above: 0 });
     checkNumber('PSAR', 'maxAcceleration', maxAcceleration, { above: 0 });
+    // The factor used to restart above its maximum after every reversal. TA-Lib lowers the acceleration to the maximum, which fixes the
+    // factor; refused instead, since equal values ask for a fixed factor explicitly
+    checkAtMost(
+      'PSAR',
+      'acceleration',
+      acceleration,
+      'maxAcceleration',
+      maxAcceleration,
+      'the factor would restart above its maximum after every reversal',
+    );
     this.acceleration = acceleration;
     this.maxAcceleration = maxAcceleration;
     this.minusDM = new MinusDM({ period: 1 });

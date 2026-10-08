@@ -57,3 +57,8 @@ export const checkInputSource = (indicator: IndicatorName, src: unknown) => {
 export const checkBelow = (indicator: IndicatorName, lowKey: string, low: number, highKey: string, high: number, why: string) => {
   if (!(low < high)) refuse(indicator, `${lowKey} must be below ${highKey}, got ${lowKey} ${low} and ${highKey} ${high}`, why);
 };
+
+/** Two parameters in order, the first at most the second, so that they may be equal; `why` says what the reverse order would compute */
+export const checkAtMost = (indicator: IndicatorName, lowKey: string, low: number, highKey: string, high: number, why: string) => {
+  if (!(low <= high)) refuse(indicator, `${lowKey} must be at most ${highKey}, got ${lowKey} ${low} and ${highKey} ${high}`, why);
+};

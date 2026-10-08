@@ -1,3 +1,4 @@
+import { GekkoError } from '@errors/gekko.error';
 import { describe, expect, it } from 'vitest';
 import { PSAR } from './psar.indicator';
 
@@ -47,5 +48,36 @@ describe('PSAR', () => {
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     psar.onNewCandle(candle);
     expect(psar.getResult()).toBeCloseTo(expected, 13);
+  });
+
+  // An acceleration equal to its maximum keeps the factor fixed, as TA-Lib does with an acceleration above it. By hand with 0.25, which
+  // keeps every value exact: from the first low, each SAR closes a quarter of its gap to the extreme point, and the gap down reverses
+  // it to the highest high, 118, where the next SAR stays, as it may not go below the last two highs. A factor raised past its maximum
+  // at a new high or a new low would close more of the gap
+  const fixedFactor = new PSAR({ acceleration: 0.25, maxAcceleration: 0.25 });
+  it.each`
+    move                              | candle                     | expected
+    ${'the first candle'}             | ${{ high: 102, low: 100 }} | ${null}
+    ${'a move up, which starts long'} | ${{ high: 106, low: 104 }} | ${100}
+    ${'a new high'}                   | ${{ high: 110, low: 108 }} | ${101.5}
+    ${'a second new high'}            | ${{ high: 114, low: 112 }} | ${103.625}
+    ${'a third new high'}             | ${{ high: 118, low: 116 }} | ${106.21875}
+    ${'a gap down through the SAR'}   | ${{ high: 105, low: 100 }} | ${118}
+    ${'a new low'}                    | ${{ high: 98, low: 96 }}   | ${118}
+    ${'a second new low'}             | ${{ high: 94, low: 92 }}   | ${112.5}
+    ${'a third new low'}              | ${{ high: 90, low: 88 }}   | ${107.375}
+  `('should return $expected with a fixed factor of 0.25 for $move', ({ candle, expected }) => {
+    fixedFactor.onNewCandle(candle);
+    expect(fixedFactor.getResult()).toBe(expected);
+  });
+
+  // Such a pair used to restart the factor above its maximum after every reversal
+  it('should refuse an acceleration above maxAcceleration', () => {
+    expect(() => new PSAR({ acceleration: 0.3, maxAcceleration: 0.2 })).toThrow(
+      new GekkoError(
+        'strategy',
+        'Indicator PSAR: acceleration must be at most maxAcceleration, got acceleration 0.3 and maxAcceleration 0.2 (the factor would restart above its maximum after every reversal)',
+      ),
+    );
   });
 });

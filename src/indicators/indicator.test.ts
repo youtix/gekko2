@@ -191,6 +191,8 @@ describe('Indicator parameters', () => {
     ${'PSAR'}          | ${{ acceleration: 0 }}       | ${'acceleration must be a number, above 0, got 0'}
     ${'PSAR'}          | ${{ acceleration: '0.02' }}  | ${'acceleration must be a number, above 0, got "0.02"'}
     ${'PSAR'}          | ${{ maxAcceleration: -0.2 }} | ${'maxAcceleration must be a number, above 0, got -0.2'}
+    ${'PSAR'}          | ${{ acceleration: 0.3 }}     | ${'acceleration must be at most maxAcceleration, got acceleration 0.3 and maxAcceleration 0.2 (the factor would restart above its maximum after every reversal)'}
+    ${'PSAR'}          | ${{ maxAcceleration: 0.01 }} | ${'acceleration must be at most maxAcceleration, got acceleration 0.02 and maxAcceleration 0.01 (the factor would restart above its maximum after every reversal)'}
     ${'ROC'}           | ${{}}                        | ${'period must be a whole number, at least 1, got undefined'}
     ${'ROC'}           | ${{ period: 0 }}             | ${'period must be a whole number, at least 1, got 0'}
     ${'Stochastic'}    | ${{ fastKPeriod: 2.5 }}      | ${'fastKPeriod must be a whole number, at least 1, got 2.5'}

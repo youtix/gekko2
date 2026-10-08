@@ -1,7 +1,7 @@
 import { GekkoError } from '@errors/gekko.error';
 import { describe, expect, it } from 'vitest';
 import { MOVING_AVERAGE_TYPES } from './indicator.const';
-import { checkBelow, checkInputSource, checkInteger, checkNumber, checkOneOf, getInputSource } from './indicator.utils';
+import { checkAtMost, checkBelow, checkInputSource, checkInteger, checkNumber, checkOneOf, getInputSource } from './indicator.utils';
 
 describe('getInputSource', () => {
   // Seven different prices, so that a source read from the wrong field cannot pass
@@ -161,6 +161,31 @@ describe('checkBelow', () => {
   `('should refuse short $short and long $long, saying why', ({ short, long }) => {
     expect(() => checkBelow('MACD', 'short', short, 'long', long, why)).toThrow(
       new GekkoError('strategy', `Indicator MACD: short must be below long, got short ${short} and long ${long} (${why})`),
+    );
+  });
+});
+
+describe('checkAtMost', () => {
+  const why = 'the factor would restart above its maximum after every reversal';
+
+  it.each`
+    relation      | acceleration | maxAcceleration
+    ${'below'}    | ${0.02}      | ${0.2}
+    ${'equal to'} | ${0.2}       | ${0.2}
+  `('should accept a first parameter $relation the second', ({ acceleration, maxAcceleration }) => {
+    expect(() => checkAtMost('PSAR', 'acceleration', acceleration, 'maxAcceleration', maxAcceleration, why)).not.toThrow();
+  });
+
+  it.each`
+    acceleration | maxAcceleration
+    ${0.3}       | ${0.2}
+    ${0.2000001} | ${0.2}
+  `('should refuse acceleration $acceleration above maxAcceleration $maxAcceleration, saying why', ({ acceleration, maxAcceleration }) => {
+    expect(() => checkAtMost('PSAR', 'acceleration', acceleration, 'maxAcceleration', maxAcceleration, why)).toThrow(
+      new GekkoError(
+        'strategy',
+        `Indicator PSAR: acceleration must be at most maxAcceleration, got acceleration ${acceleration} and maxAcceleration ${maxAcceleration} (${why})`,
+      ),
     );
   });
 });
