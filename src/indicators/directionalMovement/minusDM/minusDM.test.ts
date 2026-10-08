@@ -48,4 +48,21 @@ describe('MinusDM', () => {
     minusDM.onNewCandle(candle);
     expect(minusDM.getResult()).toBeCloseTo(expected, 13);
   });
+
+  // With period 1, −DM is each candle's own downward move, from the second candle on, as TA-Lib computes it. The first candle, which
+  // has no previous one to move from, used to give a made-up 0
+  const minusDM1 = new MinusDM({ period: 1 });
+  it.each`
+    move                       | candle                                 | expected
+    ${'the first candle'}      | ${{ high: 10, low: 8, close: 9 }}      | ${null}
+    ${'a move up by 1'}        | ${{ high: 11, low: 9, close: 10 }}     | ${0}
+    ${'a move down by 2'}      | ${{ high: 10.5, low: 7, close: 8 }}    | ${2}
+    ${'a move up by 1.5'}      | ${{ high: 12, low: 9, close: 11 }}     | ${0}
+    ${'an inside candle'}      | ${{ high: 11.5, low: 9.5, close: 10 }} | ${0}
+    ${'the same candle again'} | ${{ high: 11.5, low: 9.5, close: 10 }} | ${0}
+    ${'a move down by 1.5'}    | ${{ high: 11, low: 8, close: 9 }}      | ${1.5}
+  `('should return $expected with period 1 for $move', ({ candle, expected }) => {
+    minusDM1.onNewCandle(candle);
+    expect(minusDM1.getResult()).toBe(expected);
+  });
 });

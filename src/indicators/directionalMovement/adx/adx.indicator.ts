@@ -9,10 +9,11 @@ export class ADX extends Indicator<'ADX'> {
   private dx: DX;
   private smoothing: WilderSmoothing;
 
-  /** @param period - Period of the DX and of its smoothing: a whole number, at least 1. Required */
+  /** @param period - Period of the DX and of its smoothing: a whole number, at least 2. Required */
   constructor({ period }: IndicatorRegistry['ADX']['input']) {
     super();
-    checkInteger('ADX', 'period', period);
+    // ADX(1) is DX(1), which jumped between 100 and 0 (see DX)
+    checkInteger('ADX', 'period', period, 2, 'the ADX of a single candle is 100, or 0/0 when it has no directional movement');
     this.dx = new DX({ period });
     this.smoothing = new WilderSmoothing({ period });
   }

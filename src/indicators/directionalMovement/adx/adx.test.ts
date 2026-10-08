@@ -58,9 +58,26 @@ describe('ADX', () => {
     expect(adx.getResult()).toBeCloseTo(expected, 13);
   });
 
+  // The period-2 DX of dx.test.ts, 60, then 300 / 11 from the move up by 1.5 through the same candle again, then 4500 / 59, smoothed
+  // over 2 from the mean of its first two values. On the candles without directional movement ADX heads for the DX they keep, where
+  // ADX(1), now refused, fell to 0
+  const adx2 = new ADX({ period: 2 });
+  it.each`
+    move                       | candle                                 | expected
+    ${'the first candle'}      | ${{ high: 10, low: 8, close: 9 }}      | ${null}
+    ${'a move up by 1'}        | ${{ high: 11, low: 9, close: 10 }}     | ${null}
+    ${'a move down by 2'}      | ${{ high: 10.5, low: 7, close: 8 }}    | ${null}
+    ${'a move up by 1.5'}      | ${{ high: 12, low: 9, close: 11 }}     | ${(60 + 300 / 11) / 2}
+    ${'an inside candle'}      | ${{ high: 11.5, low: 9.5, close: 10 }} | ${(480 / 11 + 300 / 11) / 2}
+    ${'the same candle again'} | ${{ high: 11.5, low: 9.5, close: 10 }} | ${(390 / 11 + 300 / 11) / 2}
+    ${'a move down by 1.5'}    | ${{ high: 11, low: 8, close: 9 }}      | ${(345 / 11 + 4500 / 59) / 2}
+  `('should return $expected with period 2 for $move', ({ candle, expected }) => {
+    adx2.onNewCandle(candle);
+    expect(adx2.getResult()).toEqual(expected === null ? null : expect.closeTo(expected, 12));
+  });
+
   it.each`
     period
-    ${1}
     ${2}
     ${9}
     ${14}

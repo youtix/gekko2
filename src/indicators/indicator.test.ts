@@ -40,17 +40,26 @@ const series = (indicator: Indicator) =>
 // What the refusals list as accepted for src and for a moving-average kind
 const SOURCES = '"open", "high", "low", "close", "hl2", "hlc3", "ohlc4"';
 const MA_TYPES = '"sma", "ema", "dema", "wma"';
+// Why DX, ADX and the ADX ribbon refuse period 1
+const SINGLE_CANDLE_DX = 'the DX of a single candle is 100, or 0/0 when it has no directional movement';
+const SINGLE_CANDLE_ADX = 'the ADX of a single candle is 100, or 0/0 when it has no directional movement';
 
 describe('Indicator', () => {
   it.each`
     name                 | parameters                                                                 | firstComplete
     ${'ADX'}             | ${{ period: 14 }}                                                          | ${28}
+    ${'ADX'}             | ${{ period: 2 }}                                                           | ${4}
     ${'ADXRibbon'}       | ${{}}                                                                      | ${132}
     ${'DX'}              | ${{ period: 14 }}                                                          | ${15}
+    ${'DX'}              | ${{ period: 2 }}                                                           | ${3}
     ${'MinusDI'}         | ${{ period: 14 }}                                                          | ${15}
+    ${'MinusDI'}         | ${{ period: 1 }}                                                           | ${2}
     ${'MinusDM'}         | ${{ period: 14 }}                                                          | ${14}
+    ${'MinusDM'}         | ${{ period: 1 }}                                                           | ${2}
     ${'PlusDI'}          | ${{ period: 14 }}                                                          | ${15}
+    ${'PlusDI'}          | ${{ period: 1 }}                                                           | ${2}
     ${'PlusDM'}          | ${{ period: 14 }}                                                          | ${14}
+    ${'PlusDM'}          | ${{ period: 1 }}                                                           | ${2}
     ${'MACD'}            | ${{}}                                                                      | ${34}
     ${'PSAR'}            | ${{}}                                                                      | ${2}
     ${'ROC'}             | ${{ period: 10 }}                                                          | ${11}
@@ -200,12 +209,15 @@ describe('Indicator parameters', () => {
 
   it.each`
     name           | parameters          | refusal
-    ${'ADX'}       | ${{}}               | ${'period must be a whole number, at least 1, got undefined'}
-    ${'ADX'}       | ${{ period: 0 }}    | ${'period must be a whole number, at least 1, got 0'}
+    ${'ADX'}       | ${{}}               | ${`period must be a whole number, at least 2, got undefined (${SINGLE_CANDLE_ADX})`}
+    ${'ADX'}       | ${{ period: 0 }}    | ${`period must be a whole number, at least 2, got 0 (${SINGLE_CANDLE_ADX})`}
+    ${'ADX'}       | ${{ period: 1 }}    | ${`period must be a whole number, at least 2, got 1 (${SINGLE_CANDLE_ADX})`}
     ${'ADXRibbon'} | ${{ count: 0 }}     | ${'count must be a whole number, at least 1, got 0'}
-    ${'ADXRibbon'} | ${{ start: 0 }}     | ${'start must be a whole number, at least 1, got 0'}
+    ${'ADXRibbon'} | ${{ start: 0 }}     | ${`start must be a whole number, at least 2, got 0 (${SINGLE_CANDLE_ADX})`}
+    ${'ADXRibbon'} | ${{ start: 1 }}     | ${`start must be a whole number, at least 2, got 1 (${SINGLE_CANDLE_ADX})`}
     ${'ADXRibbon'} | ${{ step: 1.5 }}    | ${'step must be a whole number, at least 1, got 1.5'}
-    ${'DX'}        | ${{ period: 2.5 }}  | ${'period must be a whole number, at least 1, got 2.5'}
+    ${'DX'}        | ${{ period: 2.5 }}  | ${`period must be a whole number, at least 2, got 2.5 (${SINGLE_CANDLE_DX})`}
+    ${'DX'}        | ${{ period: 1 }}    | ${`period must be a whole number, at least 2, got 1 (${SINGLE_CANDLE_DX})`}
     ${'MinusDI'}   | ${{ period: null }} | ${'period must be a whole number, at least 1, got null'}
     ${'PlusDI'}    | ${{}}               | ${'period must be a whole number, at least 1, got undefined'}
     ${'MinusDM'}   | ${{ period: -14 }}  | ${'period must be a whole number, at least 1, got -14'}
@@ -263,9 +275,9 @@ describe('Indicator parameters', () => {
     ${'StochasticRSI'}   | ${{ period: 1, fastKPeriod: 2, fastDPeriod: 1 }}
     ${'TRIX'}            | ${{ period: 1 }}
     ${'WilliamsR'}       | ${{ period: 1 }}
-    ${'ADX'}             | ${{ period: 1 }}
-    ${'ADXRibbon'}       | ${{ count: 1, start: 1, step: 1 }}
-    ${'DX'}              | ${{ period: 1 }}
+    ${'ADX'}             | ${{ period: 2 }}
+    ${'ADXRibbon'}       | ${{ count: 1, start: 2, step: 1 }}
+    ${'DX'}              | ${{ period: 2 }}
     ${'MinusDI'}         | ${{ period: 1 }}
     ${'PlusDI'}          | ${{ period: 1 }}
     ${'MinusDM'}         | ${{ period: 1 }}

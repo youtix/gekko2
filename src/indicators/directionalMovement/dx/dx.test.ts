@@ -48,4 +48,22 @@ describe('DX', () => {
     dx.onNewCandle(candle);
     expect(dx.getResult()).toBeCloseTo(expected, 13);
   });
+
+  // By hand with period 2: from the second candle +DM is 1, 0.5, 1.75, 0.875, 0.4375, 0.21875 and −DM 0, 2, 1, 0.5, 0.25, 1.625, and the
+  // true range cancels out of DX = 100 × |+DM − −DM| / (+DM + −DM). A candle without directional movement halves both DMs, which keeps
+  // DX as it was. Period 1, now refused, dropped both DMs to 0 there, and DX to 0 with them
+  const dx2 = new DX({ period: 2 });
+  it.each`
+    move                       | candle                                 | expected
+    ${'the first candle'}      | ${{ high: 10, low: 8, close: 9 }}      | ${null}
+    ${'a move up by 1'}        | ${{ high: 11, low: 9, close: 10 }}     | ${null}
+    ${'a move down by 2'}      | ${{ high: 10.5, low: 7, close: 8 }}    | ${60}
+    ${'a move up by 1.5'}      | ${{ high: 12, low: 9, close: 11 }}     | ${300 / 11}
+    ${'an inside candle'}      | ${{ high: 11.5, low: 9.5, close: 10 }} | ${300 / 11}
+    ${'the same candle again'} | ${{ high: 11.5, low: 9.5, close: 10 }} | ${300 / 11}
+    ${'a move down by 1.5'}    | ${{ high: 11, low: 8, close: 9 }}      | ${4500 / 59}
+  `('should return $expected with period 2 for $move', ({ candle, expected }) => {
+    dx2.onNewCandle(candle);
+    expect(dx2.getResult()).toEqual(expected === null ? null : expect.closeTo(expected, 12));
+  });
 });
