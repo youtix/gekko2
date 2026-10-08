@@ -1,6 +1,7 @@
 import type { AdviceOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
 import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
+import { omit } from 'lodash-es';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMARibbon } from './emaRibbon.strategy';
@@ -135,6 +136,51 @@ describe('EMARibbon', () => {
 
       expect(tools.log).toHaveBeenNthCalledWith(1, 'debug', 'Ribbon results: [5 / 4 / 3]');
       expect(tools.log).toHaveBeenNthCalledWith(2, 'debug', 'Ribbon Spread: 0.42');
+    });
+  });
+
+  describe('schema', () => {
+    // The documentation's example, without the name that labels the run: the manager parses the block without it
+    const params = { src: 'close', count: 8, start: 10, step: 5, spreadCompressionThreshold: 500 };
+
+    it.each`
+      scenario                                                      | block                         | expected
+      ${'the documentation example'}                                | ${params}                     | ${params}
+      ${'a source of the indicator besides close and ohlc4 (hlc3)'} | ${{ ...params, src: 'hlc3' }} | ${{ ...params, src: 'hlc3' }}
+      ${'a block without src, on the close'}                        | ${omit(params, 'src')}        | ${params}
+    `('accepts $scenario', ({ block, expected }) => {
+      expect(EMARibbon.schema.parse(block)).toEqual(expected);
+    });
+
+    it('refuses a misspelt spreadCompressionThreshold (spreadCompresionThreshold)', () => {
+      const { spreadCompressionThreshold: spreadCompresionThreshold, ...ribbon } = params;
+      expect(EMARibbon.schema.safeParse({ ...ribbon, spreadCompresionThreshold }).error?.issues).toMatchObject([
+        { path: ['spreadCompressionThreshold'] },
+        { code: 'unrecognized_keys', keys: ['spreadCompresionThreshold'], path: [] },
+      ]);
+    });
+
+    it.each`
+      scenario                                            | block                                                  | path
+      ${'a quoted count'}                                 | ${{ ...params, count: '8' }}                           | ${['count']}
+      ${'a count of 1'}                                   | ${{ ...params, count: 1 }}                             | ${['count']}
+      ${'a fractional count'}                             | ${{ ...params, count: 7.5 }}                           | ${['count']}
+      ${'a fractional start'}                             | ${{ ...params, start: 10.5 }}                          | ${['start']}
+      ${'a start of 0'}                                   | ${{ ...params, start: 0 }}                             | ${['start']}
+      ${'a fractional step'}                              | ${{ ...params, step: 1.5 }}                            | ${['step']}
+      ${'a step of 0'}                                    | ${{ ...params, step: 0 }}                              | ${['step']}
+      ${'an unknown source'}                              | ${{ ...params, src: 'median' }}                        | ${['src']}
+      ${'a misspelt src (source), not left to the close'} | ${{ ...omit(params, 'src'), source: 'hl2' }}           | ${[]}
+      ${'a quoted threshold'}                             | ${{ ...params, spreadCompressionThreshold: '500' }}    | ${['spreadCompressionThreshold']}
+      ${'an infinite threshold'}                          | ${{ ...params, spreadCompressionThreshold: Infinity }} | ${['spreadCompressionThreshold']}
+    `('refuses $scenario', ({ block, path }) => {
+      expect(EMARibbon.schema.safeParse(block).error?.issues).toMatchObject([{ path }]);
+    });
+
+    it('says why it refuses a count of 1', () => {
+      expect(EMARibbon.schema.safeParse({ ...params, count: 1 }).error?.issues[0].message).toBe(
+        'count must be at least 2 (the spread of a single EMA is always 0)',
+      );
     });
   });
 });

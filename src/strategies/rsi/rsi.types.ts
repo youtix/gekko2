@@ -1,4 +1,5 @@
-import { InputSources } from '@models/inputSources.types';
+import { z } from 'zod';
+import { rsiStrategySchema } from './rsi.schema';
 
 export type RSICurrentTrend = {
   duration: number;
@@ -6,12 +7,4 @@ export type RSICurrentTrend = {
   adviced: boolean;
 };
 
-export interface RSIStrategyParams {
-  period: number;
-  src: InputSources;
-  thresholds: {
-    high: number;
-    low: number;
-    persistence: number;
-  };
-}
+export type RSIStrategyParams = z.infer<typeof rsiStrategySchema>;

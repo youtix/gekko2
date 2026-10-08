@@ -11,9 +11,12 @@ import {
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber } from 'lodash-es';
 import { UUID } from 'node:crypto';
+import { rsiStrategySchema } from './rsi.schema';
 import { RSICurrentTrend, RSIStrategyParams } from './rsi.types';
 
 export class RSI implements Strategy<RSIStrategyParams> {
+  static schema = rsiStrategySchema;
+
   private trend: RSICurrentTrend;
   private pair?: TradingPair;
   // A trend starts again when the RSI crosses the other threshold, even for fewer candles than the persistence, and every order is

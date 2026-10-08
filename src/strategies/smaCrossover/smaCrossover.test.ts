@@ -238,4 +238,36 @@ describe('SMACrossover Strategy', () => {
       expect(logs).toContainEqual(expect.objectContaining({ message: expect.stringContaining('SMA: 99.54321 | Price: 100.12345') }));
     });
   });
+
+  describe('schema', () => {
+    // The documentation's example, without the name that labels the run: the manager parses the block without it
+    const params = { period: 20, src: 'close' };
+
+    it.each`
+      scenario                               | block             | expected
+      ${'the documentation example'}         | ${params}         | ${params}
+      ${'a block without src, on the close'} | ${{ period: 20 }} | ${params}
+    `('accepts $scenario', ({ block, expected }) => {
+      expect(SMACrossover.schema.parse(block)).toEqual(expected);
+    });
+
+    it('refuses a misspelt period (periode)', () => {
+      expect(SMACrossover.schema.safeParse({ periode: 20, src: 'close' }).error?.issues).toMatchObject([
+        { path: ['period'] },
+        { code: 'unrecognized_keys', keys: ['periode'], path: [] },
+      ]);
+    });
+
+    it.each`
+      scenario                                            | block                            | path
+      ${'a quoted period'}                                | ${{ ...params, period: '20' }}   | ${['period']}
+      ${'a fractional period'}                            | ${{ ...params, period: 2.5 }}    | ${['period']}
+      ${'a period of 0'}                                  | ${{ ...params, period: 0 }}      | ${['period']}
+      ${'a NaN period'}                                   | ${{ ...params, period: NaN }}    | ${['period']}
+      ${'an unknown source'}                              | ${{ ...params, src: 'hl3' }}     | ${['src']}
+      ${'a misspelt src (source), not left to the close'} | ${{ period: 20, source: 'hl2' }} | ${[]}
+    `('refuses $scenario', ({ block, path }) => {
+      expect(SMACrossover.schema.safeParse(block).error?.issues).toMatchObject([{ path }]);
+    });
+  });
 });

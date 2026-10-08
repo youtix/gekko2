@@ -11,9 +11,12 @@ import {
 import { pluralize } from '@utils/string/string.utils';
 import { isNumber, isObject } from 'lodash-es';
 import { UUID } from 'node:crypto';
+import { macdStrategySchema } from './macd.schema';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
 
 export class MACD implements Strategy<MACDStrategyParams> {
+  static schema = macdStrategySchema;
+
   private trend?: MACDTrend;
   private pair?: TradingPair;
   // A trend starts again when the MACD crosses back, even for fewer candles than the persistence, and every order is all-in: the

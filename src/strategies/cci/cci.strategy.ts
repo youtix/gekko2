@@ -10,9 +10,12 @@ import {
 } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { UUID } from 'node:crypto';
+import { cciStrategySchema } from './cci.schema';
 import { CCIStrategyParams, CCITrend } from './cci.types';
 
 export class CCI implements Strategy<CCIStrategyParams> {
+  static schema = cciStrategySchema;
+
   private trend: CCITrend;
   private pair?: TradingPair;
   // A trend starts again each time the CCI comes back from between the thresholds, and every order is all-in: the strategy buys only

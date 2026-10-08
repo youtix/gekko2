@@ -7,9 +7,11 @@ import {
 } from '@strategies/strategy.types';
 import { isNil } from 'lodash-es';
 import { UUID } from 'node:crypto';
+import { debugAdviceStrategySchema } from './debugAdvice.schema';
 import { DebugAdviceParams } from './debugAdvice.types';
 /** This strategy is used for debugging purposes. It is used in e2e tests to verify the pipeline too, so be careful when modifying it. */
 export class DebugAdvice implements Strategy<DebugAdviceParams> {
+  static schema = debugAdviceStrategySchema;
   private index = 0;
   private activeOrders: Map<string, { orderId: UUID; cancelAt: number }> = new Map();
 

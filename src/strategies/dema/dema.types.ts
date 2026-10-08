@@ -1,4 +1,4 @@
-export interface DEMAStrategyParams {
-  period: number;
-  thresholds: { up: number; down: number };
-}
+import { z } from 'zod';
+import { demaStrategySchema } from './dema.schema';
+
+export type DEMAStrategyParams = z.infer<typeof demaStrategySchema>;

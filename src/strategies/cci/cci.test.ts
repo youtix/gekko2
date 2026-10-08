@@ -8,6 +8,7 @@ import {
   OnOrderCompletedEventParams,
   OnOrderErroredEventParams,
 } from '@strategies/strategy.types';
+import { omit } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CCI } from './cci.strategy';
@@ -234,6 +235,49 @@ describe('CCI Strategy', () => {
         level: 'debug',
         message: 'CCI: 150.12',
       });
+    });
+  });
+
+  describe('schema', () => {
+    // The documentation's example, without the name that labels the run: the manager parses the block without it
+    const params = { period: 20, thresholds: { up: 100, down: -100, persistence: 0 } };
+    const withThresholds = (thresholds: object) => ({ ...params, thresholds: { ...params.thresholds, ...thresholds } });
+
+    it('accepts the documentation example as it is', () => {
+      expect(CCI.schema.parse(params)).toEqual(params);
+    });
+
+    it.each`
+      scenario                                     | block                                                                 | missing                          | keys
+      ${'a misspelt persistence (persistance)'}    | ${{ ...params, thresholds: { up: 100, down: -100, persistance: 0 } }} | ${['thresholds', 'persistence']} | ${['persistance']}
+      ${'a misspelt thresholds block (threshold)'} | ${{ ...omit(params, 'thresholds'), threshold: params.thresholds }}    | ${['thresholds']}                | ${['threshold']}
+    `('refuses $scenario', ({ block, missing, keys }) => {
+      expect(CCI.schema.safeParse(block).error?.issues).toMatchObject([
+        { path: missing },
+        { code: 'unrecognized_keys', keys, path: missing.slice(0, -1) },
+      ]);
+    });
+
+    it.each`
+      scenario                                | block                                   | path
+      ${'a quoted period'}                    | ${{ ...params, period: '20' }}          | ${['period']}
+      ${'a fractional period'}                | ${{ ...params, period: 20.5 }}          | ${['period']}
+      ${'a period of 0'}                      | ${{ ...params, period: 0 }}             | ${['period']}
+      ${'a period of 1'}                      | ${{ ...params, period: 1 }}             | ${['period']}
+      ${'a missing period'}                   | ${omit(params, 'period')}               | ${['period']}
+      ${'a quoted threshold'}                 | ${withThresholds({ up: '100' })}        | ${['thresholds', 'up']}
+      ${'an infinite threshold'}              | ${withThresholds({ down: -Infinity })}  | ${['thresholds', 'down']}
+      ${'a negative persistence'}             | ${withThresholds({ persistence: -1 })}  | ${['thresholds', 'persistence']}
+      ${'a fractional persistence'}           | ${withThresholds({ persistence: 1.5 })} | ${['thresholds', 'persistence']}
+      ${'a src, which the CCI does not take'} | ${{ ...params, src: 'close' }}          | ${[]}
+    `('refuses $scenario', ({ block, path }) => {
+      expect(CCI.schema.safeParse(block).error?.issues).toMatchObject([{ path }]);
+    });
+
+    it('says why it refuses a period of 1', () => {
+      expect(CCI.schema.safeParse({ ...params, period: 1 }).error?.issues[0].message).toBe(
+        'period must be at least 2 (the CCI of a single candle is always 0)',
+      );
     });
   });
 });

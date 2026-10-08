@@ -1,11 +1,11 @@
 import { OnCandleEventParams, Strategy } from '@strategies/strategy.types';
+import { z } from 'zod';
+import { debugBacktestStrategySchema } from './debugBacktest.schema';
 
-interface DebugBacktestParams {
-  buyCandleIndex: number | number[];
-  sellCandleIndex: number | number[];
-}
+type DebugBacktestParams = z.infer<typeof debugBacktestStrategySchema>;
 
 export class DebugBacktestStrategy implements Strategy<DebugBacktestParams> {
+  static schema = debugBacktestStrategySchema;
   private currentIndex = 1;
 
   onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<DebugBacktestParams>, ..._indicators: unknown[]): void {

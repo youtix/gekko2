@@ -9,9 +9,12 @@ import {
   Strategy,
 } from '@strategies/strategy.types';
 import { UUID } from 'crypto';
+import { emaRibbonStrategySchema } from './emaRibbon.schema';
 import type { EMARibbonStrategyParams } from './emaRibbon.types';
 
 export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
+  static schema = emaRibbonStrategySchema;
+
   private isLong: boolean = false;
   private pair?: TradingPair;
   private buyOrderId?: UUID;

@@ -8,6 +8,7 @@ import {
   OnOrderCompletedEventParams,
   OnOrderErroredEventParams,
 } from '@strategies/strategy.types';
+import { omit } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MACD } from './macd.strategy';
@@ -203,6 +204,48 @@ describe('MACD Strategy', () => {
       expect(logs).toContainEqual({ level: 'debug', message: 'macd: 1.12345678' });
       expect(logs).toContainEqual({ level: 'debug', message: 'signal: 2.12345678' });
       expect(logs).toContainEqual({ level: 'debug', message: 'hist: 3.12345678' });
+    });
+  });
+
+  describe('schema', () => {
+    // The documentation's example, without the name that labels the run: the manager parses the block without it
+    const params = { short: 12, long: 26, signal: 9, macdSrc: 'hist', thresholds: { up: 0, down: 0, persistence: 1 } };
+    const withThresholds = (thresholds: object) => ({ ...params, thresholds: { ...params.thresholds, ...thresholds } });
+
+    it('accepts the documentation example as it is', () => {
+      expect(MACD.schema.parse(params)).toEqual(params);
+    });
+
+    it('refuses a misspelt persistence (persistance)', () => {
+      expect(MACD.schema.safeParse({ ...params, thresholds: { up: 0, down: 0, persistance: 1 } }).error?.issues).toMatchObject([
+        { path: ['thresholds', 'persistence'] },
+        { code: 'unrecognized_keys', keys: ['persistance'], path: ['thresholds'] },
+      ]);
+    });
+
+    // A period of 0 is refused once, without the comparison of the periods
+    it.each`
+      scenario                                 | block                                   | path
+      ${'an unknown macdSrc (histogram)'}      | ${{ ...params, macdSrc: 'histogram' }}  | ${['macdSrc']}
+      ${'a missing macdSrc'}                   | ${omit(params, 'macdSrc')}              | ${['macdSrc']}
+      ${'a quoted signal'}                     | ${{ ...params, signal: '9' }}           | ${['signal']}
+      ${'a fractional long'}                   | ${{ ...params, long: 26.5 }}            | ${['long']}
+      ${'a short of 0'}                        | ${{ ...params, short: 0 }}              | ${['short']}
+      ${'a long of 0'}                         | ${{ ...params, long: 0 }}               | ${['long']}
+      ${'a signal of 0'}                       | ${{ ...params, signal: 0 }}             | ${['signal']}
+      ${'swapped periods (short 26, long 12)'} | ${{ ...params, short: 26, long: 12 }}   | ${[]}
+      ${'equal periods'}                       | ${{ ...params, short: 26, long: 26 }}   | ${[]}
+      ${'an infinite threshold'}               | ${withThresholds({ up: Infinity })}     | ${['thresholds', 'up']}
+      ${'a fractional persistence'}            | ${withThresholds({ persistence: 0.5 })} | ${['thresholds', 'persistence']}
+      ${'a src, which the MACD does not take'} | ${{ ...params, src: 'close' }}          | ${[]}
+    `('refuses $scenario', ({ block, path }) => {
+      expect(MACD.schema.safeParse(block).error?.issues).toMatchObject([{ path }]);
+    });
+
+    it('says why it refuses swapped periods', () => {
+      expect(MACD.schema.safeParse({ ...params, short: 26, long: 12 }).error?.issues[0].message).toBe(
+        'short must be below long (swapped periods give the opposite MACD, equal ones a MACD of 0)',
+      );
     });
   });
 });

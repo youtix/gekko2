@@ -10,9 +10,12 @@ import {
 } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { UUID } from 'node:crypto';
+import { tmaStrategySchema } from './tma.schema';
 import { TMAStrategyParams } from './tma.types';
 
 export class TMA implements Strategy<TMAStrategyParams> {
+  static schema = tmaStrategySchema;
+
   private pair?: TradingPair;
   // An alignment holds for many candles in a row, and every order is all-in: the strategy buys once when flat and sells once when
   // long, never while its order is pending. Advised on every candle, each order after the first was sized from what the previous one

@@ -10,9 +10,12 @@ import {
 } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { UUID } from 'node:crypto';
+import { demaStrategySchema } from './dema.schema';
 import { DEMAStrategyParams } from './dema.types';
 
 export class DEMA implements Strategy<DEMAStrategyParams> {
+  static schema = demaStrategySchema;
+
   private currentTrend?: 'down' | 'up';
   // Whether the current trend has placed its order. It waits while the strategy holds the other position or an order is pending: a
   // BUY that fills during a downtrend is sold on the next candle of that downtrend.

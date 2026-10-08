@@ -10,6 +10,7 @@ import {
 } from '@strategies/strategy.types';
 import { isNumber } from 'lodash-es';
 import { UUID } from 'node:crypto';
+import { smaCrossoverStrategySchema } from './smaCrossover.schema';
 import { SMACrossoverStrategyParams } from './smaCrossover.types';
 
 /**
@@ -22,6 +23,8 @@ import { SMACrossoverStrategyParams } from './smaCrossover.types';
  * of the price vs the SMA to the current one.
  */
 export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
+  static schema = smaCrossoverStrategySchema;
+
   /** Tracks whether price was above SMA in the previous candle */
   private wasPriceAboveSMA: boolean | null = null;
   private pair?: TradingPair;

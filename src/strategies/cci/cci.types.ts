@@ -1,11 +1,7 @@
-export interface CCIStrategyParams {
-  period: number;
-  thresholds: {
-    up: number;
-    down: number;
-    persistence: number;
-  };
-}
+import { z } from 'zod';
+import { cciStrategySchema } from './cci.schema';
+
+export type CCIStrategyParams = z.infer<typeof cciStrategySchema>;
 
 export type CCIDirection = 'overbought' | 'oversold' | 'nodirection';
 

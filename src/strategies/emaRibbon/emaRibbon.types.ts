@@ -1,12 +1,4 @@
-export interface EMARibbonStrategyParams {
-  /** Source of the EMA ribbon */
-  src: 'close' | 'ohlc4';
-  /** Number of EMAs */
-  count: number;
-  /** Starting EMA period */
-  start: number;
-  /** Step between EMAs */
-  step: number;
-  /** Spread compression threshold */
-  spreadCompressionThreshold: number;
-}
+import { z } from 'zod';
+import { emaRibbonStrategySchema } from './emaRibbon.schema';
+
+export type EMARibbonStrategyParams = z.infer<typeof emaRibbonStrategySchema>;

@@ -1,9 +1,14 @@
 import { OnCandleEventParams, Strategy } from '@strategies/strategy.types';
+import { z } from 'zod';
+import { debugRealtimeStrategySchema } from './debugRealtime.schema';
 
-export class DebugRealtime implements Strategy<object> {
+type DebugRealtimeParams = z.infer<typeof debugRealtimeStrategySchema>;
+
+export class DebugRealtime implements Strategy<DebugRealtimeParams> {
+  static schema = debugRealtimeStrategySchema;
   private index = 0;
 
-  onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<object>, ..._indicators: unknown[]): void {
+  onTimeframeCandleAfterWarmup({ candle, tools }: OnCandleEventParams<DebugRealtimeParams>, ..._indicators: unknown[]): void {
     const { log, createOrder } = tools;
 
     for (const pair of candle.keys()) {

@@ -1,15 +1,10 @@
 import { OnCandleEventParams, OnOrderCompletedEventParams, Strategy } from '@strategies/strategy.types';
 import { UUID } from 'node:crypto';
+import { z } from 'zod';
 import { TrailingStopState } from '../trailingStopManager.types';
+import { debugTrailingStopStrategySchema } from './debugTrailingStop.schema';
 
-interface DebugTrailingStopParams {
-  /** Number of candles to wait before placing the first order */
-  wait: number;
-  /** Trailing stop trigger price */
-  trigger: number;
-  /** Trailing stop trailing percentage */
-  percentage: number;
-}
+type DebugTrailingStopParams = z.infer<typeof debugTrailingStopStrategySchema>;
 
 /**
  * Debug strategy used exclusively in e2e tests to verify the trailing stop lifecycle.
@@ -17,6 +12,7 @@ interface DebugTrailingStopParams {
  * so that tests can assert on logStore entries.
  */
 export class DebugTrailingStop implements Strategy<DebugTrailingStopParams> {
+  static schema = debugTrailingStopStrategySchema;
   private index = 0;
   private orderPlaced = false;
 
