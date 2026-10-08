@@ -119,7 +119,7 @@ describe('gridBot.utils Performance', () => {
   });
 
   describe('validateConfig', () => {
-    const params = { buyLevels: 5, sellLevels: 5, spacingType: 'fixed' as const, spacingValue: 5 };
+    const params = { buyLevels: 5, sellLevels: 5, spacingType: 'fixed' as const, spacingValue: 5, retryOnError: 3 };
 
     bench('1000 config validations', () => {
       for (let i = 0; i < 1000; i++) {

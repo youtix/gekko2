@@ -1,27 +1,13 @@
 import { OrderSide } from '@models/order.types';
 import { UUID } from 'node:crypto';
+import { z } from 'zod';
+import { gridBotStrategySchema } from './gridBot.schema';
+
+/** Strategy configuration parameters: the output of GridBot.schema, retryOnError defaulted */
+export type GridBotStrategyParams = z.infer<typeof gridBotStrategySchema>;
 
 /** Spacing type options for grid level distribution */
-export type GridSpacingType = 'percent' | 'fixed' | 'logarithmic';
-
-/** Strategy configuration parameters */
-export interface GridBotStrategyParams {
-  /** Number of buy levels below center price */
-  buyLevels: number;
-  /** Number of sell levels above center price */
-  sellLevels: number;
-  /** How levels are spaced apart */
-  spacingType: GridSpacingType;
-  /**
-   * Distance between levels:
-   * - percent: expressed in percent (1 === 1%)
-   * - fixed: price units
-   * - logarithmic: multiplier increment (0.01 === +1% per hop)
-   */
-  spacingValue: number;
-  /** Number of order creation/cancel retries before logging error */
-  retryOnError?: number;
-}
+export type GridSpacingType = GridBotStrategyParams['spacingType'];
 
 /** State of a single grid level */
 export interface LevelState {
@@ -43,7 +29,7 @@ export interface GridBounds {
   max: number;
 }
 
-/** Rebalance plan computed during init */
+/** Rebalance plan, computed when the grid starts, after the warmup (and again after a failed attempt) */
 export interface RebalancePlan {
   /** Side of rebalance order */
   side: OrderSide;

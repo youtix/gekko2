@@ -12,6 +12,7 @@ import {
 } from '@strategies/strategy.types';
 import type { UUID } from 'node:crypto';
 import { DEFAULT_RETRY_LIMIT } from './gridBot.const';
+import { gridBotStrategySchema } from './gridBot.schema';
 import type { GridBotStrategyParams, GridBounds, LevelState, RebalancePlan } from './gridBot.types';
 import {
   computeGridBounds,
@@ -30,6 +31,7 @@ import {
  * GridBot Strategy
  *
  * Places a grid of LIMIT orders around the current price.
+ * - The grid is placed on the first timeframe candle after the warmup, centred on its close
  * - Buy levels are placed below the center price
  * - Sell levels are placed above the center price
  * - Spacing between levels is configurable: fixed, percent, or logarithmic
@@ -39,6 +41,9 @@ import {
  * - When price exits the grid range, a warning is logged but trading continues
  */
 export class GridBot implements Strategy<GridBotStrategyParams> {
+  /** Parses the strategy block before the strategy is created: tools.strategyParams is its output */
+  static schema = gridBotStrategySchema;
+
   /** Base asset */
   private base: string = '';
   /** Quote asset */
@@ -57,6 +62,8 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private retryCount = new Map<number, number>();
   /** Reverse lookup: order ID to level index */
   private orderToLevel = new Map<UUID, number>();
+  /** Set by the first candle after the warmup, which starts the grid: it is started once, whatever the outcome */
+  private isGridStarted = false;
 
   // Rebalance state
   private awaitingRebalance = false;
@@ -68,30 +75,15 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private priceDecimals = 2;
   private priceStep?: number;
 
-  init({ candle, portfolio, tools }: InitParams<GridBotStrategyParams>): void {
+  /** Reads the pair and the parameters only: the grid is started by the first candle after the warmup */
+  init({ candle, tools }: InitParams<GridBotStrategyParams>): void {
     const [pair] = candle.keys();
     this.pair = pair;
     const [base, quote] = pair.split('/');
     this.base = base;
     this.quote = quote;
     this.reset();
-    this.retryLimit = Math.max(1, tools.strategyParams.retryOnError ?? DEFAULT_RETRY_LIMIT);
-
-    const { priceDecimals, priceStep } = inferPricePrecision(candle.get(this.pair)!.close, tools.marketData.get(this.pair)!);
-    this.priceDecimals = priceDecimals;
-    this.priceStep = priceStep;
-
-    const centerPrice = roundPrice(candle.get(this.pair)!.close, priceDecimals, priceStep);
-
-    // Validate configuration
-    const validationError = validateConfig(tools.strategyParams, centerPrice, tools.marketData.get(this.pair)!);
-    if (validationError) {
-      tools.log('error', `GridBot: ${validationError}`);
-      return;
-    }
-
-    // Always attempt rebalancing first
-    this.prepareGrid(centerPrice, portfolio, tools);
+    this.retryLimit = tools.strategyParams.retryOnError;
   }
 
   onEachTimeframeCandle({ candle, tools }: OnCandleEventParams<GridBotStrategyParams>): void {
@@ -101,6 +93,35 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     if (isOutOfRange(close, this.gridBounds)) {
       tools.log('warn', `GridBot: Price ${close} is out of grid range [${this.gridBounds.min}, ${this.gridBounds.max}]`);
     }
+  }
+
+  /**
+   * Starts the grid, once, around the close of the first candle after the warmup: a rebalance first if the portfolio needs one.
+   * Started from init, the grid was centred on the first candle of the warmup: in realtime a candle of the history replayed at
+   * start-up, a year old with 365 daily candles, and the Trader sent that grid live, so the levels the market had moved past
+   * executed at once; in a backtest it traded through the warmup.
+   */
+  onTimeframeCandleAfterWarmup({ candle, portfolio, tools }: OnCandleEventParams<GridBotStrategyParams>): void {
+    if (this.isGridStarted) return;
+    this.isGridStarted = true;
+
+    const close = candle.get(this.pair)!.close;
+    const marketData = tools.marketData.get(this.pair)!;
+    const { priceDecimals, priceStep } = inferPricePrecision(close, marketData);
+    this.priceDecimals = priceDecimals;
+    this.priceStep = priceStep;
+
+    const centerPrice = roundPrice(close, priceDecimals, priceStep);
+
+    // Validate configuration
+    const validationError = validateConfig(tools.strategyParams, centerPrice, marketData);
+    if (validationError) {
+      tools.log('error', `GridBot: ${validationError}`);
+      return;
+    }
+
+    // Always attempt rebalancing first
+    this.prepareGrid(centerPrice, portfolio, tools);
   }
 
   onOrderCompleted({ order, exchange, tools }: OnOrderCompletedEventParams<GridBotStrategyParams>): void {
@@ -195,6 +216,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
   /** Reset all internal state */
   private reset(): void {
+    this.isGridStarted = false;
     this.levels = [];
     this.gridBounds = undefined;
     this.quantity = 0;

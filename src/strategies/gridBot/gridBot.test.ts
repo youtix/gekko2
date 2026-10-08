@@ -15,6 +15,7 @@ const defaultParams: GridBotStrategyParams = {
   sellLevels: 2,
   spacingType: 'fixed',
   spacingValue: 5,
+  retryOnError: 3,
 };
 
 const marketDataMock: MarketData = {
@@ -78,6 +79,16 @@ describe('GridBot', () => {
     });
   };
 
+  /** A candle after the warmup: the first one starts the grid around its close */
+  const afterWarmup = (price: number, portfolio: Portfolio = balancedPortfolio) =>
+    strategy.onTimeframeCandleAfterWarmup({ candle: makeCandle(price), portfolio, tools });
+
+  /** A run without warmup: its first candle, which init receives, is also the first after the warmup */
+  const startStrategy = (price = 100, params: Partial<GridBotStrategyParams> = {}, portfolio: Portfolio = balancedPortfolio) => {
+    initStrategy(price, params, portfolio);
+    afterWarmup(price, portfolio);
+  };
+
   const findOrderId = (price: number, side: OrderSide): UUID | undefined =>
     issuedOrders.find(order => order.price === price && order.side === side)?.id;
 
@@ -88,9 +99,70 @@ describe('GridBot', () => {
     return undefined;
   };
 
-  describe('init', () => {
-    it('places correct number of orders for balanced portfolio', () => {
+  // GridBot placed its grid from init, on the first candle of the warmup: in realtime a candle of the history replayed at start-up,
+  // so the Trader sent live a grid centred on a stale close, a year old with 365 daily candles
+  describe('warmup', () => {
+    const balancedAt130: Portfolio = new Map<string, BalanceDetail>([
+      ['BTC', { free: 5, used: 0, total: 5 }],
+      ['USDT', { free: 650, used: 0, total: 650 }],
+    ]);
+
+    it.each`
+      portfolio              | description
+      ${balancedPortfolio}   | ${'a balanced portfolio, which gets its grid'}
+      ${unbalancedPortfolio} | ${'an unbalanced portfolio, which gets its rebalance'}
+    `('places no order from init, with $description', ({ portfolio }) => {
+      initStrategy(100, {}, portfolio);
+
+      expect(createOrder).not.toHaveBeenCalled();
+    });
+
+    it('places no order on a candle of the warmup', () => {
       initStrategy(100);
+      strategy.onEachTimeframeCandle({ candle: makeCandle(130), portfolio: balancedPortfolio, tools });
+
+      expect(createOrder).not.toHaveBeenCalled();
+    });
+
+    it('warns of no price out of range on a candle of the warmup, the grid not being placed yet', () => {
+      initStrategy(100);
+      strategy.onEachTimeframeCandle({ candle: makeCandle(150), portfolio: balancedPortfolio, tools });
+
+      expect(log).not.toHaveBeenCalledWith('warn', expect.stringContaining('out of grid range'));
+    });
+
+    it('places the grid around the close of the first candle after the warmup, not around the close init received', () => {
+      initStrategy(100, {}, balancedAt130);
+      afterWarmup(130, balancedAt130);
+
+      expect(issuedOrders.map(({ side, price }) => `${side} ${price}`)).toEqual(['BUY 120', 'BUY 125', 'SELL 135', 'SELL 140']);
+    });
+
+    it('plans the rebalance at the close of the first candle after the warmup', () => {
+      initStrategy(100, {}, unbalancedPortfolio);
+      afterWarmup(200, unbalancedPortfolio);
+
+      expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 2.5, symbol: 'BTC/USDT' }]]);
+    });
+
+    it('sizes on the portfolio of the first candle after the warmup, not on the one init received', () => {
+      initStrategy(100, {}, unbalancedPortfolio);
+      afterWarmup(100, balancedPortfolio);
+
+      expect(issuedOrders.map(({ side, type }) => `${side} ${type}`)).toEqual(['BUY LIMIT', 'BUY LIMIT', 'SELL LIMIT', 'SELL LIMIT']);
+    });
+
+    it('starts the grid once: a later candle after the warmup places no other order', () => {
+      startStrategy(100);
+      afterWarmup(130);
+
+      expect(createOrder).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  describe('grid placement', () => {
+    it('places correct number of orders for balanced portfolio', () => {
+      startStrategy(100);
 
       expect(createOrder).toHaveBeenCalledTimes(4);
     });
@@ -115,27 +187,27 @@ describe('GridBot', () => {
         ['USDT', { free: currencyValue, used: 0, total: currencyValue }],
       ]);
 
-      initStrategy(100, { buyLevels, sellLevels }, balancedForLevels);
+      startStrategy(100, { buyLevels, sellLevels }, balancedForLevels);
 
       expect(createOrder).toHaveBeenCalledTimes(expectedOrders);
     });
 
     it('places buy orders below center price', () => {
-      initStrategy(100);
+      startStrategy(100);
 
       const buyOrders = issuedOrders.filter(o => o.side === 'BUY');
       expect(buyOrders.every(o => o.price < 100)).toBe(true);
     });
 
     it('places sell orders above center price', () => {
-      initStrategy(100);
+      startStrategy(100);
 
       const sellOrders = issuedOrders.filter(o => o.side === 'SELL');
       expect(sellOrders.every(o => o.price > 100)).toBe(true);
     });
 
     it('uses LIMIT order type for grid orders', () => {
-      initStrategy(100);
+      startStrategy(100);
 
       expect(issuedOrders.every(o => o.type === 'LIMIT')).toBe(true);
     });
@@ -143,19 +215,19 @@ describe('GridBot', () => {
 
   describe('rebalancing', () => {
     it('places STICKY rebalance order for unbalanced portfolio', () => {
-      initStrategy(100, {}, unbalancedPortfolio);
+      startStrategy(100, {}, unbalancedPortfolio);
 
       expect(createOrder).toHaveBeenCalledTimes(1);
     });
 
     it('uses correct side for rebalance when asset value is low', () => {
-      initStrategy(100, {}, unbalancedPortfolio);
+      startStrategy(100, {}, unbalancedPortfolio);
 
       expect(issuedOrders[0].type).toBe('STICKY');
     });
 
     it('builds grid after rebalance completion', () => {
-      initStrategy(100, {}, unbalancedPortfolio);
+      startStrategy(100, {}, unbalancedPortfolio);
 
       const rebalanceId = issuedOrders[0].id;
       strategy.onOrderCompleted({
@@ -168,7 +240,7 @@ describe('GridBot', () => {
     });
 
     it('retries rebalance on error', () => {
-      initStrategy(100, {}, unbalancedPortfolio);
+      startStrategy(100, {}, unbalancedPortfolio);
 
       const rebalanceId = issuedOrders[0].id;
       strategy.onOrderErrored({
@@ -181,7 +253,7 @@ describe('GridBot', () => {
     });
 
     it('builds grid if rebalance no longer needed after error', () => {
-      initStrategy(100, {}, unbalancedPortfolio);
+      startStrategy(100, {}, unbalancedPortfolio);
 
       const rebalanceId = issuedOrders[0].id;
       // Simulate error but with a balanced portfolio (e.g. price moved or partial fill logic not tracked here, but state update)
@@ -199,7 +271,7 @@ describe('GridBot', () => {
     });
 
     it('builds grid after rebalance retry limit', () => {
-      initStrategy(100, { retryOnError: 1 }, unbalancedPortfolio);
+      startStrategy(100, { retryOnError: 1 }, unbalancedPortfolio);
 
       const rebalanceId = issuedOrders[0].id;
 
@@ -225,7 +297,7 @@ describe('GridBot', () => {
     });
 
     it('handles rebalance order cancellation', () => {
-      initStrategy(100, {}, unbalancedPortfolio);
+      startStrategy(100, {}, unbalancedPortfolio);
 
       const rebalanceId = issuedOrders[0].id;
       strategy.onOrderCanceled({
@@ -246,7 +318,7 @@ describe('GridBot', () => {
       // Total 1000 USDT -> wants to buy 500 USDT of BTC
       // But free is 10
 
-      initStrategy(100, {}, lockedCurrencyPortfolio);
+      startStrategy(100, {}, lockedCurrencyPortfolio);
 
       expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('Insufficient currency'));
       // Should fall back to building grid, but fails due to empty side
@@ -263,7 +335,7 @@ describe('GridBot', () => {
       // Total 10 BTC = 1000 USDT. Wants to sell 5 BTC.
       // Free is 0.1 BTC.
 
-      initStrategy(100, {}, lockedAssetPortfolio);
+      startStrategy(100, {}, lockedAssetPortfolio);
 
       expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('Insufficient asset'));
       // Should fall back to building grid, but fails due to empty side
@@ -280,7 +352,7 @@ describe('GridBot', () => {
         ['USDT', { free: 10, used: 0, total: 50 }],
       ]);
 
-      initStrategy(100, {}, lowCurrencyPortfolio);
+      startStrategy(100, {}, lowCurrencyPortfolio);
 
       expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('Insufficient currency'));
     });
@@ -290,18 +362,17 @@ describe('GridBot', () => {
     it.each`
       params                                                      | expectedError
       ${{}}                                                       | ${'Center price'}
-      ${{ spacingValue: 0 }}                                      | ${'Spacing value'}
       ${{ buyLevels: 25, spacingType: 'fixed', spacingValue: 5 }} | ${'non-positive buy prices'}
     `('logs error $expectedError for invalid params', ({ params, expectedError }) => {
       const price = expectedError === 'Center price' ? 0 : 100;
-      initStrategy(price, params);
+      startStrategy(price, params);
 
       expect(log).toHaveBeenCalledWith('error', expect.stringContaining(expectedError));
     });
 
     it('logs error if grid bounds computation fails', () => {
       const spy = vi.spyOn(GridBotUtils, 'computeGridBounds').mockReturnValue(null);
-      initStrategy(100);
+      startStrategy(100);
       expect(log).toHaveBeenCalledWith('error', expect.stringContaining('valid grid bounds'));
       spy.mockRestore();
     });
@@ -309,7 +380,7 @@ describe('GridBot', () => {
 
   describe('order completion', () => {
     it('arms adjacent opposite level after buy fill', () => {
-      initStrategy(100);
+      startStrategy(100);
       const initialOrderCount = createOrder.mock.calls.length;
 
       const buyId = findOrderId(95, 'BUY');
@@ -323,7 +394,7 @@ describe('GridBot', () => {
     });
 
     it('arms adjacent opposite level after sell fill', () => {
-      initStrategy(100);
+      startStrategy(100);
       const initialOrderCount = createOrder.mock.calls.length;
 
       const sellId = findOrderId(105, 'SELL');
@@ -337,7 +408,7 @@ describe('GridBot', () => {
     });
 
     it('logs warning when only one side remains', () => {
-      initStrategy(100, { buyLevels: 1, sellLevels: 1 });
+      startStrategy(100, { buyLevels: 1, sellLevels: 1 });
 
       const buyId = findOrderId(95, 'BUY');
       strategy.onOrderCompleted({
@@ -357,7 +428,7 @@ describe('GridBot', () => {
     });
 
     it('ignores unknown order IDs', () => {
-      initStrategy(100);
+      startStrategy(100);
 
       const initialCalls = createOrder.mock.calls.length;
       strategy.onOrderCompleted({
@@ -372,7 +443,7 @@ describe('GridBot', () => {
 
   describe('order errors', () => {
     it('retries order on error', () => {
-      initStrategy(100);
+      startStrategy(100);
 
       const buyId = findOrderId(95, 'BUY');
       strategy.onOrderErrored({
@@ -385,7 +456,7 @@ describe('GridBot', () => {
     });
 
     it('stops retrying after limit', () => {
-      initStrategy(100, { retryOnError: 1 });
+      startStrategy(100, { retryOnError: 1 });
 
       const buyId = findOrderId(95, 'BUY');
 
@@ -411,7 +482,7 @@ describe('GridBot', () => {
 
   describe('order cancellation', () => {
     it('replaces canceled grid order', () => {
-      initStrategy(100);
+      startStrategy(100);
 
       const buyId = findOrderId(95, 'BUY');
       strategy.onOrderCanceled({
@@ -426,7 +497,7 @@ describe('GridBot', () => {
 
   describe('out of range', () => {
     it('logs warning when price exits grid range', () => {
-      initStrategy(100);
+      startStrategy(100);
 
       strategy.onEachTimeframeCandle({
         candle: makeCandle(150),
@@ -438,7 +509,7 @@ describe('GridBot', () => {
     });
 
     it('does not log when price is in range', () => {
-      initStrategy(100);
+      startStrategy(100);
 
       strategy.onEachTimeframeCandle({
         candle: makeCandle(100),
@@ -457,7 +528,7 @@ describe('GridBot', () => {
       ${'percent'}     | ${5}         | ${95}            | ${105}
       ${'logarithmic'} | ${0.05}      | ${95.24}         | ${105}
     `('calculates correct prices for $spacingType spacing', ({ spacingType, spacingValue, expectedBuyPrice, expectedSellPrice }) => {
-      initStrategy(100, { spacingType, spacingValue, buyLevels: 1, sellLevels: 1 });
+      startStrategy(100, { spacingType, spacingValue, buyLevels: 1, sellLevels: 1 });
 
       const buyOrders = issuedOrders.filter(o => o.side === 'BUY');
       const sellOrders = issuedOrders.filter(o => o.side === 'SELL');
@@ -494,7 +565,7 @@ describe('GridBot', () => {
     });
 
     it('rebalances the documented portfolio, 1000 USDT and no BTC, with a STICKY BUY of half of it rounded down to 8 decimals', () => {
-      initStrategy(61234.56, { ...percentGrid, buyLevels: 5, sellLevels: 5 }, unbalancedPortfolio);
+      startStrategy(61234.56, { ...percentGrid, buyLevels: 5, sellLevels: 5 }, unbalancedPortfolio);
 
       expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 0.00816532, symbol: 'BTC/USDT' }]]);
     });
@@ -504,7 +575,7 @@ describe('GridBot', () => {
         ['BTC', { free: 0.05, used: 0, total: 0.05 }],
         ['USDT', { free: 3000, used: 0, total: 3000 }],
       ]);
-      initStrategy(61234.56, { ...percentGrid, buyLevels: 1, sellLevels: 1 }, portfolio);
+      startStrategy(61234.56, { ...percentGrid, buyLevels: 1, sellLevels: 1 }, portfolio);
 
       expect(createOrder.mock.calls).toEqual([
         [{ type: 'LIMIT', side: 'BUY', amount: 0.0494868, price: 60622.2144, symbol: 'BTC/USDT' }],

@@ -35,7 +35,8 @@ const createMockTools = (params: GridBotStrategyParams) => ({
 });
 
 describe('GridBot Strategy Performance', () => {
-  describe('init', () => {
+  // init, then the first candle after the warmup, which starts the grid
+  describe('init and the first candle after the warmup', () => {
     bench('initialize with 5 buy + 5 sell levels', () => {
       const strategy = new GridBot();
       const params: GridBotStrategyParams = {
@@ -43,14 +44,18 @@ describe('GridBot Strategy Performance', () => {
         sellLevels: 5,
         spacingType: 'fixed',
         spacingValue: 5,
+        retryOnError: 3,
       };
+
+      const tools = createMockTools(params);
 
       strategy.init({
         candle: makeCandle(100),
         portfolio: balancedPortfolio,
-        tools: createMockTools(params),
+        tools,
         addIndicator: () => {},
       } as any);
+      strategy.onTimeframeCandleAfterWarmup({ candle: makeCandle(100), portfolio: balancedPortfolio, tools } as any);
     });
 
     bench('initialize with 10 buy + 10 sell levels', () => {
@@ -60,14 +65,18 @@ describe('GridBot Strategy Performance', () => {
         sellLevels: 10,
         spacingType: 'fixed',
         spacingValue: 2,
+        retryOnError: 3,
       };
+
+      const tools = createMockTools(params);
 
       strategy.init({
         candle: makeCandle(100),
         portfolio: balancedPortfolio,
-        tools: createMockTools(params),
+        tools,
         addIndicator: () => {},
       } as any);
+      strategy.onTimeframeCandleAfterWarmup({ candle: makeCandle(100), portfolio: balancedPortfolio, tools } as any);
     });
 
     bench('initialize with logarithmic spacing', () => {
@@ -77,14 +86,18 @@ describe('GridBot Strategy Performance', () => {
         sellLevels: 5,
         spacingType: 'logarithmic',
         spacingValue: 0.02,
+        retryOnError: 3,
       };
+
+      const tools = createMockTools(params);
 
       strategy.init({
         candle: makeCandle(100),
         portfolio: balancedPortfolio,
-        tools: createMockTools(params),
+        tools,
         addIndicator: () => {},
       } as any);
+      strategy.onTimeframeCandleAfterWarmup({ candle: makeCandle(100), portfolio: balancedPortfolio, tools } as any);
     });
   });
 
@@ -96,6 +109,7 @@ describe('GridBot Strategy Performance', () => {
         sellLevels: 5,
         spacingType: 'fixed',
         spacingValue: 5,
+        retryOnError: 3,
       };
       const tools = createMockTools(params);
 
@@ -105,6 +119,7 @@ describe('GridBot Strategy Performance', () => {
         tools,
         addIndicator: () => {},
       } as any);
+      strategy.onTimeframeCandleAfterWarmup({ candle: makeCandle(100), portfolio: balancedPortfolio, tools } as any);
 
       for (let i = 0; i < 100; i++) {
         strategy.onEachTimeframeCandle({
@@ -122,6 +137,7 @@ describe('GridBot Strategy Performance', () => {
         sellLevels: 5,
         spacingType: 'fixed',
         spacingValue: 5,
+        retryOnError: 3,
       };
       const tools = createMockTools(params);
 
@@ -131,6 +147,7 @@ describe('GridBot Strategy Performance', () => {
         tools,
         addIndicator: () => {},
       } as any);
+      strategy.onTimeframeCandleAfterWarmup({ candle: makeCandle(100), portfolio: balancedPortfolio, tools } as any);
 
       for (let i = 0; i < 100; i++) {
         strategy.onEachTimeframeCandle({
@@ -150,6 +167,7 @@ describe('GridBot Strategy Performance', () => {
         sellLevels: 5,
         spacingType: 'fixed',
         spacingValue: 5,
+        retryOnError: 3,
       };
       const tools = createMockTools(params);
 
@@ -159,6 +177,7 @@ describe('GridBot Strategy Performance', () => {
         tools,
         addIndicator: () => {},
       } as any);
+      strategy.onTimeframeCandleAfterWarmup({ candle: makeCandle(100), portfolio: balancedPortfolio, tools } as any);
 
       for (let i = 0; i < 100; i++) {
         strategy.onOrderCompleted({

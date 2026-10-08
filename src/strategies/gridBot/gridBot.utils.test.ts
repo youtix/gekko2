@@ -1,5 +1,7 @@
 import { MarketData } from '@services/exchange/exchange.types';
+import { omit } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
+import { GridBot } from './gridBot.strategy';
 import { GridBotStrategyParams, GridBounds } from './gridBot.types';
 import {
   applyAmountLimits,
@@ -189,12 +191,54 @@ describe('gridBot.utils', () => {
     });
   });
 
+  // The strategy block as the StrategyManager parses it, without name, before the strategy is created
+  describe('schema', () => {
+    // The documentation's example, without name
+    const block = { buyLevels: 5, sellLevels: 5, spacingType: 'percent', spacingValue: 1, retryOnError: 3 };
+
+    it.each`
+      scenario                                    | params                         | expected
+      ${'the documentation example'}              | ${block}                       | ${block}
+      ${'a block without retryOnError, set to 3'} | ${omit(block, 'retryOnError')} | ${block}
+      ${'a grid of sell levels only'}             | ${{ ...block, buyLevels: 0 }}  | ${{ ...block, buyLevels: 0 }}
+      ${'a grid of buy levels only'}              | ${{ ...block, sellLevels: 0 }} | ${{ ...block, sellLevels: 0 }}
+    `('accepts $scenario', ({ params, expected }) => {
+      expect(GridBot.schema.parse(params)).toEqual(expected);
+    });
+
+    // Each was handed to the strategy as it was: buyLevel built a grid of SELLs only, 2.5 levels placed BUYs off the prices they
+    // were sized on, percentage was reported as non-positive buy prices, and the quoted '0.01' made a multiplier of 10.01
+    it.each`
+      scenario                                   | params
+      ${'an unknown key'}                        | ${{ ...block, levels: 5 }}
+      ${'a misspelt level count (buyLevel)'}     | ${{ ...omit(block, 'buyLevels'), buyLevel: 5 }}
+      ${'a missing level count'}                 | ${omit(block, 'sellLevels')}
+      ${'a fractional level count'}              | ${{ ...block, buyLevels: 2.5 }}
+      ${'a negative level count'}                | ${{ ...block, sellLevels: -1 }}
+      ${'a quoted level count'}                  | ${{ ...block, buyLevels: '5' }}
+      ${'both level counts 0'}                   | ${{ ...block, buyLevels: 0, sellLevels: 0 }}
+      ${'an unknown spacingType (percentage)'}   | ${{ ...block, spacingType: 'percentage' }}
+      ${'a missing spacingType'}                 | ${omit(block, 'spacingType')}
+      ${'a quoted spacingValue'}                 | ${{ ...block, spacingType: 'logarithmic', spacingValue: '0.01' }}
+      ${'a spacingValue of 0'}                   | ${{ ...block, spacingValue: 0 }}
+      ${'a negative spacingValue'}               | ${{ ...block, spacingValue: -1 }}
+      ${'a NaN spacingValue'}                    | ${{ ...block, spacingValue: NaN }}
+      ${'an infinite spacingValue'}              | ${{ ...block, spacingValue: Infinity }}
+      ${'a missing spacingValue'}                | ${omit(block, 'spacingValue')}
+      ${'a retryOnError of 0, once raised to 1'} | ${{ ...block, retryOnError: 0 }}
+      ${'a fractional retryOnError'}             | ${{ ...block, retryOnError: 1.5 }}
+    `('refuses $scenario', ({ params }) => {
+      expect(GridBot.schema.safeParse(params).success).toBe(false);
+    });
+  });
+
   describe('validateConfig', () => {
     const validParams: GridBotStrategyParams = {
       buyLevels: 2,
       sellLevels: 2,
       spacingType: 'fixed',
       spacingValue: 5,
+      retryOnError: 3,
     };
 
     it('returns null for valid config', () => {
@@ -205,21 +249,19 @@ describe('gridBot.utils', () => {
       expect(validateConfig(validParams, 0, {})).toBe('Center price must be positive');
     });
 
-    it('returns error for negative levels', () => {
-      expect(validateConfig({ ...validParams, buyLevels: -1 }, 100, {})).toBe('Level counts must be non-negative');
-    });
-
-    it('returns error for zero levels on both sides', () => {
-      expect(validateConfig({ ...validParams, buyLevels: 0, sellLevels: 0 }, 100, {})).toBe('At least one level is required');
-    });
-
-    it('returns error for non-positive spacing', () => {
-      expect(validateConfig({ ...validParams, spacingValue: 0 }, 100, {})).toBe('Spacing value must be positive');
-    });
-
-    it('returns error for negative buy prices', () => {
-      expect(validateConfig({ ...validParams, buyLevels: 25 }, 100, {})).toBe('Grid configuration would result in non-positive buy prices');
-    });
+    it.each`
+      buyLevels | spacingType      | spacingValue | expected
+      ${25}     | ${'fixed'}       | ${5}         | ${'the lowest of buyLevels 25, spaced by spacingValue 5 (fixed) below the center price 100, would be at -25'}
+      ${4}      | ${'percent'}     | ${25}        | ${'the lowest of buyLevels 4, spaced by spacingValue 25 (percent) below the center price 100, would be at 0'}
+      ${60}     | ${'logarithmic'} | ${0.1}       | ${'the lowest of buyLevels 60, spaced by spacingValue 0.1 (logarithmic) below the center price 100, would be at 0'}
+    `(
+      'returns error naming the parameters for non-positive buy prices ($spacingType spacing)',
+      ({ buyLevels, spacingType, spacingValue, expected }) => {
+        expect(validateConfig({ ...validParams, buyLevels, spacingType, spacingValue }, 100, {})).toBe(
+          `Grid configuration would result in non-positive buy prices: ${expected}`,
+        );
+      },
+    );
 
     it('returns error for price below exchange minimum', () => {
       expect(validateConfig({ ...validParams, buyLevels: 0 }, 0.5, { price: { min: 1 } })).toBe(

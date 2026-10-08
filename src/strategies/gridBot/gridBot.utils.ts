@@ -140,28 +140,22 @@ export const isOutOfRange = (currentPrice: number, bounds: GridBounds): boolean 
 };
 
 /**
- * Validate grid configuration against exchange limits.
+ * Validate grid configuration against the center price and the exchange limits. The parameters themselves were checked by the
+ * schema (gridBot.schema.ts) before the strategy was created.
  * Returns an error message if invalid, null if valid.
  */
 export const validateConfig = (params: GridBotStrategyParams, centerPrice: number, marketData: MarketData): string | null => {
   if (centerPrice <= 0) return 'Center price must be positive';
-  if (params.buyLevels < 0 || params.sellLevels < 0) return 'Level counts must be non-negative';
-  if (params.buyLevels === 0 && params.sellLevels === 0) return 'At least one level is required';
-  if (params.spacingValue <= 0) return 'Spacing value must be positive';
 
   const { priceDecimals, priceStep } = inferPricePrecision(centerPrice, marketData);
 
   // Check if lowest buy price would be positive
-  if (params.buyLevels > 0) {
-    const lowestBuyPrice = computeLevelPrice(
-      centerPrice,
-      -params.buyLevels,
-      priceDecimals,
-      params.spacingType,
-      params.spacingValue,
-      priceStep,
-    );
-    if (lowestBuyPrice <= 0) return 'Grid configuration would result in non-positive buy prices';
+  const { buyLevels, spacingType, spacingValue } = params;
+  if (buyLevels > 0) {
+    const lowestBuyPrice = computeLevelPrice(centerPrice, -buyLevels, priceDecimals, spacingType, spacingValue, priceStep);
+    if (lowestBuyPrice <= 0) {
+      return `Grid configuration would result in non-positive buy prices: the lowest of buyLevels ${buyLevels}, spaced by spacingValue ${spacingValue} (${spacingType}) below the center price ${centerPrice}, would be at ${lowestBuyPrice}`;
+    }
   }
 
   // Check against exchange price limits
