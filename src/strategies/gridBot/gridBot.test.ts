@@ -53,11 +53,13 @@ describe('GridBot', () => {
   let cancelOrder: ReturnType<typeof vi.fn>;
   let log: ReturnType<typeof vi.fn>;
   let issuedOrders: Array<{ id: UUID; price: number; side: OrderSide; type: string }>;
+  let settledIds: Set<UUID>;
   let tools: any;
 
   beforeEach(() => {
     strategy = new GridBot();
     issuedOrders = [];
+    settledIds = new Set();
     log = vi.fn();
     cancelOrder = vi.fn();
     createOrder = vi.fn(order => {
@@ -107,10 +109,21 @@ describe('GridBot', () => {
   const settle = (outcome: 'completed' | 'canceled' | 'errored', price: number, side: OrderSide) => {
     const order = { id: liveOrderId(price, side), symbol: 'BTC/USDT', side, type: 'LIMIT', price } as any;
     const exchange = { price, portfolio: balancedPortfolio };
+    settledIds.add(order.id);
     if (outcome === 'completed') strategy.onOrderCompleted({ order, exchange, tools });
     if (outcome === 'canceled') strategy.onOrderCanceled({ order, exchange, tools });
     if (outcome === 'errored') strategy.onOrderErrored({ order: { ...order, reason: 'Test error' }, exchange, tools });
   };
+
+  /** The orders sent and not settled, as `side price` from the lowest price: the book the exchange holds */
+  const openBook = () =>
+    issuedOrders
+      .filter(({ id }) => !settledIds.has(id))
+      .sort((a, b) => a.price - b.price || a.side.localeCompare(b.side))
+      .map(({ side, price }) => `${side} ${price}`);
+
+  /** The orders sent once `count` had been, as `type side price` */
+  const sentAfter = (count: number) => issuedOrders.slice(count).map(({ type, side, price }) => `${type} ${side} ${price}`);
 
   // GridBot placed its grid from init, on the first candle of the warmup: in realtime a candle of the history replayed at start-up,
   // so the Trader sent live a grid centred on a stale close, a year old with 365 daily candles
@@ -392,32 +405,18 @@ describe('GridBot', () => {
   });
 
   describe('order completion', () => {
-    it('arms adjacent opposite level after buy fill', () => {
+    // These two used to check only that no order had disappeared, which held whatever the fill did: it armed nothing, BUY 95 and
+    // SELL 105 being each other's neighbour across the center price
+    it.each`
+      side      | price  | expected
+      ${'BUY'}  | ${95}  | ${['LIMIT SELL 100']}
+      ${'SELL'} | ${105} | ${['LIMIT BUY 100']}
+    `('arms the opposite side one step away, at the center price, after a $side fill at $price', ({ side, price, expected }) => {
       startStrategy(100);
-      const initialOrderCount = createOrder.mock.calls.length;
+      const sentBefore = issuedOrders.length;
+      settle('completed', price, side);
 
-      const buyId = findOrderId(95, 'BUY');
-      strategy.onOrderCompleted({
-        order: { id: buyId as UUID, side: 'BUY' } as any,
-        exchange: { price: 95, portfolio: balancedPortfolio },
-        tools,
-      });
-
-      expect(createOrder.mock.calls.length).toBeGreaterThanOrEqual(initialOrderCount);
-    });
-
-    it('arms adjacent opposite level after sell fill', () => {
-      startStrategy(100);
-      const initialOrderCount = createOrder.mock.calls.length;
-
-      const sellId = findOrderId(105, 'SELL');
-      strategy.onOrderCompleted({
-        order: { id: sellId as UUID, side: 'SELL' } as any,
-        exchange: { price: 105, portfolio: balancedPortfolio },
-        tools,
-      });
-
-      expect(createOrder.mock.calls.length).toBeGreaterThanOrEqual(initialOrderCount);
+      expect(sentAfter(sentBefore)).toEqual(expected);
     });
 
     it('logs warning when only one side remains', () => {
@@ -427,13 +426,6 @@ describe('GridBot', () => {
       strategy.onOrderCompleted({
         order: { id: buyId as UUID, side: 'BUY' } as any,
         exchange: { price: 95, portfolio: balancedPortfolio },
-        tools,
-      });
-
-      const sellId = findOrderId(105, 'SELL');
-      strategy.onOrderCompleted({
-        order: { id: sellId as UUID, side: 'SELL' } as any,
-        exchange: { price: 105, portfolio: balancedPortfolio },
         tools,
       });
 
@@ -451,6 +443,106 @@ describe('GridBot', () => {
       });
 
       expect(createOrder).toHaveBeenCalledTimes(initialCalls);
+    });
+  });
+
+  // A fill armed the neighbouring level, and only if it held no order: a neighbour whose own fill was not reported yet was skipped.
+  // A drop through several BUYs re-armed when a backtest reported the fills highest first, not when paper or live trading polled
+  // them lowest first, so a backtest kept a grid that paper and live trading lost
+  describe('levels filled together', () => {
+    const afterDrop = ['SELL 90', 'SELL 95', 'SELL 100', 'SELL 105', 'SELL 110', 'SELL 115'];
+    const afterRally = ['BUY 85', 'BUY 90', 'BUY 95', 'BUY 100', 'BUY 105', 'BUY 110'];
+
+    it.each`
+      side      | prices             | book
+      ${'BUY'}  | ${[95, 90, 85]}    | ${afterDrop}
+      ${'BUY'}  | ${[95, 85, 90]}    | ${afterDrop}
+      ${'BUY'}  | ${[90, 95, 85]}    | ${afterDrop}
+      ${'BUY'}  | ${[90, 85, 95]}    | ${afterDrop}
+      ${'BUY'}  | ${[85, 95, 90]}    | ${afterDrop}
+      ${'BUY'}  | ${[85, 90, 95]}    | ${afterDrop}
+      ${'SELL'} | ${[105, 110, 115]} | ${afterRally}
+      ${'SELL'} | ${[105, 115, 110]} | ${afterRally}
+      ${'SELL'} | ${[110, 105, 115]} | ${afterRally}
+      ${'SELL'} | ${[110, 115, 105]} | ${afterRally}
+      ${'SELL'} | ${[115, 105, 110]} | ${afterRally}
+      ${'SELL'} | ${[115, 110, 105]} | ${afterRally}
+    `('re-arms the fills of $side $prices, reported in that order, into the same book', ({ side, prices, book }) => {
+      startStrategy(100, { buyLevels: 3, sellLevels: 3 });
+      prices.forEach((price: number) => settle('completed', price, side));
+
+      expect(openBook()).toEqual(book);
+    });
+
+    it.each`
+      prices
+      ${[90, 95, 100]}
+      ${[100, 95, 90]}
+    `('places the initial grid again once the price comes back through SELL $prices, reported in that order', ({ prices }) => {
+      startStrategy(100, { buyLevels: 3, sellLevels: 3 });
+      [85, 90, 95].forEach(price => settle('completed', price, 'BUY'));
+      prices.forEach((price: number) => settle('completed', price, 'SELL'));
+
+      expect(openBook()).toEqual(['BUY 85', 'BUY 90', 'BUY 95', 'SELL 105', 'SELL 110', 'SELL 115']);
+    });
+  });
+
+  // The two levels next to the center price were each other's neighbours, two steps apart, and each held its order, so the first
+  // fill on either side armed nothing: a price swinging between the center and one step away traded once, then never again
+  describe('around the center price', () => {
+    const assetOnlyPortfolio: Portfolio = new Map<string, BalanceDetail>([
+      ['BTC', { free: 10, used: 0, total: 10 }],
+      ['USDT', { free: 0, used: 0, total: 0 }],
+    ]);
+
+    // A one-sided grid wants the whole portfolio on its side: no rebalance
+    it.each`
+      grid           | buyLevels | sellLevels | portfolio              | side      | price  | expected
+      ${'buy-only'}  | ${3}      | ${0}       | ${unbalancedPortfolio} | ${'BUY'}  | ${95}  | ${['LIMIT SELL 100']}
+      ${'sell-only'} | ${0}      | ${3}       | ${assetOnlyPortfolio}  | ${'SELL'} | ${105} | ${['LIMIT BUY 100']}
+    `(
+      'arms the center price after the first fill of a $grid grid, $side $price',
+      ({ buyLevels, sellLevels, portfolio, side, price, expected }) => {
+        startStrategy(100, { buyLevels, sellLevels }, portfolio);
+        const sentBefore = issuedOrders.length;
+        settle('completed', price, side);
+
+        expect(sentAfter(sentBefore)).toEqual(expected);
+      },
+    );
+
+    it('trades every swing between the center price and one step below it', () => {
+      startStrategy(100);
+      const sentBefore = issuedOrders.length;
+      settle('completed', 95, 'BUY');
+      settle('completed', 100, 'SELL');
+      settle('completed', 95, 'BUY');
+      settle('completed', 100, 'SELL');
+
+      expect(sentAfter(sentBefore)).toEqual(['LIMIT SELL 100', 'LIMIT BUY 95', 'LIMIT SELL 100', 'LIMIT BUY 95']);
+    });
+
+    // One candle, or one poll interval, through both levels: each takes the center price on its other side, and the one the market
+    // has passed fills next
+    it.each`
+      first         | fills
+      ${'BUY 95'}   | ${[[95, 'BUY'], [105, 'SELL']]}
+      ${'SELL 105'} | ${[[105, 'SELL'], [95, 'BUY']]}
+    `('arms the center price on both sides once BUY 95 and SELL 105 fill together, $first reported first', ({ fills }) => {
+      startStrategy(100);
+      fills.forEach(([price, side]: [number, OrderSide]) => settle('completed', price, side));
+
+      expect(openBook()).toEqual(['BUY 90', 'BUY 100', 'SELL 100', 'SELL 110']);
+    });
+
+    it('places the initial grid again once both orders at the center price fill', () => {
+      startStrategy(100);
+      settle('completed', 95, 'BUY');
+      settle('completed', 105, 'SELL');
+      settle('completed', 100, 'SELL');
+      settle('completed', 100, 'BUY');
+
+      expect(openBook()).toEqual(['BUY 90', 'BUY 95', 'SELL 105', 'SELL 110']);
     });
   });
 
@@ -508,12 +600,12 @@ describe('GridBot', () => {
     });
   });
 
-  // A fill arms its neighbour on the opposite side, but the level kept the side the grid was built with: a canceled or errored
-  // order came back on that side, the SELL armed below the center as a BUY above the market, the BUY armed above it as a SELL
-  // below the market. The one-side warning read the same stale sides
+  // A fill arms a level on the opposite side, but the level kept the side the grid was built with: a canceled or errored order
+  // came back on that side, the SELL armed below the center as a BUY above the market, the BUY armed above it as a SELL below the
+  // market. The one-side warning read the same stale sides
   describe('a level armed on the opposite side by a fill', () => {
-    // BUY 95 fills while SELL 105 still holds the level above it, then BUY 90 fills and arms SELL 95 on the level BUY 95 left; the
-    // mirror above the center: SELL 110 arms BUY 105
+    // BUY 95 and BUY 90 fill and turn their levels to SELL 100 and SELL 95; the mirror above the center: SELL 105 and SELL 110 fill
+    // and turn theirs to BUY 100 and BUY 105
     const sellArmedAt95 = [
       [95, 'BUY'],
       [90, 'BUY'],
@@ -541,8 +633,8 @@ describe('GridBot', () => {
 
     it.each`
       fills            | book
-      ${sellArmedAt95} | ${'SELL 95, 105 and 110'}
-      ${buyArmedAt105} | ${'BUY 90, 95 and 105'}
+      ${sellArmedAt95} | ${'SELL 95, 100, 105 and 110'}
+      ${buyArmedAt105} | ${'BUY 90, 95, 100 and 105'}
     `('warns that only one side remains once the fills leave $book', ({ fills }) => {
       startStrategy(100);
       fills.forEach(([price, side]: [number, OrderSide]) => settle('completed', price, side));
@@ -550,14 +642,13 @@ describe('GridBot', () => {
       expect(log).toHaveBeenCalledWith('warn', 'GridBot: Only one side of the grid remains active');
     });
 
-    it('does not warn once the fills of a buy-only grid leave BUY 85 and SELL 95', () => {
+    it('does not warn once the fills of a buy-only grid leave BUY 85 and SELL 95 and 100', () => {
       // All in currency, as a buy-only grid wants it: no rebalance
       startStrategy(100, { buyLevels: 3, sellLevels: 0 }, unbalancedPortfolio);
-      settle('completed', 95, 'BUY'); // BUY 85 and 90 left: one side, which warns
-      const loggedBefore = log.mock.calls.length;
+      settle('completed', 95, 'BUY');
       settle('completed', 90, 'BUY');
 
-      expect(log.mock.calls.slice(loggedBefore)).toEqual([]);
+      expect(log).not.toHaveBeenCalledWith('warn', 'GridBot: Only one side of the grid remains active');
     });
   });
 

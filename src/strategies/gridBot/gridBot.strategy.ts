@@ -35,7 +35,8 @@ import {
  * - Buy levels are placed below the center price
  * - Sell levels are placed above the center price
  * - Spacing between levels is configurable: fixed, percent, or logarithmic
- * - When a level is filled, the bot arms the adjacent opposite side level
+ * - Each level trades back and forth between two adjacent prices of the grid: once its BUY fills it sells one step above, once its
+ *   SELL fills it buys one step below
  * - Mandatory rebalancing ensures 50/50 portfolio allocation before grid building
  * - On exchange errors, orders are retried up to the configured limit
  * - When price exits the grid range, a warning is logged but trading continues
@@ -143,16 +144,11 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     level.orderId = undefined;
     this.retryCount.delete(levelIndex);
 
-    // Arm the adjacent opposite side level
-    const neighborIndex = order.side === 'BUY' ? levelIndex + 1 : levelIndex - 1;
-    const neighborSide: OrderSide = order.side === 'BUY' ? 'SELL' : 'BUY';
-
-    if (neighborIndex >= 0 && neighborIndex < this.levels.length) {
-      const neighbor = this.levels[neighborIndex];
-      if (neighbor && !neighbor.orderId) {
-        this.placeOrder(neighborIndex, neighborSide, tools);
-      }
-    }
+    // The level that filled turns to the other side, one step away: a SELL above the BUY, a BUY below the SELL. A fill used to arm
+    // the neighbouring level, and only if it held no order: a neighbour whose own fill was not reported yet was skipped, so a drop
+    // through several BUYs re-armed when a backtest reported them highest first but not when paper or live trading polled them lowest
+    // first, and the two levels next to the center price, each the other's neighbour, armed nothing on their first fill.
+    this.placeOrder(levelIndex, level.side === 'BUY' ? 'SELL' : 'BUY', tools);
 
     // Check if only one side remains
     if (hasOnlyOneSide(this.levels)) {
@@ -365,24 +361,26 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       return;
     }
 
-    // Build level states
+    // Build level states, each between two adjacent prices of the grid, the center price being the top of level -1 and the bottom
+    // of level 1
     this.levels = [];
     this.orderToLevel.clear();
     this.retryCount.clear();
+    const priceAt = (steps: number) => computeLevelPrice(centerPrice, steps, this.priceDecimals, spacingType, spacingValue, this.priceStep);
 
-    // Create buy levels (negative indices, stored first)
+    // Create buy levels (negative indices, stored first), which start with their BUY
     for (let i = buyLevels; i >= 1; i--) {
-      const price = computeLevelPrice(centerPrice, -i, this.priceDecimals, spacingType, spacingValue, this.priceStep);
-      if (price > 0) {
-        this.levels.push({ index: -i, price, side: 'BUY' });
+      const buyPrice = priceAt(-i);
+      if (buyPrice > 0) {
+        this.levels.push({ index: -i, buyPrice, sellPrice: priceAt(1 - i), side: 'BUY' });
       }
     }
 
-    // Create sell levels (positive indices)
+    // Create sell levels (positive indices), which start with their SELL
     for (let i = 1; i <= sellLevels; i++) {
-      const price = computeLevelPrice(centerPrice, i, this.priceDecimals, spacingType, spacingValue, this.priceStep);
-      if (price > 0) {
-        this.levels.push({ index: i, price, side: 'SELL' });
+      const sellPrice = priceAt(i);
+      if (sellPrice > 0) {
+        this.levels.push({ index: i, buyPrice: priceAt(i - 1), sellPrice, side: 'SELL' });
       }
     }
 
@@ -395,7 +393,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     tools.log('info', `GridBot: Grid built around ${centerPrice} with ${buyLevels} buy / ${sellLevels} sell levels, qty=${this.quantity}`);
   }
 
-  /** Place a LIMIT order for a level, which takes the side of the order */
+  /** Place a LIMIT order for a level, at its buy or sell price: the level takes the side of the order */
   private placeOrder(levelArrayIndex: number, side: OrderSide, tools: Tools<GridBotStrategyParams>): void {
     const level = this.levels[levelArrayIndex];
     if (!level || level.orderId) return;
@@ -404,13 +402,13 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       type: 'LIMIT',
       side,
       amount: this.quantity,
-      price: level.price,
+      price: side === 'BUY' ? level.buyPrice : level.sellPrice,
       symbol: this.pair,
     });
 
-    // A fill arms its neighbour on the opposite side. The level used to keep the side the grid was built with, so a canceled or
-    // errored order a fill had armed came back on the other side: a BUY above the market or a SELL below it, which executed at once
-    // or, unfunded, was refused on every retry. The one-side warning read the same stale sides.
+    // A fill turns its level to the other side. The level used to keep the side the grid was built with, so a canceled or errored
+    // order a fill had armed came back on the other side: a BUY above the market or a SELL below it, which executed at once or,
+    // unfunded, was refused on every retry. The one-side warning read the same stale sides.
     level.orderId = orderId;
     level.side = side;
     this.orderToLevel.set(orderId, levelArrayIndex);

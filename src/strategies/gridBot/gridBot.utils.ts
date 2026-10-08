@@ -69,9 +69,9 @@ export const roundAmount = (value: number, amountDecimals: number): number => {
 };
 
 /**
- * Compute price for a grid level based on spacing type.
+ * Compute the price of the grid `levelIndex` steps away from the center price, based on spacing type.
  * @param centerPrice - The center price of the grid
- * @param levelIndex - Negative for buy levels, positive for sell levels
+ * @param levelIndex - Steps from the center price: negative below it, positive above, 0 for the center price itself
  * @param priceDecimals - Number of decimal places for rounding
  * @param spacingType - Type of spacing calculation
  * @param spacingValue - Spacing parameter value
