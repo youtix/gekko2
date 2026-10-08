@@ -144,7 +144,9 @@ export const roundAmount = (value: number, amountDecimals: number): number => {
 };
 
 /**
- * Compute the price of the grid `levelIndex` steps away from the center price, based on spacing type.
+ * Compute the price of the grid `levelIndex` steps away from the center price, based on spacing type: steps × spacingValue away for
+ * fixed spacing, steps × spacingValue % of the center price away for percent spacing, arithmetic as fixed spacing is, and multiplied
+ * or divided by (1 + spacingValue) once a step for logarithmic spacing, the one whose prices are a constant ratio apart.
  * @param centerPrice - The center price of the grid
  * @param levelIndex - Steps from the center price: negative below it, positive above, 0 for the center price itself
  * @param priceDecimals - Number of decimal places for rounding
@@ -322,54 +324,87 @@ export const checkRoundTripFee = (params: GridBotStrategyParams, centerPrice: nu
 };
 
 /**
- * Compute rebalance plan to achieve optimal allocation based on buy/sell level ratio, on the balances given: the free ones, which the
- * grid is sized on.
- * The target allocation ensures equal quantity per order across all levels.
- * For N buy levels and M sell levels: targetAssetRatio = M / (N + M)
- * A BUY is at most what the currency pays once placed (see getRebalanceBuyCost), and an order is at most the market's maximum (see
- * getMaximumAmount). An amount under the market's minimum is left as it is (see getMinimumAmount), for the strategy not to send it.
- * Returns null if portfolio is already optimally balanced.
+ * The sums of the BUY prices of the grid from the center price down, one more level each, the first 0 for none: as far as the prices
+ * are positive, buildGrid building no level priced at 0 or below
+ */
+const getBuyPriceSums = (priceAt: (steps: number) => number, buyLevels: number): number[] => {
+  const buyPriceSums = [0];
+  for (let i = 1; i <= buyLevels; i++) {
+    const price = priceAt(-i);
+    if (price <= 0) break;
+    buyPriceSums.push(buyPriceSums[i - 1] + price);
+  }
+  return buyPriceSums;
+};
+
+/**
+ * What the grid the parameters configure takes on each side for one unit of the quantity every level trades, around the center
+ * price: a unit of the asset for each sell level, and the price of each buy level in currency, the maker fee on top (see getMakerFee).
+ * The grid the free balances fund is sized on these (see deriveLevelQuantity), and the rebalance aims at them (see
+ * computeRebalancePlan).
+ */
+export const getGridFunding = (
+  centerPrice: number,
+  params: Pick<GridBotStrategyParams, 'buyLevels' | 'sellLevels' | 'spacingType' | 'spacingValue'>,
+  marketData: MarketData,
+): { asset: number; currency: number } => {
+  const { buyLevels, sellLevels, spacingType, spacingValue } = params;
+  const { priceDecimals, priceStep } = inferPricePrecision(marketData);
+  const priceAt = (steps: number) => computeLevelPrice(centerPrice, steps, priceDecimals, spacingType, spacingValue, priceStep);
+  const buyPriceSum = getBuyPriceSums(priceAt, buyLevels).at(-1)!;
+  return { asset: Math.max(sellLevels, 0), currency: buyPriceSum * (1 + getMakerFee(marketData)) };
+};
+
+/**
+ * Plans the rebalance after which the balances given, the free ones the grid is sized on, fund every level of the grid with the same
+ * quantity: the split of getGridFunding, reached once the rebalance's STICKY order has traded at its own price, paying its fee (see
+ * getRebalanceOrderPrice and getMakerFee). A portfolio on which the grid would leave less than 1 % of the value idle, what it holds of
+ * one side beyond what the other side funds, is not rebalanced.
+ * An order is at most the market's maximum (see getMaximumAmount). An amount under the market's minimum is left as it is (see
+ * getMinimumAmount), for the strategy not to send it.
+ * Returns null if the portfolio needs no rebalance.
  */
 export const computeRebalancePlan = (
   centerPrice: number,
   assetFree: number,
   currencyFree: number,
-  buyLevels: number,
-  sellLevels: number,
+  params: Pick<GridBotStrategyParams, 'buyLevels' | 'sellLevels' | 'spacingType' | 'spacingValue'>,
   marketData: MarketData,
 ): RebalancePlan | null => {
   if (centerPrice <= 0) return null;
-  if (buyLevels <= 0 && sellLevels <= 0) return null;
-  const totalLevels = buyLevels + sellLevels;
-  const assetValue = assetFree * centerPrice;
-  const currencyValue = currencyFree;
-  const totalValue = assetValue + currencyValue;
-
+  const totalValue = assetFree * centerPrice + currencyFree;
   if (totalValue <= 0) return null;
 
-  // Target asset ratio is sellLevels / totalLevels
-  // (assets are sold on sell levels, currency is used on buy levels)
-  const targetAssetRatio = sellLevels / totalLevels;
-  const targetAssetValue = totalValue * targetAssetRatio;
-  const gap = targetAssetValue - assetValue;
+  // The rebalance used to aim at sellLevels / (buyLevels + sellLevels) of the value in the asset, 50/50 for a symmetric grid. The
+  // BUYs, below the center price, cost less than the SELLs are worth, and the grid is sized on the scarcer side: from 3 % of the
+  // currency for 5/5 levels spaced by 1 % to 21 % for 20/20 spaced by 2 % stayed idle for the whole run.
+  const funding = getGridFunding(centerPrice, params, marketData);
+  // Above 0, the currency funds more of the quantity than the asset does: currency / funding.currency > asset / funding.asset
+  const imbalance = funding.asset * currencyFree - funding.currency * assetFree;
+  if (imbalance === 0) return null;
+  const side: OrderSide = imbalance > 0 ? 'BUY' : 'SELL';
 
-  // Small gap - no rebalance needed (within 1% of target)
-  if (Math.abs(gap) < 0.01 * totalValue) return null;
+  // What the grid would leave idle on the portfolio as it is: the currency its BUYs do not need, or the asset its SELLs do not.
+  // Measured on the amount the rebalance trades, as it used to be, the 1 % tolerance let a lopsided grid idle many times more: 5 %
+  // of the value on 9/1 levels, for a BUY of 0.5 %.
+  const idleValue = side === 'BUY' ? imbalance / funding.asset : (-imbalance / funding.currency) * centerPrice;
+  if (idleValue < 0.01 * totalValue) return null;
 
-  const side = gap > 0 ? 'BUY' : 'SELL';
-  let amount = Math.abs(gap) / centerPrice;
-  // A BUY is at most what the currency pays, at the price its STICKY order is placed at and with the fee on top. A sell-only grid,
-  // which wants the whole value in the asset, planned a BUY of the whole currency at the center price: the simulator refused it at
-  // every attempt, and the run stopped before any grid was built
-  if (side === 'BUY') amount = Math.min(amount, currencyFree / getRebalanceBuyCost(1, centerPrice, marketData));
-
-  if (amount <= 0) return null;
+  // The quantity both sides fund once the rebalance has traded at the price of its STICKY order, paying its fee, and the amount that
+  // takes. A BUY is reckoned on the currency it spends and a SELL on the asset it sells, so that in floating point a sell-only grid
+  // buys no more than the currency pays, as the simulator checks it, and a buy-only grid sells its whole asset, not a step less. A
+  // sell-only grid's BUY of the whole currency at the center price used to be refused at every attempt, its order placed one minimum
+  // price above the bid and the fee on top, and the run stopped before any grid was built.
+  const sellProceeds = getRebalanceOrderPrice('SELL', centerPrice, marketData) * (1 - getMakerFee(marketData));
+  const unitValue = side === 'BUY' ? getRebalanceBuyCost(1, centerPrice, marketData) : sellProceeds;
+  const quantity = (currencyFree + assetFree * unitValue) / (funding.currency + funding.asset * unitValue);
+  const gap = side === 'BUY' ? (currencyFree - funding.currency * quantity) / unitValue : assetFree - funding.asset * quantity;
 
   // Rounded down to the amount precision, at most the market's maximum. An amount under amount.min used to be raised to it, beyond
   // what the gap called for and what the balances paid: a rebalance under the market's minimum is no order to send
   const amountDecimals = inferAmountPrecision(marketData);
   const orderPrice = getRebalanceOrderPrice(side, centerPrice, marketData);
-  amount = Math.min(roundAmount(amount, amountDecimals), getMaximumAmount(orderPrice, marketData));
+  const amount = Math.min(roundAmount(gap, amountDecimals), getMaximumAmount(orderPrice, marketData));
 
   if (amount <= 0) return null;
 
@@ -391,7 +426,8 @@ export const computeRebalancePlan = (
  *   prices. Sized on the prices alone, the BUYs needed the whole free currency before their fees: the simulator refused the last one
  *   placed, the highest, at every attempt.
  * The quantity is the smaller of the two shares, rounded down to the amount precision, at most the market's maximum at the highest
- * price of the grid (see getMaximumAmount): 0, with no level, when the free balances fund none.
+ * price of the grid (see getMaximumAmount): 0, with no level, when the free balances fund none. What the larger share holds beyond
+ * it stays idle, which the rebalance avoids (see computeRebalancePlan).
  */
 export const deriveLevelQuantity = (
   centerPrice: number,
@@ -408,13 +444,7 @@ export const deriveLevelQuantity = (
   const priceAt = (steps: number) => computeLevelPrice(centerPrice, steps, priceDecimals, spacingType, spacingValue, priceStep);
   const amountDecimals = inferAmountPrecision(marketData);
 
-  // The sums of the BUY prices from the center price down, as far as they are positive: buildGrid builds no level priced at 0 or below
-  const buyPriceSums = [0];
-  for (let i = 1; i <= buyLevels; i++) {
-    const price = priceAt(-i);
-    if (price <= 0) break;
-    buyPriceSums.push(buyPriceSums[i - 1] + price);
-  }
+  const buyPriceSums = getBuyPriceSums(priceAt, buyLevels);
   const currencyShare = (levels: number) => (levels > 0 ? currencyFree / (buyPriceSums[levels] * (1 + getMakerFee(marketData))) : Infinity);
   const assetShare = (levels: number) => (levels > 0 ? assetFree / levels : Infinity);
   // The market minimum at the lowest price of a grid of `levels` buy levels: its lowest BUY, or without any the center price, where

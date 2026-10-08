@@ -42,13 +42,16 @@ import {
  * - The grid is placed on the first timeframe candle after the warmup, centred on its close
  * - Buy levels are placed below the center price
  * - Sell levels are placed above the center price
- * - Spacing between levels is configurable: fixed, percent, or logarithmic. A spacing that rounds two adjacent prices of the grid to
- *   the same tick stops the run, and one under the round-trip fee, two maker fees, is warned of once
+ * - Spacing between adjacent prices is configurable: fixed (in price units), percent (of the center price, the same between any two
+ *   adjacent prices, as fixed spacing) or logarithmic (a ratio between adjacent prices). A spacing that rounds two adjacent prices of
+ *   the grid to the same tick stops the run, and one under the round-trip fee, two maker fees, is warned of once
  * - Prices are rounded to the tick of the market (precision.price) as they are written, in decimal, a tie upwards. A market that states
  *   no tick has them rounded to 8 decimals, with a warning
  * - Each level trades back and forth between two adjacent prices of the grid: once its BUY fills it sells one step above, once its
  *   SELL fills it buys one step below
- * - Mandatory rebalancing ensures 50/50 portfolio allocation before grid building
+ * - Every level trades the same quantity, and the portfolio is first rebalanced to the split that funds them all with it: a unit of
+ *   the asset for each sell level, and each buy level's price in currency, the maker fee on top. Not 50/50: the BUYs, below the
+ *   center price, cost less than the SELLs are worth. A portfolio on which less than 1 % of the value would stay idle is not rebalanced
  * - The rebalance and the grid use the free balances, and every order is one the market takes, of at least its minimum amount and
  *   cost: a rebalance under them is not sent, and a side that cannot fund all its levels with them leaves out the farthest
  * - A refused or canceled order is placed again up to retryOnError times, a canceled grid order for what is left of it. A grid order
@@ -272,8 +275,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
    * would refuse the rebalance, under its minimum order, or when they cannot pay for it
    */
   private rebalanceOrBuild(centerPrice: number, asset: BalanceDetail, currency: BalanceDetail, tools: Tools<GridBotStrategyParams>): void {
-    const { buyLevels, sellLevels } = tools.strategyParams;
-    const plan = computeRebalancePlan(centerPrice, asset.free, currency.free, buyLevels, sellLevels, tools.marketData.get(this.pair)!);
+    const plan = computeRebalancePlan(centerPrice, asset.free, currency.free, tools.strategyParams, tools.marketData.get(this.pair)!);
 
     if (!plan || this.isRebalanceLeftOut(plan, asset, currency, tools)) {
       this.awaitingRebalance = false;

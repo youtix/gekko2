@@ -136,9 +136,11 @@ describe('gridBot.utils Performance', () => {
   });
 
   describe('computeRebalancePlan', () => {
+    const grid = { buyLevels: 5, sellLevels: 5, spacingType: 'fixed' as const, spacingValue: 5 };
+
     bench('1000 rebalance plan calculations', () => {
       for (let i = 0; i < 1000; i++) {
-        computeRebalancePlan(100, assetFree, currencyFree, 5, 5, marketData);
+        computeRebalancePlan(100, assetFree, currencyFree, grid, marketData);
       }
     });
   });

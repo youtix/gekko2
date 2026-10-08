@@ -13,10 +13,11 @@ export const gridBotStrategySchema = z
     /** How the levels are spaced apart */
     spacingType: z.enum(['percent', 'fixed', 'logarithmic']),
     /**
-     * Distance between levels:
-     * - percent: expressed in percent (1 === 1%)
+     * Distance between adjacent prices of the grid:
+     * - percent: a percentage of the center price (1 === 1 %), the same between any two adjacent prices, as fixed spacing is: 10
+     *   around 100 puts the prices at 50, 60, … 150, so that 50 to 60 is +20 % and 140 to 150 +7 %
      * - fixed: price units
-     * - logarithmic: multiplier increment (0.01 === +1% per hop)
+     * - logarithmic: the ratio between adjacent prices, less 1 (0.01 === each price 1 % above the one below it)
      * Checked against the market around the center price: a spacing that rounds two adjacent prices of the grid to the same price tick
      * stops the run, when the grid starts or once it is rebalanced, and one under the round-trip fee, two maker fees, is warned of once.
      */

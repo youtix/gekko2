@@ -16,6 +16,7 @@ import {
   computeLevelPrice,
   computeRebalancePlan,
   deriveLevelQuantity,
+  getGridFunding,
   getMakerFee,
   getMaximumAmount,
   getMinimumAmount,
@@ -617,74 +618,79 @@ describe('gridBot.utils', () => {
     });
   });
 
+  describe('getGridFunding', () => {
+    it.each`
+      center | grid                                                                               | marketData                        | description                                                        | expected
+      ${100} | ${{ buyLevels: 2, sellLevels: 2, spacingType: 'fixed', spacingValue: 5 }}          | ${{}}                             | ${'2/2 spaced by 5: a unit for each SELL, the BUYs at 95 and 90'}  | ${{ asset: 2, currency: 185 }}
+      ${100} | ${{ buyLevels: 1, sellLevels: 3, spacingType: 'fixed', spacingValue: 5 }}          | ${{}}                             | ${'1/3 spaced by 5'}                                               | ${{ asset: 3, currency: 95 }}
+      ${100} | ${{ buyLevels: 5, sellLevels: 5, spacingType: 'percent', spacingValue: 1 }}        | ${documentedMarketData}           | ${'5/5 spaced by 1 %, the maker fee of 0.0004 on top of the BUYs'} | ${{ asset: 5, currency: 485 * 1.0004 }}
+      ${100} | ${{ buyLevels: 5, sellLevels: 0, spacingType: 'percent', spacingValue: 1 }}        | ${{}}                             | ${'a buy-only grid'}                                               | ${{ asset: 0, currency: 485 }}
+      ${100} | ${{ buyLevels: 0, sellLevels: 5, spacingType: 'percent', spacingValue: 1 }}        | ${documentedMarketData}           | ${'a sell-only grid'}                                              | ${{ asset: 5, currency: 0 }}
+      ${100} | ${{ buyLevels: 1, sellLevels: 1, spacingType: 'logarithmic', spacingValue: 0.05 }} | ${{ precision: { price: 0.01 } }} | ${'a BUY at 95.24, rounded to the tick as it is placed'}           | ${{ asset: 1, currency: 95.24 }}
+      ${10}  | ${{ buyLevels: 5, sellLevels: 2, spacingType: 'fixed', spacingValue: 5 }}          | ${{}}                             | ${'the BUYs priced above 0 only: 5, not 0 and below'}              | ${{ asset: 2, currency: 5 }}
+    `('takes $expected a unit of the quantity of a level for $description', ({ center, grid, marketData, expected }) => {
+      expect(getGridFunding(center, grid, marketData)).toEqual(expected);
+    });
+  });
+
   describe('computeRebalancePlan', () => {
     const marketData: MarketData = { precision: { amount: 0.01 } };
+    // A unit of the quantity of a level takes 2 BTC, one for each SELL, and 185 USDT, its BUYs at 95 and 90
+    const twoByTwo = { buyLevels: 2, sellLevels: 2, spacingType: 'fixed', spacingValue: 5 } as const;
+    const fiveByFive = { buyLevels: 5, sellLevels: 5, spacingType: 'percent', spacingValue: 1 } as const;
+    const sellOnly = (sellLevels: number) => ({ ...fiveByFive, buyLevels: 0, sellLevels });
 
     it('returns BUY plan when asset value is low for symmetric levels', () => {
-      // 5 buy + 5 sell = target 50% asset (500 value = 5 asset at price 100)
-      // totalAssetValue = 0, totalCurrencyValue = 1000
-      const plan = computeRebalancePlan(100, 0, 1000, 5, 5, marketData);
-
-      expect(plan?.side).toBe('BUY');
+      expect(computeRebalancePlan(100, 0, 1000, twoByTwo, marketData)?.side).toBe('BUY');
     });
 
     it('returns SELL plan when asset value is high', () => {
-      // 5 buy + 5 sell = target 50% asset (500 value) but we have 1000 value in asset
-      // totalAssetValue = 10, totalCurrencyValue = 0
-      const plan = computeRebalancePlan(100, 10, 0, 5, 5, marketData);
-
-      expect(plan?.side).toBe('SELL');
+      expect(computeRebalancePlan(100, 10, 0, twoByTwo, marketData)?.side).toBe('SELL');
     });
 
-    it('returns null for balanced portfolio with symmetric levels', () => {
-      // 5 buy + 5 sell = target 50% asset = 500 value, we have 5*100=500
-      // totalAssetValue = 5, totalCurrencyValue = 500
-      expect(computeRebalancePlan(100, 5, 500, 5, 5, marketData)).toBeNull();
+    // 2.5 a level: 5 BTC for its SELLs, 462.5 USDT for its BUYs
+    it('returns null for a portfolio at the split that funds every level alike', () => {
+      expect(computeRebalancePlan(100, 5, 462.5, twoByTwo, marketData)).toBeNull();
     });
 
+    // 1000 USDT fund 1.015 a level on 2/8 levels: 8.12 BTC for the SELLs, the rest for the BUYs at 95 and 90
     it('computes correct ratio for asymmetric levels', () => {
-      // 2 buy + 8 sell = target 80% asset (800 value = 8 asset at price 100)
-      // totalAssetValue = 0, totalCurrencyValue = 1000
-      const plan = computeRebalancePlan(100, 0, 1000, 2, 8, marketData);
-
-      expect(plan?.amount).toBe(8); // Need to buy 8 asset to reach 800 value
+      expect(computeRebalancePlan(100, 0, 1000, { ...twoByTwo, sellLevels: 8 }, marketData)?.amount).toBe(8.12);
     });
 
     it('returns null for zero center price', () => {
-      expect(computeRebalancePlan(0, 0, 1000, 5, 5, marketData)).toBeNull();
+      expect(computeRebalancePlan(0, 0, 1000, twoByTwo, marketData)).toBeNull();
     });
 
     it('returns null for zero levels', () => {
-      expect(computeRebalancePlan(100, 5, 500, 0, 0, marketData)).toBeNull();
+      expect(computeRebalancePlan(100, 5, 500, { ...twoByTwo, buyLevels: 0, sellLevels: 0 }, marketData)).toBeNull();
     });
 
     it('returns null for empty portfolio', () => {
-      expect(computeRebalancePlan(100, 0, 0, 5, 5, marketData)).toBeNull();
+      expect(computeRebalancePlan(100, 0, 0, twoByTwo, marketData)).toBeNull();
     });
 
     it('applies amount limits', () => {
       const marketDataWithMax: MarketData = { amount: { max: 10 }, precision: { amount: 0.01 } };
-      // totalAssetValue = 0, totalCurrencyValue = 10000
-      const plan = computeRebalancePlan(100, 0, 10000, 5, 5, marketDataWithMax);
 
-      expect(plan?.amount).toBe(10);
+      expect(computeRebalancePlan(100, 0, 10000, twoByTwo, marketDataWithMax)?.amount).toBe(10);
     });
 
     // 1000 at the price of its STICKY order, 100.01, is 9.99900…: at the center price it would be 10, refused for a cost of 1000.1
     it('caps the amount at the market maximum at the price its STICKY order is placed at', () => {
       const marketDataWithMaxCost: MarketData = { cost: { max: 1000 }, price: { min: 0.01 }, precision: { amount: 0.01 } };
 
-      expect(computeRebalancePlan(100, 0, 10000, 5, 5, marketDataWithMaxCost)?.amount).toBe(9.99);
+      expect(computeRebalancePlan(100, 0, 10000, twoByTwo, marketDataWithMaxCost)?.amount).toBe(9.99);
     });
 
     // An amount under amount.min used to be raised to it, beyond what the gap called for and what the balances paid: 1 USDT held
     // planned a BUY of 0.1, 10 USDT. Under the market's minimum, a plan is no order to send: the strategy leaves it out
     it.each`
-      center      | assetFree | currencyFree | levels | marketData                                                | description                                                          | expected
-      ${100}      | ${0}      | ${1}         | ${1}   | ${{ precision: { amount: 0.001 }, amount: { min: 0.1 } }} | ${'a BUY of 0.005, under amount.min 0.1'}                            | ${0.005}
-      ${61234.56} | ${0.0023} | ${150}       | ${5}   | ${documentedMarketData}                                   | ${'a BUY of 4.58 USDT, under cost.min 5, a small account 1.6 % off'} | ${0.00007479}
-    `('plans $description as it is', ({ center, assetFree, currencyFree, levels, marketData, expected }) => {
-      expect(computeRebalancePlan(center, assetFree, currencyFree, levels, levels, marketData)?.amount).toBe(expected);
+      center      | assetFree  | currencyFree | grid                                            | marketData                                                | description                                                           | expected
+      ${100}      | ${0}       | ${1}         | ${{ ...twoByTwo, buyLevels: 1, sellLevels: 1 }} | ${{ precision: { amount: 0.001 }, amount: { min: 0.1 } }} | ${'a BUY of 0.005, under amount.min 0.1'}                             | ${0.005}
+      ${61234.56} | ${0.00235} | ${146}       | ${fiveByFive}                                   | ${documentedMarketData}                                   | ${'a BUY of 3.23 USDT, under cost.min 5, a small account 2.2 % idle'} | ${0.0000527}
+    `('plans $description as it is', ({ center, assetFree, currencyFree, grid, marketData, expected }) => {
+      expect(computeRebalancePlan(center, assetFree, currencyFree, grid, marketData)?.amount).toBe(expected);
     });
 
     // A sell-only grid wants the whole value in the asset: started in currency, it planned a BUY of the whole currency at the center
@@ -692,28 +698,167 @@ describe('gridBot.utils', () => {
     // top, and the run stopped before any grid was built. All in currency here, the plans are BUYs.
     describe('in currency, on a market with a minimum price and a maker fee', () => {
       it.each`
-        center      | buyLevels | sellLevels | marketData                         | description                                                                | expected
-        ${100}      | ${0}      | ${5}       | ${documentedMarketData}            | ${'a sell-only grid'}                                                      | ${9.99500209}
-        ${61234.56} | ${0}      | ${3}       | ${tenthPercentFeeMarketData}       | ${'a sell-only grid, at a 0.1 % maker fee'}                                | ${0.01631}
-        ${100}      | ${5}      | ${5}       | ${documentedMarketData}            | ${'a 5/5 grid, half the currency'}                                         | ${5}
-        ${100}      | ${0}      | ${5}       | ${{ precision: { amount: 1e-8 } }} | ${'a sell-only grid, on a market that states neither: the whole currency'} | ${10}
-      `('plans a BUY of $expected for $description', ({ center, buyLevels, sellLevels, marketData, expected }) => {
-        expect(computeRebalancePlan(center, 0, 1000, buyLevels, sellLevels, marketData)?.amount).toBe(expected);
+        center      | grid           | marketData                         | description                                                                | expected
+        ${100}      | ${sellOnly(5)} | ${documentedMarketData}            | ${'a sell-only grid'}                                                      | ${9.99500209}
+        ${61234.56} | ${sellOnly(3)} | ${tenthPercentFeeMarketData}       | ${'a sell-only grid, at a 0.1 % maker fee'}                                | ${0.01631}
+        ${100}      | ${fiveByFive}  | ${documentedMarketData}            | ${'a 5/5 grid spaced by 1 %, the split that funds it'}                     | ${5.07385493}
+        ${100}      | ${sellOnly(5)} | ${{ precision: { amount: 1e-8 } }} | ${'a sell-only grid, on a market that states neither: the whole currency'} | ${10}
+      `('plans a BUY of $expected for $description', ({ center, grid, marketData, expected }) => {
+        expect(computeRebalancePlan(center, 0, 1000, grid, marketData)?.amount).toBe(expected);
       });
 
       it.each`
-        center      | buyLevels | sellLevels | marketData                   | description
-        ${100}      | ${0}      | ${5}       | ${documentedMarketData}      | ${'a sell-only grid'}
-        ${61234.56} | ${0}      | ${3}       | ${tenthPercentFeeMarketData} | ${'a sell-only grid, at a 0.1 % maker fee'}
-        ${100}      | ${5}      | ${5}       | ${documentedMarketData}      | ${'a 5/5 grid'}
+        center      | grid           | marketData                   | description
+        ${100}      | ${sellOnly(5)} | ${documentedMarketData}      | ${'a sell-only grid'}
+        ${61234.56} | ${sellOnly(3)} | ${tenthPercentFeeMarketData} | ${'a sell-only grid, at a 0.1 % maker fee'}
+        ${100}      | ${fiveByFive}  | ${documentedMarketData}      | ${'a 5/5 grid'}
       `(
         'plans a BUY the currency pays at the price of its STICKY order, the maker fee on top, for $description',
-        ({ center, buyLevels, sellLevels, marketData }) => {
-          const { amount } = computeRebalancePlan(center, 0, 1000, buyLevels, sellLevels, marketData)!;
+        ({ center, grid, marketData }) => {
+          const { amount } = computeRebalancePlan(center, 0, 1000, grid, marketData)!;
 
           expect(amount * (center + marketData.price.min) * (1 + marketData.fee.maker)).toBeLessThanOrEqual(1000);
         },
       );
+
+      // A whole number of steps at 100.01, the price of the STICKY BUY: 4.0004 pays 0.04, while 0.07 costs 7.000700000000001 in
+      // floating point, which the simulator refuses for 7.0007 free
+      describe('on currency paying a whole number of amount steps', () => {
+        const cents: MarketData = { price: { min: 0.01 }, precision: { price: 0.01, amount: 0.01 } };
+
+        it('plans a BUY of all the currency pays, not a step less: 0.04 for 4.0004', () => {
+          expect(computeRebalancePlan(100, 0, 4.0004, sellOnly(3), cents)?.amount).toBe(0.04);
+        });
+
+        it('plans a BUY the simulator takes, not a step more: 0.06 for 7.0007', () => {
+          const { amount } = computeRebalancePlan(100, 0, 7.0007, sellOnly(5), cents)!;
+
+          expect(amount * 100.01).toBeLessThanOrEqual(7.0007);
+        });
+      });
+    });
+
+    // The rebalance aimed at sellLevels / (buyLevels + sellLevels) of the value in the asset, 50/50 for a symmetric grid. The BUYs,
+    // below the center price, cost less than the SELLs are worth, and the grid is sized on its scarcer side: once the asset was split
+    // over the sell levels, from 3 % of the currency for 5/5 levels spaced by 1 % to 21 % for 20/20 spaced by 2 % stayed idle, and a
+    // portfolio at 50/50 was not rebalanced at all
+    describe('to the split that funds every level alike', () => {
+      interface Start {
+        center: number;
+        assetFree: number;
+        currencyFree: number;
+        grid: Pick<GridBotStrategyParams, 'buyLevels' | 'sellLevels' | 'spacingType' | 'spacingValue'>;
+        marketData: MarketData;
+      }
+      const grid = (buyLevels: number, sellLevels: number, spacingType: GridSpacingType, spacingValue: number) => ({
+        buyLevels,
+        sellLevels,
+        spacingType,
+        spacingValue,
+      });
+      /** At 50/50, 5 BTC and 500 USDT at 100, on a market without fee: V7's grids */
+      const fiftyFifty = (start: Start['grid']): Start => ({
+        center: 100,
+        assetFree: 5,
+        currencyFree: 500,
+        grid: start,
+        marketData: { precision: { price: 0.01, amount: 1e-8 } },
+      });
+      /** All in currency or all in the asset, on the documented market, a maker fee of 0.0004 and a minimum price of 0.01 */
+      const documented = (start: Start['grid'], assetFree: number, currencyFree: number, center = 100): Start => ({
+        center,
+        assetFree,
+        currencyFree,
+        grid: start,
+        marketData: documentedMarketData,
+      });
+
+      /**
+       * The value the grid leaves idle once the plan has filled, its STICKY order booked as the simulator books it, at its price with
+       * the maker fee: what the quantity of a level does not take, a unit of the asset for each SELL and each BUY's price in currency
+       * with the fee on top
+       */
+      const idleOnceFilled = ({ center, assetFree, currencyFree, grid: start, marketData }: Start) => {
+        const plan = computeRebalancePlan(center, assetFree, currencyFree, start, marketData);
+        const fee = getMakerFee(marketData);
+        const bought = plan ? (plan.side === 'BUY' ? plan.amount : -plan.amount) : 0;
+        const paid = plan ? getRebalanceOrderPrice(plan.side, center, marketData) * (plan.side === 'BUY' ? 1 + fee : 1 - fee) : 0;
+        const asset = assetFree + bought;
+        const currency = currencyFree - bought * paid;
+        const { priceDecimals, priceStep } = inferPricePrecision(marketData);
+        const { spacingType, spacingValue } = start;
+        const size = deriveLevelQuantity(
+          center,
+          asset,
+          currency,
+          start.buyLevels,
+          start.sellLevels,
+          priceDecimals,
+          spacingType,
+          spacingValue,
+          marketData,
+          priceStep,
+        );
+        const buyPrices = Array.from({ length: size.buyLevels }, (_, i) =>
+          computeLevelPrice(center, -(i + 1), priceDecimals, spacingType, spacingValue, priceStep),
+        );
+        const currencyLeft = buyPrices.reduce((left, price) => left - size.quantity * price * (1 + fee), currency);
+        return (asset - size.sellLevels * size.quantity) * center + currencyLeft;
+      };
+
+      it.each`
+        start                                                      | description                                                | expected
+        ${fiftyFifty(grid(5, 5, 'percent', 1))}                    | ${'5/5 spaced by 1 %, at 50/50'}                           | ${'BUY 0.07614213'}
+        ${fiftyFifty(grid(20, 20, 'percent', 2))}                  | ${'20/20 spaced by 2 %, at 50/50'}                         | ${'BUY 0.58659217'}
+        ${documented(grid(5, 5, 'percent', 1), 0, 1000)}           | ${'5/5 spaced by 1 %, all in currency'}                    | ${'BUY 5.07385493'}
+        ${documented(grid(5, 5, 'percent', 1), 10, 0)}             | ${'5/5 spaced by 1 %, all in the asset'}                   | ${'SELL 4.92610737'}
+        ${documented(grid(1, 3, 'fixed', 5), 0, 1000)}             | ${'1/3 spaced by 5, all in currency: 75.9 % in the asset'} | ${'BUY 7.59132339'}
+        ${documented(grid(5, 0, 'percent', 1), 3.3, 0)}            | ${'a buy-only grid: the whole asset, not a step less'}     | ${'SELL 3.3'}
+        ${documented(grid(5, 5, 'percent', 1), 0, 1000, 61234.56)} | ${'the documented 5/5 grid, 1000 USDT at 61234.56'}        | ${'BUY 0.00828635'}
+      `('plans $expected for $description', ({ start, expected }) => {
+        const { center, assetFree, currencyFree, grid: params, marketData } = start;
+        const plan = computeRebalancePlan(center, assetFree, currencyFree, params, marketData);
+
+        expect(plan && `${plan.side} ${plan.amount}`).toBe(expected);
+      });
+
+      it.each`
+        start                                                      | description
+        ${fiftyFifty(grid(5, 5, 'percent', 1))}                    | ${'5/5 spaced by 1 %, at 50/50: 3 % of the currency idled'}
+        ${fiftyFifty(grid(10, 10, 'percent', 1))}                  | ${'10/10 spaced by 1 %, at 50/50: 5.5 %'}
+        ${fiftyFifty(grid(20, 20, 'percent', 1))}                  | ${'20/20 spaced by 1 %, at 50/50: 10.5 %'}
+        ${fiftyFifty(grid(20, 20, 'percent', 2))}                  | ${'20/20 spaced by 2 %, at 50/50: 21 %'}
+        ${fiftyFifty(grid(20, 20, 'logarithmic', 0.02))}           | ${'20/20 spaced by 0.02 logarithmic, at 50/50: 18.24 %'}
+        ${documented(grid(5, 5, 'percent', 1), 0, 1000)}           | ${'5/5 spaced by 1 %, all in currency: 2.91 %'}
+        ${documented(grid(5, 5, 'percent', 1), 10, 0)}             | ${'5/5 spaced by 1 %, all in the asset: 2.91 %'}
+        ${documented(grid(1, 3, 'fixed', 5), 0, 1000)}             | ${'1/3 spaced by 5, all in currency: 4.82 %'}
+        ${documented(grid(3, 1, 'fixed', 5), 0, 1000)}             | ${'3/1 spaced by 5, all in currency: 9.95 %'}
+        ${documented(grid(5, 5, 'percent', 1), 0, 1000, 61234.56)} | ${'the documented 5/5 grid, 1000 USDT at 61234.56'}
+      `('leaves less than 0.01 % of the value idle once filled, for $description', ({ start }) => {
+        const { center, assetFree, currencyFree } = start;
+
+        expect(idleOnceFilled(start)).toBeLessThan(0.0001 * (assetFree * center + currencyFree));
+      });
+    });
+
+    // The 1 % tolerance used to be on the amount the rebalance traded, and the deviation is now measured by what the grid would leave
+    // idle without it: a lopsided grid idles much more of the value than it takes to trade, 5 % of it for a BUY of 0.5 % on 9/1 levels
+    describe('when the grid would leave idle less than 1 % of the value, or more', () => {
+      const nineByOne = { ...twoByTwo, buyLevels: 9, sellLevels: 1, spacingValue: 1 };
+
+      it.each`
+        assetFree | currencyFree | grid         | description                                                     | expected
+        ${5}      | ${472}       | ${twoByTwo}  | ${'2/2 spaced by 5, 9.5 USDT of 972 idle, 0.98 %'}              | ${null}
+        ${5}      | ${473}       | ${twoByTwo}  | ${'2/2 spaced by 5, 10.5 USDT of 973 idle, 1.08 %'}             | ${'BUY 0.05'}
+        ${4.9}    | ${462.5}     | ${twoByTwo}  | ${'2/2 spaced by 5, 9.25 USDT of 952.5 idle, 0.97 %'}           | ${null}
+        ${5.1}    | ${462.5}     | ${twoByTwo}  | ${'2/2 spaced by 5, 0.1 BTC idle, 10 USDT of 972.5, 1.03 %'}    | ${'SELL 0.04'}
+        ${1}      | ${855}       | ${nineByOne} | ${'9/1 spaced by 1, at the split'}                              | ${null}
+        ${0.95}   | ${860}       | ${nineByOne} | ${'9/1 spaced by 1, 47.75 USDT of 955 idle for a BUY of 0.5 %'} | ${'BUY 0.05'}
+      `('plans $expected at 100 for $description', ({ assetFree, currencyFree, grid, expected }) => {
+        const plan = computeRebalancePlan(100, assetFree, currencyFree, grid, marketData);
+
+        expect(plan && `${plan.side} ${plan.amount}`).toBe(expected);
+      });
     });
   });
 

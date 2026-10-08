@@ -318,14 +318,14 @@ The GridBot is a sophisticated **grid trading strategy** that places a series of
 
 #### How It Works
 
-1. **Initialization**: Rebalances portfolio to 50/50 allocation (asset/currency)
+1. **Initialization**: Rebalances the portfolio so that it funds every level of the grid with the same quantity, which is not a 50/50 split (see [Rebalancing](#rebalancing))
 2. **Grid Building**: Places buy orders below and sell orders above the center price
 3. **Order Management**: When an order fills, places an opposite order at the adjacent level
 4. **Range Monitoring**: Logs warnings if price exits the grid range
 
 #### Key Features
 
-- **Automatic Rebalancing**: Ensures equal allocation before building the grid
+- **Automatic Rebalancing**: Splits the portfolio the way the grid uses it before building the grid, so that no capital sits idle
 - **Three Spacing Types**: Fixed, percent, or logarithmic level distribution
 - **Error Recovery**: Configurable retry limit for failed orders
 - **Range Warnings**: Alerts when price moves outside the grid
@@ -337,16 +337,42 @@ The GridBot is a sophisticated **grid trading strategy** that places a series of
 | `buyLevels`              | number                                  | Number of buy levels below center price               |
 | `sellLevels`             | number                                  | Number of sell levels above center price              |
 | `spacingType`            | `percent`, `fixed`, `logarithmic`       | How levels are spaced                                 |
-| `spacingValue`           | number                                  | Distance between levels                               |
+| `spacingValue`           | number                                  | Distance between adjacent prices (see below)          |
 | `retryOnError`           | number                                  | (optional) Retry limit for failed orders (default: 3) |
 
 #### Spacing Types Explained
 
-| Type          | `spacingValue` Meaning | Example              |
-|---------------|------------------------|----------------------|
-| `percent`     | Expressed in percent   | `1` = 1% spacing     |
-| `fixed`       | Price units            | `100` = $100 spacing |
-| `logarithmic` | Multiplier increment   | `0.01` = +1% per hop |
+`spacingValue` is the distance between two adjacent prices of the grid, the center price included:
+
+| Type          | `spacingValue` Meaning                 | Example                                                             |
+|---------------|----------------------------------------|---------------------------------------------------------------------|
+| `percent`     | Percent of the center price            | `1` = prices 1 % of the center price apart: 99, 100, 101 around 100 |
+| `fixed`       | Price units                            | `500` = prices $500 apart                                           |
+| `logarithmic` | Ratio between adjacent prices, minus 1 | `0.01` = each price 1 % above the one below it                      |
+
+`percent` spacing is arithmetic, as `fixed` spacing is: each level is `spacingValue` % **of the center price** away from its neighbour, not `spacingValue` % of the neighbour itself. Measured against the prices themselves, the levels are therefore wider at the bottom of the grid than at the top: `10` around 100 places the prices at 50, 60, … 150, so that 50 → 60 is +20 % while 140 → 150 is +7 %. For the same percentage between every two adjacent prices, use `logarithmic` spacing.
+
+#### Prices and Checks
+
+The grid starts on the first candle after the warmup, centred on its close. Its prices are rounded to the market's price tick (`precision.price`) as they are written, a half tick rounding up: `fixed` and `percent` spacings are computed in decimal, `logarithmic` spacing in binary. A market that states no tick is priced to 8 decimals, with a warning when the grid starts; the dummy-cex configuration always states one (`precision.price`, in decimals).
+
+The parameters are checked when the strategy is created, before the first candle: a key other than `name` and the parameters above, a quoted number, a fractional or negative level count, both level counts at 0, another `spacingType`, a `spacingValue` that is not a positive number or a `retryOnError` under 1 refuses the run. The checks that need the price run when the grid starts, before any order, and stop the run when:
+
+- the lowest buy level would be at or below 0: with `percent` spacing, `buyLevels × spacingValue` must stay under 100;
+- the center price is outside the exchange's price limits (`price.min`, `price.max`);
+- two adjacent prices of the grid round to the same tick (see *Minimum spacing*).
+
+**Minimum spacing.** Once rounded to the market's price tick, adjacent prices of the grid must stay at least one tick apart. A spacing that rounds two of them to the same price, a level that would buy and sell at that one price, stops the run when the grid starts, and again when the grid is built around the price a rebalance ended at (a `percent` or `logarithmic` step shrinks with the price).
+
+A spacing whose levels earn less than the two maker fees of a round trip (`fee.maker`), a SELL less than 2 × fee / (1 − fee) above its BUY (0.08003 % at a 0.04 % fee, 0.2002 % at 0.1 %), is accepted with one warning, logged at the `warn` level: such a grid loses money at each round trip. For a 5/5 grid at 60000 with a 0.1 % maker fee, that takes a spacing of 121.1 or more with `fixed` spacing (100 loses money there), 0.2019 or more with `percent` and 0.002003 or more with `logarithmic`.
+
+#### Rebalancing
+
+Every level of the grid trades the same quantity. For a quantity `q`, the SELLs need `sellLevels × q` of the asset, and the BUYs need the sum of their prices × `q` of the currency, plus the maker fee (`fee.maker`), which the simulator of backtests and paper trading charges in currency on top of a BUY. The grid is sized on the free balances, rounded down to the market's amount precision, so what one side holds beyond what the other side funds stays idle for the whole run.
+
+Before building the grid, GridBot therefore rebalances the free balances to that split with one STICKY order: it buys or sells the amount after which both sides fund the same quantity, the order's own price and fee included. Funds locked in other orders are left out. The portfolio is not rebalanced when the grid would leave less than 1 % of its value idle, nor when the rebalance would be smaller than the market's minimum order (`amount.min`, or `cost.min` at the price of the STICKY order): the grid is then built on the balances as they are.
+
+The split is not 50/50, since the BUYs, below the center price, cost less than the SELLs are worth. A symmetric grid holds a little more than half of its value in the asset, about 51 % for 5/5 levels spaced by 1 % and 56 % for 20/20 levels spaced by 2 %, and an asymmetric one about its share of sell levels, 76 % for 1 buy and 3 sell levels spaced by 5 at 100. A grid without sell levels is rebalanced all in currency, and one without buy levels all in the asset, buying what the currency pays once the fee is on top.
 
 #### Example Configuration
 

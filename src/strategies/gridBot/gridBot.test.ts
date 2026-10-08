@@ -40,9 +40,10 @@ const makeCandle = (close: number): CandleBucket => {
   return new Map([['BTC/USDT', candle]]);
 };
 
+// The split that funds every level of the default grid at 100 with 2.5: its two SELLs 5 BTC, its BUYs at 95 and 90 462.5 USDT
 const balancedPortfolio: Portfolio = new Map<string, BalanceDetail>([
   ['BTC', { free: 5, used: 0, total: 5 }],
-  ['USDT', { free: 500, used: 0, total: 500 }],
+  ['USDT', { free: 462.5, used: 0, total: 462.5 }],
 ]);
 
 const unbalancedPortfolio: Portfolio = new Map<string, BalanceDetail>([
@@ -155,9 +156,10 @@ describe('GridBot', () => {
   // GridBot placed its grid from init, on the first candle of the warmup: in realtime a candle of the history replayed at start-up,
   // so the Trader sent live a grid centred on a stale close, a year old with 365 daily candles
   describe('warmup', () => {
+    // The split of the default grid at 130, 2.5 a level: its BUYs at 125 and 120 take 612.5 USDT
     const balancedAt130: Portfolio = new Map<string, BalanceDetail>([
       ['BTC', { free: 5, used: 0, total: 5 }],
-      ['USDT', { free: 650, used: 0, total: 650 }],
+      ['USDT', { free: 612.5, used: 0, total: 612.5 }],
     ]);
 
     it.each`
@@ -191,11 +193,12 @@ describe('GridBot', () => {
       expect(issuedOrders.map(({ side, price }) => `${side} ${price}`)).toEqual(['BUY 120', 'BUY 125', 'SELL 135', 'SELL 140']);
     });
 
+    // Centred on 200, a BUY of 2.54 BTC, where centred on the close init received, 100, it would be 5.19
     it('plans the rebalance at the close of the first candle after the warmup', () => {
       initStrategy(100, {}, unbalancedPortfolio);
       afterWarmup(200, unbalancedPortfolio);
 
-      expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 2.5, symbol: 'BTC/USDT' }]]);
+      expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 2.54, symbol: 'BTC/USDT' }]]);
     });
 
     it('sizes on the portfolio of the first candle after the warmup, not on the one init received', () => {
@@ -227,17 +230,12 @@ describe('GridBot', () => {
       ${3}      | ${2}       | ${5}
       ${2}      | ${3}       | ${5}
     `('places $expectedOrders orders for $buyLevels buy and $sellLevels sell levels', ({ buyLevels, sellLevels, expectedOrders }) => {
-      // Create portfolio balanced for this level ratio
-      // Target asset ratio = sellLevels / (buyLevels + sellLevels)
-      const totalValue = 1000;
-      const assetRatio = sellLevels / (buyLevels + sellLevels);
-      const assetValue = totalValue * assetRatio;
-      const assetAmount = assetValue / 100; // at price 100
-      const currencyValue = totalValue - assetValue;
-
+      // The split that funds 2 a level, which needs no rebalance: 2 BTC for each SELL, and 2 × the price of each BUY, 95, 90, 85…
+      const btc = 2 * sellLevels;
+      const usdt = Array.from({ length: buyLevels }, (_, i) => 2 * (95 - 5 * i)).reduce((total, cost) => total + cost, 0);
       const balancedForLevels: Portfolio = new Map<string, BalanceDetail>([
-        ['BTC', { free: assetAmount, used: 0, total: assetAmount }],
-        ['USDT', { free: currencyValue, used: 0, total: currencyValue }],
+        ['BTC', { free: btc, used: 0, total: btc }],
+        ['USDT', { free: usdt, used: 0, total: usdt }],
       ]);
 
       startStrategy(100, { buyLevels, sellLevels }, balancedForLevels);
@@ -290,6 +288,20 @@ describe('GridBot', () => {
       });
 
       expect(createOrder).toHaveBeenCalledTimes(5);
+    });
+
+    // The rebalance aimed at 50/50, a BUY of 5 BTC: the grid built on 5 BTC and 500 USDT traded 2.5 a level, and its BUYs at 95 and
+    // 90 left 37.5 USDT idle for the whole run
+    it('builds, once the rebalance fills, a grid that the bought BTC and the USDT left fund alike: 2.59 a level', () => {
+      startStrategy(100, {}, unbalancedPortfolio);
+      const { id, amount } = issuedOrders[0];
+      const rebalanced: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: amount, used: 0, total: amount }],
+        ['USDT', { free: 1000 - amount * 100, used: 0, total: 1000 - amount * 100 }],
+      ]);
+      strategy.onOrderCompleted({ order: { id } as any, exchange: { price: 100, portfolio: rebalanced }, tools });
+
+      expect(amountsSentAfter(1)).toEqual(['BUY 90 x2.59', 'BUY 95 x2.59', 'SELL 105 x2.59', 'SELL 110 x2.59']);
     });
 
     it('retries rebalance on error', () => {
@@ -350,7 +362,7 @@ describe('GridBot', () => {
         startStrategy(100, {}, unbalancedPortfolio);
 
         expect(loseRebalance).toThrow(
-          `GridBot: The rebalance, a STICKY BUY of 5, may be live on the exchange without GridBot tracking it: the grid is not built. Check it on the exchange. Last error: ${lostOnTheNetwork}`,
+          `GridBot: The rebalance, a STICKY BUY of 5.19, may be live on the exchange without GridBot tracking it: the grid is not built. Check it on the exchange. Last error: ${lostOnTheNetwork}`,
         );
       });
 
@@ -425,9 +437,10 @@ describe('GridBot', () => {
           ['USDT', { ...usdt, total: usdt.free + usdt.used }],
         ]);
       const btcLocked = portfolioOf({ free: 0, used: 0.01 }, { free: 600, used: 0 });
-      const btcLockedFreeBalanced = portfolioOf({ free: 0.01, used: 0.01 }, { free: 600, used: 0 });
+      // The split of the grid at 60000, 0.002 a level: 0.01 BTC for its SELLs, 582 USDT for its BUYs at 59400 down to 57000
+      const btcLockedFreeBalanced = portfolioOf({ free: 0.01, used: 0.01 }, { free: 582, used: 0 });
       const usdtLocked = portfolioOf({ free: 0.01, used: 0 }, { free: 0, used: 600 });
-      const usdtLockedFreeBalanced = portfolioOf({ free: 0.01, used: 0 }, { free: 600, used: 600 });
+      const usdtLockedFreeBalanced = portfolioOf({ free: 0.01, used: 0 }, { free: 582, used: 600 });
 
       beforeEach(() => {
         tools.marketData = lotMarketData;
@@ -436,9 +449,9 @@ describe('GridBot', () => {
       it.each`
         portfolio                 | description                                      | expected
         ${btcLocked}              | ${'0.01 BTC locked and 600 USDT free'}           | ${['STICKY BUY 0.005']}
-        ${btcLockedFreeBalanced}  | ${'0.01 BTC locked, 0.01 BTC and 600 USDT free'} | ${['LIMIT BUY 0.002', 'LIMIT SELL 0.002']}
-        ${usdtLocked}             | ${'600 USDT locked and 0.01 BTC free'}           | ${['STICKY SELL 0.005']}
-        ${usdtLockedFreeBalanced} | ${'600 USDT locked, 0.01 BTC and 600 USDT free'} | ${['LIMIT BUY 0.002', 'LIMIT SELL 0.002']}
+        ${btcLockedFreeBalanced}  | ${'0.01 BTC locked, 0.01 BTC and 582 USDT free'} | ${['LIMIT BUY 0.002', 'LIMIT SELL 0.002']}
+        ${usdtLocked}             | ${'600 USDT locked and 0.01 BTC free'}           | ${['STICKY SELL 0.0049']}
+        ${usdtLockedFreeBalanced} | ${'600 USDT locked, 0.01 BTC and 582 USDT free'} | ${['LIMIT BUY 0.002', 'LIMIT SELL 0.002']}
       `('rebalances the free balances, $description, at 60000: $expected', ({ portfolio, expected }) => {
         startStrategy(60000, percentGrid, portfolio);
 
@@ -448,7 +461,7 @@ describe('GridBot', () => {
       it.each`
         portfolio                                                            | description       | locked
         ${btcLocked}                                                         | ${'BTC'}          | ${'0.01 BTC locked in other orders, left out: the rebalance and the grid use the free balances only, 0 BTC and 600 USDT'}
-        ${usdtLockedFreeBalanced}                                            | ${'USDT'}         | ${'600 USDT locked in other orders, left out: the rebalance and the grid use the free balances only, 0.01 BTC and 600 USDT'}
+        ${usdtLockedFreeBalanced}                                            | ${'USDT'}         | ${'600 USDT locked in other orders, left out: the rebalance and the grid use the free balances only, 0.01 BTC and 582 USDT'}
         ${portfolioOf({ free: 0.01, used: 0.01 }, { free: 600, used: 600 })} | ${'BTC and USDT'} | ${'0.01 BTC and 600 USDT locked in other orders, left out: the rebalance and the grid use the free balances only, 0.01 BTC and 600 USDT'}
       `('reports the $description locked in other orders at info', ({ portfolio, locked }) => {
         startStrategy(60000, percentGrid, portfolio);
@@ -598,12 +611,18 @@ describe('GridBot', () => {
     });
 
     describe('on a market with a maker fee of 0.0004, 0.08003 % a round trip', () => {
+      // The split of the grid a tick apart, whose BUYs at 99.99 and 99.98 cost about what its SELLs are worth
+      const balancedOneTick: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: 5, used: 0, total: 5 }],
+        ['USDT', { free: 500, used: 0, total: 500 }],
+      ]);
+
       beforeEach(() => {
         tools.marketData = new Map([['BTC/USDT', { ...marketDataMock, fee: { maker: 0.0004 } }]]);
       });
 
       it('warns that a spacing of one tick is under the round-trip fee, naming the parameter and the fee', () => {
-        startStrategy(100, oneTick);
+        startStrategy(100, oneTick, balancedOneTick);
 
         expect(log).toHaveBeenCalledWith(
           'warn',
@@ -612,7 +631,7 @@ describe('GridBot', () => {
       });
 
       it('warns once: not again on the candles and the fills that follow', () => {
-        startStrategy(100, oneTick);
+        startStrategy(100, oneTick, balancedOneTick);
         afterWarmup(100);
         strategy.onEachTimeframeCandle({ candle: makeCandle(100), portfolio: balancedPortfolio, tools });
         settle('completed', 99.99, 'BUY');
@@ -621,7 +640,7 @@ describe('GridBot', () => {
       });
 
       it('places the grid all the same: a bad grid, not an impossible one', () => {
-        startStrategy(100, oneTick);
+        startStrategy(100, oneTick, balancedOneTick);
 
         expect(amountsSentAfter(0)).toEqual(['BUY 99.98 x2.49', 'BUY 99.99 x2.49', 'SELL 100.01 x2.49', 'SELL 100.02 x2.49']);
       });
@@ -890,7 +909,7 @@ describe('GridBot', () => {
   // was traded a second time, and an exchange that kept canceling it (self-trade prevention, a cancel by hand) brought it back
   // without end
   describe('a grid order canceled', () => {
-    // 2.5 per level: the 2/2 grid at 100 on 5 BTC and 500 USDT. 2.5 - 2.2 is 0.2999999999999998 in binary
+    // 2.5 per level: the 2/2 grid at 100 on 5 BTC and 462.5 USDT. 2.5 - 2.2 is 0.2999999999999998 in binary
     it.each`
       side      | price  | cancels                                                             | description                                      | expected
       ${'BUY'}  | ${95}  | ${[{ filled: 0, remaining: 2.5 }]}                                  | ${'nothing filled'}                              | ${['BUY 95 x2.5']}
@@ -1070,7 +1089,7 @@ describe('GridBot', () => {
       expect(sentAfter(sentBefore)).toEqual(['LIMIT SELL 95']);
     });
 
-    // 1.66 per level: the 3/3 grid at 100 on 5 BTC and 500 USDT
+    // 1.66 per level: the 3/3 grid at 100 on 5 BTC and 462.5 USDT
     it('does not stop the run while retryOnError orders or fewer may be live untracked', () => {
       startStrategy(100, { buyLevels: 3, sellLevels: 3, retryOnError: 3 });
 
@@ -1226,9 +1245,10 @@ describe('GridBot', () => {
     // Divided by the tick in binary, a close on a tie fell under the half, 109.445 / 0.01 being 10944.499999999998: the grid was
     // centred on 109.44 where round rounds the close to 109.45
     it('centres the grid on a close on a tie rounded upwards, as round rounds it: 109.445 to 109.45', () => {
+      // The split of the default grid at 109.45, 2.5 a level: its BUYs at 104.45 and 99.45 take 509.75 USDT
       const balancedAt109: Portfolio = new Map<string, BalanceDetail>([
         ['BTC', { free: 5, used: 0, total: 5 }],
-        ['USDT', { free: 547.25, used: 0, total: 547.25 }],
+        ['USDT', { free: 509.75, used: 0, total: 509.75 }],
       ]);
       startStrategy(109.445, {}, balancedAt109);
 
@@ -1245,13 +1265,18 @@ describe('GridBot', () => {
     // 100, 100, 101 and 101, which the start refused, two levels buying and selling at one price
     describe('on a market that states none', () => {
       const halfPercent = { buyLevels: 3, sellLevels: 3, spacingType: 'percent', spacingValue: 0.5 } as const;
+      // Its split, 5/3 a level: its BUYs at 99.5, 99 and 98.5 take 495 USDT
+      const balancedHalfPercent: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: 5, used: 0, total: 5 }],
+        ['USDT', { free: 495, used: 0, total: 495 }],
+      ]);
 
       beforeEach(() => {
         tools.marketData = new Map([['BTC/USDT', { amount: { min: 0.1 }, precision: { amount: 0.01 } }]]);
       });
 
       it('places the grid at its prices rounded to 8 decimals', () => {
-        startStrategy(100, halfPercent);
+        startStrategy(100, halfPercent, balancedHalfPercent);
 
         expect(pricesSent()).toEqual(['BUY 98.5', 'BUY 99', 'BUY 99.5', 'SELL 100.5', 'SELL 101', 'SELL 101.5']);
       });
@@ -1263,7 +1288,7 @@ describe('GridBot', () => {
       });
 
       it('warns that it rounds the prices to 8 decimals, which a coarser tick refuses', () => {
-        startStrategy(100, halfPercent);
+        startStrategy(100, halfPercent, balancedHalfPercent);
 
         expect(log).toHaveBeenCalledWith(
           'warn',
@@ -1305,10 +1330,11 @@ describe('GridBot', () => {
       tools.marketData = configuredMarketData;
     });
 
-    it('rebalances the documented portfolio, 1000 USDT and no BTC, with a STICKY BUY of half of it rounded down to 8 decimals', () => {
+    // Half of it used to be bought, 0.00816532 BTC, and about 3 % of the currency left stayed idle once the SELLs had their BTC
+    it('rebalances the documented portfolio, 1000 USDT and no BTC, with a STICKY BUY of the split that funds its grid, to 8 decimals', () => {
       startStrategy(61234.56, { ...percentGrid, buyLevels: 5, sellLevels: 5 }, unbalancedPortfolio);
 
-      expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 0.00816532, symbol: 'BTC/USDT' }]]);
+      expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 0.00828635, symbol: 'BTC/USDT' }]]);
     });
 
     // Limited by the currency, the BUY used to be sized on its price alone: 0.0494868 at 60622.2144 is all of the 3000 USDT, and
@@ -1336,28 +1362,28 @@ describe('GridBot', () => {
     });
 
     // Planned on the totals, the rebalance bought 5 BTC at 100, a notional of 500 that the 500.22 USDT free passed, while its STICKY
-    // order, at 100.01 with the maker fee on top, took 500.25002, which the simulator refused. Planned on the free currency, it buys
-    // half of what the grid can use.
-    it('rebalances half the free currency, not half the total, when part of it is locked in other orders', () => {
+    // order, at 100.01 with the maker fee on top, took 500.25002, which the simulator refused. Planned on the free currency, it splits
+    // what the grid can use.
+    it('rebalances the free currency, not the total, when part of it is locked in other orders', () => {
       const partlyLocked: Portfolio = new Map<string, BalanceDetail>([
         ['BTC', { free: 0, used: 0, total: 0 }],
         ['USDT', { free: 500.22, used: 499.78, total: 1000 }],
       ]);
       startStrategy(100, { buyLevels: 1, sellLevels: 1 }, partlyLocked);
 
-      expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 2.5011, symbol: 'BTC/USDT' }]]);
+      expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 2.56407359, symbol: 'BTC/USDT' }]]);
     });
 
-    // A gap between the 1 % tolerance and cost.min, 4.58 USDT on 0.0023 BTC and 150 USDT, used to be sent and refused, planned again
-    // identically at every attempt, until the run stopped ('Rebalance failed after 4 attempts'): the portfolio as it was funded a grid
-    // whose lowest BUY costs 26.76 USDT
+    // A rebalance under cost.min, a gap between the 1 % tolerance and the market minimum on a small account, used to be sent and
+    // refused, planned again identically at every attempt, until the run stopped ('Rebalance failed after 4 attempts'), while the
+    // portfolio as it was funded a grid. Here a BUY of 3.23 USDT on 0.00235 BTC and 146 USDT, whose grid's lowest BUY costs 27.34
     describe('when the rebalance is under the market minimum', () => {
       const smallAccount: Portfolio = new Map<string, BalanceDetail>([
-        ['BTC', { free: 0.0023, used: 0, total: 0.0023 }],
-        ['USDT', { free: 150, used: 0, total: 150 }],
+        ['BTC', { free: 0.00235, used: 0, total: 0.00235 }],
+        ['USDT', { free: 146, used: 0, total: 146 }],
       ]);
       const fiveByFive = { ...percentGrid, buyLevels: 5, sellLevels: 5 };
-      const asItIs = [...Array<string>(5).fill('LIMIT BUY 0.00046'), ...Array<string>(5).fill('LIMIT SELL 0.00046')];
+      const asItIs = [...Array<string>(5).fill('LIMIT BUY 0.00047'), ...Array<string>(5).fill('LIMIT SELL 0.00047')];
 
       it('builds the grid on the portfolio as it is, with no rebalance', () => {
         startStrategy(61234.56, fiveByFive, smallAccount);
@@ -1370,7 +1396,7 @@ describe('GridBot', () => {
 
         expect(log).toHaveBeenCalledWith(
           'info',
-          'GridBot: No rebalance, its BUY of 0.00007479 BTC being under the market minimum of 0.00008166 BTC: the grid is built on the free balances as they are',
+          'GridBot: No rebalance, its BUY of 0.0000527 BTC being under the market minimum of 0.00008166 BTC: the grid is built on the free balances as they are',
         );
       });
 
@@ -1381,6 +1407,8 @@ describe('GridBot', () => {
           ['BTC', { free: 0.6, used: 0, total: 0.6 }],
           ['USDT', { free: 50, used: 0, total: 50 }],
         ]);
+        const sellOfCostMin = { side: 'SELL', amount: 0.05, estimatedNotional: 5, centerPrice: 100 } as const;
+        vi.spyOn(GridBotUtils, 'computeRebalancePlan').mockReturnValue(sellOfCostMin);
         startStrategy(100, fiveByFive, richInAsset);
 
         expect(log).toHaveBeenCalledWith(
@@ -1399,7 +1427,7 @@ describe('GridBot', () => {
         const order = { id: issuedOrders[0].id, reason: 'Test error' } as any;
         strategy.onOrderErrored({ order, exchange: { price: 61234.56, portfolio: smallAccount }, tools });
 
-        expect(issuedOrders.map(({ type, side, amount }) => `${type} ${side} ${amount}`)).toEqual(['STICKY BUY 0.0023748', ...asItIs]);
+        expect(issuedOrders.map(({ type, side, amount }) => `${type} ${side} ${amount}`)).toEqual(['STICKY BUY 0.00241', ...asItIs]);
       });
     });
   });
