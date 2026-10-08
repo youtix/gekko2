@@ -87,10 +87,11 @@ const isSellable = (amount: number, price: number, marketData: MarketData = {}) 
 };
 
 /**
- * The strategy's own copy of a timeframe bucket. The bucket is the TradingAdvisor's, queued as the timeframe candle event once the
- * hooks have run, and its candles are those the indicators are fed, which some keep (the previous candle of TrueRange, PSAR and ±DM,
- * the window of CCI): a close the strategy overwrote reached the analyzers, the warmup event and every later ATR. A candle holds
- * numbers only, so a spread copies it.
+ * The strategy's own copy of a bucket: a timeframe bucket for the candle hooks, the first one-minute bucket for init. A timeframe
+ * bucket is the TradingAdvisor's, queued as the timeframe candle event once the hooks have run, and its candles are those the
+ * indicators are fed, which some keep (the previous candle of TrueRange, PSAR and ±DM, the window of CCI): a close the strategy
+ * overwrote reached the analyzers, the warmup event and every later ATR. A one-minute bucket is the one every plugin receives, which
+ * the TradingAdvisor then batches. A candle holds numbers and a flag only, so a spread copies it.
  */
 const copyBucket = (bucket: CandleBucket): CandleBucket => {
   const copy: CandleBucket = new Map();
@@ -133,6 +134,8 @@ export class StrategyManager extends EventEmitter {
   private readonly trailingStopManager: TrailingStopManager;
 
   private age = 0;
+  /** Set once init has run, on the first one-minute bucket, never reset: addIndicator refuses indicators from then on */
+  private isInitialized = false;
   /** Set as the warmup event is emitted, never reset: createOrder refuses orders until then */
   private isWarmupCompleted = false;
   private indicators: { indicator: Indicator; symbol: TradingPair }[] = [];
@@ -215,6 +218,8 @@ export class StrategyManager extends EventEmitter {
     // Update current timestamp with the latest candle data
     const firstCandle = getFirstCandleFromBucket(bucket);
     this.currentTimestamp = addMinutes(firstCandle.start, 1).getTime();
+    // init runs on the first bucket, once the clock is set: it dates what init logs
+    if (!this.isInitialized) this.initStrategy(bucket);
     // Update trailing stop orders each minute with the latest candle data
     this.trailingStopManager.update(bucket);
   }
@@ -222,9 +227,6 @@ export class StrategyManager extends EventEmitter {
   public onTimeFrameCandle(bucket: CandleBucket) {
     // The hooks of the candle share one copy of the bucket (see copyBucket): the bucket itself feeds the indicators and the warmup event
     const params = { candle: copyBucket(bucket), portfolio: this.portfolio, tools: this.tools };
-
-    // Initialize strategy with time frame candle (do not use one minute candle)
-    if (this.age === 0) this.strategy?.init?.({ ...params, addIndicator: this.addIndicator });
 
     // Update indicators: each is on a watched pair (see addIndicator), and a timeframe bucket holds a candle of every watched pair. The
     // hooks get a copy of each result, made once per candle (see copyResult).
@@ -355,6 +357,10 @@ export class StrategyManager extends EventEmitter {
   /* -------------------------------------------------------------------------- */
 
   private addIndicator<T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>): void {
+    // Kept from init and called from a later hook, it added an indicator fed from then on only, and one more argument to every hook:
+    // one per candle for a strategy that called it on each
+    if (this.isInitialized)
+      throw new GekkoError('strategy', `Impossible to add the ${name} indicator on ${symbol}: addIndicator is available in init only`);
     const Indicator = indicators[name];
     if (!Indicator) throw new GekkoError('strategy', `${name} indicator not found.`);
     // An indicator on a pair that is not watched never got a candle: its results stayed null for the whole run, so a strategy waiting
@@ -462,6 +468,17 @@ export class StrategyManager extends EventEmitter {
     }
     this.strategyParams = result.data;
     this.tools.strategyParams = result.data;
+  }
+
+  /**
+   * Runs init, once, on the first one-minute bucket, given the strategy's own copy of it (see copyBucket): a candle of every watched
+   * pair, all init needs to pick its pairs and register its indicators, which are fed from the first timeframe candle on. Run on that
+   * candle instead, init came up to a day after start-up on 1d without warmup (a month on 1M): an indicator misspelt there, or a
+   * parameter its checks refused, stopped the bot only then. addIndicator is closed once init has returned.
+   */
+  private initStrategy(bucket: CandleBucket) {
+    this.strategy?.init?.({ candle: copyBucket(bucket), portfolio: this.portfolio, tools: this.tools, addIndicator: this.addIndicator });
+    this.isInitialized = true;
   }
 
   /**

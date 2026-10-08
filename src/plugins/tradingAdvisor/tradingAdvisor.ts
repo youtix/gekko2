@@ -149,6 +149,7 @@ export class TradingAdvisor extends Plugin {
   }
 
   protected processOneMinuteBucket(bucket: CandleBucket) {
+    // The strategy's init runs on the first bucket (see StrategyManager.onOneMinuteBucket), before any timeframe candle
     this.strategyManager?.onOneMinuteBucket(bucket);
 
     const timeframeBucket = this.bucketBatcher.addBucket(bucket);

@@ -7,6 +7,7 @@ import {
 } from '@constants/event.const';
 import { ONE_MINUTE } from '@constants/time.const';
 import { ApplicationStopError } from '@errors/applicationStop.error';
+import { IndicatorNames } from '@indicators/indicator.types';
 import { StrategyOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { Timeframe, Watch } from '@models/configuration.types';
@@ -24,6 +25,7 @@ import { config } from '@services/configuration/configuration';
 import { Exchange, MarketData } from '@services/exchange/exchange.types';
 import { error } from '@services/logger';
 import {
+  AddIndicatorFn,
   IndicatorResults,
   InitParams,
   OnCandleEventParams,
@@ -244,15 +246,17 @@ describe('TradingAdvisor', () => {
       await expect(createAdvisor({ strategyName, strategyPath }).processInitStream()).rejects.toThrow(message);
     });
 
-    describe('on the first timeframe candle', () => {
+    // One bucket, before any timeframe candle: a 3m candle takes three
+    describe('on the first one-minute bucket', () => {
       beforeEach(async () => {
-        await sendBuckets(await startAdvisor(), 3);
+        await sendBuckets(await startAdvisor(), 1);
       });
 
       it.each`
         given                                      | expected
         ${'the market data of every watched pair'} | ${expect.objectContaining({ tools: expect.objectContaining({ marketData: MARKET_DATA }) })}
         ${'the balance fetched from the exchange'} | ${expect.objectContaining({ portfolio: FETCHED_BALANCE })}
+        ${'the candles of that bucket'}            | ${expect.objectContaining({ candle: oneMinuteBucket(0) })}
       `('gives the strategy $given', ({ expected }) => {
         expect(strategy.init).toHaveBeenCalledExactlyOnceWith(expected);
       });
@@ -330,6 +334,38 @@ describe('TradingAdvisor', () => {
         await expect(sendBuckets(advisor, 3)).rejects.toThrow('[STRATEGY] Orders are not available until the warmup is over');
       },
     );
+
+    // init ran on the first timeframe candle: on 1d without warmup up to a day after start-up, which is when an indicator misspelt
+    // there stopped the bot
+    describe('the init of the strategy', () => {
+      it('runs on the first one-minute bucket, before the first 1d candle closes', async () => {
+        await sendBuckets(await startAdvisor({ timeframe: '1d' }), 1);
+        expect(strategy.init).toHaveBeenCalledOnce();
+      });
+
+      it('runs once', async () => {
+        await sendBuckets(await startAdvisor(), 6);
+        expect(strategy.init).toHaveBeenCalledOnce();
+      });
+
+      it('rejects the first one-minute bucket when it registers an indicator that does not exist', async () => {
+        strategy.init.mockImplementation(({ addIndicator }) => addIndicator('SMAA' as IndicatorNames, 'BTC/USDT', {} as never));
+        const advisor = await startAdvisor({ timeframe: '1d' });
+        await expect(advisor.processInputStream(oneMinuteBucket(0))).rejects.toThrow('[STRATEGY] SMAA indicator not found.');
+      });
+
+      it('rejects when the strategy adds an indicator once it has returned', async () => {
+        let kept: AddIndicatorFn | undefined;
+        strategy.init.mockImplementation(({ addIndicator }) => {
+          kept = addIndicator;
+        });
+        strategy.onEachTimeframeCandle.mockImplementation(() => kept?.('SMA', 'BTC/USDT', { period: 2 }));
+        const advisor = await startAdvisor();
+        await expect(sendBuckets(advisor, 3)).rejects.toThrow(
+          '[STRATEGY] Impossible to add the SMA indicator on BTC/USDT: addIndicator is available in init only',
+        );
+      });
+    });
 
     describe('on a complete timeframe candle after the warmup', () => {
       let createdOrderId: UUID | undefined;
@@ -482,6 +518,29 @@ describe('TradingAdvisor', () => {
         ${TIMEFRAME_CANDLE_EVENT}
       `('queues $event with the bucket as the batcher built it', ({ event }) => {
         expect(delivered.get(event)).toEqual([FIRST_3M_BUCKET]);
+      });
+    });
+
+    describe('to the candles init gets', () => {
+      beforeEach(() => {
+        strategy.init.mockImplementation(({ candle }) => {
+          candle.get('BTC/USDT')!.open = 0;
+          candle.get('BTC/USDT')!.high = 999;
+        });
+      });
+
+      // Every plugin receives it
+      it('leaves the first one-minute bucket as it was', async () => {
+        const bucket = oneMinuteBucket(0);
+        await (await startAdvisor()).processInputStream(bucket);
+        expect(bucket).toEqual(oneMinuteBucket(0));
+      });
+
+      // Built from the one-minute buckets
+      it('queues the first timeframe candle as the batcher built it', async () => {
+        const advisor = await startAdvisor();
+        await sendBuckets(advisor, 3);
+        expect((await flushDeferredEvents(advisor)).get(TIMEFRAME_CANDLE_EVENT)).toEqual([FIRST_3M_BUCKET]);
       });
     });
 

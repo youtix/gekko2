@@ -19,7 +19,7 @@ import { debug, error, info, warning } from '@services/logger';
 import { randomUUID, UUID } from 'node:crypto';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { IndicatorResults, InitParams, OnCandleEventParams, Tools } from './strategy.types';
+import { AddIndicatorFn, IndicatorResults, InitParams, OnCandleEventParams, Tools } from './strategy.types';
 import { StrategyManager } from './strategyManager';
 import { TrailingStopState } from './trailingStopManager.types';
 
@@ -192,7 +192,7 @@ describe('StrategyManager', () => {
           vi.mocked(config.getStrategy).mockReturnValue({ name: 'SchemaStrategy', period: 14 });
           manager = new StrategyManager(1);
           await manager.createStrategy('SchemaStrategy', strategyPath);
-          manager.onTimeFrameCandle(bucket);
+          manager.onOneMinuteBucket(bucket); // Runs init
         });
 
         it('gives the strategy the output of its schema: the block without name, defaults applied', () => {
@@ -244,7 +244,7 @@ describe('StrategyManager', () => {
         vi.mocked(config.getStrategy).mockReturnValue({ name: 'DummyStrategy', each: 1, wait: 0 });
         manager = new StrategyManager(1);
         await manager.createStrategy('DummyStrategy');
-        manager.onTimeFrameCandle(bucket);
+        manager.onOneMinuteBucket(bucket); // Runs init
       });
 
       it('gives the strategy the whole block, name included', () => {
@@ -272,14 +272,123 @@ describe('StrategyManager', () => {
         expect(manager['currentTimestamp']).toBe(new Date(1000 + 60000).getTime());
         expect(updateSpy).toHaveBeenCalledWith(minBucket);
       });
+
+      // init ran on the first timeframe candle: up to a day after start-up on 1d without warmup (a month on 1M), which is when an
+      // indicator misspelt there, or a parameter its checks refused, stopped the bot
+      describe('init, on the first one-minute bucket', () => {
+        const ETH_CANDLE = { ...candle, open: 3000, high: 3010, low: 2990, close: 3005 };
+        /** The first minute of the two pairs watched here, a new bucket each time */
+        const firstMinute = (): CandleBucket =>
+          new Map([
+            ['BTC/USDT', { ...candle }],
+            ['ETH/USDT', { ...ETH_CANDLE }],
+          ]);
+        let strategy: { init: Mock<(params: InitParams<object>) => void>; onEachTimeframeCandle: Mock };
+
+        /** What init was given */
+        const initParams = () => strategy.init.mock.calls[0][0];
+
+        beforeEach(() => {
+          manager.setMarketData(twoPairsMarketData);
+          strategy = { init: vi.fn(), onEachTimeframeCandle: vi.fn() };
+          manager['strategy'] = strategy as any;
+        });
+
+        describe('when that bucket comes', () => {
+          beforeEach(() => {
+            manager.onOneMinuteBucket(firstMinute());
+          });
+
+          it('runs init', () => {
+            expect(strategy.init).toHaveBeenCalledOnce();
+          });
+
+          it('gives init a candle of every pair of the bucket, in its order', () => {
+            expect([...initParams().candle.keys()]).toEqual(['BTC/USDT', 'ETH/USDT']);
+          });
+
+          it('gives init the candles of that minute', () => {
+            expect(initParams().candle).toEqual(firstMinute());
+          });
+
+          it('gives init the tools every candle hook gets', () => {
+            expect(initParams().tools).toBe(manager['tools']);
+          });
+
+          it('gives init addIndicator', () => {
+            expect(initParams().addIndicator).toBe(manager['addIndicator']);
+          });
+        });
+
+        it('gives init the portfolio received before it', () => {
+          const portfolio: Portfolio = new Map([['USDT', { free: 1000, used: 0, total: 1000 }]]);
+          manager.onPortfolioChange(portfolio);
+          manager.onOneMinuteBucket(firstMinute());
+          expect(initParams().portfolio).toEqual(portfolio);
+        });
+
+        // The clock is set first: what init logs is dated with the end of its minute, as every line of that minute is
+        it('dates what init logs with the end of its minute', () => {
+          const listener = vi.fn();
+          manager.on(STRATEGY_INFO_EVENT, listener);
+          strategy.init.mockImplementation(({ tools }) => tools.log('info', 'Trading BTC/USDT'));
+          manager.onOneMinuteBucket(firstMinute());
+          expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ timestamp: candle.start + ONE_MINUTE }));
+        });
+
+        it('runs init once, not again on the minutes and the timeframe candles after it', () => {
+          completeWarmup();
+          expect(strategy.init).toHaveBeenCalledOnce();
+        });
+
+        it('keeps the indicators init registers', () => {
+          strategy.init.mockImplementation(({ addIndicator }) => addIndicator('SMA', 'ETH/USDT', { period: 10 }));
+          manager.onOneMinuteBucket(firstMinute());
+          expect(manager['indicators']).toEqual([{ indicator: indicatorMocks.IndicatorMock.mock.instances[0], symbol: 'ETH/USDT' }]);
+        });
+
+        describe('then on the first timeframe candle', () => {
+          const TIMEFRAME_ETH_CANDLE = { ...ETH_CANDLE, high: 3100, close: 3050, volume: 5 };
+          let sma: { onNewCandle: Mock; getResult: Mock };
+
+          beforeEach(() => {
+            sma = { onNewCandle: vi.fn(), getResult: vi.fn(() => 42) };
+            indicatorMocks.IndicatorMock.mockImplementation(function () {
+              return sma;
+            });
+            strategy.init.mockImplementation(({ addIndicator }) => addIndicator('SMA', 'ETH/USDT', { period: 10 }));
+            manager.onOneMinuteBucket(firstMinute());
+            manager.onTimeFrameCandle(
+              new Map([
+                ['BTC/USDT', candle],
+                ['ETH/USDT', TIMEFRAME_ETH_CANDLE],
+              ]),
+            );
+          });
+
+          it('feeds the indicators init registered that candle', () => {
+            expect(sma.onNewCandle).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_ETH_CANDLE);
+          });
+
+          it('gives the hooks of that candle their results', () => {
+            expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.anything(), { results: 42, symbol: 'ETH/USDT' });
+          });
+        });
+      });
     });
 
     describe('onTimeFrameCandle', () => {
-      it('initializes strategy once, processes indicators, and emits warmup completion', () => {
+      it('runs no init: the first one-minute bucket does', () => {
+        const strategy = { init: vi.fn() };
+        manager['strategy'] = strategy as any;
+        manager.onTimeFrameCandle(bucket);
+        expect(strategy.init).not.toHaveBeenCalled();
+      });
+
+      it('processes indicators, and emits warmup completion', () => {
         const indicator = { onNewCandle: vi.fn(), getResult: vi.fn().mockReturnValue(42) };
         manager['indicators'].push({ indicator, symbol: 'BTC/USDT' } as any);
         const strategy = {
-          init: vi.fn(),
           onEachTimeframeCandle: vi.fn(),
           log: vi.fn(),
           onTimeframeCandleAfterWarmup: vi.fn(),
@@ -291,20 +400,6 @@ describe('StrategyManager', () => {
         // 1st Candle: Warmup phase (age 0 -> 1)
         manager.onTimeFrameCandle(bucket);
 
-        expect(strategy.init).toHaveBeenCalledTimes(1);
-        const initArgs = strategy.init.mock.calls[0]?.[0];
-        expect(initArgs.candle).toEqual(bucket);
-        expect(initArgs.portfolio).toBeInstanceOf(Map);
-        expect(initArgs.portfolio.size).toBe(0);
-        expect(initArgs.addIndicator).toBe(manager['addIndicator']);
-        expect(initArgs.tools).toEqual({
-          strategyParams: { each: 1, wait: 0 },
-          marketData: defaultMarketData,
-          createOrder: manager['createOrder'],
-          cancelOrder: manager['cancelOrder'],
-          cancelTrailingOrder: manager['cancelTrailingOrder'],
-          log: manager['log'],
-        });
         expect(indicator.onNewCandle).toHaveBeenCalledWith(candle);
         expect(indicator.getResult).toHaveBeenCalled();
         expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(1);
@@ -337,8 +432,6 @@ describe('StrategyManager', () => {
 
         // 2nd execution
         manager.onTimeFrameCandle(bucket);
-
-        expect(strategy.init).toHaveBeenCalledTimes(1); // Only once
 
         // Check 1: 1 === 1 (true) -> emit
         expect(warmupListener).toHaveBeenCalledWith(bucket);
@@ -1882,7 +1975,7 @@ describe('StrategyManager', () => {
           tools.strategyParams.each = 2;
           tools.strategyParams.thresholds.up = 9;
         });
-        manager.onTimeFrameCandle(bucket);
+        manager.onOneMinuteBucket(bucket); // Runs init
       });
 
       // A strategy without schema got the block itself, which every plugin keeps: the PerformanceReporter makes its run id of it
@@ -1907,7 +2000,7 @@ describe('StrategyManager', () => {
             tools.marketData.set('ETH/USDT', { amount: { min: 0.001 } });
           },
         };
-        manager.onTimeFrameCandle(bucket);
+        manager.onOneMinuteBucket(bucket); // Runs init
       });
 
       // On dummy-cex and paper trading the entry is the one the simulator charges and checks orders with
@@ -2067,7 +2160,7 @@ describe('StrategyManager', () => {
       let warmupListener: Mock;
 
       beforeEach(() => {
-        // Without warmup the first candle completes it: its warmup event follows init and onEachTimeframeCandle
+        // Without warmup the first candle completes it: its warmup event follows onEachTimeframeCandle
         manager = new StrategyManager(0);
         manager.setMarketData(defaultMarketData);
         indicator = { onNewCandle: vi.fn(), getResult: vi.fn(() => null) };
@@ -2075,11 +2168,7 @@ describe('StrategyManager', () => {
         warmupListener = vi.fn();
         manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);
         manager['strategy'] = {
-          // Before the indicators are fed
-          init: ({ candle }: InitParams<object>) => {
-            candle.get('BTC/USDT')!.close = 0;
-          },
-          // After them
+          // Once the indicators are fed
           onEachTimeframeCandle: ({ candle }: OnCandleEventParams<object>) => {
             candle.get('BTC/USDT')!.high = 99;
             candle.delete('BTC/USDT');
@@ -2101,6 +2190,21 @@ describe('StrategyManager', () => {
 
       it('emits the warmup event with the bucket as it was', () => {
         expect(warmupListener).toHaveBeenCalledExactlyOnceWith(new Map([['BTC/USDT', CANDLE]]));
+      });
+    });
+
+    describe('the candles of the one-minute bucket init runs on', () => {
+      // Every plugin receives that bucket, and the TradingAdvisor batches it into its first timeframe candle
+      it('leaves the bucket as it was', () => {
+        manager['strategy'] = {
+          init: ({ candle: own }: InitParams<object>) => {
+            own.get('BTC/USDT')!.close = 0;
+            own.delete('BTC/USDT');
+          },
+        };
+        const minuteBucket: CandleBucket = new Map([['BTC/USDT', { ...candle }]]);
+        manager.onOneMinuteBucket(minuteBucket);
+        expect(minuteBucket).toEqual(new Map([['BTC/USDT', candle]]));
       });
     });
   });
@@ -2182,6 +2286,52 @@ describe('StrategyManager', () => {
           'message',
           `[STRATEGY] Impossible to add the SMA indicator on ETH/BTC: symbol must be one of the watched pairs (BTC/USDT, ETH/USDT), got ${quoted('ETH/BTC')}`,
         );
+      });
+
+      // Kept from init and called from a later hook, it added an indicator fed from then on only, and one more argument to every hook:
+      // one per candle for a strategy that called it on each. When it is called is what is wrong, whatever the name.
+      describe.each`
+        kind                      | name
+        ${'an indicator'}         | ${'SMA'}
+        ${'an unknown indicator'} | ${'UNKNOWN'}
+      `('when the strategy adds $kind from a later hook, with addIndicator kept from init', ({ name }) => {
+        let failure: unknown;
+
+        beforeEach(() => {
+          let kept: AddIndicatorFn | undefined;
+          manager['strategy'] = {
+            init: ({ addIndicator }: InitParams<object>) => {
+              kept = addIndicator;
+            },
+            onEachTimeframeCandle: () => kept?.(name, 'BTC/USDT', { period: 10 }),
+          };
+          manager.onOneMinuteBucket(bucket);
+          failure = undefined;
+          try {
+            manager.onTimeFrameCandle(bucket);
+          } catch (caught) {
+            failure = caught;
+          }
+        });
+
+        it('refuses the indicator with a GekkoError', () => {
+          expect(failure).toBeInstanceOf(GekkoError);
+        });
+
+        it('names the indicator and its pair, and says that addIndicator is available in init only', () => {
+          expect(failure).toHaveProperty(
+            'message',
+            `[STRATEGY] Impossible to add the ${name} indicator on BTC/USDT: addIndicator is available in init only`,
+          );
+        });
+
+        it('creates no indicator', () => {
+          expect(indicatorMocks.IndicatorMock).not.toHaveBeenCalled();
+        });
+
+        it('keeps no indicator', () => {
+          expect(manager['indicators']).toEqual([]);
+        });
       });
     });
 
@@ -2389,8 +2539,9 @@ describe('StrategyManager', () => {
     });
 
     // The manager is driven as the TradingAdvisor drives it, one minute after the other, each completing its 1m candle, and the
-    // strategy orders from one hook on one candle. Candle warmupPeriod + 1 completes the warmup (candle 1 without warmup): its warmup
-    // event comes after init and onEachTimeframeCandle, and before log and onTimeframeCandleAfterWarmup.
+    // strategy orders from one hook on one candle. init runs on the minute of candle 1, before that candle. Candle warmupPeriod + 1
+    // completes the warmup (candle 1 without warmup): its warmup event comes after onEachTimeframeCandle, and before log and
+    // onTimeframeCandleAfterWarmup.
     describe('createOrder during and after the warmup', () => {
       type CandleHook = 'init' | 'onEachTimeframeCandle' | 'log' | 'onTimeframeCandleAfterWarmup';
       const ORDER = { symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', amount: 1 } as const;

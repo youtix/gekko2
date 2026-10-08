@@ -22,6 +22,9 @@ export type Direction = 'short' | 'long';
  *
  * `symbol` must be a watched pair, a key of `tools.marketData`: an indicator on any other pair would never get a candle, its results
  * null for the whole run. Any other symbol throws a GekkoError naming it and the watched pairs: the bot stops.
+ *
+ * Available in init only: called once init has returned, kept from it, it throws a GekkoError and the bot stops. An indicator added
+ * later would only be fed from then on, and would give every hook one more argument.
  */
 export type AddIndicatorFn = <T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>) => void;
 /** Logs a message under the strategy tag. 'error' does not return: it throws a GekkoError, which stops the bot. */
@@ -83,12 +86,28 @@ export type Tools<T> = {
 export type OnCandleEventParams<T> = {
   /** The timeframe candle of every watched pair: the strategy's own copy, made once per candle and shared by the hooks of that candle */
   candle: CandleBucket;
-  /** The last portfolio received: the strategy's own copy, made when the portfolio changed and kept until the next change */
+  /**
+   * The latest portfolio the Trader relayed, as of the candle: the balance at start-up, then the one a portfolio change or the end of
+   * an order carries (read after that order ended, whatever the Trader's portfolioUpdates filter). The strategy's own copy, made when
+   * it was received and kept until the next one
+   */
   portfolio: Portfolio;
   tools: Tools<T>;
 };
-/** What init gets: what every timeframe candle hook gets (see OnCandleEventParams), and addIndicator */
-export type InitParams<T> = OnCandleEventParams<T> & { addIndicator: AddIndicatorFn };
+/**
+ * What init gets: the portfolio and the tools every timeframe candle hook gets (see OnCandleEventParams), a one-minute candle of every
+ * watched pair, and addIndicator
+ */
+export type InitParams<T> = Omit<OnCandleEventParams<T>, 'candle'> & {
+  /**
+   * The candles of the first one-minute bucket, which init runs on (see Strategy.init): the strategy's own copy. Its pairs are those of
+   * every timeframe candle, in the order of watch.assets. Its prices are that minute's, in realtime a minute of the warmup history: a
+   * price to start trading from is that of the first candle after the warmup (see Strategy.onTimeframeCandleAfterWarmup)
+   */
+  candle: CandleBucket;
+  /** Available here only (see AddIndicatorFn) */
+  addIndicator: AddIndicatorFn;
+};
 /** What an order hook gets */
 type OrderEventParams<Order, T> = {
   /** The order: the strategy's own copy of the event, which every other plugin listening to it receives as it was */
@@ -109,7 +128,13 @@ export type OnOrderErroredEventParams<T> = OrderEventParams<OrderErroredEvent['o
  * what the StrategyManager itself goes by. Where each is declared says when its copy is made.
  */
 export interface Strategy<T> {
-  /** Executed once at the beginning of the strategy, on the first timeframe candle, before the warmup is over: no orders here */
+  /**
+   * Executed once, on the first one-minute bucket, before any timeframe candle: in realtime the first minute of the warmup history,
+   * replayed at start-up (with no history to replay, the first live minute, once it closes), in a backtest the first minute of
+   * watch.daterange. The place to pick the pairs and to register the indicators, addIndicator being refused once it has returned: an
+   * indicator misspelt there, or a parameter refused there, stops the bot at start-up, not when the first timeframe candle closes, up
+   * to a day later on 1d without warmup. The warmup is not over: no orders here (see Tools.createOrder).
+   */
   init?(params: InitParams<T>): void;
   /**
    * On each timeframe candle from the beginning, the warmup included, before log and onTimeframeCandleAfterWarmup: it can create
