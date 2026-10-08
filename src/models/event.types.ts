@@ -6,11 +6,6 @@ import { TradingPair } from './utility.types';
 
 export type CandleBucket = Map<TradingPair, Candle>;
 
-export type DeffferedEvent = {
-  name: string;
-  payload: unknown;
-};
-
 type OrderEvent = {
   /** Order Id */
   id: UUID;

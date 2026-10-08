@@ -11,6 +11,7 @@ import { IndicatorNames } from '@indicators/indicator.types';
 import { StrategyOrder } from '@models/advice.types';
 import { Candle } from '@models/candle.types';
 import { Timeframe, Watch } from '@models/configuration.types';
+import { LogLevel } from '@models/logLevel.types';
 import {
   CandleBucket,
   ExchangeEvent,
@@ -37,6 +38,7 @@ import {
 import { toTimestamp } from '@utils/date/date.utils';
 import { UUID } from 'node:crypto';
 import { resolve } from 'node:path';
+import { inspect } from 'node:util';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { TradingAdvisor } from './tradingAdvisor';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
@@ -51,7 +53,7 @@ const { strategy, TestStrategy } = vi.hoisted(() => {
     onOrderCompleted: vi.fn<(params: OnOrderCompletedEventParams<object>) => void>(),
     onOrderCanceled: vi.fn<(params: OnOrderCanceledEventParams<object>) => void>(),
     onOrderErrored: vi.fn<(params: OnOrderErroredEventParams<object>) => void>(),
-    end: vi.fn<() => void>(),
+    end: vi.fn<(interruption?: string) => void>(),
   };
   class TestStrategy implements Strategy<object> {
     init = strategy.init;
@@ -301,21 +303,85 @@ describe('TradingAdvisor', () => {
       await expect(sendBuckets(advisor, 3)).rejects.toThrow('Indicator out of range');
     });
 
-    // Thrown before it was relayed, the error line was lost even to a strategy that caught the error and went on
-    it('queues the error line of a strategy that catches the error and goes on', async () => {
-      strategy.onEachTimeframeCandle.mockImplementation(({ tools }) => {
+    describe('a line the strategy logs', () => {
+      const ERROR_MESSAGE = 'Indicator out of range';
+      /** The strategy info of a line logged on the first 3m candle, dated with its end */
+      const strategyInfo = (level: LogLevel, message: string) => ({ timestamp: START + 3 * ONE_MINUTE, level, tag: 'strategy', message });
+      /** A candle hook that logs an error line, then catches the error tools.log('error') throws and goes on */
+      const logErrorAndGoOn = ({ tools }: OnCandleEventParams<object>) => {
         try {
-          tools.log('error', 'Indicator out of range');
+          tools.log('error', ERROR_MESSAGE);
         } catch {
           // The strategy goes on
         }
+      };
+      let advisor: TradingAdvisor;
+      let listener: Mock;
+
+      beforeEach(async () => {
+        advisor = await startAdvisor();
+        listener = vi.fn();
+        advisor.on(STRATEGY_INFO_EVENT, listener); // As the pipeline wires the onStrategyInfo of an EventSubscriber
       });
-      const advisor = await startAdvisor();
-      await sendBuckets(advisor, 3);
-      const delivered = await flushDeferredEvents(advisor);
-      expect(delivered.get(STRATEGY_INFO_EVENT)).toEqual([
-        { timestamp: START + 3 * ONE_MINUTE, level: 'error', tag: 'strategy', message: 'Indicator out of range' },
-      ]);
+
+      describe.each`
+        level
+        ${'info'}
+        ${'warn'}
+      `('at $level', ({ level }: { level: LogLevel }) => {
+        beforeEach(async () => {
+          strategy.onEachTimeframeCandle.mockImplementation(({ tools }) => tools.log(level, INFO_MESSAGE));
+          await sendBuckets(advisor, 3);
+        });
+
+        it('is not delivered before the events of the bucket are broadcast', () => {
+          expect(listener).not.toHaveBeenCalled();
+        });
+
+        it('is queued with the events of the bucket', async () => {
+          expect((await flushDeferredEvents(advisor)).get(STRATEGY_INFO_EVENT)).toEqual([strategyInfo(level, INFO_MESSAGE)]);
+        });
+      });
+
+      // Queued, it was dropped with the events of the bucket that tools.log('error') fails, which PluginsStream never broadcasts: the
+      // strat_info subscribers never heard why the bot stopped
+      it('at error, is delivered at once, alone in an array as the deferred events are, though its bucket fails', async () => {
+        strategy.onEachTimeframeCandle.mockImplementation(({ tools }) => tools.log('error', ERROR_MESSAGE));
+        await sendBuckets(advisor, 3).catch(() => undefined);
+        expect(listener).toHaveBeenCalledExactlyOnceWith([strategyInfo('error', ERROR_MESSAGE)]);
+      });
+
+      // Thrown before it was relayed, the error line was lost even to a strategy that caught the error and went on
+      describe('at error, when the strategy catches the error and goes on', () => {
+        beforeEach(async () => {
+          strategy.onEachTimeframeCandle.mockImplementation(logErrorAndGoOn);
+          await sendBuckets(advisor, 3);
+        });
+
+        it('is delivered at once, before the events of the bucket are broadcast', () => {
+          expect(listener).toHaveBeenCalledExactlyOnceWith([strategyInfo('error', ERROR_MESSAGE)]);
+        });
+
+        it('is not queued with the events of the bucket as well', async () => {
+          expect((await flushDeferredEvents(advisor)).has(STRATEGY_INFO_EVENT)).toBe(false);
+        });
+      });
+
+      it.each`
+        thrown                        | reason
+        ${new Error('Telegram down')} | ${'Telegram down'}
+        ${'Telegram down'}            | ${inspect('Telegram down')}
+      `('at error, has a listener that fails on it logged at error level: $reason', async ({ thrown, reason }) => {
+        strategy.onEachTimeframeCandle.mockImplementation(logErrorAndGoOn);
+        advisor.on(STRATEGY_INFO_EVENT, () => {
+          throw thrown;
+        });
+        await sendBuckets(advisor, 3);
+        expect(vi.mocked(error).mock.calls).toEqual([
+          ['strategy', ERROR_MESSAGE],
+          ['trading advisor', `A listener failed on the error line of the strategy: ${reason}`],
+        ]);
+      });
     });
 
     // In realtime the warmup candles are history, replayed with the Trader active: an order created on them is refused, which stops
@@ -414,19 +480,37 @@ describe('TradingAdvisor', () => {
       ${'onOrderCanceled'}
       ${'onOrderErrored'}
     `('$handler gives the strategy every order of the batch, in order', async ({ handler }: { handler: keyof typeof SEND_ORDER_BATCH }) => {
-      await SEND_ORDER_BATCH[handler](await startAdvisor());
+      SEND_ORDER_BATCH[handler](await startAdvisor());
       expect(strategy[handler].mock.calls.map(([{ order }]) => order.id)).toEqual(ORDER_IDS);
     });
 
-    it('onOrderErrored rejects with ApplicationStopError once a batch reaches maxConsecutiveErrors', async () => {
+    // The hooks are synchronous: an `await Promise.all` over them only seemed to run them together
+    it.each`
+      handler
+      ${'onOrderCompleted'}
+      ${'onOrderCanceled'}
+      ${'onOrderErrored'}
+    `(
+      '$handler returns nothing to wait for, its batch relayed by then',
+      async ({ handler }: { handler: keyof typeof SEND_ORDER_BATCH }) => {
+        const advisor = await startAdvisor();
+        expect(SEND_ORDER_BATCH[handler](advisor)).toBeUndefined();
+      },
+    );
+
+    it('onOrderErrored throws an ApplicationStopError once a batch reaches maxConsecutiveErrors', async () => {
       const advisor = await startAdvisor({ maxConsecutiveErrors: ORDER_IDS.length });
-      await expect(SEND_ORDER_BATCH.onOrderErrored(advisor)).rejects.toThrow(ApplicationStopError);
+      expect(() => SEND_ORDER_BATCH.onOrderErrored(advisor)).toThrow(ApplicationStopError);
     });
 
     // Thrown before the strategy's hook, the circuit breaker kept the error that trips it from the strategy
     it('onOrderErrored gives the strategy the order that trips the circuit breaker too', async () => {
       const advisor = await startAdvisor({ maxConsecutiveErrors: ORDER_IDS.length });
-      await SEND_ORDER_BATCH.onOrderErrored(advisor).catch(() => undefined);
+      try {
+        SEND_ORDER_BATCH.onOrderErrored(advisor);
+      } catch {
+        // The circuit breaker, which has a test of its own
+      }
       expect(strategy.onOrderErrored.mock.calls.map(([{ order }]) => order.id)).toEqual(ORDER_IDS);
     });
   });
@@ -452,7 +536,7 @@ describe('TradingAdvisor', () => {
       '$handler gives the next candle the portfolio the last event of its batch carries',
       async ({ handler, orderEvent }: { handler: keyof typeof SEND_ORDER_BATCH; orderEvent: (id: UUID) => OrderCompletedEvent }) => {
         const advisor = await startAdvisor();
-        await advisor[handler](carrying(orderEvent, usdtPortfolio(900), usdtPortfolio(800)) as never);
+        advisor[handler](carrying(orderEvent, usdtPortfolio(900), usdtPortfolio(800)) as never);
         await sendBuckets(advisor, 3);
         expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ portfolio: usdtPortfolio(800) }));
       },
@@ -468,19 +552,19 @@ describe('TradingAdvisor', () => {
       '$handler leaves the next candle the portfolio it had when its event carries the empty one of a Trader yet to fetch any',
       async ({ handler, orderEvent }: { handler: keyof typeof SEND_ORDER_BATCH; orderEvent: (id: UUID) => OrderCompletedEvent }) => {
         const advisor = await startAdvisor();
-        await advisor[handler](carrying(orderEvent, new Map()) as never);
+        advisor[handler](carrying(orderEvent, new Map()) as never);
         await sendBuckets(advisor, 3);
         expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ portfolio: FETCHED_BALANCE }));
       },
     );
 
     // Each in the order the Trader queued it: the last one received is the latest it read
-    const portfolioChangeThenEnd = async (advisor: TradingAdvisor) => {
+    const portfolioChangeThenEnd = (advisor: TradingAdvisor) => {
       advisor.onPortfolioChange([usdtPortfolio(900)]);
-      await advisor.onOrderCompleted(carrying(orderCompleted, usdtPortfolio(800)));
+      advisor.onOrderCompleted(carrying(orderCompleted, usdtPortfolio(800)));
     };
-    const endThenPortfolioChange = async (advisor: TradingAdvisor) => {
-      await advisor.onOrderCompleted(carrying(orderCompleted, usdtPortfolio(800)));
+    const endThenPortfolioChange = (advisor: TradingAdvisor) => {
+      advisor.onOrderCompleted(carrying(orderCompleted, usdtPortfolio(800)));
       advisor.onPortfolioChange([usdtPortfolio(900)]);
     };
 
@@ -490,7 +574,7 @@ describe('TradingAdvisor', () => {
       ${'the end of an order, then a portfolio change'} | ${endThenPortfolioChange} | ${usdtPortfolio(900)}
     `('gives the next candle the last portfolio received, after $received', async ({ send, expected }) => {
       const advisor = await startAdvisor();
-      await send(advisor);
+      send(advisor);
       await sendBuckets(advisor, 3);
       expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ portfolio: expected }));
     });
@@ -561,7 +645,7 @@ describe('TradingAdvisor', () => {
         own.get('USDT')!.free = 0;
       });
       const advisor = await startAdvisor();
-      await advisor.onOrderCompleted([event]);
+      advisor.onOrderCompleted([event]);
       await sendBuckets(advisor, 3);
       expect(event.exchange.portfolio).toEqual(usdtPortfolio(800));
     });
@@ -581,7 +665,7 @@ describe('TradingAdvisor', () => {
           exchange.portfolio.clear();
         });
         const sent = batch();
-        await (await startAdvisor())[handler](sent as never);
+        (await startAdvisor())[handler](sent as never);
         expect(sent).toEqual(batch());
       },
     );
@@ -628,6 +712,18 @@ describe('TradingAdvisor', () => {
       const advisor = await startAdvisor();
       await advisor.processCloseStream();
       expect(strategy.end).toHaveBeenCalledOnce();
+    });
+
+    // The analyzers said in their reports why a run stopped before its end, while the end of the strategy could not know it
+    it.each`
+      run                                   | failure                                                                 | interruption
+      ${'that reached its end'}             | ${undefined}                                                            | ${undefined}
+      ${'that the circuit breaker stopped'} | ${new ApplicationStopError('Max consecutive order errors reached (5)')} | ${'[CORE] Max consecutive order errors reached (5)'}
+      ${'that a crash stopped'}             | ${new Error('Database locked')}                                         | ${'Database locked'}
+    `('gives the end of the strategy the interruption of a run $run: $interruption', async ({ failure, interruption }) => {
+      const advisor = await startAdvisor();
+      await advisor.processCloseStream(failure);
+      expect(strategy.end).toHaveBeenCalledExactlyOnceWith(interruption);
     });
 
     // With a warmup of one 3m candle, the second one completes it: a run that ended before used to say nothing about it

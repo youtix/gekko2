@@ -72,11 +72,11 @@ export class TrailingStopManager extends EventEmitter {
   }
 
   public update(bucket: CandleBucket): void {
-    for (const [id, order] of this.orders) {
+    for (const order of this.orders.values()) {
       const candle = bucket.get(order.symbol);
       if (!candle) continue;
 
-      if (order.status === 'dormant') this.processDormant(id, order, candle);
+      if (order.status === 'dormant') this.processDormant(order, candle);
       else if (order.status === 'active') this.trail(order, [candle.open, candle.low, candle.high, candle.close]);
       // A stop selling trails no more: its SELL is sent, and how that SELL ends decides what follows (see resumeSellingStop)
     }
@@ -130,7 +130,7 @@ export class TrailingStopManager extends EventEmitter {
     return this.orders;
   }
 
-  private processDormant(id: UUID, order: TrailingStopState, { open, high, low, close }: Candle): void {
+  private processDormant(order: TrailingStopState, { open, high, low, close }: Candle): void {
     // Only a stop with a trigger is dormant: armed without one, a stop is active at once
     const trigger = order.activationPrice ?? 0;
     if (high < trigger) return;
@@ -145,7 +145,7 @@ export class TrailingStopManager extends EventEmitter {
     this.emit<TrailingStopState>(TRAILING_STOP_ACTIVATED, copyState(order));
     // The strategy hears of the activation at once, and may cancel the stop then (tools.cancelTrailingOrder): a stop no longer listed
     // is over, and must not send the SELL of a stop the strategy has just canceled
-    if (this.orders.has(id)) this.trail(order, isActiveAtOpen ? [low, high, close] : [close]);
+    if (this.orders.has(order.id)) this.trail(order, isActiveAtOpen ? [low, high, close] : [close]);
   }
 
   /**

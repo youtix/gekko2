@@ -15,7 +15,6 @@ import { TrailingStopState } from './trailingStopManager.types';
  * it changes nothing in the indicator.
  */
 export type IndicatorResults<T = unknown> = { results: T; symbol: TradingPair };
-export type Direction = 'short' | 'long';
 /**
  * Registers an indicator on a pair. It returns nothing: the StrategyManager keeps the indicator and feeds it, and its results reach
  * the hooks as their indicator arguments, in the order of the addIndicator calls.
@@ -34,8 +33,9 @@ export type AddIndicatorFn = <T extends IndicatorNames>(name: T, symbol: Trading
  * strat_info subscribers: log a signal or an order outcome at info. 'debug' lines are not relayed: a subscriber does not want the
  * indicator values of every candle. Below GEKKO_LOG_LEVEL a 'debug' line costs nothing but the message the strategy built.
  *
- * 'error' does not return: it relays the line, then throws a GekkoError, which stops the bot. A level outside these, which only an
- * untyped strategy can pass, is logged and relayed at info, after one warning per level.
+ * 'error' does not return: it relays the line, then throws a GekkoError, which stops the bot. The line is relayed at once, not with
+ * the other events of its minute, which the stop drops: the subscribers learn why the bot stopped. A level outside these, which only
+ * an untyped strategy can pass, is logged and relayed at info, after one warning per level.
  */
 export type LoggerFn = (level: LogLevel, msg: string) => void;
 export type Tools<T> = {
@@ -197,8 +197,12 @@ export interface Strategy<T> {
    * `tools` is the object every other hook gets, passed last so that a hook written without it still fits.
    */
   onTrailingStopTriggered?(orderId: UUID, state: TrailingStopState, tools: Tools<T>): void;
-  /** Executed at the end of the strategy */
-  end?(): void;
+  /**
+   * Executed once, at the end of the run, or when an error stops it before its end (a crash, missing candles, the circuit breaker):
+   * `interruption` is then the message of that error, as the analyzers give it in their reports, and undefined when the run reached
+   * its end. Not executed when a signal (SIGINT, SIGTERM) or an uncaught exception ends Gekko at once.
+   */
+  end?(interruption?: string): void;
 }
 
 /**

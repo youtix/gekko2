@@ -14,10 +14,11 @@ import { TradingPair } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { CandleBucketBatcher } from '@services/core/batcher/candleBatcher/candleBucketBatcher';
 import { MarketData } from '@services/exchange/exchange.types';
-import { info } from '@services/logger';
+import { error, info } from '@services/logger';
 import { StrategyManager } from '@strategies/strategyManager';
 import { bindAll, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
+import { inspect } from 'node:util';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
 
@@ -89,38 +90,42 @@ export class TradingAdvisor extends Plugin {
     this.addDeferredEmit<AdviceOrder>(STRATEGY_CREATE_ORDER_EVENT, advice);
   }
 
+  /**
+   * Queues a line of the strategy with the events of the bucket, but an error line, delivered at once: tools.log('error') throws, which
+   * fails the bucket, and the events a failed bucket queued are dropped (see PluginsStream), so the line saying why the bot stopped
+   * never reached the strat_info subscribers. Its listeners get it in an array, as they get the deferred events. A strategy that catches
+   * the error and goes on has the line delivered ahead of those it logged before it in the bucket.
+   */
   private relayStrategyInfo(strategyInfo: StrategyInfo) {
-    this.addDeferredEmit<StrategyInfo>(STRATEGY_INFO_EVENT, strategyInfo);
+    if (strategyInfo.level !== 'error') {
+      this.addDeferredEmit<StrategyInfo>(STRATEGY_INFO_EVENT, strategyInfo);
+      return;
+    }
+    this.emit<StrategyInfo[]>(STRATEGY_INFO_EVENT, [strategyInfo]).catch((err: unknown) =>
+      error('trading advisor', `A listener failed on the error line of the strategy: ${err instanceof Error ? err.message : inspect(err)}`),
+    );
   }
 
   /* -------------------------------------------------------------------------- */
   /*                          EVENT LISTENERS                                   */
   /* -------------------------------------------------------------------------- */
 
-  public async onOrderCompleted(payloads: OrderCompletedEvent[]) {
-    await Promise.all(
-      payloads.map(order => {
-        this.strategyManager?.onOrderCompleted(order);
-      }),
-    );
+  // The order handlers relay their batch one order after the other, in the order the Trader queued it, then the portfolio of its last
+  // order. The hooks are synchronous: under an `await Promise.all` they only seemed to run together, and one that throws (the circuit
+  // breaker) stops the batch there either way.
+
+  public onOrderCompleted(payloads: OrderCompletedEvent[]) {
+    for (const payload of payloads) this.strategyManager?.onOrderCompleted(payload);
     this.refreshPortfolio(payloads);
   }
 
-  public async onOrderCanceled(payloads: OrderCanceledEvent[]) {
-    await Promise.all(
-      payloads.map(order => {
-        this.strategyManager?.onOrderCanceled(order);
-      }),
-    );
+  public onOrderCanceled(payloads: OrderCanceledEvent[]) {
+    for (const payload of payloads) this.strategyManager?.onOrderCanceled(payload);
     this.refreshPortfolio(payloads);
   }
 
-  public async onOrderErrored(payloads: OrderErroredEvent[]) {
-    await Promise.all(
-      payloads.map(order => {
-        this.strategyManager?.onOrderErrored(order);
-      }),
-    );
+  public onOrderErrored(payloads: OrderErroredEvent[]) {
+    for (const payload of payloads) this.strategyManager?.onOrderErrored(payload);
     this.refreshPortfolio(payloads);
   }
 
@@ -161,8 +166,8 @@ export class TradingAdvisor extends Plugin {
     }
   }
 
-  protected processFinalize() {
-    this.strategyManager?.onStrategyEnd();
+  protected processFinalize(failure?: Error) {
+    this.strategyManager?.onStrategyEnd(failure);
   }
 
   /* -------------------------------------------------------------------------- */

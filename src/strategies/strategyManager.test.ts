@@ -158,7 +158,7 @@ describe('StrategyManager', () => {
     it('initializes with default empty config if no strategy config exists', () => {
       vi.mocked(config.getStrategy).mockReturnValueOnce(undefined as any);
       const m = new StrategyManager(1);
-      expect(m['strategyParams']).toEqual({});
+      expect(m['tools'].strategyParams).toEqual({});
     });
   });
 
@@ -209,8 +209,8 @@ describe('StrategyManager', () => {
           expect(strategy.init.mock.calls[0][0].tools.strategyParams).toEqual({ period: 14, src: 'close' });
         });
 
-        it('keeps the parsed block as its own parameters', () => {
-          expect(manager['strategyParams']).toBe(manager['tools'].strategyParams);
+        it('keeps the parsed block as the parameters of the strategy, in the tools every hook gets', () => {
+          expect(manager['tools'].strategyParams).toEqual({ period: 14, src: 'close' });
         });
 
         it('does not say that the parameters are not validated', () => {
@@ -571,6 +571,20 @@ describe('StrategyManager', () => {
         manager.onStrategyEnd();
 
         expect(strategy.end).toHaveBeenCalled();
+      });
+
+      // The end of the strategy could not know that the run stopped before its end, nor why: it gets the message the analyzers report,
+      // not the error every plugin is finalised with
+      it.each`
+        run                                   | failure                                                                 | interruption
+        ${'that reached its end'}             | ${undefined}                                                            | ${undefined}
+        ${'that the circuit breaker stopped'} | ${new ApplicationStopError('Max consecutive order errors reached (5)')} | ${'[CORE] Max consecutive order errors reached (5)'}
+        ${'that the strategy stopped'}        | ${new GekkoError('strategy', 'Indicator out of range')}                 | ${'[STRATEGY] Indicator out of range'}
+      `('gives the end of the strategy the interruption of a run $run: $interruption', ({ failure, interruption }) => {
+        const strategy = { end: vi.fn() };
+        manager['strategy'] = strategy as any;
+        manager.onStrategyEnd(failure);
+        expect(strategy.end).toHaveBeenCalledExactlyOnceWith(interruption);
       });
 
       it('logs warning if pending orders present', () => {
@@ -2852,6 +2866,18 @@ describe('StrategyManager', () => {
 
         expect(info).toHaveBeenCalledWith('strategy', expect.stringContaining('Strategy warmup done'));
       });
+
+      it.each`
+        given                     | warmupBucket | date
+        ${'a bucket of one pair'} | ${bucket}    | ${'1970-01-01T00:00:01.000Z'}
+        ${'an empty bucket'}      | ${new Map()} | ${'Unknown Date'}
+      `('dates the line with the minute of the bucket, $date for $given', ({ warmupBucket, date }) => {
+        manager['emitWarmupCompletedEvent'](warmupBucket);
+        expect(vi.mocked(info).mock.calls).toEqual([
+          ['strategy', `Strategy warmup done ! Sending first candle bucket (${date}) to strategy`],
+        ]);
+      });
+
       it('should emit the event with the candle payload', () => {
         const warmupListener = vi.fn();
         manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);

@@ -28,7 +28,7 @@ import { config } from '@services/configuration/configuration';
 import { MarketData } from '@services/exchange/exchange.types';
 import { debug, error, info, isLevelEnabled, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
-import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
+import { getBucketTimestamp, getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
 import { getMarketOrderLimits } from '@utils/market/market.utils';
 import { isFiniteNumber } from '@utils/math/math.utils';
@@ -125,14 +125,9 @@ const copyOrderEvent = <O extends OrderInitiatedEvent['order']>(order: O, exchan
 export class StrategyManager extends EventEmitter {
   private readonly warmupPeriod: number;
   private readonly maxConsecutiveErrors: number;
-  /**
-   * A copy of the strategy block, replaced by its parse when the strategy's class declares a schema; the same object as
-   * tools.strategyParams. The block itself is the configuration's, which every plugin keeps: a strategy without schema got that very
-   * object, and what it wrote there changed the run id of the PerformanceReporter.
-   */
-  private strategyParams: object;
   private readonly trailingStopManager: TrailingStopManager;
 
+  /** The timeframe candles processed, counted up to the one that completes the warmup (see onTimeFrameCandle) */
   private age = 0;
   /** Set once init has run, on the first one-minute bucket, never reset: addIndicator refuses indicators from then on */
   private isInitialized = false;
@@ -165,8 +160,6 @@ export class StrategyManager extends EventEmitter {
     super();
     this.warmupPeriod = warmupPeriod;
     this.maxConsecutiveErrors = maxConsecutiveErrors;
-    // Copied before the schema parses it: what the schema passes through as it is comes from the copy too
-    this.strategyParams = cloneDeep(config.getStrategy() ?? {});
 
     bindAll(this, [
       this.addIndicator.name,
@@ -185,7 +178,10 @@ export class StrategyManager extends EventEmitter {
       createOrder: this.createOrder,
       cancelOrder: this.cancelOrder,
       log: this.log,
-      strategyParams: this.strategyParams,
+      // A copy of the strategy block, made before the strategy's schema, if any, parses it (see parseStrategyParams): what the schema
+      // passes through as it is comes from the copy too. The block is the configuration's, which every plugin keeps: a strategy without
+      // schema got that very object, and what it wrote there changed the run id of the PerformanceReporter.
+      strategyParams: cloneDeep(config.getStrategy() ?? {}),
       marketData: this.marketData,
       cancelTrailingOrder: this.cancelTrailingOrder,
     };
@@ -246,7 +242,7 @@ export class StrategyManager extends EventEmitter {
       this.strategy?.onTimeframeCandleAfterWarmup?.(params, ...this.indicatorsResults);
     }
 
-    // Increment age only if init function is not called or if warmup phase is not done.
+    // Not counted beyond the candle that completes the warmup: neither the warmup event nor onStrategyEnd needs more
     if (this.warmupPeriod >= this.age) this.age++;
   }
 
@@ -301,7 +297,8 @@ export class StrategyManager extends EventEmitter {
     if (isConsecutiveErrorsReached) throw new ApplicationStopError(`Max consecutive order errors reached (${this.maxConsecutiveErrors})`);
   }
 
-  public onStrategyEnd() {
+  /** `failure` is the error that stops the run before its end, if any: the strategy's end gets its message (see Strategy.end) */
+  public onStrategyEnd(failure?: Error) {
     // A backtest too short for its warmup ended normally, without a trade, and only analyzer warnings that did not name the warmup.
     // The configuration refuses such a range, but a run can still stop before its warmup is over (on an error, or in realtime before
     // the first live timeframe candle).
@@ -316,7 +313,8 @@ export class StrategyManager extends EventEmitter {
     if (armedCount > 0) warning('strategy', `Strategy ended with ${armedCount} active trailing stop(s) that never triggered.`);
     if (sellingCount > 0) warning('strategy', `Strategy ended with ${sellingCount} triggered trailing stop(s) whose SELL had not ended.`);
     this.trailingStopManager.removeAllListeners();
-    this.strategy?.end?.();
+    // The message, not the error, which every plugin is finalised with: what a hook receives is the strategy's own (see Strategy)
+    this.strategy?.end?.(failure?.message);
   }
 
   public onPortfolioChange(portfolio: Portfolio) {
@@ -469,12 +467,11 @@ export class StrategyManager extends EventEmitter {
       return;
     }
     // Without name, which only labels the run and which the configuration schema checks: the strategy gets what the schema outputs
-    const result = schema.safeParse(omit(this.strategyParams, 'name'));
+    const result = schema.safeParse(omit(this.tools.strategyParams, 'name'));
     if (!result.success) {
       const issues = z.prettifyError(result.error);
       throw new GekkoError('trading advisor', `Invalid parameters for strategy ${strategyName} (strategy block):\n${issues}`);
     }
-    this.strategyParams = result.data;
     this.tools.strategyParams = result.data;
   }
 
@@ -653,9 +650,7 @@ export class StrategyManager extends EventEmitter {
 
   private emitWarmupCompletedEvent(bucket: CandleBucket) {
     this.isWarmupCompleted = true;
-    // Use first available candle for logging timestamp
-    const firstCandle = bucket.values().next().value;
-    info('strategy', `Strategy warmup done ! Sending first candle bucket (${toISOString(firstCandle?.start)}) to strategy`);
+    info('strategy', `Strategy warmup done ! Sending first candle bucket (${toISOString(getBucketTimestamp(bucket))}) to strategy`);
     this.emit<CandleBucket>(STRATEGY_WARMUP_COMPLETED_EVENT, bucket);
   }
 }
