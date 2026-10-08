@@ -51,15 +51,16 @@ export const holding = (symbol: TradingPair, free: number, used = 0): Portfolio 
 };
 
 /**
- * Stands in for tools.createOrder: records every order created, an all-in one (without amount) with amount 1, and gives the n-th
- * one the id 00000000-0000-0000-0000-00000000000n.
+ * Stands in for tools.createOrder: records every order as it was created, and gives the n-th one the id
+ * 00000000-0000-0000-0000-00000000000n. An all-in order keeps its amount left out: recorded with amount 1, it could not be told from
+ * an order of 1 unit, and a strategy that stopped trading all-in kept its suite green.
  */
 export class OrderRecorder {
   readonly advices: StrategyOrder[] = [];
   readonly ids: UUID[] = [];
 
   readonly createOrder = (order: StrategyOrder): UUID => {
-    this.advices.push({ ...order, amount: order.amount ?? 1 });
+    this.advices.push({ ...order });
     const id = `00000000-0000-0000-0000-${String(this.advices.length).padStart(12, '0')}` as UUID;
     this.ids.push(id);
     return id;

@@ -20,8 +20,8 @@ describe('EMARibbon', () => {
   let advices: StrategyOrder[];
   let tools: any;
   let bucket: CandleBucket;
-  const longAdvice = { type: 'STICKY', side: 'BUY', amount: 1, symbol } satisfies Partial<AdviceOrder>;
-  const shortAdvice = { type: 'STICKY', side: 'SELL', amount: 1, symbol } satisfies Partial<AdviceOrder>;
+  const longAdvice = { type: 'STICKY', side: 'BUY', symbol } satisfies Partial<AdviceOrder>;
+  const shortAdvice = { type: 'STICKY', side: 'SELL', symbol } satisfies Partial<AdviceOrder>;
 
   /**
    * Plays a timeframe candle as the StrategyManager does: onEachTimeframeCandle on every candle, the warmup included, then, once the

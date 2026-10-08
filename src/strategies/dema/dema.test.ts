@@ -8,17 +8,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEMA } from './dema.strategy';
 import { DEMAStrategyParams } from './dema.types';
 
-vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn();
-  Configuration.prototype.getStrategy = vi.fn(() => ({
-    period: 14,
-    thresholds: { up: 0.5, down: -0.5 },
-  }));
-  return { config: new Configuration() };
-});
-
-// The DEMA and SMA results of each step of the scenarios played below: diff = SMA - DEMA against the thresholds 0.5 / -0.5
-const TRENDS = { up: { dema: 1, sma: 2 }, down: { dema: 1, sma: 0 }, neutral: { dema: 1, sma: 1 } } as const;
+// The DEMA and SMA results of each step of the scenarios played below: diff = SMA - DEMA against the thresholds 0.5 / -0.5. Null is
+// what an indicator gives until it is ready: the DEMA, ready later than the SMA of its period, or the SMA.
+const TRENDS = {
+  up: { dema: 1, sma: 2 },
+  down: { dema: 1, sma: 0 },
+  neutral: { dema: 1, sma: 1 },
+  demaNull: { dema: null, sma: 2 },
+  smaNull: { dema: 2, sma: null },
+} as const;
+// All-in, as the strategy creates them: without amount, the Trader sizes them from all the free currency (BUY) or asset (SELL)
+const allInBuy = { type: 'STICKY', side: 'BUY', symbol: 'BTC/USDT' } satisfies StrategyOrder;
+const allInSell = { type: 'STICKY', side: 'SELL', symbol: 'BTC/USDT' } satisfies StrategyOrder;
 
 describe('DEMA Strategy', () => {
   let strategy: DEMA;
@@ -29,9 +30,10 @@ describe('DEMA Strategy', () => {
   let bucket: CandleBucket;
   let addIndicator: any;
 
-  /** Plays the steps (see playSteps): a trend (up, down, neutral) is a candle */
+  /** Plays the steps (see playSteps): the DEMA and SMA results of a trend (see TRENDS) are a candle */
   const play = (steps: string) =>
     playSteps(steps, strategy, orders, step => {
+      if (!(step in TRENDS)) throw new Error(`No step named ${step}, in "${steps}"`);
       const { dema, sma } = TRENDS[step as keyof typeof TRENDS];
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<DEMAStrategyParams>,
@@ -81,14 +83,11 @@ describe('DEMA Strategy', () => {
   });
 
   describe('onTimeframeCandleAfterWarmup', () => {
-    it('should do nothing if pair is not defined', () => {
-      const emptyStrategy = new DEMA();
-      emptyStrategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<DEMAStrategyParams>,
-        { results: 1, symbol: 'BTC/USDT' },
-        { results: 2, symbol: 'BTC/USDT' },
-      );
-      expect(advices).toHaveLength(0);
+    // An uptrend, which buys once init has picked the pair
+    it('should do nothing before init has picked the pair', () => {
+      strategy = new DEMA();
+      play('up');
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
     it('should do nothing if candle for the pair is not found', () => {
@@ -107,6 +106,8 @@ describe('DEMA Strategy', () => {
       ${undefined} | ${undefined}
       ${1}         | ${undefined}
       ${undefined} | ${2}
+      ${null}      | ${2}
+      ${1}         | ${null}
       ${'invalid'} | ${2}
       ${NaN}       | ${2}
       ${1}         | ${NaN}
@@ -121,14 +122,23 @@ describe('DEMA Strategy', () => {
       expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
-    it('should emit a STICKY BUY advice when diff is 1 (uptrend) and flat', () => {
-      play('up');
-      expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1, symbol: 'BTC/USDT' }]);
+    // Unskipped, a null SMA would be subtracted as 0, a downtrend that sells, and a null DEMA would throw as the log message is built
+    it.each`
+      case                        | steps                       | expectedSides
+      ${'a null SMA, when long'}  | ${'up completed:1 smaNull'} | ${['BUY']}
+      ${'a null DEMA, when flat'} | ${'demaNull'}               | ${[]}
+    `('should skip a candle whose DEMA or SMA is null, as one not ready yet: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
 
-    it('should emit a STICKY SELL advice when diff is -1 (downtrend) and long', () => {
-      play('up completed:1 down');
-      expect(advices[1]).toEqual({ type: 'STICKY', side: 'SELL', amount: 1, symbol: 'BTC/USDT' });
+    it.each`
+      case                                 | steps                    | expected
+      ${'a BUY on an uptrend when flat'}   | ${'up'}                  | ${[allInBuy]}
+      ${'a SELL on a downtrend when long'} | ${'up completed:1 down'} | ${[allInBuy, allInSell]}
+    `('should emit an all-in STICKY order: $case', ({ steps, expected }) => {
+      play(steps);
+      expect(advices).toStrictEqual(expected);
     });
 
     it.each`
@@ -140,6 +150,7 @@ describe('DEMA Strategy', () => {
       ${'a downtrend once the BUY filled'}     | ${'up completed:1 down down'}              | ${['BUY', 'SELL']}
       ${'a BUY that fills during a downtrend'} | ${'up down completed:1 down'}              | ${['BUY', 'SELL']}
       ${'an uptrend while the SELL pends'}     | ${'up completed:1 down up up'}             | ${['BUY', 'SELL']}
+      ${'a downtrend while the SELL pends'}    | ${'up completed:1 down up down'}           | ${['BUY', 'SELL']}
       ${'an uptrend once the SELL filled'}     | ${'up completed:1 down completed:2 up'}    | ${['BUY', 'SELL', 'BUY']}
       ${'a SELL that fills during an uptrend'} | ${'up completed:1 down up completed:2 up'} | ${['BUY', 'SELL', 'BUY']}
     `('should advise once per position change on $case', ({ steps, expectedSides }) => {
@@ -186,6 +197,8 @@ describe('DEMA Strategy', () => {
       ${undefined} | ${undefined} | ${0}
       ${1}         | ${undefined} | ${0}
       ${undefined} | ${2}         | ${0}
+      ${null}      | ${2}         | ${0}
+      ${1}         | ${null}      | ${0}
       ${NaN}       | ${2}         | ${0}
       ${1}         | ${-Infinity} | ${0}
     `('should not log when results are missing (sma: $smaRes, dema: $demaRes)', ({ smaRes, demaRes, expectedLogsLength }) => {
@@ -235,14 +248,14 @@ describe('DEMA Strategy', () => {
     });
 
     it.each`
-      scenario                                 | block                               | path
-      ${'a quoted period'}                     | ${{ ...params, period: '21' }}      | ${['period']}
-      ${'a fractional period'}                 | ${{ ...params, period: 21.5 }}      | ${['period']}
-      ${'a period of 1'}                       | ${{ ...params, period: 1 }}         | ${['period']}
-      ${'a missing period'}                    | ${omit(params, 'period')}           | ${['period']}
-      ${'a quoted threshold'}                  | ${withThresholds({ up: '0.0025' })} | ${['thresholds', 'up']}
-      ${'a NaN threshold'}                     | ${withThresholds({ down: NaN })}    | ${['thresholds', 'down']}
-      ${'a src, which the DEMA does not take'} | ${{ ...params, src: 'close' }}      | ${[]}
+      scenario                                  | block                               | path
+      ${'a quoted period'}                      | ${{ ...params, period: '21' }}      | ${['period']}
+      ${'a fractional period'}                  | ${{ ...params, period: 21.5 }}      | ${['period']}
+      ${'a period of 1'}                        | ${{ ...params, period: 1 }}         | ${['period']}
+      ${'a missing period'}                     | ${omit(params, 'period')}           | ${['period']}
+      ${'a quoted threshold'}                   | ${withThresholds({ up: '0.0025' })} | ${['thresholds', 'up']}
+      ${'a NaN threshold'}                      | ${withThresholds({ down: NaN })}    | ${['thresholds', 'down']}
+      ${'a src (the DEMA strategy takes none)'} | ${{ ...params, src: 'close' }}      | ${[]}
     `('refuses $scenario', ({ block, path }) => {
       expect(DEMA.schema.safeParse(block).error?.issues).toMatchObject([{ path }]);
     });

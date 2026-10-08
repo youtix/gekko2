@@ -12,7 +12,8 @@ const makeIndicator = (res: any) => [{ results: res, symbol }] as any;
 const ULP = 2 ** -46; // the gap between 100 and the next double
 // The close and the SMA of each step of the scenarios played below. The first candle only records where the price is. A flat window
 // (one close for the whole period) leaves the running-sum SMA a few ulps off that close, on either side: 'on+' has it one ulp above
-// the close, 'on-' one ulp below, 'on' on it. 'tick+' and 'tick-' have the close a tick above or below the SMA, 'nan' the SMA NaN.
+// the close, 'on-' one ulp below, 'on' on it. 'tick+' and 'tick-' have the close a tick above or below the SMA, 'nan' the SMA NaN,
+// 'null' the SMA not ready yet, what the indicator gives until its period is full.
 const STEPS = {
   above: { close: 110, sma: 100 },
   below: { close: 90, sma: 100 },
@@ -22,7 +23,11 @@ const STEPS = {
   'tick+': { close: 100.01, sma: 100 },
   'tick-': { close: 99.99, sma: 100 },
   nan: { close: 100, sma: NaN },
+  null: { close: 100, sma: null },
 } as const;
+// All-in, as the strategy creates them: without amount, the Trader sizes them from all the free currency (BUY) or asset (SELL)
+const allInBuy = { type: 'MARKET', side: 'BUY', symbol } satisfies StrategyOrder;
+const allInSell = { type: 'MARKET', side: 'SELL', symbol } satisfies StrategyOrder;
 
 describe('SMACrossover Strategy', () => {
   let strategy: SMACrossover;
@@ -134,12 +139,14 @@ describe('SMACrossover Strategy', () => {
       expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
+    // Compared as 0, a null SMA would put the price above it: that side recorded, the crossover of the next candle would be missed
     it.each`
-      case                                  | steps                                  | expectedSides
-      ${'before the first state'}           | ${'nan above'}                         | ${[]}
-      ${'between the two sides of a cross'} | ${'below nan above'}                   | ${['BUY']}
-      ${'above the SMA, when long'}         | ${'below above completed:1 nan tick+'} | ${['BUY']}
-    `('should skip a candle whose SMA is NaN, as one not ready yet: $case', ({ steps, expectedSides }) => {
+      case                                       | steps                                  | expectedSides
+      ${'NaN before the first state'}            | ${'nan above'}                         | ${[]}
+      ${'NaN between the two sides of a cross'}  | ${'below nan above'}                   | ${['BUY']}
+      ${'NaN above the SMA, when long'}          | ${'below above completed:1 nan tick+'} | ${['BUY']}
+      ${'null between the two sides of a cross'} | ${'below null above'}                  | ${['BUY']}
+    `('should skip a candle whose SMA is NaN or null, as one not ready yet: $case', ({ steps, expectedSides }) => {
       play(steps);
       expect(sides()).toEqual(expectedSides);
     });
@@ -147,18 +154,16 @@ describe('SMACrossover Strategy', () => {
     it('should record initial state without creating an order on first candle', () => {
       setBucket(100);
       playCandle(95); // price above SMA
-      expect(advices).toHaveLength(0);
-      expect(logs).toContainEqual(expect.objectContaining({ message: expect.stringContaining('Initial state') }));
+      expect({ advices, logs }).toEqual({ advices: [], logs: [{ level: 'info', message: 'Initial state: price above SMA' }] });
     });
 
-    it('should emit a MARKET BUY when the price crosses above the SMA and flat', () => {
-      play('below above');
-      expect(advices).toEqual([{ type: 'MARKET', side: 'BUY', amount: 1, symbol }]);
-    });
-
-    it('should emit a MARKET SELL when the price crosses below the SMA and long', () => {
-      play('below above completed:1 below');
-      expect(advices[1]).toEqual({ type: 'MARKET', side: 'SELL', amount: 1, symbol });
+    it.each`
+      case                                   | steps                              | expected
+      ${'a BUY on a cross above when flat'}  | ${'below above'}                   | ${[allInBuy]}
+      ${'a SELL on a cross below when long'} | ${'below above completed:1 below'} | ${[allInBuy, allInSell]}
+    `('should emit an all-in MARKET order: $case', ({ steps, expected }) => {
+      play(steps);
+      expect(advices).toStrictEqual(expected);
     });
 
     it.each`
@@ -182,6 +187,7 @@ describe('SMACrossover Strategy', () => {
       ${'a cross below skipped, then the BUY filled'} | ${'below above below completed:1 below'}             | ${['BUY']}
       ${'a cross above while long'}                   | ${'below above completed:1 below errored:2 above'}   | ${['BUY', 'SELL']}
       ${'a cross above while the SELL pends'}         | ${'below above completed:1 below above'}             | ${['BUY', 'SELL']}
+      ${'a cross below while the SELL pends'}         | ${'below above completed:1 below above below'}       | ${['BUY', 'SELL']}
     `('should advise once per position change on $case', ({ steps, expectedSides }) => {
       play(steps);
       expect(sides()).toEqual(expectedSides);

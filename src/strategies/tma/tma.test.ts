@@ -8,12 +8,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TMA } from './tma.strategy';
 import { TMAStrategyParams } from './tma.types';
 
-vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn();
-  Configuration.prototype.getStrategy = vi.fn(() => ({ short: 3, medium: 5, long: 8 }));
-  return { config: new Configuration() };
-});
-
 const symbol = 'BTC/USDT';
 const ULP = 2 ** -46; // the gap between 100 and the next double
 // The short, medium and long SMAs of each alignment. On a flat stretch the SMAs holding only its price are equal in exact arithmetic,
@@ -21,6 +15,7 @@ const ULP = 2 ** -46; // the gap between 100 and the next double
 // 'flatPeak' the medium one ulp above both others, 'flatDip' one ulp below both. In 'pairOver' and 'pairUnder' only the short and the
 // medium hold the flat price, one ulp apart, the long still below or above it, and 'runningSums' are the SMAs 10, 21 and 50 that the
 // running sums gave on the 26th candle of a stretch flat at 29864.4. 'tickRise' and 'tickPeak' are a tick apart: real alignments.
+// 'longNull', 'mediumNull' and 'shortNull' have that SMA not ready yet: null, what the indicator gives until its period is full.
 const ALIGNMENTS = {
   up: [10, 5, 2],
   down: [3, 5, 2],
@@ -34,7 +29,13 @@ const ALIGNMENTS = {
   runningSums: [29864.40000000007, 29864.40000000003, 29864.298399999956],
   tickRise: [100.02, 100.01, 100],
   tickPeak: [100, 100.01, 100],
+  longNull: [10, 5, null],
+  mediumNull: [10, null, 2],
+  shortNull: [null, 5, 2],
 } as const;
+// All-in, as the strategy creates them: without amount, the Trader sizes them from all the free currency (BUY) or asset (SELL)
+const allInBuy = { type: 'STICKY', side: 'BUY', symbol } satisfies StrategyOrder;
+const allInSell = { type: 'STICKY', side: 'SELL', symbol } satisfies StrategyOrder;
 
 describe('TMA Strategy', () => {
   let strategy: TMA;
@@ -52,8 +53,12 @@ describe('TMA Strategy', () => {
       ...smas.map((results): IndicatorResults<number | null> => ({ results: results as number | null, symbol })),
     );
 
-  /** Plays the steps (see playSteps): an alignment (up, down, bearish) is a candle */
-  const play = (steps: string) => playSteps(steps, strategy, orders, step => onCandle(...ALIGNMENTS[step as keyof typeof ALIGNMENTS]));
+  /** Plays the steps (see playSteps): an alignment (see ALIGNMENTS) is a candle */
+  const play = (steps: string) =>
+    playSteps(steps, strategy, orders, step => {
+      if (!(step in ALIGNMENTS)) throw new Error(`No step named ${step}, in "${steps}"`);
+      onCandle(...ALIGNMENTS[step as keyof typeof ALIGNMENTS]);
+    });
 
   beforeEach(() => {
     strategy = new TMA();
@@ -95,15 +100,11 @@ describe('TMA Strategy', () => {
   });
 
   describe('onTimeframeCandleAfterWarmup', () => {
-    it('should do nothing if pair is not defined', () => {
-      const emptyStrategy = new TMA();
-      emptyStrategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<TMAStrategyParams>,
-        { results: 10, symbol },
-        { results: 5, symbol },
-        { results: 2, symbol },
-      );
-      expect(advices).toHaveLength(0);
+    // An uptrend, which buys once init has picked the pair: before it, the order would have no symbol
+    it('should do nothing before init has picked the pair', () => {
+      strategy = new TMA();
+      play('up');
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
     // Nothing logged either: a NaN SMA failed every comparison, read as no clear trend, and an infinite one made a trend
@@ -112,6 +113,9 @@ describe('TMA Strategy', () => {
       ${undefined} | ${5}         | ${2}
       ${10}        | ${undefined} | ${2}
       ${10}        | ${5}         | ${undefined}
+      ${null}      | ${5}         | ${2}
+      ${10}        | ${null}      | ${2}
+      ${10}        | ${5}         | ${null}
       ${'invalid'} | ${5}         | ${2}
       ${NaN}       | ${5}         | ${2}
       ${10}        | ${NaN}       | ${2}
@@ -126,9 +130,20 @@ describe('TMA Strategy', () => {
       },
     );
 
-    it('should emit a STICKY BUY advice on an uptrend when flat', () => {
+    // Compared as 0, a null long SMA would make an uptrend that buys, a null short or medium one a mixed alignment that sells
+    it.each`
+      case                            | steps                          | expectedSides
+      ${'long SMA null, when flat'}   | ${'longNull'}                  | ${[]}
+      ${'medium SMA null, when long'} | ${'up completed:1 mediumNull'} | ${['BUY']}
+      ${'short SMA null, when long'}  | ${'up completed:1 shortNull'}  | ${['BUY']}
+    `('should skip a candle whose SMA is null, as one not ready yet: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
+    });
+
+    it('should emit an all-in STICKY BUY on an uptrend when flat', () => {
       play('up');
-      expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1, symbol }]);
+      expect(advices).toStrictEqual([allInBuy]);
     });
 
     it('should log the long advice with the three SMAs', () => {
@@ -141,11 +156,11 @@ describe('TMA Strategy', () => {
       ${3}     | ${5}      | ${2}
       ${5}     | ${3}      | ${7}
     `(
-      'should emit a STICKY SELL advice when long and short=$shortRes, med=$mediumRes, long=$longRes',
+      'should emit an all-in STICKY SELL when long and short=$shortRes, med=$mediumRes, long=$longRes',
       ({ shortRes, mediumRes, longRes }) => {
         play('up completed:1');
         onCandle(shortRes, mediumRes, longRes);
-        expect(advices[1]).toEqual({ type: 'STICKY', side: 'SELL', amount: 1, symbol });
+        expect(advices).toStrictEqual([allInBuy, allInSell]);
       },
     );
 

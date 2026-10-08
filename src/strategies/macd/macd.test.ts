@@ -8,22 +8,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MACD } from './macd.strategy';
 import { MACDStrategyParams } from './macd.types';
 
-vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn();
-  Configuration.prototype.getStrategy = vi.fn(() => ({
-    short: 12,
-    long: 26,
-    signal: 9,
-    macdSrc: 'macd',
-    thresholds: { up: 0.5, down: -0.5, persistence: 2 },
-  }));
-  return { config: new Configuration() };
-});
-
 const symbol = 'BTC/USDT';
 const makeIndicator = (res: any) => [{ results: res, symbol }] as any;
-// The MACD value (macdSrc: 'macd', thresholds 0.5 / -0.5) of each step of the scenarios played below
-const MACD_VALUES = { up: 1, down: -1, none: 0 } as const;
+// The MACD result of each step of the scenarios played below (hist = macd - signal), with one field only beyond the thresholds
+// 0.5 / -0.5: only the field macdSrc names can make a trend. up and down move the MACD line, which the suite trades (macdSrc: 'macd'),
+// signalUp and signalDown the signal line, histUp and histDown the histogram. Null is what the indicator gives until it is ready.
+const MACD_RESULTS = {
+  up: { macd: 0.8, signal: 0.4, hist: 0.4 },
+  down: { macd: -0.8, signal: -0.4, hist: -0.4 },
+  none: { macd: 0, signal: 0, hist: 0 },
+  signalUp: { macd: 0.4, signal: 0.8, hist: -0.4 },
+  signalDown: { macd: -0.4, signal: -0.8, hist: 0.4 },
+  histUp: { macd: 0.4, signal: -0.4, hist: 0.8 },
+  histDown: { macd: -0.4, signal: 0.4, hist: -0.8 },
+  null: null,
+} as const;
+// All-in, as the strategy creates them: without amount, the Trader sizes them from all the free currency (BUY) or asset (SELL)
+const allInBuy = { type: 'STICKY', side: 'BUY', symbol } satisfies StrategyOrder;
+const allInSell = { type: 'STICKY', side: 'SELL', symbol } satisfies StrategyOrder;
 
 describe('MACD Strategy', () => {
   let strategy: MACD;
@@ -34,14 +36,16 @@ describe('MACD Strategy', () => {
   let bucket: CandleBucket;
   let addIndicator: any;
 
-  /** Plays the steps (see playSteps): a trend (up, down, none) is a candle */
+  /** Plays the steps (see playSteps): a MACD result (see MACD_RESULTS) is a candle */
   const play = (steps: string) =>
-    playSteps(steps, strategy, orders, step =>
+    playSteps(steps, strategy, orders, step => {
+      // A misspelt step would be an undefined result, a candle skipped
+      if (!(step in MACD_RESULTS)) throw new Error(`No step named ${step}, in "${steps}"`);
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<MACDStrategyParams>,
-        ...makeIndicator({ macd: MACD_VALUES[step as keyof typeof MACD_VALUES], signal: 0, hist: 0 }),
-      ),
-    );
+        ...makeIndicator(MACD_RESULTS[step as keyof typeof MACD_RESULTS]),
+      );
+    });
   const sides = () => advices.map(({ side }) => side);
 
   beforeEach(() => {
@@ -86,13 +90,11 @@ describe('MACD Strategy', () => {
   });
 
   describe('onTimeframeCandleAfterWarmup', () => {
-    it('should do nothing if pair is not defined', () => {
-      const emptyStrategy = new MACD();
-      emptyStrategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<MACDStrategyParams>,
-        ...makeIndicator({ macd: 1, signal: 0, hist: 0 }),
-      );
-      expect(advices).toHaveLength(0);
+    // An uptrend over the persistence, which buys once init has picked the pair: before it, the order would have no symbol
+    it('should do nothing before init has picked the pair', () => {
+      strategy = new MACD();
+      play('up up');
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
     // Nothing logged either: a NaN MACD failed both thresholds, logged as no trend, and an infinite one started a trend
@@ -116,14 +118,23 @@ describe('MACD Strategy', () => {
       expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
-    it('should emit a STICKY BUY advice after persistence on uptrend when flat', () => {
-      play('up up');
-      expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1, symbol }]);
+    // Unskipped, a null MACD would throw as its field is read
+    it.each`
+      case                         | steps                                 | expectedSides
+      ${'null within an uptrend'}  | ${'up null up'}                       | ${['BUY']}
+      ${'null within a downtrend'} | ${'up up completed:1 down null down'} | ${['BUY', 'SELL']}
+    `('should skip a candle whose MACD is null, as one not ready yet: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
 
-    it('should emit a STICKY SELL advice after persistence on downtrend when long', () => {
-      play('up up completed:1 down down');
-      expect(advices[1]).toEqual({ type: 'STICKY', side: 'SELL', amount: 1, symbol });
+    it.each`
+      case                                 | steps                            | expected
+      ${'a BUY on an uptrend when flat'}   | ${'up up'}                       | ${[allInBuy]}
+      ${'a SELL on a downtrend when long'} | ${'up up completed:1 down down'} | ${[allInBuy, allInSell]}
+    `('should emit an all-in STICKY order after persistence: $case', ({ steps, expected }) => {
+      play(steps);
+      expect(advices).toStrictEqual(expected);
     });
 
     it.each`
@@ -138,19 +149,37 @@ describe('MACD Strategy', () => {
       ${'a downtrend after a shorter uptrend'}  | ${'up up completed:1 down down completed:2 up down down'} | ${['BUY', 'SELL']}
       ${'a downtrend when flat'}                | ${'down down down'}                                       | ${[]}
       ${'a downtrend while the BUY pends'}      | ${'up up down down'}                                      | ${['BUY']}
+      ${'a new downtrend while the SELL pends'} | ${'up up completed:1 down down up down down'}             | ${['BUY', 'SELL']}
       ${'an uptrend once the SELL filled'}      | ${'up up completed:1 down down up up completed:2 up'}     | ${['BUY', 'SELL', 'BUY']}
     `('should advise once per position change on $case', ({ steps, expectedSides }) => {
       play(steps);
       expect(sides()).toEqual(expectedSides);
     });
 
-    it('should log when no trend detected', () => {
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<MACDStrategyParams>,
-        ...makeIndicator({ macd: 0, signal: 0, hist: 0 }),
-      );
-      expect(logs).toContainEqual({ level: 'debug', message: 'MACD: no trend detected' });
-      expect(advices).toHaveLength(0);
+    it('should log when no trend detected, and advise nothing', () => {
+      play('none');
+      expect({ advices, logs }).toEqual({ advices: [], logs: [{ level: 'debug', message: 'MACD: no trend detected' }] });
+    });
+  });
+
+  describe('macdSrc', () => {
+    // Each step has one field of the result beyond a threshold: the field macdSrc names makes the trend, and the others do not
+    it.each`
+      macdSrc     | case                            | steps                                                          | expectedSides
+      ${'macd'}   | ${'the others up, when flat'}   | ${'signalUp signalUp histUp histUp'}                           | ${[]}
+      ${'macd'}   | ${'the others down, when long'} | ${'up up completed:1 signalDown signalDown histDown histDown'} | ${['BUY']}
+      ${'signal'} | ${'its field up, when flat'}    | ${'signalUp signalUp'}                                         | ${['BUY']}
+      ${'signal'} | ${'the others up, when flat'}   | ${'up up histUp histUp'}                                       | ${[]}
+      ${'signal'} | ${'its field down, when long'}  | ${'signalUp signalUp completed:1 signalDown signalDown'}       | ${['BUY', 'SELL']}
+      ${'signal'} | ${'the others down, when long'} | ${'signalUp signalUp completed:1 down down histDown histDown'} | ${['BUY']}
+      ${'hist'}   | ${'its field up, when flat'}    | ${'histUp histUp'}                                             | ${['BUY']}
+      ${'hist'}   | ${'the others up, when flat'}   | ${'up up signalUp signalUp'}                                   | ${[]}
+      ${'hist'}   | ${'its field down, when long'}  | ${'histUp histUp completed:1 histDown histDown'}               | ${['BUY', 'SELL']}
+      ${'hist'}   | ${'the others down, when long'} | ${'histUp histUp completed:1 down down signalDown signalDown'} | ${['BUY']}
+    `('should trade on the $macdSrc field only: $case', ({ macdSrc, steps, expectedSides }) => {
+      tools.strategyParams.macdSrc = macdSrc;
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
   });
 
@@ -192,9 +221,11 @@ describe('MACD Strategy', () => {
         { candle: bucket, tools } as unknown as OnCandleEventParams<MACDStrategyParams>,
         ...makeIndicator({ macd: 1.12345678, signal: 2.12345678, hist: 3.12345678 }),
       );
-      expect(logs).toContainEqual({ level: 'debug', message: 'macd: 1.12345678' });
-      expect(logs).toContainEqual({ level: 'debug', message: 'signal: 2.12345678' });
-      expect(logs).toContainEqual({ level: 'debug', message: 'hist: 3.12345678' });
+      expect(logs).toEqual([
+        { level: 'debug', message: 'macd: 1.12345678' },
+        { level: 'debug', message: 'signal: 2.12345678' },
+        { level: 'debug', message: 'hist: 3.12345678' },
+      ]);
     });
   });
 
@@ -216,19 +247,19 @@ describe('MACD Strategy', () => {
 
     // A period of 0 is refused once, without the comparison of the periods
     it.each`
-      scenario                                 | block                                   | path
-      ${'an unknown macdSrc (histogram)'}      | ${{ ...params, macdSrc: 'histogram' }}  | ${['macdSrc']}
-      ${'a missing macdSrc'}                   | ${omit(params, 'macdSrc')}              | ${['macdSrc']}
-      ${'a quoted signal'}                     | ${{ ...params, signal: '9' }}           | ${['signal']}
-      ${'a fractional long'}                   | ${{ ...params, long: 26.5 }}            | ${['long']}
-      ${'a short of 0'}                        | ${{ ...params, short: 0 }}              | ${['short']}
-      ${'a long of 0'}                         | ${{ ...params, long: 0 }}               | ${['long']}
-      ${'a signal of 0'}                       | ${{ ...params, signal: 0 }}             | ${['signal']}
-      ${'swapped periods (short 26, long 12)'} | ${{ ...params, short: 26, long: 12 }}   | ${[]}
-      ${'equal periods'}                       | ${{ ...params, short: 26, long: 26 }}   | ${[]}
-      ${'an infinite threshold'}               | ${withThresholds({ up: Infinity })}     | ${['thresholds', 'up']}
-      ${'a fractional persistence'}            | ${withThresholds({ persistence: 0.5 })} | ${['thresholds', 'persistence']}
-      ${'a src, which the MACD does not take'} | ${{ ...params, src: 'close' }}          | ${[]}
+      scenario                                  | block                                   | path
+      ${'an unknown macdSrc (histogram)'}       | ${{ ...params, macdSrc: 'histogram' }}  | ${['macdSrc']}
+      ${'a missing macdSrc'}                    | ${omit(params, 'macdSrc')}              | ${['macdSrc']}
+      ${'a quoted signal'}                      | ${{ ...params, signal: '9' }}           | ${['signal']}
+      ${'a fractional long'}                    | ${{ ...params, long: 26.5 }}            | ${['long']}
+      ${'a short of 0'}                         | ${{ ...params, short: 0 }}              | ${['short']}
+      ${'a long of 0'}                          | ${{ ...params, long: 0 }}               | ${['long']}
+      ${'a signal of 0'}                        | ${{ ...params, signal: 0 }}             | ${['signal']}
+      ${'swapped periods (short 26, long 12)'}  | ${{ ...params, short: 26, long: 12 }}   | ${[]}
+      ${'equal periods'}                        | ${{ ...params, short: 26, long: 26 }}   | ${[]}
+      ${'an infinite threshold'}                | ${withThresholds({ up: Infinity })}     | ${['thresholds', 'up']}
+      ${'a fractional persistence'}             | ${withThresholds({ persistence: 0.5 })} | ${['thresholds', 'persistence']}
+      ${'a src (the MACD strategy takes none)'} | ${{ ...params, src: 'close' }}          | ${[]}
     `('refuses $scenario', ({ block, path }) => {
       expect(MACD.schema.safeParse(block).error?.issues).toMatchObject([{ path }]);
     });

@@ -7,19 +7,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RSI } from './rsi.strategy';
 import { RSIStrategyParams } from './rsi.types';
 
-vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn();
-  Configuration.prototype.getStrategy = vi.fn(() => ({
-    period: 14,
-    src: 'close',
-    thresholds: { high: 70, low: 30, persistence: 2 },
-  }));
-  return { config: new Configuration() };
-});
-
 const symbol = 'BTC/USDT';
-// The RSI value (thresholds 70 / 30) of each step of the scenarios played below
-const RSI_VALUES = { high: 75, low: 20, neutral: 50, nan: NaN, inf: Infinity, '-inf': -Infinity } as const;
+// The RSI value (thresholds 70 / 30) of each step of the scenarios played below: null is what the indicator gives until it is ready
+const RSI_VALUES = { high: 75, low: 20, neutral: 50, nan: NaN, inf: Infinity, '-inf': -Infinity, null: null } as const;
+// All-in, as the strategy creates them: without amount, the Trader sizes them from all the free currency (BUY) or asset (SELL)
+const allInBuy = { type: 'STICKY', side: 'BUY', symbol } satisfies StrategyOrder;
+const allInSell = { type: 'STICKY', side: 'SELL', symbol } satisfies StrategyOrder;
 
 describe('RSI Strategy', () => {
   let strategy: RSI;
@@ -29,14 +22,16 @@ describe('RSI Strategy', () => {
   let bucket: CandleBucket;
   let addIndicator: any;
 
-  /** Plays the steps (see playSteps): an RSI value (high, low, neutral) is a candle */
+  /** Plays the steps (see playSteps): an RSI value (see RSI_VALUES) is a candle */
   const play = (steps: string) =>
-    playSteps(steps, strategy, orders, step =>
+    playSteps(steps, strategy, orders, step => {
+      // A misspelt step would be an undefined RSI, a candle skipped
+      if (!(step in RSI_VALUES)) throw new Error(`No step named ${step}, in "${steps}"`);
       strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
         results: RSI_VALUES[step as keyof typeof RSI_VALUES],
         symbol,
-      }),
-    );
+      });
+    });
   const sides = () => advices.map(({ side }) => side);
 
   beforeEach(() => {
@@ -74,13 +69,11 @@ describe('RSI Strategy', () => {
   });
 
   describe('onTimeframeCandleAfterWarmup', () => {
-    it('should do nothing if pair is not defined', () => {
-      const emptyStrategy = new RSI();
-      emptyStrategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
-        results: 75,
-        symbol,
-      });
-      expect(advices).toHaveLength(0);
+    // A low trend over the persistence, which buys once init has picked the pair: before it, the order would have no symbol
+    it('should do nothing before init has picked the pair', () => {
+      strategy = new RSI();
+      play('low low');
+      expect({ advices, logged: tools.log.mock.calls }).toEqual({ advices: [], logged: [] });
     });
 
     // Nothing logged either: an infinite RSI started a trend
@@ -100,25 +93,27 @@ describe('RSI Strategy', () => {
       expect({ advices, logged: tools.log.mock.calls }).toEqual({ advices: [], logged: [] });
     });
 
+    // Compared as 0, a null RSI would count toward a low trend, or end a high one
     it.each`
-      case                             | steps                            | expectedSides
-      ${'NaN within a low trend'}      | ${'low nan low'}                 | ${['BUY']}
-      ${'Infinity within a low trend'} | ${'low inf low'}                 | ${['BUY']}
-      ${'-Infinity twice when flat'}   | ${'-inf -inf'}                   | ${[]}
-      ${'Infinity twice when long'}    | ${'low low completed:1 inf inf'} | ${['BUY']}
+      case                             | steps                                   | expectedSides
+      ${'NaN within a low trend'}      | ${'low nan low'}                        | ${['BUY']}
+      ${'Infinity within a low trend'} | ${'low inf low'}                        | ${['BUY']}
+      ${'-Infinity twice when flat'}   | ${'-inf -inf'}                          | ${[]}
+      ${'Infinity twice when long'}    | ${'low low completed:1 inf inf'}        | ${['BUY']}
+      ${'null after a low candle'}     | ${'low null'}                           | ${[]}
+      ${'null within a high trend'}    | ${'low low completed:1 high null high'} | ${['BUY', 'SELL']}
     `('should skip a candle whose RSI is not a finite number, as one not ready yet: $case', ({ steps, expectedSides }) => {
       play(steps);
       expect(sides()).toEqual(expectedSides);
     });
 
-    it('should emit a STICKY BUY advice after persistence on low trend when flat', () => {
-      play('low low');
-      expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1, symbol }]);
-    });
-
-    it('should emit a STICKY SELL advice after persistence on high trend when long', () => {
-      play('low low completed:1 high high');
-      expect(advices[1]).toEqual({ type: 'STICKY', side: 'SELL', amount: 1, symbol });
+    it.each`
+      case                                  | steps                              | expected
+      ${'a BUY on a low trend when flat'}   | ${'low low'}                       | ${[allInBuy]}
+      ${'a SELL on a high trend when long'} | ${'low low completed:1 high high'} | ${[allInBuy, allInSell]}
+    `('should emit an all-in STICKY order after persistence: $case', ({ steps, expected }) => {
+      play(steps);
+      expect(advices).toStrictEqual(expected);
     });
 
     it.each`
@@ -136,6 +131,7 @@ describe('RSI Strategy', () => {
       ${'a high trend while the BUY pends'}       | ${'low low high high'}                                       | ${['BUY']}
       ${'a high trend once the BUY filled'}       | ${'low low high high completed:1 high'}                      | ${['BUY', 'SELL']}
       ${'a low trend while the SELL pends'}       | ${'low low completed:1 high high low low'}                   | ${['BUY', 'SELL']}
+      ${'a new high trend while the SELL pends'}  | ${'low low completed:1 high high low high high'}             | ${['BUY', 'SELL']}
     `('should advise once per position change on $case', ({ steps, expectedSides }) => {
       play(steps);
       expect(sides()).toEqual(expectedSides);

@@ -8,17 +8,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CCI } from './cci.strategy';
 import { CCIStrategyParams } from './cci.types';
 
-vi.mock('@services/configuration/configuration', () => {
-  const Configuration = vi.fn();
-  Configuration.prototype.getStrategy = vi.fn(() => ({
-    period: 14,
-    thresholds: { up: 100, down: -100, persistence: 2 },
-  }));
-  return { config: new Configuration() };
-});
-
-// The CCI value of each step of the scenarios played below
-const CCI_VALUES = { over: 150, under: -150, neutral: 50, nan: NaN } as const;
+// The CCI value of each step of the scenarios played below: null is what the indicator gives until it is ready
+const CCI_VALUES = { over: 150, under: -150, neutral: 50, nan: NaN, null: null } as const;
+// All-in, as the strategy creates them: without amount, the Trader sizes them from all the free currency (BUY) or asset (SELL)
+const allInBuy = { type: 'STICKY', side: 'BUY', symbol: 'BTC/USDT' } satisfies StrategyOrder;
+const allInSell = { type: 'STICKY', side: 'SELL', symbol: 'BTC/USDT' } satisfies StrategyOrder;
 
 describe('CCI Strategy', () => {
   let strategy: CCI;
@@ -29,14 +23,16 @@ describe('CCI Strategy', () => {
   let bucket: CandleBucket;
   let addIndicator: any;
 
-  /** Plays the steps (see playSteps): a CCI value (over, under, neutral) is a candle */
+  /** Plays the steps (see playSteps): a CCI value (see CCI_VALUES) is a candle */
   const play = (steps: string) =>
-    playSteps(steps, strategy, orders, step =>
+    playSteps(steps, strategy, orders, step => {
+      // A misspelt step would be an undefined CCI, a candle skipped
+      if (!(step in CCI_VALUES)) throw new Error(`No step named ${step}, in "${steps}"`);
       strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, {
         results: CCI_VALUES[step as keyof typeof CCI_VALUES],
         symbol: 'BTC/USDT',
-      }),
-    );
+      });
+    });
   const sides = () => advices.map(({ side }) => side);
 
   beforeEach(() => {
@@ -75,13 +71,11 @@ describe('CCI Strategy', () => {
   });
 
   describe('onTimeframeCandleAfterWarmup', () => {
-    it('should do nothing if pair is not defined', () => {
-      const emptyStrategy = new CCI();
-      emptyStrategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, {
-        results: 150,
-        symbol: 'BTC/USDT',
-      });
-      expect(advices).toHaveLength(0);
+    // Two oversold candles, which buy once init has picked the pair: before it, the order would have no symbol
+    it('should do nothing before init has picked the pair', () => {
+      strategy = new CCI();
+      play('under under');
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
     // Nothing logged either: a NaN CCI failed both thresholds and ended the trend, and an infinite one started one
@@ -101,11 +95,14 @@ describe('CCI Strategy', () => {
       expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
+    // Unskipped, a null or NaN CCI would read as between the thresholds and end the trend in progress, its order delayed
     it.each`
-      case                            | steps                                      | expectedSides
-      ${'within an oversold trend'}   | ${'under nan under'}                       | ${['BUY']}
-      ${'within an overbought trend'} | ${'under under completed:1 over nan over'} | ${['BUY', 'SELL']}
-    `('should skip a candle whose CCI is NaN, as one not ready yet: $case', ({ steps, expectedSides }) => {
+      case                                 | steps                                       | expectedSides
+      ${'NaN within an oversold trend'}    | ${'under nan under'}                        | ${['BUY']}
+      ${'NaN within an overbought trend'}  | ${'under under completed:1 over nan over'}  | ${['BUY', 'SELL']}
+      ${'null within an oversold trend'}   | ${'under null under'}                       | ${['BUY']}
+      ${'null within an overbought trend'} | ${'under under completed:1 over null over'} | ${['BUY', 'SELL']}
+    `('should skip a candle whose CCI is null or NaN, as one not ready yet: $case', ({ steps, expectedSides }) => {
       play(steps);
       expect(sides()).toEqual(expectedSides);
     });
@@ -125,27 +122,14 @@ describe('CCI Strategy', () => {
       expect(sides()).toEqual(expectedSides);
     });
 
-    it('should handle nodirection and accumulate duration correctly', () => {
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, {
-        results: 50,
-        symbol: 'BTC/USDT',
-      });
-      expect(logs).toContainEqual({ level: 'debug', message: 'Trend: nodirection for 1' });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, {
-        results: 50,
-        symbol: 'BTC/USDT',
-      });
-      expect(logs).toContainEqual({ level: 'debug', message: 'Trend: nodirection for 2' });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, {
-        results: 150,
-        symbol: 'BTC/USDT',
-      });
-      expect(logs).toContainEqual({ level: 'debug', message: 'Trend: overbought for 1' });
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, {
-        results: 50,
-        symbol: 'BTC/USDT',
-      });
-      expect(logs).toContainEqual({ level: 'debug', message: 'Trend: nodirection for 0' });
+    it('should log the trend and its duration on each candle', () => {
+      play('neutral neutral over neutral');
+      expect(logs.filter(({ level }) => level === 'debug')).toEqual([
+        { level: 'debug', message: 'Trend: nodirection for 1' },
+        { level: 'debug', message: 'Trend: nodirection for 2' },
+        { level: 'debug', message: 'Trend: overbought for 1' },
+        { level: 'debug', message: 'Trend: nodirection for 0' },
+      ]);
     });
 
     describe('persistence = 3', () => {
@@ -170,14 +154,13 @@ describe('CCI Strategy', () => {
         tools.strategyParams.thresholds.persistence = 0;
       });
 
-      it('should emit a STICKY SELL advice immediately on overbought when long', () => {
-        play('under completed:1 over');
-        expect(advices[1]).toEqual({ type: 'STICKY', side: 'SELL', amount: 1, symbol: 'BTC/USDT' });
-      });
-
-      it('should emit a STICKY BUY advice immediately on oversold when flat', () => {
-        play('under');
-        expect(advices).toEqual([{ type: 'STICKY', side: 'BUY', amount: 1, symbol: 'BTC/USDT' }]);
+      it.each`
+        case                                | steps                       | expected
+        ${'a BUY on oversold when flat'}    | ${'under'}                  | ${[allInBuy]}
+        ${'a SELL on overbought when long'} | ${'under completed:1 over'} | ${[allInBuy, allInSell]}
+      `('should emit an all-in STICKY order immediately: $case', ({ steps, expected }) => {
+        play(steps);
+        expect(advices).toStrictEqual(expected);
       });
 
       it.each`
@@ -189,6 +172,7 @@ describe('CCI Strategy', () => {
         ${'an overbought trend while the BUY pends'} | ${'under over'}                                      | ${['BUY']}
         ${'an overbought trend once the BUY filled'} | ${'under over completed:1 over'}                     | ${['BUY', 'SELL']}
         ${'an oversold trend while the SELL pends'}  | ${'under completed:1 over under'}                    | ${['BUY', 'SELL']}
+        ${'overbought again while the SELL pends'}   | ${'under completed:1 over neutral over'}             | ${['BUY', 'SELL']}
       `('should advise once per position change on $case', ({ steps, expectedSides }) => {
         play(steps);
         expect(sides()).toEqual(expectedSides);
@@ -218,6 +202,7 @@ describe('CCI Strategy', () => {
     it.each`
       cciRes       | expectedLogsLength
       ${undefined} | ${0}
+      ${null}      | ${0}
       ${'invalid'} | ${0}
       ${NaN}       | ${0}
       ${Infinity}  | ${0}
