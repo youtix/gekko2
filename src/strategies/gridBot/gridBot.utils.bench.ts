@@ -1,13 +1,13 @@
 import { MarketData } from '@services/exchange/exchange.types';
 import { bench, describe } from 'vitest';
 import {
-  applyAmountLimits,
-  applyCostLimits,
   computeGridBounds,
   computeLevelPrice,
   computeRebalancePlan,
   countDecimals,
   deriveLevelQuantity,
+  getMaximumAmount,
+  getMinimumAmount,
   hasOnlyOneSide,
   inferAmountPrecision,
   inferPricePrecision,
@@ -128,18 +128,18 @@ describe('gridBot.utils Performance', () => {
     });
   });
 
-  describe('applyAmountLimits', () => {
-    bench('10000 amount limit applications', () => {
+  describe('getMinimumAmount', () => {
+    bench('10000 minimum amounts', () => {
       for (let i = 0; i < 10000; i++) {
-        applyAmountLimits(i % 100, marketData);
+        getMinimumAmount(90 + (i % 20), marketData);
       }
     });
   });
 
-  describe('applyCostLimits', () => {
-    bench('10000 cost limit applications', () => {
+  describe('getMaximumAmount', () => {
+    bench('10000 maximum amounts', () => {
       for (let i = 0; i < 10000; i++) {
-        applyCostLimits(1, 90 + (i % 20), 110 + (i % 20), marketData);
+        getMaximumAmount(110 + (i % 20), marketData);
       }
     });
   });

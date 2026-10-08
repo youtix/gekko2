@@ -9,15 +9,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GridBot } from './gridBot.strategy';
 import { GridBotStrategyParams, GridBounds, GridSpacingType } from './gridBot.types';
 import {
-  applyAmountLimits,
-  applyCostLimits,
   computeGridBounds,
   computeLevelPrice,
   computeRebalancePlan,
   countDecimals,
   deriveLevelQuantity,
   getMakerFee,
+  getMaximumAmount,
+  getMinimumAmount,
   getRebalanceBuyCost,
+  getRebalanceOrderPrice,
   hasOnlyOneSide,
   inferAmountPrecision,
   inferPricePrecision,
@@ -52,6 +53,9 @@ const tenthPercentFeeMarketData: MarketData = {
   precision: { price: 0.01, amount: 0.00001 },
   fee: { maker: 0.001, taker: 0.001 },
 };
+// The documented block with Binance's BTC/USDT steps, an amount to 5 decimals and a price to the cent, which CCXTExchange truncates an
+// amount to
+const binanceStepsMarketData: MarketData = { ...documentedMarketData, precision: { price: 0.01, amount: 0.00001 } };
 
 describe('gridBot.utils', () => {
   describe('countDecimals', () => {
@@ -307,42 +311,61 @@ describe('gridBot.utils', () => {
     });
   });
 
-  describe('applyAmountLimits', () => {
+  // GridBot used to raise an amount to amount.min, or to cost.min at its price, left unrounded: CCXTExchange truncated it to the
+  // amount step, under cost.min again, and the exchange refused it
+  describe('getMinimumAmount', () => {
     it.each`
-      qty     | min  | max   | expected
-      ${5}    | ${1} | ${10} | ${5}
-      ${0.5}  | ${1} | ${10} | ${1}
-      ${15}   | ${1} | ${10} | ${10}
-      ${0.05} | ${1} | ${10} | ${1}
-    `('adjusts $qty to $expected (min=$min, max=$max)', ({ qty, min, max, expected }) => {
-      expect(applyAmountLimits(qty, { amount: { min, max } })).toBe(expected);
+      price       | marketData                                                                       | description                                                                          | expected
+      ${100}      | ${{ precision: { amount: 0.01 } }}                                               | ${'no limit: one amount step'}                                                       | ${0.01}
+      ${100}      | ${{}}                                                                            | ${'no limit and no precision: one step of 8 decimals'}                               | ${1e-8}
+      ${100}      | ${{ amount: { min: 0, max: 0 }, cost: { min: 0 }, precision: { amount: 0.01 } }} | ${'limits of 0, which bound nothing: one amount step'}                               | ${0.01}
+      ${100}      | ${{ amount: { min: 0.1 }, precision: { amount: 0.01 } }}                         | ${'amount.min'}                                                                      | ${0.1}
+      ${100}      | ${{ amount: { min: 0.015 }, precision: { amount: 0.01 } }}                       | ${'amount.min off the amount step, rounded up to it'}                                | ${0.02}
+      ${58172.83} | ${{ cost: { min: 5 }, precision: { amount: 0.00001 } }}                          | ${'cost.min / price, 0.0000859507…, rounded up to the amount step'}                  | ${0.00009}
+      ${58172.83} | ${{ amount: { min: 0.0001 }, cost: { min: 5 }, precision: { amount: 0.00001 } }} | ${'the larger of amount.min and cost.min / price'}                                   | ${0.0001}
+      ${50000}    | ${{ cost: { min: 5 }, precision: { amount: 1e-8 } }}                             | ${'cost.min / price exactly, 0.0001 × 50000 being 5 in floating point'}              | ${0.0001}
+      ${100000}   | ${{ cost: { min: 7 }, precision: { amount: 1e-8 } }}                             | ${'cost.min / price exactly, 0.00007 × 100000 being 6.999999999999999: a step more'} | ${0.00007001}
+    `('is $expected for $description', ({ price, marketData, expected }) => {
+      expect(getMinimumAmount(price, marketData)).toBe(expected);
     });
 
-    it('returns original for non-positive quantity', () => {
-      expect(applyAmountLimits(-1, { amount: { min: 1 } })).toBe(-1);
-    });
-
-    it('handles missing limits', () => {
-      expect(applyAmountLimits(5, {})).toBe(5);
+    // As the simulator and CCXTExchange compute the cost of an order, amount × price, against cost.min
+    it.each`
+      price        | marketData
+      ${58172.83}  | ${binanceStepsMarketData}
+      ${61234.57}  | ${documentedMarketData}
+      ${100000}    | ${{ cost: { min: 7 }, precision: { amount: 1e-8 } }}
+      ${800000}    | ${{ cost: { min: 7 }, precision: { amount: 1e-8 } }}
+      ${0.0001234} | ${{ cost: { min: 5 }, precision: { amount: 1 } }}
+    `('is an amount whose cost at $price is cost.min or more', ({ price, marketData }) => {
+      expect(getMinimumAmount(price, marketData) * price).toBeGreaterThanOrEqual(marketData.cost.min);
     });
   });
 
-  describe('applyCostLimits', () => {
+  describe('getMaximumAmount', () => {
     it.each`
-      qty     | minPrice | maxPrice | minCost | maxCost | expected
-      ${1}    | ${100}   | ${100}   | ${10}   | ${200}  | ${1}
-      ${0.05} | ${100}   | ${100}   | ${10}   | ${200}  | ${0.1}
-      ${3}    | ${100}   | ${100}   | ${10}   | ${200}  | ${2}
-    `('adjusts $qty to $expected', ({ qty, minPrice, maxPrice, minCost, maxCost, expected }) => {
-      expect(applyCostLimits(qty, minPrice, maxPrice, { cost: { min: minCost, max: maxCost } })).toBe(expected);
+      price     | marketData                                                                  | description                                                                           | expected
+      ${100}    | ${{ precision: { amount: 0.01 } }}                                          | ${'no limit'}                                                                         | ${Infinity}
+      ${100}    | ${{ amount: { max: 0 }, cost: { max: 0 } }}                                 | ${'limits of 0, which bound nothing'}                                                 | ${Infinity}
+      ${100}    | ${{ amount: { max: 10 }, precision: { amount: 0.01 } }}                     | ${'amount.max'}                                                                       | ${10}
+      ${300}    | ${{ cost: { max: 1000 }, precision: { amount: 0.01 } }}                     | ${'cost.max / price, 3.333…, rounded down to the amount step'}                        | ${3.33}
+      ${300}    | ${{ amount: { max: 3 }, cost: { max: 1000 }, precision: { amount: 0.01 } }} | ${'the smaller of amount.max and cost.max / price'}                                   | ${3}
+      ${300000} | ${{ cost: { max: 3 }, precision: { amount: 1e-8 } }}                        | ${'cost.max / price exactly, 0.00001 × 300000 being 3.0000000000000004: a step less'} | ${0.00000999}
+    `('is $expected for $description', ({ price, marketData, expected }) => {
+      expect(getMaximumAmount(price, marketData)).toBe(expected);
     });
+  });
 
-    it('returns original for non-positive quantity', () => {
-      expect(applyCostLimits(-1, 100, 100, { cost: { min: 10 } })).toBe(-1);
-    });
-
-    it('handles missing limits', () => {
-      expect(applyCostLimits(5, 100, 100, {})).toBe(5);
+  // StickyOrder places a BUY one minimum price above the bid, a SELL one below the ask
+  describe('getRebalanceOrderPrice', () => {
+    it.each`
+      side      | marketData                  | description                  | expected
+      ${'BUY'}  | ${{ price: { min: 0.01 } }} | ${'a minimum price of 0.01'} | ${100.01}
+      ${'SELL'} | ${{ price: { min: 0.01 } }} | ${'a minimum price of 0.01'} | ${99.99}
+      ${'BUY'}  | ${{}}                       | ${'no minimum price'}        | ${100}
+      ${'SELL'} | ${{}}                       | ${'no minimum price'}        | ${100}
+    `('is $expected for a $side planned at 100, on a market with $description', ({ side, marketData, expected }) => {
+      expect(getRebalanceOrderPrice(side, 100, marketData)).toBe(expected);
     });
   });
 
@@ -422,6 +445,23 @@ describe('gridBot.utils', () => {
       expect(plan?.amount).toBe(10);
     });
 
+    // 1000 at the price of its STICKY order, 100.01, is 9.99900…: at the center price it would be 10, refused for a cost of 1000.1
+    it('caps the amount at the market maximum at the price its STICKY order is placed at', () => {
+      const marketDataWithMaxCost: MarketData = { cost: { max: 1000 }, price: { min: 0.01 }, precision: { amount: 0.01 } };
+
+      expect(computeRebalancePlan(100, 0, 10000, 5, 5, marketDataWithMaxCost)?.amount).toBe(9.99);
+    });
+
+    // An amount under amount.min used to be raised to it, beyond what the gap called for and what the balances paid: 1 USDT held
+    // planned a BUY of 0.1, 10 USDT. Under the market's minimum, a plan is no order to send: the strategy leaves it out
+    it.each`
+      center      | assetFree | currencyFree | levels | marketData                                                | description                                                          | expected
+      ${100}      | ${0}      | ${1}         | ${1}   | ${{ precision: { amount: 0.001 }, amount: { min: 0.1 } }} | ${'a BUY of 0.005, under amount.min 0.1'}                            | ${0.005}
+      ${61234.56} | ${0.0023} | ${150}       | ${5}   | ${documentedMarketData}                                   | ${'a BUY of 4.58 USDT, under cost.min 5, a small account 1.6 % off'} | ${0.00007479}
+    `('plans $description as it is', ({ center, assetFree, currencyFree, levels, marketData, expected }) => {
+      expect(computeRebalancePlan(center, assetFree, currencyFree, levels, levels, marketData)?.amount).toBe(expected);
+    });
+
     // A sell-only grid wants the whole value in the asset: started in currency, it planned a BUY of the whole currency at the center
     // price, which the simulator refused at every attempt, its STICKY order placed one minimum price above the bid and the maker fee on
     // top, and the run stopped before any grid was built. All in currency here, the plans are BUYs.
@@ -458,36 +498,36 @@ describe('gridBot.utils', () => {
 
     it('derives quantity from portfolio for symmetric levels', () => {
       // deriveLevelQuantity(centerPrice, assetFree, currencyFree, buyLevels, sellLevels, priceDecimals, spacingType, spacingValue, marketData, priceStep?)
-      const qty = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketData);
+      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('derives quantity from portfolio for asymmetric levels', () => {
-      const qty = deriveLevelQuantity(100, 10, 1000, 3, 2, 2, 'fixed', 5, marketData);
+      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 3, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('returns 0 for zero levels', () => {
-      expect(deriveLevelQuantity(100, 10, 1000, 0, 0, 2, 'fixed', 5, marketData)).toBe(0);
+      expect(deriveLevelQuantity(100, 10, 1000, 0, 0, 2, 'fixed', 5, marketData).quantity).toBe(0);
     });
 
     it('handles only buy levels', () => {
-      const qty = deriveLevelQuantity(100, 10, 1000, 2, 0, 2, 'fixed', 5, marketData);
+      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 0, 2, 'fixed', 5, marketData);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('handles only sell levels', () => {
-      const qty = deriveLevelQuantity(100, 10, 1000, 0, 2, 2, 'fixed', 5, marketData);
+      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 0, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBe(5);
     });
 
     it('applies amount limits', () => {
       const marketDataWithLimits: MarketData = { amount: { min: 0.1, max: 1 }, precision: { amount: 0.01 } };
-      const qty = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketDataWithLimits);
+      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketDataWithLimits);
 
       expect(qty).toBeLessThanOrEqual(1);
     });
@@ -497,47 +537,64 @@ describe('gridBot.utils', () => {
         cost: { min: 10, max: 1000 },
         precision: { amount: 0.01 },
       };
-      const qty = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketDataWithCostLimits);
+      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketDataWithCostLimits);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('returns 0 for insufficient portfolio', () => {
       // assetFree = 0, currencyFree = 0
-      const qty = deriveLevelQuantity(100, 0, 0, 2, 2, 2, 'fixed', 5, marketData);
+      const { quantity: qty } = deriveLevelQuantity(100, 0, 0, 2, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBe(0);
     });
 
     it('handles price step parameter', () => {
-      const qty = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketData, 0.5);
+      const { quantity: qty } = deriveLevelQuantity(100, 10, 1000, 2, 2, 2, 'fixed', 5, marketData, 0.5);
 
       expect(qty).toBeGreaterThan(0);
     });
 
     it('handles negative level prices in calculation', () => {
       // Low center price where some buy levels would be negative - should skip those
-      const qty = deriveLevelQuantity(10, 10, 1000, 5, 2, 2, 'fixed', 5, marketData);
+      const { quantity: qty } = deriveLevelQuantity(10, 10, 1000, 5, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBeGreaterThanOrEqual(0);
     });
 
+    interface Grid {
+      center: number;
+      assetFree: number;
+      currencyFree: number;
+      buyLevels: number;
+      sellLevels: number;
+      spacingType: GridSpacingType;
+      spacingValue: number;
+      marketData: MarketData;
+      /** The prices of its BUYs, in the order the grid places them: the lowest first */
+      buyPrices?: number[];
+    }
+
+    /** The size of the grid, with the precision the strategy infers from the market data */
+    const sizeOf = ({ center, assetFree, currencyFree, buyLevels, sellLevels, spacingType, spacingValue, marketData }: Grid) => {
+      const { priceDecimals, priceStep } = inferPricePrecision(center, marketData);
+      return deriveLevelQuantity(
+        center,
+        assetFree,
+        currencyFree,
+        buyLevels,
+        sellLevels,
+        priceDecimals,
+        spacingType,
+        spacingValue,
+        marketData,
+        priceStep,
+      );
+    };
+
     // The simulator charges the maker fee in currency on top of each BUY. Sized on the prices alone, the BUYs of a grid limited by its
     // currency needed the whole free currency before their fees: the last one placed, the highest, was refused at every attempt
     describe('limited by the free currency, on a market with a maker fee', () => {
-      interface Grid {
-        center: number;
-        assetFree: number;
-        currencyFree: number;
-        buyLevels: number;
-        sellLevels: number;
-        spacingType: GridSpacingType;
-        spacingValue: number;
-        marketData: MarketData;
-        /** The prices of its BUYs, in the order the grid places them: the lowest first */
-        buyPrices: number[];
-      }
-
       const buyOnly: Grid = {
         center: 100,
         assetFree: 0,
@@ -585,28 +642,11 @@ describe('gridBot.utils', () => {
       };
       const withoutFee: Grid = { ...buyOnly, marketData: omit(documentedMarketData, 'fee') };
 
-      /** The quantity of each level, with the precision the strategy infers from the market data */
-      const sizeOf = ({ center, assetFree, currencyFree, buyLevels, sellLevels, spacingType, spacingValue, marketData }: Grid) => {
-        const { priceDecimals, priceStep } = inferPricePrecision(center, marketData);
-        return deriveLevelQuantity(
-          center,
-          assetFree,
-          currencyFree,
-          buyLevels,
-          sellLevels,
-          priceDecimals,
-          spacingType,
-          spacingValue,
-          marketData,
-          priceStep,
-        );
-      };
-
       /** What the free currency has left once every BUY of the grid is placed, as the simulator reserves them: with the fee on top */
       const leftOnceEveryBuyIsPlaced = (grid: Grid) => {
-        const quantity = sizeOf(grid);
+        const { quantity } = sizeOf(grid);
         const fee = grid.marketData.fee?.maker ?? 0;
-        return grid.buyPrices.reduce((free, price) => free - quantity * price * (1 + fee), grid.currencyFree);
+        return grid.buyPrices!.reduce((free, price) => free - quantity * price * (1 + fee), grid.currencyFree);
       };
 
       it.each`
@@ -617,7 +657,7 @@ describe('gridBot.utils', () => {
         ${tenthPercentFee}         | ${'a 5/5 grid at a 0.1 % maker fee'}                                   | ${0.61793}
         ${withoutFee}              | ${'a buy-only grid, on a market that states no fee, as charging none'} | ${5.4054054}
       `('sizes $description to $expected', ({ grid, expected }) => {
-        expect(sizeOf(grid)).toBe(expected);
+        expect(sizeOf(grid).quantity).toBe(expected);
       });
 
       it.each`
@@ -628,6 +668,131 @@ describe('gridBot.utils', () => {
         ${tenthPercentFee}         | ${'a 5/5 grid at a 0.1 % maker fee'}
       `('leaves the free currency paying every BUY of $description, the last one placed included', ({ grid }) => {
         expect(leftOnceEveryBuyIsPlaced(grid)).toBeGreaterThanOrEqual(0);
+      });
+    });
+
+    // The quantity used to be raised to amount.min, or to cost.min at the lowest price, beyond what the free balances funded, and
+    // left unrounded. On 0.0004 BTC and 25 USDT, a 5/5 grid of 0.0000859507… a level: the simulator refused the highest BUY and the
+    // highest SELL for want of funds, and CCXTExchange truncated the amount to 0.00008, under cost.min, refusing 7 levels of 10
+    describe('on free balances too small for every level at the market minimum', () => {
+      const smallAccount: Grid = {
+        center: 61234.56,
+        assetFree: 0.0004,
+        currencyFree: 25,
+        buyLevels: 5,
+        sellLevels: 5,
+        spacingType: 'percent',
+        spacingValue: 1,
+        marketData: binanceStepsMarketData,
+      };
+      const smallInAsset: Grid = { ...smallAccount, currencyFree: 10_000 };
+      // To 8 decimals, 0.00008596 at 58172.832, the configured lowest price, but 0.00008506 at 58785.1776, the lowest of the levels the
+      // currency funds: 4 SELLs of 0.00008507 are funded at the latter
+      const smallAtEightDecimals: Grid = { ...smallAccount, assetFree: 0.0003403, marketData: documentedMarketData };
+      const tenthAmountMin: MarketData = { amount: { min: 0.1 }, precision: { price: 0.01, amount: 0.01 } };
+      const underAmountMin: Grid = {
+        center: 100,
+        assetFree: 0.05,
+        currencyFree: 5,
+        buyLevels: 5,
+        sellLevels: 5,
+        spacingType: 'fixed',
+        spacingValue: 1,
+        marketData: { amount: { min: 0.1 }, precision: { price: 0.01, amount: 0.001 } },
+      };
+      const allInCurrency: Grid = {
+        center: 100,
+        assetFree: 0,
+        currencyFree: 1000,
+        buyLevels: 2,
+        sellLevels: 2,
+        spacingType: 'fixed',
+        spacingValue: 5,
+        marketData: tenthAmountMin,
+      };
+      const allInAsset: Grid = { ...allInCurrency, assetFree: 10, currencyFree: 0 };
+      const documentedOneLevelASide: Grid = {
+        center: 61234.56,
+        assetFree: 0.05,
+        currencyFree: 3000,
+        buyLevels: 1,
+        sellLevels: 1,
+        spacingType: 'percent',
+        spacingValue: 1,
+        marketData: documentedMarketData,
+      };
+      // cost.max 210 at the highest price, 105: 2 a level
+      const underMaximumCost: Grid = {
+        center: 100,
+        assetFree: 100,
+        currencyFree: 100_000,
+        buyLevels: 1,
+        sellLevels: 1,
+        spacingType: 'fixed',
+        spacingValue: 5,
+        marketData: { cost: { max: 210 }, precision: { price: 0.01, amount: 0.01 } },
+      };
+
+      const priceAtOf = ({ center, spacingType, spacingValue, marketData }: Grid) => {
+        const { priceDecimals, priceStep } = inferPricePrecision(center, marketData);
+        return (steps: number) => computeLevelPrice(center, steps, priceDecimals, spacingType, spacingValue, priceStep);
+      };
+      /** The lowest price an order of the grid is ever placed at: its lowest BUY, or the center price, where its lowest SELL buys back */
+      const lowestPriceOf = (grid: Grid) => priceAtOf(grid)(-sizeOf(grid).buyLevels);
+      /** What the free balances have left, the smaller of the two, once every order of the grid is placed, BUYs with the fee on top */
+      const leftOnceEveryOrderIsPlaced = (grid: Grid) => {
+        const { quantity, buyLevels, sellLevels } = sizeOf(grid);
+        const priceAt = priceAtOf(grid);
+        const fee = grid.marketData.fee?.maker ?? 0;
+        const buys = Array.from({ length: buyLevels }, (_, i) => priceAt(-buyLevels + i));
+        const currencyLeft = buys.reduce((free, price) => free - quantity * price * (1 + fee), grid.currencyFree);
+        return Math.min(currencyLeft, grid.assetFree - sellLevels * quantity);
+      };
+
+      it.each`
+        grid                       | description                                                           | expected
+        ${smallAccount}            | ${'0.0004 BTC and 25 USDT: the farthest level of each side left out'} | ${{ quantity: 0.0001, buyLevels: 4, sellLevels: 4, minimumAmount: 0.00009 }}
+        ${smallInAsset}            | ${'0.0004 BTC and 10000 USDT: the farthest sell level left out'}      | ${{ quantity: 0.0001, buyLevels: 5, sellLevels: 4, minimumAmount: 0.00009 }}
+        ${smallAtEightDecimals}    | ${'to 8 decimals, at the minimum of the lowest level kept'}           | ${{ quantity: 0.00008507, buyLevels: 4, sellLevels: 4, minimumAmount: 0.00008506 }}
+        ${underAmountMin}          | ${'0.05 BTC and 5 USDT, under amount.min 0.1 on either side: none'}   | ${{ quantity: 0, buyLevels: 0, sellLevels: 0, minimumAmount: 0.1 }}
+        ${allInCurrency}           | ${'all in currency: the sell levels left out'}                        | ${{ quantity: 5.4, buyLevels: 2, sellLevels: 0, minimumAmount: 0.1 }}
+        ${allInAsset}              | ${'all in asset: the buy levels left out'}                            | ${{ quantity: 5, buyLevels: 0, sellLevels: 2, minimumAmount: 0.1 }}
+        ${documentedOneLevelASide} | ${'the documented grid of one level a side: whole'}                   | ${{ quantity: 0.04946702, buyLevels: 1, sellLevels: 1, minimumAmount: 0.00008248 }}
+        ${underMaximumCost}        | ${'a grid capped by cost.max at its highest price'}                   | ${{ quantity: 2, buyLevels: 1, sellLevels: 1, minimumAmount: 0.01 }}
+      `('sizes $description', ({ grid, expected }) => {
+        expect(sizeOf(grid)).toEqual(expected);
+      });
+
+      it.each`
+        grid                       | description
+        ${smallAccount}            | ${'0.0004 BTC and 25 USDT'}
+        ${smallInAsset}            | ${'0.0004 BTC and 10000 USDT'}
+        ${smallAtEightDecimals}    | ${'0.0003403 BTC and 25 USDT, to 8 decimals'}
+        ${documentedOneLevelASide} | ${'the documented grid of one level a side'}
+      `('sizes every order of $description at a cost of cost.min or more, its lowest price included', ({ grid }) => {
+        expect(sizeOf(grid).quantity * lowestPriceOf(grid)).toBeGreaterThanOrEqual(grid.marketData.cost.min);
+      });
+
+      it.each`
+        grid                       | description
+        ${smallAccount}            | ${'0.0004 BTC and 25 USDT'}
+        ${smallInAsset}            | ${'0.0004 BTC and 10000 USDT'}
+        ${smallAtEightDecimals}    | ${'0.0003403 BTC and 25 USDT, to 8 decimals'}
+        ${allInCurrency}           | ${'all in currency'}
+        ${allInAsset}              | ${'all in asset'}
+        ${documentedOneLevelASide} | ${'the documented grid of one level a side'}
+      `('leaves the free balances paying every order of $description', ({ grid }) => {
+        expect(leftOnceEveryOrderIsPlaced(grid)).toBeGreaterThanOrEqual(0);
+      });
+
+      // CCXTExchange truncates an amount to the step: one off the step was sent smaller than sized
+      it.each`
+        grid                | description
+        ${smallAccount}     | ${'0.0004 BTC and 25 USDT'}
+        ${smallInAsset}     | ${'0.0004 BTC and 10000 USDT'}
+        ${underMaximumCost} | ${'a grid capped by cost.max'}
+      `('sizes $description on the amount step', ({ grid }) => {
+        expect(countDecimals(sizeOf(grid).quantity)).toBeLessThanOrEqual(inferAmountPrecision(grid.marketData));
       });
     });
   });

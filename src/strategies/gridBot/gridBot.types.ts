@@ -37,6 +37,18 @@ export interface LevelState {
   orderId?: UUID;
 }
 
+/** The grid the free balances fund (see deriveLevelQuantity) */
+export interface GridSize {
+  /** Amount of every order of the grid: 0 when the free balances fund no level */
+  quantity: number;
+  /** Buy levels funded, the nearest to the center price: the farthest of the configured ones are left out first */
+  buyLevels: number;
+  /** Sell levels funded, the nearest to the center price */
+  sellLevels: number;
+  /** Smallest amount the market takes at the lowest price of the grid, which the quantity is at least */
+  minimumAmount: number;
+}
+
 /** Grid price boundaries */
 export interface GridBounds {
   /** Lowest grid price (bottom buy level) */

@@ -1,8 +1,10 @@
+import { OrderSide } from '@models/order.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
+import { addPrecise } from '@utils/math/math.utils';
 import { round } from '@utils/math/round.utils';
 import { DEFAULT_AMOUNT_PRECISION, DEFAULT_PRICE_PRECISION, EMPTY_BALANCE } from './gridBot.const';
-import { GridBotStrategyParams, GridBounds, GridSpacingType, RebalancePlan } from './gridBot.types';
+import { GridBotStrategyParams, GridBounds, GridSize, GridSpacingType, RebalancePlan } from './gridBot.types';
 
 export const getPortfolioContent = (
   portfolio: Portfolio,
@@ -24,11 +26,57 @@ export const getPortfolioContent = (
 export const getMakerFee = (marketData: MarketData): number => marketData.fee?.maker ?? 0;
 
 /**
- * What a rebalance BUY of `amount`, planned at `price`, takes from the free currency: GridBot places it as a STICKY order, which
- * StickyOrder prices one minimum price (price.min) above the bid, and the maker fee comes on top (see getMakerFee).
+ * The price the rebalance order, planned at `price`, is placed at: GridBot places it as a STICKY order, which StickyOrder prices one
+ * minimum price (price.min) above the bid for a BUY, below the ask for a SELL, the bid and the ask being that price here.
+ */
+export const getRebalanceOrderPrice = (side: OrderSide, price: number, marketData: MarketData): number => {
+  const minimumPrice = marketData.price?.min ?? 0;
+  return side === 'BUY' ? price + minimumPrice : price - minimumPrice;
+};
+
+/**
+ * What a rebalance BUY of `amount`, planned at `price`, takes from the free currency: its STICKY order's price (see
+ * getRebalanceOrderPrice), and the maker fee on top (see getMakerFee).
  */
 export const getRebalanceBuyCost = (amount: number, price: number, marketData: MarketData): number =>
-  amount * (price + (marketData.price?.min ?? 0)) * (1 + getMakerFee(marketData));
+  amount * getRebalanceOrderPrice('BUY', price, marketData) * (1 + getMakerFee(marketData));
+
+/** A market limit is a bound only as a finite number above 0: Binance disables a filter bound by setting it to 0 (see market.utils) */
+const toBound = (limit?: number): number | undefined => (limit !== undefined && Number.isFinite(limit) && limit > 0 ? limit : undefined);
+
+/** The step of the amounts, one unit of their last decimal (see inferAmountPrecision): 1e-8 for 8 decimals */
+const getAmountStep = (amountDecimals: number): number => Number(`1e-${amountDecimals}`);
+
+/**
+ * The smallest amount of an order at `price` that the market takes: one amount step at least, amount.min and cost.min / price,
+ * rounded up to the amount precision (see inferAmountPrecision). The simulator and CCXTExchange check the cost as amount × price in
+ * floating point, which comes out one ulp under cost.min where the decimal product is exactly cost.min (0.00007 × 100000 is
+ * 6.999999999999999): one step more is taken then.
+ */
+export const getMinimumAmount = (price: number, marketData: MarketData): number => {
+  const amountDecimals = inferAmountPrecision(marketData);
+  const step = getAmountStep(amountDecimals);
+  const minimumCost = toBound(marketData.cost?.min);
+  const atCost = minimumCost && price > 0 ? minimumCost / price : 0;
+  // Rounded up as -(the negated value rounded down): round has no ceiling
+  const minimum = Math.max(step, -round(-Math.max(toBound(marketData.amount?.min) ?? 0, atCost), amountDecimals, 'down'));
+  return minimumCost && minimum * price < minimumCost ? addPrecise(minimum, step) : minimum;
+};
+
+/**
+ * The largest amount of an order at `price` that the market takes: amount.max and cost.max / price, rounded down to the amount
+ * precision, one step less should the cost still come out over cost.max in floating point (0.00001 × 300000 is 3.0000000000000004).
+ * Infinity when the market sets neither.
+ */
+export const getMaximumAmount = (price: number, marketData: MarketData): number => {
+  const amountDecimals = inferAmountPrecision(marketData);
+  const maximumCost = toBound(marketData.cost?.max);
+  const atCost = maximumCost && price > 0 ? maximumCost / price : Infinity;
+  const limit = Math.min(toBound(marketData.amount?.max) ?? Infinity, atCost);
+  if (!Number.isFinite(limit)) return Infinity;
+  const maximum = roundAmount(limit, amountDecimals);
+  return maximumCost && maximum * price > maximumCost ? addPrecise(maximum, -getAmountStep(amountDecimals)) : maximum;
+};
 
 /**
  * Infer price precision from market data or use default.
@@ -186,16 +234,18 @@ export const validateConfig = (params: GridBotStrategyParams, centerPrice: numbe
 };
 
 /**
- * Compute rebalance plan to achieve optimal allocation based on buy/sell level ratio.
+ * Compute rebalance plan to achieve optimal allocation based on buy/sell level ratio, on the balances given: the free ones, which the
+ * grid is sized on.
  * The target allocation ensures equal quantity per order across all levels.
  * For N buy levels and M sell levels: targetAssetRatio = M / (N + M)
- * A BUY is at most what the currency pays once placed (see getRebalanceBuyCost).
+ * A BUY is at most what the currency pays once placed (see getRebalanceBuyCost), and an order is at most the market's maximum (see
+ * getMaximumAmount). An amount under the market's minimum is left as it is (see getMinimumAmount), for the strategy not to send it.
  * Returns null if portfolio is already optimally balanced.
  */
 export const computeRebalancePlan = (
   centerPrice: number,
-  totalAssetValue: number,
-  totalCurrencyValue: number,
+  assetFree: number,
+  currencyFree: number,
   buyLevels: number,
   sellLevels: number,
   marketData: MarketData,
@@ -203,8 +253,8 @@ export const computeRebalancePlan = (
   if (centerPrice <= 0) return null;
   if (buyLevels <= 0 && sellLevels <= 0) return null;
   const totalLevels = buyLevels + sellLevels;
-  const assetValue = totalAssetValue * centerPrice;
-  const currencyValue = totalCurrencyValue;
+  const assetValue = assetFree * centerPrice;
+  const currencyValue = currencyFree;
   const totalValue = assetValue + currencyValue;
 
   if (totalValue <= 0) return null;
@@ -223,16 +273,15 @@ export const computeRebalancePlan = (
   // A BUY is at most what the currency pays, at the price its STICKY order is placed at and with the fee on top. A sell-only grid,
   // which wants the whole value in the asset, planned a BUY of the whole currency at the center price: the simulator refused it at
   // every attempt, and the run stopped before any grid was built
-  if (side === 'BUY') amount = Math.min(amount, totalCurrencyValue / getRebalanceBuyCost(1, centerPrice, marketData));
+  if (side === 'BUY') amount = Math.min(amount, currencyFree / getRebalanceBuyCost(1, centerPrice, marketData));
 
   if (amount <= 0) return null;
 
-  // Apply amount rounding
+  // Rounded down to the amount precision, at most the market's maximum. An amount under amount.min used to be raised to it, beyond
+  // what the gap called for and what the balances paid: a rebalance under the market's minimum is no order to send
   const amountDecimals = inferAmountPrecision(marketData);
-  amount = roundAmount(amount, amountDecimals);
-
-  // Apply amount limits
-  amount = applyAmountLimits(amount, marketData);
+  const orderPrice = getRebalanceOrderPrice(side, centerPrice, marketData);
+  amount = Math.min(roundAmount(amount, amountDecimals), getMaximumAmount(orderPrice, marketData));
 
   if (amount <= 0) return null;
 
@@ -245,37 +294,16 @@ export const computeRebalancePlan = (
 };
 
 /**
- * Apply exchange amount limits to quantity.
- */
-export const applyAmountLimits = (quantity: number, marketData: MarketData): number => {
-  if (quantity <= 0) return quantity;
-
-  let adjusted = quantity;
-  if (marketData.amount?.min) adjusted = Math.max(adjusted, marketData.amount.min);
-  if (marketData.amount?.max) adjusted = Math.min(adjusted, marketData.amount.max);
-
-  return adjusted;
-};
-
-/**
- * Apply exchange cost limits to quantity.
- */
-export const applyCostLimits = (quantity: number, minPrice: number, maxPrice: number, marketData: MarketData): number => {
-  if (quantity <= 0) return quantity;
-
-  let adjusted = quantity;
-  if (marketData.cost?.min && minPrice > 0) {
-    adjusted = Math.max(adjusted, marketData.cost.min / minPrice);
-  }
-  if (marketData.cost?.max && maxPrice > 0) {
-    adjusted = Math.min(adjusted, marketData.cost.max / maxPrice);
-  }
-
-  return adjusted;
-};
-
-/**
- * Derive quantity per level from portfolio based on grid configuration.
+ * Sizes the grid on the free balances: the quantity every order of the grid trades, and the levels it funds, the nearest to the
+ * center price. Every order is placed at or above the lowest price of the grid, so a quantity of at least the market's minimum there
+ * (see getMinimumAmount) is one the market takes for every order. A side whose free balance cannot fund each of its levels with that
+ * minimum keeps the levels it funds and leaves out the farthest: none at all for a side that funds no level.
+ * - A SELL needs its amount of the asset: the sell levels share the free asset.
+ * - A BUY needs its cost with the maker fee on top (see getMakerFee): the buy levels share the free currency in proportion to their
+ *   prices. Sized on the prices alone, the BUYs needed the whole free currency before their fees: the simulator refused the last one
+ *   placed, the highest, at every attempt.
+ * The quantity is the smaller of the two shares, rounded down to the amount precision, at most the market's maximum at the highest
+ * price of the grid (see getMaximumAmount): 0, with no level, when the free balances fund none.
  */
 export const deriveLevelQuantity = (
   centerPrice: number,
@@ -288,43 +316,39 @@ export const deriveLevelQuantity = (
   spacingValue: number,
   marketData: MarketData,
   priceStep?: number,
-): number => {
-  if (buyLevels <= 0 && sellLevels <= 0) return 0;
-
-  // Calculate sell capacity: assets / sell levels
-  const assetShare = sellLevels > 0 ? assetFree / sellLevels : Infinity;
-
-  // Calculate buy capacity using actual level prices, the fee on top (see getMakerFee). Sized on the prices alone, the BUYs needed
-  // the whole free currency before their fees: the simulator refused the last one placed, the highest, at every attempt
-  let currencyShare = Infinity;
-  if (buyLevels > 0) {
-    let totalBuyCost = 0;
-    for (let i = 1; i <= buyLevels; i++) {
-      const levelPrice = computeLevelPrice(centerPrice, -i, priceDecimals, spacingType, spacingValue, priceStep);
-      if (levelPrice > 0) totalBuyCost += levelPrice;
-    }
-    if (totalBuyCost > 0) {
-      currencyShare = currencyFree / (totalBuyCost * (1 + getMakerFee(marketData)));
-    }
-  }
-
-  const derived = Math.min(assetShare, currencyShare);
-  if (!Number.isFinite(derived) || derived <= 0) return 0;
-
-  // Apply rounding
+): GridSize => {
+  const priceAt = (steps: number) => computeLevelPrice(centerPrice, steps, priceDecimals, spacingType, spacingValue, priceStep);
   const amountDecimals = inferAmountPrecision(marketData);
-  let quantity = roundAmount(derived, amountDecimals);
 
-  // Apply limits
-  quantity = applyAmountLimits(quantity, marketData);
-
-  // Apply cost limits if we have grid bounds
-  const bounds = computeGridBounds(centerPrice, buyLevels, sellLevels, priceDecimals, spacingType, spacingValue, priceStep);
-  if (bounds) {
-    quantity = applyCostLimits(quantity, bounds.min, bounds.max, marketData);
+  // The sums of the BUY prices from the center price down, as far as they are positive: buildGrid builds no level priced at 0 or below
+  const buyPriceSums = [0];
+  for (let i = 1; i <= buyLevels; i++) {
+    const price = priceAt(-i);
+    if (price <= 0) break;
+    buyPriceSums.push(buyPriceSums[i - 1] + price);
   }
+  const currencyShare = (levels: number) => (levels > 0 ? currencyFree / (buyPriceSums[levels] * (1 + getMakerFee(marketData))) : Infinity);
+  const assetShare = (levels: number) => (levels > 0 ? assetFree / levels : Infinity);
+  // The market minimum at the lowest price of a grid of `levels` buy levels: its lowest BUY, or without any the center price, where
+  // the first sell level buys once it has sold
+  const minimumAt = (levels: number) => getMinimumAmount(levels > 0 ? priceAt(-levels) : centerPrice, marketData);
 
-  return quantity;
+  // The quantity used to be raised to amount.min, or to cost.min at the lowest price, beyond what the balances funded, and left
+  // unrounded: the last orders placed were refused for want of funds, and CCXTExchange truncated the others to the amount step,
+  // under cost.min again, so that a small account had most of its levels refused at every attempt
+  let fundedBuyLevels = buyPriceSums.length - 1;
+  while (fundedBuyLevels > 0 && roundAmount(currencyShare(fundedBuyLevels), amountDecimals) < minimumAt(fundedBuyLevels)) fundedBuyLevels--;
+  const minimumAmount = minimumAt(fundedBuyLevels);
+  let fundedSellLevels = Math.max(sellLevels, 0);
+  while (fundedSellLevels > 0 && roundAmount(assetShare(fundedSellLevels), amountDecimals) < minimumAmount) fundedSellLevels--;
+
+  if (fundedBuyLevels === 0 && fundedSellLevels === 0) return { quantity: 0, buyLevels: 0, sellLevels: 0, minimumAmount };
+
+  const share = roundAmount(Math.min(assetShare(fundedSellLevels), currencyShare(fundedBuyLevels)), amountDecimals);
+  // At most the market maximum at the highest price of the grid: its highest SELL, or without any the center price, where the first
+  // buy level sells once it has bought
+  const quantity = Math.min(share, getMaximumAmount(priceAt(fundedSellLevels), marketData));
+  return { quantity, buyLevels: fundedBuyLevels, sellLevels: fundedSellLevels, minimumAmount };
 };
 
 /**
