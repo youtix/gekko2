@@ -6,6 +6,7 @@ import {
   TRAILING_STOP_ACTIVATED,
   TRAILING_STOP_TRIGGERED,
 } from '@constants/event.const';
+import { ORDER_SIDES, ORDER_TYPES } from '@constants/order.const';
 import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
 import * as indicators from '@indicators/index';
@@ -54,14 +55,44 @@ const getPairProblem = (symbol: TradingPair, marketData: Map<TradingPair, Market
   return `symbol must be one of the watched pairs (${[...marketData.keys()].join(', ')}), got ${inspect(symbol)}`;
 };
 
+/** Values as util.inspect shows them, quoted when they are strings: the case of a side or a type shows */
+const showValues = (values: readonly unknown[]) => values.map(value => inspect(value)).join(', ');
+
+/** Whether a value is a number above 0: not NaN, not Infinity, and not a quoted number, which Number.isFinite does not coerce */
+const isAboveZero = (value: unknown) => isFiniteNumber(value) && value > 0;
+
 /**
- * What is wrong with the trailing stop an order asks for, or undefined when it asks for none or for a valid one: on a BUY only, within
- * the bounds the TrailingStopManager checks again as it arms the stop. A trigger left out (undefined, or null from an untyped strategy)
- * asks for a stop active as soon as it is armed.
+ * What is wrong with the side, the type, the amount or the price of an order, or undefined when nothing is: a side of ORDER_SIDES and a
+ * type of ORDER_TYPES as they are spelt there, an amount and a price above 0 or left out (undefined, or null from an untyped strategy,
+ * as the Trader reads them), for an all-in order and for the last price of the pair. Each layer below read them its own way. ccxt's
+ * 'buy', which only an untyped strategy can pass, was sized by the Trader as a SELL, all the asset held, which the simulator executed
+ * as a SELL and Binance as a BUY; 'market' threw a TypeError in the Trader after the order was initiated, which stopped the bot without
+ * naming the strategy. An amount or a price of NaN, 0 or below, or quoted, was refused by the Trader or by the exchange as an error
+ * counting towards the circuit breaker.
+ */
+const getOrderProblem = ({ side, type, amount, price }: StrategyOrder): string | undefined => {
+  if (!ORDER_SIDES.includes(side)) return `side must be one of ${showValues(ORDER_SIDES)}, got ${inspect(side)}`;
+  if (!ORDER_TYPES.includes(type)) return `type must be one of ${showValues(ORDER_TYPES)}, got ${inspect(type)}`;
+  if (!isNil(amount) && !isAboveZero(amount))
+    return `amount must be a number above 0, or left out for an all-in order, got ${inspect(amount)}`;
+  if (!isNil(price) && !isAboveZero(price))
+    return `price must be a number above 0, or left out for the last price of the pair, got ${inspect(price)}`;
+};
+
+/** The keys of a trailing stop, those of TrailingConfig: the record is typed to hold each of them and no other */
+const TRAILING_KEYS = Object.keys({ percentage: true, trigger: true } satisfies Record<keyof TrailingConfig, true>);
+
+/**
+ * What is wrong with the trailing stop an order asks for, or undefined when it asks for none or for a valid one: on a BUY only, with no
+ * key but those of TrailingConfig, within the bounds the TrailingStopManager checks again as it arms the stop. A trigger left out
+ * (undefined, or null from an untyped strategy) asks for a stop active as soon as it is armed.
  */
 const getTrailingProblem = ({ side, trailing }: StrategyOrder): string | undefined => {
   if (!trailing) return;
   if (side !== 'BUY') return 'trailing applies to BUY orders only: its stop sells what the BUY filled';
+  // A misspelt key was ignored: { percentage: 2, triger: 50000 } armed a stop active at once, not one waiting for 50000
+  const unknownKeys = Object.keys(trailing).filter(key => !TRAILING_KEYS.includes(key));
+  if (unknownKeys.length) return `trailing keys must be one of ${showValues(TRAILING_KEYS)}, got ${showValues(unknownKeys)}`;
   const { percentage, trigger } = trailing;
   if (!(Number.isFinite(percentage) && percentage > 0 && percentage < 100))
     return `trailing.percentage must be a number above 0 and below 100 (2.5 for 2.5%), got ${inspect(percentage)}`;
@@ -506,12 +537,13 @@ export class StrategyManager extends EventEmitter {
   /**
    * Refuses, before anything is relayed, an order the strategy cannot have meant. One on a pair that is not watched, given a price, was
    * placed on a live exchange (an all-in BUY spending the currency of the watched pairs), though Gekko has no candle or balance of that
-   * pair: what it bought was missing from the portfolio and its stop never trailed. The trailing stop of a BUY was only checked once the
-   * BUY had completed: an invalid one was refused then, with a warning, and the position the BUY had just opened kept no stop. One given
-   * to a SELL was dropped without a word.
+   * pair: what it bought was missing from the portfolio and its stop never trailed. A side, a type, an amount or a price an untyped
+   * strategy got wrong was relayed as it was (see getOrderProblem). The trailing stop of a BUY was only checked once the BUY had
+   * completed: an invalid one was refused then, with a warning, and the position the BUY had just opened kept no stop. One given to a
+   * SELL was dropped without a word.
    */
   private checkOrder(order: StrategyOrder) {
-    const problem = getPairProblem(order.symbol, this.marketData) ?? getTrailingProblem(order);
+    const problem = getPairProblem(order.symbol, this.marketData) ?? getOrderProblem(order) ?? getTrailingProblem(order);
     if (!problem) return;
     const { side, type, symbol } = order;
     throw new GekkoError('strategy', `Impossible to create the ${side} ${type} order on ${symbol}: ${problem}`);

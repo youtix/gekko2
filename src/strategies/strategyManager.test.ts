@@ -2504,8 +2504,127 @@ describe('StrategyManager', () => {
         });
       });
 
+      // An untyped strategy (a JavaScript strategyPath, or any file Bun loads without type-checking it) could pass any side, type, amount
+      // or price: ccxt's 'buy' was sized by the Trader as a SELL, all the asset held, and executed as one by the simulator, 'market' threw
+      // a TypeError in the Trader once the order was initiated, and an amount or a price of NaN, 0 or below, or quoted, was refused by
+      // the Trader or by the exchange as an order error counting towards the circuit breaker
+      describe('on its side, its type, its amount and its price', () => {
+        /** What a refused side, type, amount or price is told, the value shown as util.inspect shows it */
+        const sideIssue = (shown: string) => `side must be one of 'BUY', 'SELL', got ${shown}`;
+        const typeIssue = (shown: string) => `type must be one of 'MARKET', 'STICKY', 'LIMIT', got ${shown}`;
+        const amountIssue = (shown: string) => `amount must be a number above 0, or left out for an all-in order, got ${shown}`;
+        const priceIssue = (shown: string) => `price must be a number above 0, or left out for the last price of the pair, got ${shown}`;
+        const PAIR_ISSUE = `symbol must be one of the watched pairs (BTC/USDT), got ${quoted('ETH/USDT')}`;
+        let listener: Mock;
+
+        /** Creates `order` as an untyped strategy does, and returns what it throws */
+        const createAs = (order: object) => {
+          try {
+            manager['createOrder'](order as StrategyOrder);
+          } catch (caught) {
+            return caught;
+          }
+        };
+
+        beforeEach(() => {
+          listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+        });
+
+        // The last rows have several problems: the pair is checked first, then the side, the type, the amount and the price, then the
+        // trailing stop, whose BUY-only refusal would have misled a strategy that spelt BUY as ccxt does
+        describe.each`
+          problem                               | order                                                                                             | reason
+          ${'an all-in BUY, side spelt buy'}    | ${{ symbol: 'BTC/USDT', side: 'buy', type: 'MARKET' }}                                            | ${sideIssue(quoted('buy'))}
+          ${'a SELL of 0.5, side spelt sell'}   | ${{ symbol: 'BTC/USDT', side: 'sell', type: 'STICKY', amount: 0.5 }}                              | ${sideIssue(quoted('sell'))}
+          ${'an order without a side'}          | ${{ symbol: 'BTC/USDT', type: 'MARKET' }}                                                         | ${sideIssue('undefined')}
+          ${'a BUY, type spelt market'}         | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'market' }}                                            | ${typeIssue(quoted('market'))}
+          ${'a SELL of type STOP_LOSS'}         | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'STOP_LOSS', price: 49000 }}                          | ${typeIssue(quoted('STOP_LOSS'))}
+          ${'an order without a type'}          | ${{ symbol: 'BTC/USDT', side: 'BUY' }}                                                            | ${typeIssue('undefined')}
+          ${'a BUY of 0'}                       | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', amount: 0 }}                                 | ${amountIssue('0')}
+          ${'a SELL of a negative amount'}      | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', amount: -0.5 }}                             | ${amountIssue('-0.5')}
+          ${'a BUY of NaN'}                     | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'STICKY', amount: NaN }}                               | ${amountIssue('NaN')}
+          ${'a SELL of an infinite amount'}     | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'LIMIT', amount: Infinity, price: 51000 }}            | ${amountIssue('Infinity')}
+          ${'a BUY of a quoted amount'}         | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', amount: '0.5' }}                             | ${amountIssue(quoted('0.5'))}
+          ${'a LIMIT BUY at 0'}                 | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', amount: 0.5, price: 0 }}                      | ${priceIssue('0')}
+          ${'a LIMIT SELL at a negative price'} | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'LIMIT', amount: 0.5, price: -51000 }}                | ${priceIssue('-51000')}
+          ${'a LIMIT BUY at NaN'}               | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', amount: 0.5, price: NaN }}                    | ${priceIssue('NaN')}
+          ${'an all-in LIMIT BUY at Infinity'}  | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', price: Infinity }}                            | ${priceIssue('Infinity')}
+          ${'a LIMIT SELL at a quoted price'}   | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'LIMIT', price: '51000' }}                            | ${priceIssue(quoted('51000'))}
+          ${'a BUY spelt buy on ETH/USDT'}      | ${{ symbol: 'ETH/USDT', side: 'buy', type: 'MARKET' }}                                            | ${PAIR_ISSUE}
+          ${'a BUY spelt buy, type market'}     | ${{ symbol: 'BTC/USDT', side: 'buy', type: 'market' }}                                            | ${sideIssue(quoted('buy'))}
+          ${'a MARKET BUY of NaN at NaN'}       | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', amount: NaN, price: NaN }}                   | ${amountIssue('NaN')}
+          ${'a BUY spelt buy, with a stop'}     | ${{ symbol: 'BTC/USDT', side: 'buy', type: 'MARKET', trailing: { percentage: 2 } }}               | ${sideIssue(quoted('buy'))}
+          ${'a SELL of NaN with a stop'}        | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', amount: NaN, trailing: { percentage: 2 } }} | ${amountIssue('NaN')}
+        `('when the strategy creates $problem', ({ order, reason }) => {
+          let failure: unknown;
+
+          beforeEach(() => {
+            failure = createAs(order);
+          });
+
+          it('refuses the order with a GekkoError', () => {
+            expect(failure).toBeInstanceOf(GekkoError);
+          });
+
+          it('names the order and the field, and says what it accepts', () => {
+            expect(failure).toHaveProperty(
+              'message',
+              `[STRATEGY] Impossible to create the ${order.side} ${order.type} order on ${order.symbol}: ${reason}`,
+            );
+          });
+
+          it('relays no order', () => {
+            expect(listener).not.toHaveBeenCalled();
+          });
+
+          it('keeps no trailing stop', () => {
+            expect(manager['pendingTrailingStops'].size).toBe(0);
+          });
+
+          // Kept, a SELL held back the stops of its pair until an outcome that never comes
+          it('keeps no SELL of the strategy', () => {
+            expect(manager['strategySellIds'].size).toBe(0);
+          });
+        });
+
+        // Left out, undefined or null (an untyped strategy) as the Trader reads them, the amount makes an all-in order, and the price is
+        // the last price of the pair
+        describe.each`
+          kind                                       | order
+          ${'an all-in MARKET BUY'}                  | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET' }}
+          ${'a MARKET SELL of an amount'}            | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', amount: 0.5 }}
+          ${'an all-in MARKET BUY sized at a price'} | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', price: 50000 }}
+          ${'a STICKY BUY of an amount'}             | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'STICKY', amount: 0.0001 }}
+          ${'an all-in STICKY SELL'}                 | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'STICKY' }}
+          ${'a LIMIT BUY of an amount at a price'}   | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', amount: 0.25, price: 49000.5 }}
+          ${'an all-in LIMIT SELL at a price'}       | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'LIMIT', price: 51000 }}
+          ${'a LIMIT BUY, amount, price undefined'}  | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', amount: undefined, price: undefined }}
+          ${'a LIMIT SELL, amount, price null'}      | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'LIMIT', amount: null, price: null }}
+        `('when the strategy creates $kind', ({ order }) => {
+          let failure: unknown;
+
+          beforeEach(() => {
+            failure = createAs(order);
+          });
+
+          it('accepts the order', () => {
+            expect(failure).toBeUndefined();
+          });
+
+          it('relays it as it was created, with its id and its date', () => {
+            expect(listener).toHaveBeenCalledExactlyOnceWith({
+              ...order,
+              id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
+              orderCreationDate: candle.start + ONE_MINUTE,
+            });
+          });
+        });
+      });
+
       // The stop of a BUY was only checked once the BUY had completed: an invalid one was refused then, with a warning, and the position
-      // the BUY had just opened kept no stop. One given to a SELL was dropped without a word.
+      // the BUY had just opened kept no stop. One given to a SELL was dropped without a word, and so was a misspelt key: a trigger spelt
+      // triger armed a stop active at once, not one waiting for its trigger.
       describe('with a trailing stop', () => {
         /** What a refused percentage, then a refused trigger, is told, the value shown as util.inspect shows it */
         const percentageIssue = (shown: string) =>
@@ -2513,6 +2632,9 @@ describe('StrategyManager', () => {
         const triggerIssue = (shown: string) =>
           `trailing.trigger must be a price above 0, or left out for a stop active as soon as its BUY completes, got ${shown}`;
         const SELL_ISSUE = 'trailing applies to BUY orders only: its stop sells what the BUY filled';
+        /** What a trailing with keys a stop does not take is told, the keys shown as util.inspect shows them */
+        const keysIssue = (shown: string) => `trailing keys must be one of 'percentage', 'trigger', got ${shown}`;
+        const BOTH_KEYS_ISSUE = keysIssue(`${quoted('percent')}, ${quoted('triger')}`);
         let listener: Mock;
         let failure: unknown;
 
@@ -2538,7 +2660,10 @@ describe('StrategyManager', () => {
           ${'a BUY asks for a percentage of NaN'}    | ${'BUY'}  | ${{ percentage: NaN }}                  | ${percentageIssue('NaN')}
           ${'a BUY asks for an infinite percentage'} | ${'BUY'}  | ${{ percentage: Infinity }}             | ${percentageIssue('Infinity')}
           ${'a BUY asks for a quoted percentage'}    | ${'BUY'}  | ${{ percentage: '2' }}                  | ${percentageIssue(quoted('2'))}
-          ${'a BUY misspells its percentage'}        | ${'BUY'}  | ${{ percnt: 2 }}                        | ${percentageIssue('undefined')}
+          ${'a BUY misspells its percentage'}        | ${'BUY'}  | ${{ percnt: 2 }}                        | ${keysIssue(quoted('percnt'))}
+          ${'a BUY misspells its trigger'}           | ${'BUY'}  | ${{ percentage: 2, triger: 50000 }}     | ${keysIssue(quoted('triger'))}
+          ${'a BUY misspells an undefined trigger'}  | ${'BUY'}  | ${{ percentage: 2, triger: undefined }} | ${keysIssue(quoted('triger'))}
+          ${'a BUY misspells both its keys'}         | ${'BUY'}  | ${{ percent: 2, triger: 50000 }}        | ${BOTH_KEYS_ISSUE}
           ${'a BUY asks for a trigger of 0'}         | ${'BUY'}  | ${{ percentage: 2, trigger: 0 }}        | ${triggerIssue('0')}
           ${'a BUY asks for a negative trigger'}     | ${'BUY'}  | ${{ percentage: 2, trigger: -1 }}       | ${triggerIssue('-1')}
           ${'a BUY asks for a trigger of NaN'}       | ${'BUY'}  | ${{ percentage: 2, trigger: NaN }}      | ${triggerIssue('NaN')}
@@ -2546,6 +2671,7 @@ describe('StrategyManager', () => {
           ${'a BUY asks for a quoted trigger'}       | ${'BUY'}  | ${{ percentage: 2, trigger: '500' }}    | ${triggerIssue(quoted('500'))}
           ${'a SELL asks for a stop'}                | ${'SELL'} | ${{ percentage: 2 }}                    | ${SELL_ISSUE}
           ${'a SELL asks for a stop with a trigger'} | ${'SELL'} | ${{ percentage: 2, trigger: 50000 }}    | ${SELL_ISSUE}
+          ${'a SELL misspells its percentage'}       | ${'SELL'} | ${{ percnt: 2 }}                        | ${SELL_ISSUE}
         `('when $problem', ({ side, trailing, reason }) => {
           beforeEach(() => {
             failure = createWith(side, trailing);

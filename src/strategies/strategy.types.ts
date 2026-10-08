@@ -63,9 +63,17 @@ export type Tools<T> = {
    * neither follow the position nor trail its stop, while a live exchange would still execute the order. Any other symbol throws a
    * GekkoError naming it and the watched pairs, and the order is not sent: the bot stops.
    *
-   * A `trailing` is checked before anything is relayed: on a BUY only, with a percentage above 0 and below 100 and a trigger above 0
-   * or left out. Anything else throws a GekkoError and the order is not sent: the bot stops. The stop is armed, once the BUY
-   * completes, from a copy taken here: changing the object afterwards moves nothing.
+   * `side` must be 'BUY' or 'SELL', and `type` 'MARKET', 'STICKY' or 'LIMIT', in upper case: ccxt spells them in lower case, which
+   * only an untyped strategy can pass. `amount` and `price` must be numbers above 0, or left out. An amount left out makes the order
+   * all-in: all the currency free for a BUY, all the asset free for a SELL. A price left out is the last price of the pair: the limit
+   * of a LIMIT order, and what an all-in BUY is sized at. Anything else (NaN, 0, a negative number, Infinity, a quoted number) throws a
+   * GekkoError naming the field and what it accepts, and the order is not sent: the bot stops, even for an amount a strategy computed
+   * as 0, which used to come back as an order error.
+   *
+   * A `trailing` is checked before anything is relayed: on a BUY only, with a percentage above 0 and below 100, a trigger above 0 or
+   * left out, and no other key (a trigger misspelt `triger` armed a stop active at once). Anything else throws a GekkoError and the
+   * order is not sent: the bot stops. The stop is armed, once the BUY completes, from a copy taken here: changing the object
+   * afterwards moves nothing.
    *
    * A stop protects the position its BUY opened until the strategy sells on that pair: once a SELL the strategy created completes
    * there, every stop armed on the pair is canceled, whatever the amount sold, with a line at info level. So a strategy that scales
