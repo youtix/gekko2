@@ -20,8 +20,9 @@ export const gridBotStrategySchema = z
      */
     spacingValue: z.number().positive(),
     /**
-     * Retries of a failed order, a grid level's or the rebalance's, before the strategy gives up with an error. At least 1: the
-     * strategy used to raise a 0 to 1 without a word.
+     * Retries of a failed order before the strategy gives up on it: a grid order is then left out with a warning, the rest of the
+     * grid trading on until no level holds an order, and a rebalance stops the run. At least 1: the strategy used to raise a 0 to 1
+     * without a word.
      */
     retryOnError: z.int().min(1).default(DEFAULT_RETRY_LIMIT),
   })

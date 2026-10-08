@@ -1,4 +1,4 @@
-/** Default retry attempts for order create/cancel failures */
+/** Default retryOnError: the retries of a failed order before GridBot gives up on it */
 export const DEFAULT_RETRY_LIMIT = 3;
 
 /** Default amount precision when not specified by exchange */

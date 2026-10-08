@@ -1,5 +1,7 @@
+import { GekkoError } from '@errors/gekko.error';
 import type { Candle } from '@models/candle.types';
 import type { CandleBucket } from '@models/event.types';
+import type { LogLevel } from '@models/logLevel.types';
 import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
@@ -60,7 +62,11 @@ describe('GridBot', () => {
     strategy = new GridBot();
     issuedOrders = [];
     settledIds = new Set();
-    log = vi.fn();
+    // As the StrategyManager's, which throws a GekkoError on 'error': with a log that returned, these tests ran code after it that a
+    // real run never reached
+    log = vi.fn((level: LogLevel, message: string) => {
+      if (level === 'error') throw new GekkoError('strategy', message);
+    });
     cancelOrder = vi.fn();
     createOrder = vi.fn(order => {
       const id = `order-${issuedOrders.length + 1}` as UUID;
@@ -91,15 +97,17 @@ describe('GridBot', () => {
     afterWarmup(price, portfolio);
   };
 
+  /** Runs a step that stops the run, as tools.log('error') does, to look at what it did before */
+  const untilStopped = (step: () => void) => {
+    try {
+      step();
+    } catch (err) {
+      if (!(err instanceof GekkoError)) throw err;
+    }
+  };
+
   const findOrderId = (price: number, side: OrderSide): UUID | undefined =>
     issuedOrders.find(order => order.price === price && order.side === side)?.id;
-
-  const findLatestOrderId = (side: OrderSide): UUID | undefined => {
-    for (let i = issuedOrders.length - 1; i >= 0; i--) {
-      if (issuedOrders[i].side === side) return issuedOrders[i].id;
-    }
-    return undefined;
-  };
 
   /** The order a level holds now at that price and side: a level armed or placed again gets a new order at the same price */
   const liveOrderId = (price: number, side: OrderSide): UUID | undefined =>
@@ -296,32 +304,6 @@ describe('GridBot', () => {
       expect(createOrder).toHaveBeenCalledTimes(5); // 1 initial sticky + 4 grid orders (no retry sticky)
     });
 
-    it('builds grid after rebalance retry limit', () => {
-      startStrategy(100, { retryOnError: 1 }, unbalancedPortfolio);
-
-      const rebalanceId = issuedOrders[0].id;
-
-      // First error
-      strategy.onOrderErrored({
-        order: { id: rebalanceId, reason: 'Test error' } as any,
-        exchange: { price: 100, portfolio: unbalancedPortfolio },
-        tools,
-      });
-
-      // Second error exceeds limit
-      const retryId = issuedOrders[1].id;
-      strategy.onOrderErrored({
-        order: { id: retryId, reason: 'Test error' } as any,
-        exchange: { price: 100, portfolio: unbalancedPortfolio },
-        tools,
-      });
-
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('Rebalance failed'));
-      // Should attempt to build grid anyway, but fails due to empty side
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('Insufficient portfolio'));
-      expect(createOrder).toHaveBeenCalledTimes(2); // Only rebalance attempts
-    });
-
     it('handles rebalance order cancellation', () => {
       startStrategy(100, {}, unbalancedPortfolio);
 
@@ -335,72 +317,127 @@ describe('GridBot', () => {
       expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('failed'));
     });
 
-    it('skips rebalance if insufficient currency for buy (due to locked funds)', () => {
-      // Need to buy, but free currency is low (total is high)
-      const lockedCurrencyPortfolio: Portfolio = new Map<string, BalanceDetail>([
+    // The grid used to be built anyway on the portfolio as it was, after a tools.log('error') that had already stopped the run: these
+    // tests ran that code with a log that returned
+    describe('once the rebalance failed at every attempt', () => {
+      // Short of BTC for the grid, yet with both sides funded: built without the rebalance, the grid would have 4 levels of 1.5 BTC
+      const shortOfAssetPortfolio: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: 3, used: 0, total: 3 }],
+        ['USDT', { free: 1000, used: 0, total: 1000 }],
+      ]);
+
+      /** Ends the live rebalance order `times` times in a row, as the Trader reports it, the portfolio left as it was */
+      const failRebalance = (times: number, outcome: 'errored' | 'canceled') => {
+        for (let i = 0; i < times; i++) {
+          const order = { id: issuedOrders[issuedOrders.length - 1].id, reason: 'Test error' } as any;
+          const exchange = { price: 100, portfolio: shortOfAssetPortfolio };
+          if (outcome === 'errored') strategy.onOrderErrored({ order, exchange, tools });
+          else strategy.onOrderCanceled({ order, exchange, tools });
+        }
+      };
+
+      it.each`
+        outcome       | retryOnError | attempts | reason
+        ${'errored'}  | ${1}         | ${2}     | ${'Test error'}
+        ${'errored'}  | ${3}         | ${4}     | ${'Test error'}
+        ${'canceled'} | ${3}         | ${4}     | ${'Order was canceled'}
+      `(
+        'stops the run once $attempts attempts in a row are $outcome, with retryOnError $retryOnError',
+        ({ outcome, retryOnError, attempts, reason }) => {
+          startStrategy(100, { retryOnError }, shortOfAssetPortfolio);
+
+          expect(() => failRebalance(attempts, outcome)).toThrow(
+            `GridBot: Rebalance failed after ${attempts} attempts (retryOnError: ${retryOnError}): the grid is not built. Last error: ${reason}`,
+          );
+        },
+      );
+
+      it('places the rebalance again until its last attempt', () => {
+        startStrategy(100, { retryOnError: 3 }, shortOfAssetPortfolio);
+
+        expect(() => failRebalance(3, 'errored')).not.toThrow();
+      });
+
+      it('builds no grid on the portfolio as it is: the orders sent are the attempts of the rebalance', () => {
+        startStrategy(100, { retryOnError: 3 }, shortOfAssetPortfolio);
+        untilStopped(() => failRebalance(4, 'errored'));
+
+        expect(issuedOrders.map(({ type, side }) => `${type} ${side}`)).toEqual(['STICKY BUY', 'STICKY BUY', 'STICKY BUY', 'STICKY BUY']);
+      });
+    });
+
+    // The rebalance, planned on the total balances, is more than the free balances can pay: the grid is built without it, on the free
+    // balances, which fund no level here
+    describe('when the free balances cannot pay for the rebalance', () => {
+      // Wants to buy 500 USDT of BTC, 10 USDT free
+      const lockedCurrency: Portfolio = new Map<string, BalanceDetail>([
         ['BTC', { free: 0, used: 0, total: 0 }],
         ['USDT', { free: 10, used: 990, total: 1000 }],
       ]);
-      // Total 1000 USDT -> wants to buy 500 USDT of BTC
-      // But free is 10
-
-      startStrategy(100, {}, lockedCurrencyPortfolio);
-
-      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('Insufficient currency'));
-      // Should fall back to building grid, but fails due to empty side
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('Insufficient portfolio'));
-      expect(createOrder).toHaveBeenCalledTimes(0);
-    });
-
-    it('skips rebalance if insufficient asset for sell (due to locked funds)', () => {
-      // Need to sell, but free asset is low
-      const lockedAssetPortfolio: Portfolio = new Map<string, BalanceDetail>([
+      // Wants to sell 5 BTC, 0.1 BTC free
+      const lockedAsset: Portfolio = new Map<string, BalanceDetail>([
         ['BTC', { free: 0.1, used: 9.9, total: 10 }],
         ['USDT', { free: 0, used: 0, total: 0 }],
       ]);
-      // Total 10 BTC = 1000 USDT. Wants to sell 5 BTC.
-      // Free is 0.1 BTC.
-
-      startStrategy(100, {}, lockedAssetPortfolio);
-
-      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('Insufficient asset'));
-      // Should fall back to building grid, but fails due to empty side
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('Insufficient portfolio'));
-      expect(createOrder).toHaveBeenCalledTimes(0);
-    });
-
-    it('skips rebalance if insufficient currency for buy', () => {
-      // Asset value is 0, currency is 50 - total value 50, needs 25 asset value
-      // That's buying 0.25 at price 100 = 25 in currency (but free currency is only 10)
-
-      const lowCurrencyPortfolio: Portfolio = new Map<string, BalanceDetail>([
+      // Wants to buy 25 USDT of BTC, 10 USDT free
+      const lowCurrency: Portfolio = new Map<string, BalanceDetail>([
         ['BTC', { free: 0, used: 0, total: 0 }],
         ['USDT', { free: 10, used: 0, total: 50 }],
       ]);
 
-      startStrategy(100, {}, lowCurrencyPortfolio);
+      it.each`
+        portfolio         | description                          | warning
+        ${lockedCurrency} | ${'currency locked in other orders'} | ${'Insufficient currency'}
+        ${lockedAsset}    | ${'asset locked in other orders'}    | ${'Insufficient asset'}
+        ${lowCurrency}    | ${'too little free currency'}        | ${'Insufficient currency'}
+      `('warns that it skips the rebalance, with $description', ({ portfolio, warning }) => {
+        untilStopped(() => startStrategy(100, {}, portfolio));
 
-      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('Insufficient currency'));
+        expect(log).toHaveBeenCalledWith('warn', expect.stringContaining(warning));
+      });
+
+      it.each`
+        portfolio         | description
+        ${lockedCurrency} | ${'currency locked in other orders'}
+        ${lockedAsset}    | ${'asset locked in other orders'}
+        ${lowCurrency}    | ${'too little free currency'}
+      `('sends no order, with $description', ({ portfolio }) => {
+        untilStopped(() => startStrategy(100, {}, portfolio));
+
+        expect(createOrder).not.toHaveBeenCalled();
+      });
+
+      it.each`
+        portfolio         | description
+        ${lockedCurrency} | ${'currency locked in other orders'}
+        ${lockedAsset}    | ${'asset locked in other orders'}
+        ${lowCurrency}    | ${'too little free currency'}
+      `('stops the run, the free balances funding no level, with $description', ({ portfolio }) => {
+        expect(() => startStrategy(100, {}, portfolio)).toThrow('GridBot: Insufficient portfolio for any grid levels');
+      });
     });
   });
 
   describe('validation', () => {
     it.each`
-      params                                                      | expectedError
-      ${{}}                                                       | ${'Center price'}
-      ${{ buyLevels: 25, spacingType: 'fixed', spacingValue: 5 }} | ${'non-positive buy prices'}
-    `('logs error $expectedError for invalid params', ({ params, expectedError }) => {
-      const price = expectedError === 'Center price' ? 0 : 100;
-      startStrategy(price, params);
-
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining(expectedError));
+      price  | params                                                      | expectedError
+      ${0}   | ${{}}                                                       | ${'GridBot: Center price must be positive'}
+      ${100} | ${{ buyLevels: 25, spacingType: 'fixed', spacingValue: 5 }} | ${'GridBot: Grid configuration would result in non-positive buy prices'}
+    `('stops the run with $expectedError', ({ price, params, expectedError }) => {
+      expect(() => startStrategy(price, params)).toThrow(expectedError);
     });
 
-    it('logs error if grid bounds computation fails', () => {
-      const spy = vi.spyOn(GridBotUtils, 'computeGridBounds').mockReturnValue(null);
-      startStrategy(100);
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('valid grid bounds'));
-      spy.mockRestore();
+    it('stops the run if the grid bounds cannot be computed', () => {
+      vi.spyOn(GridBotUtils, 'computeGridBounds').mockReturnValue(null);
+
+      expect(() => startStrategy(100)).toThrow('GridBot: Could not compute valid grid bounds');
+    });
+
+    // GridBot used to go on after tools.log('error'), as if it had only logged
+    it('stops the run on its own, with a log that would return at error level', () => {
+      log.mockImplementation(() => undefined);
+
+      expect(() => startStrategy(0)).toThrow('GridBot: Center price must be positive');
     });
   });
 
@@ -559,29 +596,75 @@ describe('GridBot', () => {
 
       expect(createOrder).toHaveBeenCalledTimes(5);
     });
+  });
 
-    it('stops retrying after limit', () => {
-      startStrategy(100, { retryOnError: 1 });
+  // A level whose order failed at every attempt gave up through tools.log('error'), which throws: the first one stopped the bot, with
+  // a message naming an array index rather than the order
+  describe('a grid order that failed at every attempt', () => {
+    /** Ends the live order at that price and side in error `times` times in a row, as the Trader reports it */
+    const fail = (times: number, price: number, side: OrderSide) => {
+      for (let i = 0; i < times; i++) settle('errored', price, side);
+    };
 
-      const buyId = findOrderId(95, 'BUY');
+    it.each`
+      side      | price  | retryOnError | attempts
+      ${'BUY'}  | ${95}  | ${1}         | ${2}
+      ${'BUY'}  | ${95}  | ${3}         | ${4}
+      ${'SELL'} | ${105} | ${3}         | ${4}
+    `(
+      'warns that the $side at $price failed after $attempts attempts, with retryOnError $retryOnError',
+      ({ side, price, retryOnError, attempts }) => {
+        startStrategy(100, { retryOnError });
+        fail(attempts, price, side);
 
-      // First error - retry
-      strategy.onOrderErrored({
-        order: { id: buyId as UUID, reason: 'Test error' } as any,
-        exchange: { price: 100, portfolio: balancedPortfolio },
-        tools,
-      });
+        expect(log).toHaveBeenCalledWith(
+          'warn',
+          `GridBot: ${side} at ${price} failed after ${attempts} attempts (retryOnError: ${retryOnError}): its level is left without an order, the rest of the grid trades on. Last error: Test error`,
+        );
+      },
+    );
 
-      const retryId = findLatestOrderId('BUY');
+    it('does not stop the run while other levels hold an order', () => {
+      startStrategy(100, { retryOnError: 3 });
 
-      // Second error - limit reached
-      strategy.onOrderErrored({
-        order: { id: retryId as UUID, reason: 'Test error' } as any,
-        exchange: { price: 100, portfolio: balancedPortfolio },
-        tools,
-      });
+      expect(() => fail(4, 95, 'BUY')).not.toThrow();
+    });
 
-      expect(log).toHaveBeenCalledWith('error', expect.stringContaining('Retry limit'));
+    it('is placed again after every attempt but the last', () => {
+      startStrategy(100, { retryOnError: 3 });
+      const sentBefore = issuedOrders.length;
+      fail(4, 95, 'BUY');
+
+      expect(sentAfter(sentBefore)).toEqual(['LIMIT BUY 95', 'LIMIT BUY 95', 'LIMIT BUY 95']);
+    });
+
+    it('leaves its level without an order, the rest of the book in place', () => {
+      startStrategy(100, { retryOnError: 3 });
+      fail(4, 95, 'BUY');
+
+      expect(openBook()).toEqual(['BUY 90', 'SELL 105', 'SELL 110']);
+    });
+
+    it('lets the rest of the grid trade on: the fill of the BUY below arms its SELL', () => {
+      startStrategy(100, { retryOnError: 3 });
+      fail(4, 95, 'BUY');
+      const sentBefore = issuedOrders.length;
+      settle('completed', 90, 'BUY');
+
+      expect(sentAfter(sentBefore)).toEqual(['LIMIT SELL 95']);
+    });
+
+    // A grid without any order would sit idle for the rest of the run
+    it.each`
+      grid     | buyLevels | sellLevels | portfolio              | failing                         | last
+      ${'1/0'} | ${1}      | ${0}       | ${unbalancedPortfolio} | ${[[95, 'BUY']]}                | ${'BUY at 95'}
+      ${'1/1'} | ${1}      | ${1}       | ${balancedPortfolio}   | ${[[95, 'BUY'], [105, 'SELL']]} | ${'SELL at 105'}
+    `('stops the run once no level of a $grid grid holds an order any more', ({ buyLevels, sellLevels, portfolio, failing, last }) => {
+      startStrategy(100, { buyLevels, sellLevels, retryOnError: 1 }, portfolio);
+
+      expect(() => failing.forEach(([price, side]: [number, OrderSide]) => fail(2, price, side))).toThrow(
+        `GridBot: ${last} failed after 2 attempts (retryOnError: 1): no level of the grid holds an order any more. Last error: Test error`,
+      );
     });
   });
 

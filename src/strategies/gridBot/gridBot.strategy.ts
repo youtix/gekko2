@@ -1,3 +1,4 @@
+import { GekkoError } from '@errors/gekko.error';
 import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
@@ -38,7 +39,8 @@ import {
  * - Each level trades back and forth between two adjacent prices of the grid: once its BUY fills it sells one step above, once its
  *   SELL fills it buys one step below
  * - Mandatory rebalancing ensures 50/50 portfolio allocation before grid building
- * - On exchange errors, orders are retried up to the configured limit
+ * - A failed order is placed again up to retryOnError times. Then a grid order is left out with a warning, the rest of the grid
+ *   trading on until no level holds an order, and a rebalance stops the run
  * - When price exits the grid range, a warning is logged but trading continues
  */
 export class GridBot implements Strategy<GridBotStrategyParams> {
@@ -114,12 +116,8 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
     const centerPrice = roundPrice(close, priceDecimals, priceStep);
 
-    // Validate configuration
     const validationError = validateConfig(tools.strategyParams, centerPrice, marketData);
-    if (validationError) {
-      tools.log('error', `GridBot: ${validationError}`);
-      return;
-    }
+    if (validationError) this.stopRun(validationError, tools);
 
     // Always attempt rebalancing first
     this.prepareGrid(centerPrice, portfolio, tools);
@@ -202,7 +200,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     // Retry if under the limit
     const attempts = (this.retryCount.get(levelIndex) ?? 0) + 1;
     if (attempts > this.retryLimit) {
-      tools.log('error', `GridBot: Retry limit reached for level ${levelIndex}`);
+      this.giveUpLevel(level, attempts, order.reason, tools);
       return;
     }
 
@@ -296,15 +294,12 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     this.rebalanceRetryCount++;
     this.rebalanceOrderId = undefined;
 
+    // A rebalance that failed at every attempt stops the run. A grid used to follow, built anyway on the portfolio as it was, after a
+    // tools.log('error') that had already thrown: it never ran. Not rebalanced, the portfolio would size every level on its scarcer
+    // side, the rest left idle, or fund none.
     if (this.rebalanceRetryCount > this.retryLimit) {
-      tools.log('error', `GridBot: Rebalance failed after ${this.retryLimit} attempts: ${reason}`);
-      this.awaitingRebalance = false;
-      this.pendingRebalance = undefined;
-
-      // Build grid anyway with current allocation
-      const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep);
-      this.buildGrid(centerPrice, asset.free, currency.free, tools);
-      return;
+      const failure = `Rebalance failed after ${this.rebalanceRetryCount} attempts (retryOnError: ${this.retryLimit})`;
+      this.stopRun(`${failure}: the grid is not built. Last error: ${reason}`, tools);
     }
 
     tools.log('warn', `GridBot: Rebalance attempt ${this.rebalanceRetryCount} failed: ${reason}. Retrying...`);
@@ -334,11 +329,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
     // Compute grid bounds
     const bounds = computeGridBounds(centerPrice, buyLevels, sellLevels, this.priceDecimals, spacingType, spacingValue, this.priceStep);
-
-    if (!bounds) {
-      tools.log('error', 'GridBot: Could not compute valid grid bounds');
-      return;
-    }
+    if (!bounds) this.stopRun('Could not compute valid grid bounds', tools);
 
     this.gridBounds = bounds;
 
@@ -356,10 +347,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       this.priceStep,
     );
 
-    if (this.quantity <= 0) {
-      tools.log('error', 'GridBot: Insufficient portfolio for any grid levels');
-      return;
-    }
+    if (this.quantity <= 0) this.stopRun('Insufficient portfolio for any grid levels', tools);
 
     // Build level states, each between two adjacent prices of the grid, the center price being the top of level -1 and the bottom
     // of level 1
@@ -412,5 +400,28 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     level.orderId = orderId;
     level.side = side;
     this.orderToLevel.set(orderId, levelArrayIndex);
+  }
+
+  /**
+   * Leaves a level without an order once its order failed at every attempt, the first and retryOnError retries: the rest of the grid
+   * trades on, and the run stops once no level holds an order. A level used to give up through tools.log('error'), which throws: the
+   * first one to give up stopped the bot, with a message naming an array index rather than the order.
+   */
+  private giveUpLevel(level: LevelState, attempts: number, reason: string, tools: Tools<GridBotStrategyParams>): void {
+    const price = level.side === 'BUY' ? level.buyPrice : level.sellPrice;
+    const failure = `${level.side} at ${price} failed after ${attempts} attempts (retryOnError: ${this.retryLimit})`;
+    if (this.levels.every(({ orderId }) => !orderId))
+      this.stopRun(`${failure}: no level of the grid holds an order any more. Last error: ${reason}`, tools);
+    tools.log('warn', `GridBot: ${failure}: its level is left without an order, the rest of the grid trades on. Last error: ${reason}`);
+  }
+
+  /**
+   * Stops the run with the message, logged and relayed at error level: tools.log('error') throws a GekkoError. GridBot places its
+   * grid once, so a grid it cannot place, or one without any order left, would leave it idle for the rest of the run.
+   */
+  private stopRun(message: string, tools: Tools<GridBotStrategyParams>): never {
+    tools.log('error', `GridBot: ${message}`);
+    // Not reached, tools.log('error') throwing first: it makes the stop explicit, to the compiler and with a log that would return
+    throw new GekkoError('strategy', `GridBot: ${message}`);
   }
 }
