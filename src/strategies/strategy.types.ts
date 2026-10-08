@@ -75,10 +75,14 @@ export interface Strategy<T> {
   /**
    * On each trailing stop activated: when the high of a one-minute candle reaches its trigger, or, for a stop without one, as soon
    * as it is armed (its BUY completed, right after onOrderCompleted). The latter has not trailed any candle yet: its highestPeak and
-   * stopPrice are still 0.
+   * stopPrice are still 0. The former's peak is that candle's open when the open reached the trigger, else its high; the rest of the
+   * candle is trailed after this hook (see TrailingStopState.highestPeak), unless the stop is canceled here (tools.cancelTrailingOrder).
    */
   onTrailingStopActivated?(state: TrailingStopState): void;
-  /** On each trailing stop triggered (when trailing stop price is reached) */
+  /**
+   * On each trailing stop triggered: when a price of a one-minute candle, met as open, low, high, close, reaches the stop price (see
+   * TrailingStopState.highestPeak). The state holds the peak and the stop price of that moment.
+   */
   onTrailingStopTriggered?(orderId: UUID, state: TrailingStopState): void;
   /** Executed at the end of the strategy */
   end?(): void;

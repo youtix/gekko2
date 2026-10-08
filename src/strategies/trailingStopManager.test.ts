@@ -3,7 +3,7 @@ import { CandleBucket } from '@models/event.types';
 import { TradingPair } from '@models/utility.types';
 import { warning } from '@services/logger';
 import { UUID } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { TrailingStopManager } from './trailingStopManager';
 import { TrailingStopState } from './trailingStopManager.types';
 
@@ -13,13 +13,19 @@ vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 /*                                Test Helpers                                */
 /* -------------------------------------------------------------------------- */
 
-const makeCandle = (high: number, low: number, close: number) => ({ start: 1000, open: 1, high, low, close, volume: 1 }) as any;
+// Opens at its low: the stop meets a candle's prices as open, low, high, close, and an open outside the candle (it was 1) met the stop
+// at a price the candle never traded
+const makeCandle = (high: number, low: number, close: number) => ({ start: 1000, open: low, high, low, close, volume: 1 }) as any;
 
 const makeBucket = (symbol: TradingPair, high: number, low: number, close: number): CandleBucket => {
   const bucket: CandleBucket = new Map();
   bucket.set(symbol, makeCandle(high, low, close));
   return bucket;
 };
+
+/** A bucket holding one BTC/USDT candle with these prices, in the usual order */
+const ohlc = (open: number, high: number, low: number, close: number): CandleBucket =>
+  new Map([['BTC/USDT' as TradingPair, { start: 1000, open, high, low, close, volume: 1 }]]);
 
 const defaultId = 'aaaa-bbbb-cccc-dddd' as UUID;
 const defaultOrder = {
@@ -172,7 +178,7 @@ describe('TrailingStopManager', () => {
       { desc: 'activates at trigger', high: 50000, low: 49500, expectedStatus: 'active' },
       { desc: 'activates above trigger', high: 51000, low: 50500, expectedStatus: 'active' },
     ])('$desc', ({ high, low, expectedStatus }) => {
-      manager.update(makeBucket('BTC/USDT', high, low, 49500));
+      manager.update(makeBucket('BTC/USDT', high, low, low));
       expect(manager.getOrders().get(defaultId)?.status).toBe(expectedStatus);
     });
 
@@ -180,7 +186,7 @@ describe('TrailingStopManager', () => {
       { desc: 'sets highestPeak on activation', high: 51000, low: 50500, check: (o: any) => expect(o?.highestPeak).toBe(51000) },
       { desc: 'computes stopPrice on activation', high: 50000, low: 49500, check: (o: any) => expect(o?.stopPrice).toBe(49000) }, // 50000 * 0.98
     ])('$desc', ({ high, low, check }) => {
-      manager.update(makeBucket('BTC/USDT', high, low, 49500));
+      manager.update(makeBucket('BTC/USDT', high, low, low));
       const order = manager.getOrders().get(defaultId);
       check(order);
     });
@@ -204,18 +210,83 @@ describe('TrailingStopManager', () => {
       expect(listener).not.toHaveBeenCalled();
     });
 
-    it('does not trigger a stop a listener of its activation removed, on the candle that activated it', () => {
-      const listener = vi.fn();
-      manager.on(TRAILING_STOP_ACTIVATED, () => manager.removeOrder(defaultId));
-      manager.on(TRAILING_STOP_TRIGGERED, listener);
-      // The high reaches the trigger, the low goes below the stop price (49000)
-      manager.update(makeBucket('BTC/USDT', 50000, 48000, 48000));
-      expect(listener).not.toHaveBeenCalled();
-    });
-
     it('ignores updates for other symbols', () => {
       manager.update(makeBucket('ETH/USDT', 60000, 59000, 59500));
       expect(manager.getOrders().get(defaultId)?.status).toBe('dormant');
+    });
+  });
+
+  /* -------------------------------------------------------------------------- */
+  /*                  update – the candle that activates a stop                 */
+  /* -------------------------------------------------------------------------- */
+
+  // Its low may have come before its high reached the trigger: the stop meets that candle from its open when the open reached the
+  // trigger, else from its high, then its close. Trailed whole, the candle triggered the stop whenever it had opened 2% below its high.
+  describe('update (the candle that activates a stop with a trigger)', () => {
+    let triggered: Mock;
+
+    beforeEach(() => {
+      manager.addOrder(defaultOrder); // Trigger 50000, 2%
+      triggered = vi.fn();
+      manager.on(TRAILING_STOP_TRIGGERED, triggered);
+    });
+
+    it.each`
+      desc                                      | open     | high     | low      | close
+      ${'opens at its low, closes at its high'} | ${49000} | ${51000} | ${49000} | ${51000}
+      ${'goes below the stop price it sets'}    | ${49800} | ${50500} | ${48500} | ${50000}
+    `('does not trigger the stop on a candle that $desc', ({ open, high, low, close }) => {
+      manager.update(ohlc(open, high, low, close));
+      expect(triggered).not.toHaveBeenCalled();
+    });
+
+    describe.each`
+      desc                                      | open     | high     | low      | close    | peak     | stopPrice
+      ${'opens at the trigger, falls 2% below'} | ${50000} | ${50200} | ${48900} | ${49000} | ${50000} | ${49000}
+      ${'closes 2% below its high'}             | ${49500} | ${51000} | ${49400} | ${49900} | ${51000} | ${49980}
+    `('on a candle that $desc', ({ open, high, low, close, peak, stopPrice }) => {
+      beforeEach(() => {
+        manager.update(ohlc(open, high, low, close));
+      });
+
+      it('triggers the stop', () => {
+        expect(triggered).toHaveBeenCalledOnce();
+      });
+
+      it(`reports a peak of ${peak} and a stop price of ${stopPrice}, those its price reached`, () => {
+        expect(triggered).toHaveBeenCalledWith(expect.objectContaining({ highestPeak: peak, stopPrice }));
+      });
+    });
+
+    it.each`
+      desc                         | open     | peak     | stopPrice
+      ${'at or above the trigger'} | ${50100} | ${50100} | ${49098}
+      ${'below the trigger'}       | ${49800} | ${50600} | ${49588}
+    `('announces the activation by a candle that opened $desc with a peak of $peak', ({ open, peak, stopPrice }) => {
+      const activated = vi.fn();
+      manager.on(TRAILING_STOP_ACTIVATED, activated);
+      manager.update(ohlc(open, 50600, 49700, 50500));
+      expect(activated).toHaveBeenCalledWith(expect.objectContaining({ highestPeak: peak, stopPrice }));
+    });
+
+    it('triggers on the next candle when its low reaches the stop price the activation set', () => {
+      manager.update(ohlc(49000, 51000, 49000, 51000)); // Peak 51000, stop price 49980
+      const listener = vi.fn();
+      manager.on(TRAILING_STOP_TRIGGERED, listener);
+      manager.update(ohlc(51000, 51000, 49980, 50000));
+      expect(listener).toHaveBeenCalledOnce();
+    });
+
+    // The strategy hears of the activation at once, and may cancel the stop then (tools.cancelTrailingOrder). Both candles would trigger
+    // the stop it does not cancel: the first at its close, met after its high, the second at its low, met after its open.
+    it.each`
+      desc                         | open     | high     | low      | close
+      ${'opens below the trigger'} | ${48000} | ${50000} | ${48000} | ${48000}
+      ${'opens at the trigger'}    | ${50000} | ${50000} | ${48000} | ${48500}
+    `('does not trigger a stop a listener of its activation removed, on a candle that $desc', ({ open, high, low, close }) => {
+      manager.on(TRAILING_STOP_ACTIVATED, () => manager.removeOrder(defaultId));
+      manager.update(ohlc(open, high, low, close));
+      expect(triggered).not.toHaveBeenCalled();
     });
   });
 
@@ -226,29 +297,27 @@ describe('TrailingStopManager', () => {
   describe('update (active phase)', () => {
     beforeEach(() => {
       manager.addOrder(defaultOrder);
-      // Activate order first
-      // Peak 50000, Stop 49000
-      // Use low 49500 to prevent immediate trigger (since dormant -> active happens same tick)
+      // Activated by its high: peak 50000, stop price 49000. After that, the candle that activates a stop only meets its close.
       manager.update(makeBucket('BTC/USDT', 50000, 49500, 50000));
     });
 
     it.each([
-      // High 52000 -> Stop 50960. Low must be > 50960. Use 51000.
+      // High 52000 -> stop price 50960, which the close (51000) stays above
       { desc: 'updates peak when high > peak', high: 52000, low: 51000, expectedPeak: 52000 },
-      // High 49500 -> Stop 49000. Low must be > 49000. Use 49500.
+      // Stop price 49000, which the low (49500) stays above
       { desc: 'keeps peak when high < peak', high: 49500, low: 49500, expectedPeak: 50000 },
     ])('$desc', ({ high, low, expectedPeak }) => {
-      manager.update(makeBucket('BTC/USDT', high, low, 49500));
+      manager.update(makeBucket('BTC/USDT', high, low, low));
       expect(manager.getOrders().get(defaultId)?.highestPeak).toBe(expectedPeak);
     });
 
     it.each([
-      // High 52000 -> Stop 50960. Use safe low 51000.
+      // High 52000 -> stop price 50960, which the close (51000) stays above
       { desc: 'updates stopPrice when peak increases', high: 52000, low: 51000, expectedStop: 50960 },
-      // High 50000 -> Stop 49000. Use safe low 49500.
+      // Stop price 49000, which the low (49500) stays above
       { desc: 'keeps stopPrice when peak is same', high: 50000, low: 49500, expectedStop: 49000 },
     ])('$desc', ({ high, low, expectedStop }) => {
-      manager.update(makeBucket('BTC/USDT', high, low, 49500));
+      manager.update(makeBucket('BTC/USDT', high, low, low));
       expect(manager.getOrders().get(defaultId)?.stopPrice).toBe(expectedStop);
     });
 
@@ -272,6 +341,53 @@ describe('TrailingStopManager', () => {
   });
 
   /* -------------------------------------------------------------------------- */
+  /*               update – a candle after the one that activated it            */
+  /* -------------------------------------------------------------------------- */
+
+  // The order of a candle's low and high is unknown: the stop meets them low first, the low tested against the stop price of the peak
+  // before it, the open included. Raised to the high first, the peak made a candle that rose more than 2% from its open trigger the
+  // stop on its own low.
+  describe('update (a candle after the one that activated the stop)', () => {
+    let triggered: Mock;
+
+    beforeEach(() => {
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2, trigger: 100 } });
+      manager.update(ohlc(99, 100, 99, 100)); // Peak 100, stop price 98
+      triggered = vi.fn();
+      manager.on(TRAILING_STOP_TRIGGERED, triggered);
+    });
+
+    it.each`
+      desc                                      | open   | high   | low    | close
+      ${'rises 3% from its open, its low'}      | ${100} | ${103} | ${100} | ${103}
+      ${'dips 1%, then rises 10% to its close'} | ${100} | ${110} | ${99}  | ${109.9}
+    `('does not trigger the stop on a candle that $desc', ({ open, high, low, close }) => {
+      manager.update(ohlc(open, high, low, close));
+      expect(triggered).not.toHaveBeenCalled();
+    });
+
+    describe.each`
+      desc                                      | open   | high     | low     | close    | peak   | stopPrice
+      ${'falls below 98 before any new high'}   | ${100} | ${100.5} | ${97.9} | ${98}    | ${100} | ${98}
+      ${'gaps above the peak, falls 2% below'}  | ${102} | ${102.5} | ${99.9} | ${100}   | ${102} | ${99.96}
+      ${'makes a new high, closes 2% below it'} | ${100} | ${103}   | ${100}  | ${100.5} | ${103} | ${100.94}
+      ${'opens below the stop price'}           | ${97}  | ${97.5}  | ${96}   | ${96.5}  | ${100} | ${98}
+    `('on a candle that $desc', ({ open, high, low, close, peak, stopPrice }) => {
+      beforeEach(() => {
+        manager.update(ohlc(open, high, low, close));
+      });
+
+      it('triggers the stop', () => {
+        expect(triggered).toHaveBeenCalledOnce();
+      });
+
+      it(`reports a peak of ${peak} and a stop price of ${stopPrice}, those its price reached`, () => {
+        expect(triggered).toHaveBeenCalledWith(expect.objectContaining({ highestPeak: peak, stopPrice }));
+      });
+    });
+  });
+
+  /* -------------------------------------------------------------------------- */
   /*                 update – directly active (undefined trigger)               */
   /* -------------------------------------------------------------------------- */
 
@@ -281,22 +397,24 @@ describe('TrailingStopManager', () => {
     });
 
     it('updates highestPeak and stopPrice on first candle', () => {
-      // Use low > 49000 so it doesn't trigger immediately
+      // Its low stays above the stop price of its open (48510), its close above that of its high (49000)
       manager.update(makeBucket('BTC/USDT', 50000, 49500, 49500));
       const order = manager.getOrders().get(defaultId);
       expect(order?.highestPeak).toBe(50000);
       expect(order?.stopPrice).toBe(49000); // 50000 * 0.98
     });
 
-    it('triggers immediately if first candle low is low enough', () => {
+    // Armed before it, the stop meets its first candle from the open: the first peak it trails, with no stop price before it
+    it.each`
+      outcome               | desc                                      | open     | high     | low      | close    | times
+      ${'triggers'}         | ${'falls 2% below its open'}              | ${50000} | ${50000} | ${48000} | ${49500} | ${1}
+      ${'does not trigger'} | ${'rises over 2% from its open, its low'} | ${48000} | ${50000} | ${48000} | ${49500} | ${0}
+      ${'triggers'}         | ${'closes 2% below its high'}             | ${49000} | ${50000} | ${48900} | ${48950} | ${1}
+    `('$outcome the stop on a first candle that $desc', ({ open, high, low, close, times }) => {
       const listener = vi.fn();
       manager.on(TRAILING_STOP_TRIGGERED, listener);
-
-      // high = 50000 -> stop = 49000. low = 48000 -> triggers!
-      manager.update(makeBucket('BTC/USDT', 50000, 48000, 49500));
-
-      expect(listener).toHaveBeenCalledOnce();
-      expect(manager.getOrders().has(defaultId)).toBe(false);
+      manager.update(ohlc(open, high, low, close));
+      expect(listener).toHaveBeenCalledTimes(times);
     });
 
     it('does not emit TRAILING_STOP_ACTIVATED again on its first candle', () => {
@@ -304,6 +422,41 @@ describe('TrailingStopManager', () => {
       manager.on(TRAILING_STOP_ACTIVATED, listener);
       manager.update(makeBucket('BTC/USDT', 50000, 49500, 49500));
       expect(listener).not.toHaveBeenCalled();
+    });
+  });
+
+  /* -------------------------------------------------------------------------- */
+  /*                         the trailing a stop keeps                          */
+  /* -------------------------------------------------------------------------- */
+
+  // Kept by reference, the strategy's object, or the config of a state a listener received, moved the stop when changed after the
+  // checks of addOrder: a percentage of 150 or NaN made a stop price that never triggered
+  describe('the trailing a stop keeps', () => {
+    it.each`
+      percentage
+      ${150}
+      ${NaN}
+      ${0.5}
+    `('does not follow a percentage of $percentage the strategy sets on its object once the stop is armed', ({ percentage }) => {
+      const trailing = { percentage: 2, trigger: 50000 };
+      manager.addOrder({ ...defaultOrder, trailing });
+      trailing.percentage = percentage;
+      manager.update(ohlc(49500, 50000, 49500, 50000)); // Activated: peak 50000
+      expect(manager.getOrders().get(defaultId)?.stopPrice).toBe(49000);
+    });
+
+    it.each`
+      announcement                      | trigger
+      ${'its arming (no trigger)'}      | ${undefined}
+      ${'the candle that activates it'} | ${50000}
+    `('keeps its 2% when a listener of $announcement sets the percentage of its state to 150', ({ trigger }) => {
+      manager.on(TRAILING_STOP_ACTIVATED, (state: TrailingStopState) => {
+        state.config.percentage = 150;
+      });
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2, trigger } });
+      manager.update(ohlc(49500, 50000, 49500, 50000)); // Peak 50000
+      manager.update(ohlc(50000, 52000, 50000, 51500)); // Peak 52000
+      expect(manager.getOrders().get(defaultId)?.stopPrice).toBe(50960);
     });
   });
 
