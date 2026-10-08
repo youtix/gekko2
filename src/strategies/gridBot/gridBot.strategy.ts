@@ -22,6 +22,7 @@ import {
   computeRebalancePlan,
   deriveLevelQuantity,
   getPortfolioContent,
+  getRebalanceBuyCost,
   hasOnlyOneSide,
   inferPricePrecision,
   isOutcomeUnknown,
@@ -230,7 +231,9 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
         this.buildGrid(centerPrice, asset.free, currency.free, tools);
         return;
       }
-      if (plan.side === 'BUY' && plan.estimatedNotional > currency.free) {
+      // What the BUY takes from the free currency once placed, not its notional at the center price: a BUY whose notional was all
+      // the free currency passed, to be refused at every attempt for its fee and the price of its STICKY order
+      if (plan.side === 'BUY' && getRebalanceBuyCost(plan.amount, plan.centerPrice, marketData) > currency.free) {
         tools.log('warn', 'GridBot: Insufficient currency for rebalance, building grid with current allocation');
         this.buildGrid(centerPrice, asset.free, currency.free, tools);
         return;

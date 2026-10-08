@@ -1068,6 +1068,8 @@ describe('GridBot', () => {
       expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 0.00816532, symbol: 'BTC/USDT' }]]);
     });
 
+    // Limited by the currency, the BUY used to be sized on its price alone: 0.0494868 at 60622.2144 is all of the 3000 USDT, and
+    // 3001.1994 with the maker fee the simulator charges on top, which refused it at every attempt. 0.04946702 costs 2999.9998.
     it('places a balanced grid 1 % around the close, its prices and amounts to 8 decimals', () => {
       const portfolio: Portfolio = new Map<string, BalanceDetail>([
         ['BTC', { free: 0.05, used: 0, total: 0.05 }],
@@ -1076,9 +1078,39 @@ describe('GridBot', () => {
       startStrategy(61234.56, { ...percentGrid, buyLevels: 1, sellLevels: 1 }, portfolio);
 
       expect(createOrder.mock.calls).toEqual([
-        [{ type: 'LIMIT', side: 'BUY', amount: 0.0494868, price: 60622.2144, symbol: 'BTC/USDT' }],
-        [{ type: 'LIMIT', side: 'SELL', amount: 0.0494868, price: 61846.9056, symbol: 'BTC/USDT' }],
+        [{ type: 'LIMIT', side: 'BUY', amount: 0.04946702, price: 60622.2144, symbol: 'BTC/USDT' }],
+        [{ type: 'LIMIT', side: 'SELL', amount: 0.04946702, price: 61846.9056, symbol: 'BTC/USDT' }],
       ]);
+    });
+
+    // A sell-only grid wants the whole value in the asset. It used to plan a BUY of the whole currency at the close, 10 here, which
+    // the simulator refused at every attempt: its STICKY order is placed one minimum price above the bid, at 100.01, and the maker fee
+    // comes on top, 1000.50004 in all. The run stopped before any grid was built.
+    it('rebalances a sell-only grid, all in currency, with a STICKY BUY the currency pays once placed', () => {
+      startStrategy(100, { buyLevels: 0, sellLevels: 5 }, unbalancedPortfolio);
+
+      expect(createOrder.mock.calls).toEqual([[{ type: 'STICKY', side: 'BUY', amount: 9.99500209, symbol: 'BTC/USDT' }]]);
+    });
+
+    // Planned on the totals, the rebalance buys 5 BTC at 100, a notional of 500 that the 500.22 USDT free used to pass, while its
+    // STICKY order, at 100.01 with the maker fee on top, takes 500.25002: the simulator refused it at every attempt
+    describe('when the free currency pays the notional of the rebalance BUY, but not its order once placed', () => {
+      const partlyLocked: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: 0, used: 0, total: 0 }],
+        ['USDT', { free: 500.22, used: 499.78, total: 1000 }],
+      ]);
+
+      it('warns that it skips the rebalance', () => {
+        untilStopped(() => startStrategy(100, { buyLevels: 1, sellLevels: 1 }, partlyLocked));
+
+        expect(log).toHaveBeenCalledWith('warn', 'GridBot: Insufficient currency for rebalance, building grid with current allocation');
+      });
+
+      it('sends no rebalance order', () => {
+        untilStopped(() => startStrategy(100, { buyLevels: 1, sellLevels: 1 }, partlyLocked));
+
+        expect(createOrder).not.toHaveBeenCalled();
+      });
     });
   });
 });

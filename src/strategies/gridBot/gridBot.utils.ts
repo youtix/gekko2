@@ -15,6 +15,22 @@ export const getPortfolioContent = (
 };
 
 /**
+ * The maker fee of the market, a fraction (0.001 is 0.1 %), which a LIMIT order pays: the grid's orders and the STICKY rebalance's.
+ * The simulator of backtests and paper trading charges it in currency, on top of a BUY (DummyCentralizedExchange.getLimitBuyCost) and
+ * out of a SELL's proceeds: a BUY of `amount` at `price` needs amount × price × (1 + fee) of free currency, a SELL only its amount of
+ * the asset. A live exchange that takes a BUY's fee from the asset bought, as Binance does, leaves what is set aside for it free. A
+ * market that states no maker fee is taken to charge none, as the simulator takes it.
+ */
+export const getMakerFee = (marketData: MarketData): number => marketData.fee?.maker ?? 0;
+
+/**
+ * What a rebalance BUY of `amount`, planned at `price`, takes from the free currency: GridBot places it as a STICKY order, which
+ * StickyOrder prices one minimum price (price.min) above the bid, and the maker fee comes on top (see getMakerFee).
+ */
+export const getRebalanceBuyCost = (amount: number, price: number, marketData: MarketData): number =>
+  amount * (price + (marketData.price?.min ?? 0)) * (1 + getMakerFee(marketData));
+
+/**
  * Infer price precision from market data or use default.
  * Returns both the decimal count and optional price step for tick-based rounding.
  */
@@ -173,6 +189,7 @@ export const validateConfig = (params: GridBotStrategyParams, centerPrice: numbe
  * Compute rebalance plan to achieve optimal allocation based on buy/sell level ratio.
  * The target allocation ensures equal quantity per order across all levels.
  * For N buy levels and M sell levels: targetAssetRatio = M / (N + M)
+ * A BUY is at most what the currency pays once placed (see getRebalanceBuyCost).
  * Returns null if portfolio is already optimally balanced.
  */
 export const computeRebalancePlan = (
@@ -203,6 +220,10 @@ export const computeRebalancePlan = (
 
   const side = gap > 0 ? 'BUY' : 'SELL';
   let amount = Math.abs(gap) / centerPrice;
+  // A BUY is at most what the currency pays, at the price its STICKY order is placed at and with the fee on top. A sell-only grid,
+  // which wants the whole value in the asset, planned a BUY of the whole currency at the center price: the simulator refused it at
+  // every attempt, and the run stopped before any grid was built
+  if (side === 'BUY') amount = Math.min(amount, totalCurrencyValue / getRebalanceBuyCost(1, centerPrice, marketData));
 
   if (amount <= 0) return null;
 
@@ -273,7 +294,8 @@ export const deriveLevelQuantity = (
   // Calculate sell capacity: assets / sell levels
   const assetShare = sellLevels > 0 ? assetFree / sellLevels : Infinity;
 
-  // Calculate buy capacity using actual level prices
+  // Calculate buy capacity using actual level prices, the fee on top (see getMakerFee). Sized on the prices alone, the BUYs needed
+  // the whole free currency before their fees: the simulator refused the last one placed, the highest, at every attempt
   let currencyShare = Infinity;
   if (buyLevels > 0) {
     let totalBuyCost = 0;
@@ -282,7 +304,7 @@ export const deriveLevelQuantity = (
       if (levelPrice > 0) totalBuyCost += levelPrice;
     }
     if (totalBuyCost > 0) {
-      currencyShare = currencyFree / totalBuyCost;
+      currencyShare = currencyFree / (totalBuyCost * (1 + getMakerFee(marketData)));
     }
   }
 

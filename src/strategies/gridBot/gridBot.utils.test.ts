@@ -7,7 +7,7 @@ import { omit } from 'lodash-es';
 import { randomUUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GridBot } from './gridBot.strategy';
-import { GridBotStrategyParams, GridBounds } from './gridBot.types';
+import { GridBotStrategyParams, GridBounds, GridSpacingType } from './gridBot.types';
 import {
   applyAmountLimits,
   applyCostLimits,
@@ -16,6 +16,8 @@ import {
   computeRebalancePlan,
   countDecimals,
   deriveLevelQuantity,
+  getMakerFee,
+  getRebalanceBuyCost,
   hasOnlyOneSide,
   inferAmountPrecision,
   inferPricePrecision,
@@ -33,6 +35,23 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 vi.mock('@services/injecter/injecter', () => ({ inject: { exchange: () => fakeExchange } }));
 vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() }));
+
+// The documented dummy-cex block (config/backtest.yml), its 8 decimals handed on as steps by its schema, and a market charging a
+// 0.1 % maker fee, as Binance does
+const documentedMarketData: MarketData = {
+  price: { min: 0.01, max: 1_000_000 },
+  amount: { min: 0.00001, max: 9000 },
+  cost: { min: 5, max: 9_000_000 },
+  precision: { price: 1e-8, amount: 1e-8 },
+  fee: { maker: 0.0004, taker: 0.0007 },
+};
+const tenthPercentFeeMarketData: MarketData = {
+  price: { min: 0.01 },
+  amount: { min: 0.00001 },
+  cost: { min: 5 },
+  precision: { price: 0.01, amount: 0.00001 },
+  fee: { maker: 0.001, taker: 0.001 },
+};
 
 describe('gridBot.utils', () => {
   describe('countDecimals', () => {
@@ -327,6 +346,29 @@ describe('gridBot.utils', () => {
     });
   });
 
+  describe('getMakerFee', () => {
+    it.each`
+      fee                                 | description                    | expected
+      ${{ maker: 0.0004, taker: 0.0007 }} | ${'a maker fee'}               | ${0.0004}
+      ${{ taker: 0.0007 }}                | ${'a taker fee, but no maker'} | ${0}
+      ${undefined}                        | ${'no fee'}                    | ${0}
+    `('is $expected on a market that states $description', ({ fee, expected }) => {
+      expect(getMakerFee({ fee })).toBe(expected);
+    });
+  });
+
+  // What the simulator reserves for a STICKY BUY: StickyOrder places it one minimum price above the bid, the maker fee on top
+  describe('getRebalanceBuyCost', () => {
+    it.each`
+      marketData                                          | description                          | expected
+      ${{ price: { min: 0.01 }, fee: { maker: 0.0004 } }} | ${'a minimum price and a maker fee'} | ${1000.50004}
+      ${{ price: { min: 0.01 } }}                         | ${'a minimum price, but no fee'}     | ${1000.1}
+      ${{}}                                               | ${'neither'}                         | ${1000}
+    `('is $expected for 10 planned at 100, on a market that states $description', ({ marketData, expected }) => {
+      expect(getRebalanceBuyCost(10, 100, marketData)).toBe(expected);
+    });
+  });
+
   describe('computeRebalancePlan', () => {
     const marketData: MarketData = { precision: { amount: 0.01 } };
 
@@ -378,6 +420,35 @@ describe('gridBot.utils', () => {
       const plan = computeRebalancePlan(100, 0, 10000, 5, 5, marketDataWithMax);
 
       expect(plan?.amount).toBe(10);
+    });
+
+    // A sell-only grid wants the whole value in the asset: started in currency, it planned a BUY of the whole currency at the center
+    // price, which the simulator refused at every attempt, its STICKY order placed one minimum price above the bid and the maker fee on
+    // top, and the run stopped before any grid was built. All in currency here, the plans are BUYs.
+    describe('in currency, on a market with a minimum price and a maker fee', () => {
+      it.each`
+        center      | buyLevels | sellLevels | marketData                         | description                                                                | expected
+        ${100}      | ${0}      | ${5}       | ${documentedMarketData}            | ${'a sell-only grid'}                                                      | ${9.99500209}
+        ${61234.56} | ${0}      | ${3}       | ${tenthPercentFeeMarketData}       | ${'a sell-only grid, at a 0.1 % maker fee'}                                | ${0.01631}
+        ${100}      | ${5}      | ${5}       | ${documentedMarketData}            | ${'a 5/5 grid, half the currency'}                                         | ${5}
+        ${100}      | ${0}      | ${5}       | ${{ precision: { amount: 1e-8 } }} | ${'a sell-only grid, on a market that states neither: the whole currency'} | ${10}
+      `('plans a BUY of $expected for $description', ({ center, buyLevels, sellLevels, marketData, expected }) => {
+        expect(computeRebalancePlan(center, 0, 1000, buyLevels, sellLevels, marketData)?.amount).toBe(expected);
+      });
+
+      it.each`
+        center      | buyLevels | sellLevels | marketData                   | description
+        ${100}      | ${0}      | ${5}       | ${documentedMarketData}      | ${'a sell-only grid'}
+        ${61234.56} | ${0}      | ${3}       | ${tenthPercentFeeMarketData} | ${'a sell-only grid, at a 0.1 % maker fee'}
+        ${100}      | ${5}      | ${5}       | ${documentedMarketData}      | ${'a 5/5 grid'}
+      `(
+        'plans a BUY the currency pays at the price of its STICKY order, the maker fee on top, for $description',
+        ({ center, buyLevels, sellLevels, marketData }) => {
+          const { amount } = computeRebalancePlan(center, 0, 1000, buyLevels, sellLevels, marketData)!;
+
+          expect(amount * (center + marketData.price.min) * (1 + marketData.fee.maker)).toBeLessThanOrEqual(1000);
+        },
+      );
     });
   });
 
@@ -449,6 +520,115 @@ describe('gridBot.utils', () => {
       const qty = deriveLevelQuantity(10, 10, 1000, 5, 2, 2, 'fixed', 5, marketData);
 
       expect(qty).toBeGreaterThanOrEqual(0);
+    });
+
+    // The simulator charges the maker fee in currency on top of each BUY. Sized on the prices alone, the BUYs of a grid limited by its
+    // currency needed the whole free currency before their fees: the last one placed, the highest, was refused at every attempt
+    describe('limited by the free currency, on a market with a maker fee', () => {
+      interface Grid {
+        center: number;
+        assetFree: number;
+        currencyFree: number;
+        buyLevels: number;
+        sellLevels: number;
+        spacingType: GridSpacingType;
+        spacingValue: number;
+        marketData: MarketData;
+        /** The prices of its BUYs, in the order the grid places them: the lowest first */
+        buyPrices: number[];
+      }
+
+      const buyOnly: Grid = {
+        center: 100,
+        assetFree: 0,
+        currencyFree: 1000,
+        buyLevels: 2,
+        sellLevels: 0,
+        spacingType: 'fixed',
+        spacingValue: 5,
+        marketData: documentedMarketData,
+        buyPrices: [90, 95],
+      };
+      // Inside the 1 % window, so not rebalanced: 1.01 BTC a SELL, more than the currency pays a BUY
+      const slightlyRichInAsset: Grid = {
+        center: 100,
+        assetFree: 5.05,
+        currencyFree: 495,
+        buyLevels: 5,
+        sellLevels: 5,
+        spacingType: 'percent',
+        spacingValue: 0.1,
+        marketData: documentedMarketData,
+        buyPrices: [99.5, 99.6, 99.7, 99.8, 99.9],
+      };
+      const documentedOneLevelASide: Grid = {
+        center: 61234.56,
+        assetFree: 0.05,
+        currencyFree: 3000,
+        buyLevels: 1,
+        sellLevels: 1,
+        spacingType: 'percent',
+        spacingValue: 1,
+        marketData: documentedMarketData,
+        buyPrices: [60622.2144],
+      };
+      const tenthPercentFee: Grid = {
+        center: 100,
+        assetFree: 10,
+        currencyFree: 300,
+        buyLevels: 5,
+        sellLevels: 5,
+        spacingType: 'percent',
+        spacingValue: 1,
+        marketData: tenthPercentFeeMarketData,
+        buyPrices: [95, 96, 97, 98, 99],
+      };
+      const withoutFee: Grid = { ...buyOnly, marketData: omit(documentedMarketData, 'fee') };
+
+      /** The quantity of each level, with the precision the strategy infers from the market data */
+      const sizeOf = ({ center, assetFree, currencyFree, buyLevels, sellLevels, spacingType, spacingValue, marketData }: Grid) => {
+        const { priceDecimals, priceStep } = inferPricePrecision(center, marketData);
+        return deriveLevelQuantity(
+          center,
+          assetFree,
+          currencyFree,
+          buyLevels,
+          sellLevels,
+          priceDecimals,
+          spacingType,
+          spacingValue,
+          marketData,
+          priceStep,
+        );
+      };
+
+      /** What the free currency has left once every BUY of the grid is placed, as the simulator reserves them: with the fee on top */
+      const leftOnceEveryBuyIsPlaced = (grid: Grid) => {
+        const quantity = sizeOf(grid);
+        const fee = grid.marketData.fee?.maker ?? 0;
+        return grid.buyPrices.reduce((free, price) => free - quantity * price * (1 + fee), grid.currencyFree);
+      };
+
+      it.each`
+        grid                       | description                                                            | expected
+        ${buyOnly}                 | ${'a buy-only grid, all in currency'}                                  | ${5.4032441}
+        ${slightlyRichInAsset}     | ${'a 5/5 grid slightly rich in asset'}                                 | ${0.9925819}
+        ${documentedOneLevelASide} | ${'the documented grid of one level a side'}                           | ${0.04946702}
+        ${tenthPercentFee}         | ${'a 5/5 grid at a 0.1 % maker fee'}                                   | ${0.61793}
+        ${withoutFee}              | ${'a buy-only grid, on a market that states no fee, as charging none'} | ${5.4054054}
+      `('sizes $description to $expected', ({ grid, expected }) => {
+        expect(sizeOf(grid)).toBe(expected);
+      });
+
+      it.each`
+        grid                       | description
+        ${buyOnly}                 | ${'a buy-only grid, all in currency'}
+        ${slightlyRichInAsset}     | ${'a 5/5 grid slightly rich in asset'}
+        ${documentedOneLevelASide} | ${'the documented grid of one level a side'}
+        ${tenthPercentFee}         | ${'a 5/5 grid at a 0.1 % maker fee'}
+      `('leaves the free currency paying every BUY of $description, the last one placed included', ({ grid }) => {
+        expect(leftOnceEveryBuyIsPlaced(grid)).toBeGreaterThanOrEqual(0);
+      });
     });
   });
 
