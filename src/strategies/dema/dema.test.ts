@@ -92,19 +92,24 @@ describe('DEMA Strategy', () => {
       expect(advices).toHaveLength(0);
     });
 
+    // Nothing logged either: a NaN result made a NaN diff, logged as no trend, and an infinite one an infinite trend, advised
     it.each`
-      smaRes       | demaRes      | expectedAdvices
-      ${undefined} | ${undefined} | ${0}
-      ${1}         | ${undefined} | ${0}
-      ${undefined} | ${2}         | ${0}
-      ${'invalid'} | ${2}         | ${0}
-    `('should do nothing when results are invalid (sma: $smaRes, dema: $demaRes)', ({ smaRes, demaRes, expectedAdvices }) => {
+      smaRes       | demaRes
+      ${undefined} | ${undefined}
+      ${1}         | ${undefined}
+      ${undefined} | ${2}
+      ${'invalid'} | ${2}
+      ${NaN}       | ${2}
+      ${1}         | ${NaN}
+      ${Infinity}  | ${2}
+      ${1}         | ${Infinity}
+    `('should do nothing when results are invalid (sma: $smaRes, dema: $demaRes)', ({ smaRes, demaRes }) => {
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<DEMAStrategyParams>,
         { results: demaRes, symbol: 'BTC/USDT' },
         { results: smaRes, symbol: 'BTC/USDT' },
       );
-      expect(advices).toHaveLength(expectedAdvices);
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
     it('should emit a STICKY BUY advice when diff is 1 (uptrend) and flat', () => {
@@ -172,6 +177,8 @@ describe('DEMA Strategy', () => {
       ${undefined} | ${undefined} | ${0}
       ${1}         | ${undefined} | ${0}
       ${undefined} | ${2}         | ${0}
+      ${NaN}       | ${2}         | ${0}
+      ${1}         | ${-Infinity} | ${0}
     `('should not log when results are missing (sma: $smaRes, dema: $demaRes)', ({ smaRes, demaRes, expectedLogsLength }) => {
       strategy.log(
         { candle: bucket, tools } as unknown as OnCandleEventParams<DEMAStrategyParams>,

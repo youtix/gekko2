@@ -9,8 +9,8 @@ import {
   OnOrderErroredEventParams,
   Strategy,
 } from '@strategies/strategy.types';
+import { isFiniteNumber } from '@utils/math/math.utils';
 import { pluralize } from '@utils/string/string.utils';
-import { isNumber } from 'lodash-es';
 import { rsiStrategySchema } from './rsi.schema';
 import { RSICurrentTrend, RSIStrategyParams } from './rsi.types';
 
@@ -39,7 +39,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
   onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<RSIStrategyParams>, ...indicators: IndicatorResults<number | null>[]): void {
     const { strategyParams, log, createOrder } = tools;
     const [rsi] = indicators;
-    if (!isNumber(rsi.results) || !this.pair) return;
+    if (!isFiniteNumber(rsi.results) || !this.pair) return;
     const { thresholds } = strategyParams;
 
     if (rsi.results > thresholds.high) {

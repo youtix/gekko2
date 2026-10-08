@@ -9,8 +9,9 @@ import {
   OnOrderErroredEventParams,
   Strategy,
 } from '@strategies/strategy.types';
+import { isFiniteNumber } from '@utils/math/math.utils';
 import { pluralize } from '@utils/string/string.utils';
-import { isNumber, isObject } from 'lodash-es';
+import { isObject } from 'lodash-es';
 import { macdStrategySchema } from './macd.schema';
 import { MACDStrategyParams, MACDTrend } from './macd.types';
 
@@ -108,9 +109,9 @@ export class MACD implements Strategy<MACDStrategyParams> {
       'macd' in data &&
       'signal' in data &&
       'hist' in data &&
-      isNumber(data.macd) &&
-      isNumber(data.signal) &&
-      isNumber(data.hist)
+      isFiniteNumber(data.macd) &&
+      isFiniteNumber(data.signal) &&
+      isFiniteNumber(data.hist)
     );
   }
 }

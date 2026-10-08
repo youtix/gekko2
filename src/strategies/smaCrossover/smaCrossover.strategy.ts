@@ -9,7 +9,7 @@ import {
   OnOrderErroredEventParams,
   Strategy,
 } from '@strategies/strategy.types';
-import { isNumber } from 'lodash-es';
+import { compareWithTolerance, isFiniteNumber } from '@utils/math/math.utils';
 import { smaCrossoverStrategySchema } from './smaCrossover.schema';
 import { SMACrossoverStrategyParams } from './smaCrossover.types';
 
@@ -20,7 +20,8 @@ import { SMACrossoverStrategyParams } from './smaCrossover.types';
  * - When MA crosses DOWN the market price => BUY (market order, all in), when flat
  *
  * A crossover is detected by comparing the previous relative position
- * of the price vs the SMA to the current one.
+ * of the price vs the SMA to the current one. A price within the tolerance of the SMA (see compareWithTolerance) is on it, neither
+ * above nor below, and keeps the previous position: the price crosses once it leaves the SMA on the other side.
  */
 export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
   static schema = smaCrossoverStrategySchema;
@@ -52,9 +53,15 @@ export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
     if (!currentCandle) return;
     const price = currentCandle.close;
 
-    if (!isNumber(sma.results)) return;
+    if (!isFiniteNumber(sma.results)) return;
 
-    const isPriceAboveSMA = price > sma.results;
+    // On a flat window the SMA is the price in exact arithmetic, but its running sum leaves it a few ulps off, on either side: compared
+    // strictly, that noise crossed the price on about half the flat windows, a round trip of fees on a market that had not moved, and
+    // an exact tie counted as below, a SELL. Within the tolerance the price is on the SMA: no crossover, the side it was on is kept,
+    // and after the warmup the first side it takes is the initial state.
+    const priceToSMA = compareWithTolerance(price, sma.results);
+    if (priceToSMA === 0) return;
+    const isPriceAboveSMA = priceToSMA > 0;
 
     // First candle after warmup - just record the position
     if (this.wasPriceAboveSMA === null) {
@@ -85,7 +92,7 @@ export class SMACrossover implements Strategy<SMACrossoverStrategyParams> {
     const currentCandle = candle.get(this.pair);
     if (!currentCandle) return;
 
-    if (!isNumber(sma.results)) return;
+    if (!isFiniteNumber(sma.results)) return;
 
     log('debug', `SMA: ${sma.results.toFixed(5)} | Price: ${currentCandle.close.toFixed(5)}`);
   }

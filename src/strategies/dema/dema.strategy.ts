@@ -9,7 +9,7 @@ import {
   OnOrderErroredEventParams,
   Strategy,
 } from '@strategies/strategy.types';
-import { isNumber } from 'lodash-es';
+import { isFiniteNumber } from '@utils/math/math.utils';
 import { demaStrategySchema } from './dema.schema';
 import { DEMAStrategyParams } from './dema.types';
 
@@ -40,7 +40,7 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
     const currentCandle = candle.get(this.pair);
     if (!currentCandle) return;
     const price = currentCandle.close;
-    if (!isNumber(sma.results) || !isNumber(dema.results)) return;
+    if (!isFiniteNumber(sma.results) || !isFiniteNumber(dema.results)) return;
 
     const diff = sma.results - dema.results;
 
@@ -78,7 +78,7 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
   log({ tools }: OnCandleEventParams<DEMAStrategyParams>, ...indicators: IndicatorResults[]): void {
     const { log } = tools;
     const [dema, sma] = indicators;
-    if (!isNumber(sma.results) || !isNumber(dema.results)) return;
+    if (!isFiniteNumber(sma.results) || !isFiniteNumber(dema.results)) return;
 
     log(
       'debug',

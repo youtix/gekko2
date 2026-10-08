@@ -9,7 +9,7 @@ import {
   OnOrderErroredEventParams,
   Strategy,
 } from '@strategies/strategy.types';
-import { isNumber } from 'lodash-es';
+import { isFiniteNumber } from '@utils/math/math.utils';
 import { cciStrategySchema } from './cci.schema';
 import { CCIStrategyParams, CCITrend } from './cci.types';
 
@@ -37,7 +37,7 @@ export class CCI implements Strategy<CCIStrategyParams> {
   onTimeframeCandleAfterWarmup({ tools }: OnCandleEventParams<CCIStrategyParams>, ...indicators: IndicatorResults[]): void {
     const { strategyParams, createOrder, log } = tools;
     const [cci] = indicators;
-    if (!isNumber(cci.results) || !this.pair) return;
+    if (!isFiniteNumber(cci.results) || !this.pair) return;
 
     const { up, down, persistence } = strategyParams.thresholds;
 
@@ -79,7 +79,7 @@ export class CCI implements Strategy<CCIStrategyParams> {
 
   log({ tools }: OnCandleEventParams<CCIStrategyParams>, ...indicators: IndicatorResults[]): void {
     const [cci] = indicators;
-    if (!isNumber(cci.results)) return;
+    if (!isFiniteNumber(cci.results)) return;
     tools.log('debug', `CCI: ${cci.results.toFixed(2)}`);
   }
 

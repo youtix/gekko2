@@ -86,3 +86,31 @@ const countDecimals = (num: number) => {
   }
   return s.split('.')[1]?.length || 0;
 };
+
+/**
+ * Whether value is a number other than NaN, Infinity and -Infinity, as Number.isFinite tells, narrowing its type where
+ * Number.isFinite does not. lodash's isNumber is true for NaN: a NaN indicator result passed the strategies' guards, then failed
+ * every comparison, and the strategy silently never traded.
+ */
+export const isFiniteNumber = (value: unknown): value is number => Number.isFinite(value);
+
+/**
+ * Compares a with b as Math.sign(a - b) does, but takes them as equal when they differ by at most `tolerance` times the larger of
+ * their magnitudes: 1 when a is above b, -1 when below, 0 when equal, NaN when either is NaN. With a tolerance below 1, no value but
+ * 0 is equal to 0, and an infinite value is equal only to itself.
+ *
+ * Values equal in exact arithmetic come out a few ulps apart, on either side, once computed apart: the running sum of an SMA leaves
+ * it off the price of a flat window, and (p + p + p) / 3 is not p for 15 % of prices. Compared exactly, they were ordered by rounding
+ * noise. The default tolerance, 1e-9, is:
+ * - far above that noise: the running sum's error grows with the candles summed, about 1e-15 of the mean after a thousand, 2e-13
+ *   after ten million (19 years of minutes), 1e-10 when the price fell a thousandfold over those ten million;
+ * - far below a real difference: prices move by ticks of the order of 1e-7 of the price or more (0.01 on 100000), so two values
+ *   within 1e-9 of each other are less than a hundredth of a tick apart, a touch rather than a cross.
+ */
+export const compareWithTolerance = (a: number, b: number, tolerance = 1e-9): number => {
+  if (a === b) return 0;
+  const difference = a - b;
+  // Infinity times the tolerance is Infinity again: an infinite value would be within the tolerance of any finite one
+  if (Number.isFinite(difference) && Math.abs(difference) <= tolerance * Math.max(Math.abs(a), Math.abs(b))) return 0;
+  return Math.sign(difference);
+};

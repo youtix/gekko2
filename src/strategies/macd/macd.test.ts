@@ -86,6 +86,7 @@ describe('MACD Strategy', () => {
       expect(advices).toHaveLength(0);
     });
 
+    // Nothing logged either: a NaN MACD failed both thresholds, logged as no trend, and an infinite one started a trend
     it.each`
       macdRes
       ${null}
@@ -94,12 +95,16 @@ describe('MACD Strategy', () => {
       ${{ macd: 'not_number', signal: 0, hist: 0 }}
       ${{ macd: 1, signal: 'not_number', hist: 0 }}
       ${{ macd: 1, signal: 0, hist: 'not_number' }}
+      ${{ macd: NaN, signal: 0, hist: 0 }}
+      ${{ macd: Infinity, signal: 1, hist: 1 }}
+      ${{ macd: 1, signal: NaN, hist: 0 }}
+      ${{ macd: 1, signal: 1, hist: -Infinity }}
     `('should do nothing when MACD result is invalid ($macdRes)', ({ macdRes }) => {
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<MACDStrategyParams>,
         ...makeIndicator(macdRes),
       );
-      expect(advices).toHaveLength(0);
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
     it('should emit a STICKY BUY advice after persistence on uptrend when flat', () => {
@@ -166,6 +171,8 @@ describe('MACD Strategy', () => {
       ${null}
       ${undefined}
       ${'invalid'}
+      ${{ macd: NaN, signal: 0, hist: 0 }}
+      ${{ macd: 1, signal: 0, hist: Infinity }}
     `('should not log when MACD result is missing or invalid ($macdRes)', ({ macdRes }) => {
       strategy.log({ candle: bucket, tools } as unknown as OnCandleEventParams<MACDStrategyParams>, ...makeIndicator(macdRes));
       expect(logs).toHaveLength(0);

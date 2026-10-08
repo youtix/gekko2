@@ -18,7 +18,7 @@ vi.mock('@services/configuration/configuration', () => {
 });
 
 // The CCI value of each step of the scenarios played below
-const CCI_VALUES = { over: 150, under: -150, neutral: 50 } as const;
+const CCI_VALUES = { over: 150, under: -150, neutral: 50, nan: NaN } as const;
 
 describe('CCI Strategy', () => {
   let strategy: CCI;
@@ -75,17 +75,30 @@ describe('CCI Strategy', () => {
       expect(advices).toHaveLength(0);
     });
 
+    // Nothing logged either: a NaN CCI failed both thresholds and ended the trend, and an infinite one started one
     it.each`
       cciRes
       ${undefined}
       ${'invalid'}
       ${null}
+      ${NaN}
+      ${Infinity}
+      ${-Infinity}
     `('should do nothing when CCI result is invalid ($cciRes)', ({ cciRes }) => {
       strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, {
         results: cciRes,
         symbol: 'BTC/USDT',
       });
-      expect(advices).toHaveLength(0);
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
+    });
+
+    it.each`
+      case                            | steps                                      | expectedSides
+      ${'within an oversold trend'}   | ${'under nan under'}                       | ${['BUY']}
+      ${'within an overbought trend'} | ${'under under completed:1 over nan over'} | ${['BUY', 'SELL']}
+    `('should skip a candle whose CCI is NaN, as one not ready yet: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
 
     it.each`
@@ -197,6 +210,8 @@ describe('CCI Strategy', () => {
       cciRes       | expectedLogsLength
       ${undefined} | ${0}
       ${'invalid'} | ${0}
+      ${NaN}       | ${0}
+      ${Infinity}  | ${0}
     `('should not log when CCI result is missing or invalid ($cciRes)', ({ cciRes, expectedLogsLength }) => {
       strategy.log({ candle: bucket, tools } as unknown as OnCandleEventParams<CCIStrategyParams>, { results: cciRes, symbol: 'BTC/USDT' });
       expect(logs).toHaveLength(expectedLogsLength);

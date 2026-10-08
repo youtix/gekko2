@@ -19,7 +19,7 @@ vi.mock('@services/configuration/configuration', () => {
 
 const symbol = 'BTC/USDT';
 // The RSI value (thresholds 70 / 30) of each step of the scenarios played below
-const RSI_VALUES = { high: 75, low: 20, neutral: 50 } as const;
+const RSI_VALUES = { high: 75, low: 20, neutral: 50, nan: NaN, inf: Infinity, '-inf': -Infinity } as const;
 
 describe('RSI Strategy', () => {
   let strategy: RSI;
@@ -74,17 +74,32 @@ describe('RSI Strategy', () => {
       expect(advices).toHaveLength(0);
     });
 
+    // Nothing logged either: an infinite RSI started a trend
     it.each`
       rsiRes
       ${undefined}
       ${null}
       ${'invalid'}
+      ${NaN}
+      ${Infinity}
+      ${-Infinity}
     `('should do nothing when RSI result is invalid ($rsiRes)', ({ rsiRes }) => {
       strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<RSIStrategyParams>, {
         results: rsiRes,
         symbol,
       });
-      expect(advices).toHaveLength(0);
+      expect({ advices, logged: tools.log.mock.calls }).toEqual({ advices: [], logged: [] });
+    });
+
+    it.each`
+      case                             | steps                            | expectedSides
+      ${'NaN within a low trend'}      | ${'low nan low'}                 | ${['BUY']}
+      ${'Infinity within a low trend'} | ${'low inf low'}                 | ${['BUY']}
+      ${'-Infinity twice when flat'}   | ${'-inf -inf'}                   | ${[]}
+      ${'Infinity twice when long'}    | ${'low low completed:1 inf inf'} | ${['BUY']}
+    `('should skip a candle whose RSI is not a finite number, as one not ready yet: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
 
     it('should emit a STICKY BUY advice after persistence on low trend when flat', () => {

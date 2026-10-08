@@ -9,8 +9,20 @@ import { SMACrossoverStrategyParams } from './smaCrossover.types';
 
 const symbol = 'BTC/USDT';
 const makeIndicator = (res: any) => [{ results: res, symbol }] as any;
-// The close of each step of the scenarios played below, against an SMA of 100. The first candle only records where the price is.
-const PRICES = { above: 110, below: 90 } as const;
+const ULP = 2 ** -46; // the gap between 100 and the next double
+// The close and the SMA of each step of the scenarios played below. The first candle only records where the price is. A flat window
+// (one close for the whole period) leaves the running-sum SMA a few ulps off that close, on either side: 'on+' has it one ulp above
+// the close, 'on-' one ulp below, 'on' on it. 'tick+' and 'tick-' have the close a tick above or below the SMA, 'nan' the SMA NaN.
+const STEPS = {
+  above: { close: 110, sma: 100 },
+  below: { close: 90, sma: 100 },
+  on: { close: 100, sma: 100 },
+  'on+': { close: 100, sma: 100 + ULP },
+  'on-': { close: 100, sma: 100 - ULP },
+  'tick+': { close: 100.01, sma: 100 },
+  'tick-': { close: 99.99, sma: 100 },
+  nan: { close: 100, sma: NaN },
+} as const;
 
 describe('SMACrossover Strategy', () => {
   let strategy: SMACrossover;
@@ -27,13 +39,14 @@ describe('SMACrossover Strategy', () => {
     bucket.set(symbol, createCandle(price));
   };
 
-  /** Plays the steps (see playSteps): a price (above, below the SMA) is a candle */
+  /** Plays the steps (see playSteps): a close and an SMA (see STEPS) are a candle */
   const play = (steps: string) =>
     playSteps(steps, strategy, orders, step => {
-      setBucket(PRICES[step as keyof typeof PRICES]);
+      const { close, sma } = STEPS[step as keyof typeof STEPS];
+      setBucket(close);
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-        ...makeIndicator(100),
+        ...makeIndicator(sma),
       );
     });
   const sides = () => advices.map(({ side }) => side);
@@ -84,18 +97,32 @@ describe('SMACrossover Strategy', () => {
       expect(advices).toHaveLength(0);
     });
 
+    // Nothing logged either: a NaN SMA, compared with the price, was recorded as the price being below it
     it.each`
       smaRes
       ${undefined}
       ${null}
       ${'invalid'}
+      ${NaN}
+      ${Infinity}
+      ${-Infinity}
     `('should do nothing when SMA result is invalid ($smaRes)', ({ smaRes }) => {
       setBucket(100);
       strategy.onTimeframeCandleAfterWarmup(
         { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
         ...makeIndicator(smaRes),
       );
-      expect(advices).toHaveLength(0);
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
+    });
+
+    it.each`
+      case                                  | steps                                  | expectedSides
+      ${'before the first state'}           | ${'nan above'}                         | ${[]}
+      ${'between the two sides of a cross'} | ${'below nan above'}                   | ${['BUY']}
+      ${'above the SMA, when long'}         | ${'below above completed:1 nan tick+'} | ${['BUY']}
+    `('should skip a candle whose SMA is NaN, as one not ready yet: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
     });
 
     it('should record initial state without creating an order on first candle', () => {
@@ -164,6 +191,51 @@ describe('SMACrossover Strategy', () => {
     });
   });
 
+  describe('on a flat window', () => {
+    // Compared strictly, an SMA one ulp above the price, or on it, read as the price below it, one ulp below as the price above it.
+    // Long or flat is the position held when the window turns flat.
+    it.each`
+      case                                       | steps                                       | expectedSides
+      ${'SMA an ulp above the price, when long'} | ${'below above completed:1 on+'}            | ${['BUY']}
+      ${'SMA on the price, when long'}           | ${'below above completed:1 on'}             | ${['BUY']}
+      ${'SMA an ulp below the price, when long'} | ${'below above completed:1 on-'}            | ${['BUY']}
+      ${'SMA wobbling around it, when long'}     | ${'below above completed:1 on- on+ on on+'} | ${['BUY']}
+      ${'SMA an ulp below the price, when flat'} | ${'below on-'}                              | ${[]}
+      ${'SMA on the price, when flat'}           | ${'below on'}                               | ${[]}
+      ${'SMA an ulp above the price, when flat'} | ${'below on+'}                              | ${[]}
+      ${'SMA wobbling around it, when flat'}     | ${'below on+ on- on on-'}                   | ${[]}
+    `('should not cross on a flat window: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
+    });
+
+    it.each`
+      case                                 | steps                                      | expectedSides
+      ${'a tick below the SMA, when long'} | ${'below above completed:1 on+ on- tick-'} | ${['BUY', 'SELL']}
+      ${'a tick above the SMA, when long'} | ${'below above completed:1 on+ on- tick+'} | ${['BUY']}
+      ${'a tick above the SMA, when flat'} | ${'below on- on+ tick+'}                   | ${['BUY']}
+      ${'a tick below the SMA, when flat'} | ${'below on- on+ tick-'}                   | ${[]}
+    `('should cross once the price leaves the SMA on the other side: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
+    });
+
+    it.each`
+      case                                    | steps               | expectedSides
+      ${'on the SMA, then above it'}          | ${'on above'}       | ${[]}
+      ${'ulps off the SMA, then above it'}    | ${'on+ on- above'}  | ${[]}
+      ${'on the SMA, then below, then above'} | ${'on below above'} | ${['BUY']}
+    `('should take the first side after the warmup as the initial state: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
+    });
+
+    it('should log the initial state once the price leaves the SMA', () => {
+      play('on on+ above');
+      expect(logs.filter(({ level }) => level === 'info')).toEqual([{ level: 'info', message: 'Initial state: price above SMA' }]);
+    });
+  });
+
   describe('order outcomes', () => {
     // An outcome reports nothing of an execution, unless its step gives the BTC left free after it ('errored:2:0', see playSteps)
     it.each`
@@ -201,6 +273,9 @@ describe('SMACrossover Strategy', () => {
       ${undefined}
       ${null}
       ${'invalid'}
+      ${NaN}
+      ${Infinity}
+      ${-Infinity}
     `('should not log when SMA is missing or invalid ($smaRes)', ({ smaRes }) => {
       setBucket(100.12345);
       strategy.log({ candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>, ...makeIndicator(smaRes));

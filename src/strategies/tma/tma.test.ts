@@ -15,11 +15,25 @@ vi.mock('@services/configuration/configuration', () => {
 });
 
 const symbol = 'BTC/USDT';
-// The short, medium and long SMAs of each alignment
+const ULP = 2 ** -46; // the gap between 100 and the next double
+// The short, medium and long SMAs of each alignment. On a flat stretch the SMAs holding only its price are equal in exact arithmetic,
+// their running sums leave them a few ulps apart: 'flatRise' has the short one ulp above the medium, itself one ulp above the long,
+// 'flatPeak' the medium one ulp above both others, 'flatDip' one ulp below both. In 'pairOver' and 'pairUnder' only the short and the
+// medium hold the flat price, one ulp apart, the long still below or above it, and 'runningSums' are the SMAs 10, 21 and 50 that the
+// running sums gave on the 26th candle of a stretch flat at 29864.4. 'tickRise' and 'tickPeak' are a tick apart: real alignments.
 const ALIGNMENTS = {
   up: [10, 5, 2],
   down: [3, 5, 2],
   bearish: [2, 5, 10],
+  flat: [100, 100, 100],
+  flatRise: [100 + ULP, 100, 100 - ULP],
+  flatPeak: [100 - ULP, 100, 100 - ULP],
+  flatDip: [100 + ULP, 100, 100 + ULP],
+  pairOver: [100 + ULP, 100, 99],
+  pairUnder: [100 + ULP, 100, 101],
+  runningSums: [29864.40000000007, 29864.40000000003, 29864.298399999956],
+  tickRise: [100.02, 100.01, 100],
+  tickPeak: [100, 100.01, 100],
 } as const;
 
 describe('TMA Strategy', () => {
@@ -83,17 +97,23 @@ describe('TMA Strategy', () => {
       expect(advices).toHaveLength(0);
     });
 
+    // Nothing logged either: a NaN SMA failed every comparison, read as no clear trend, and an infinite one made a trend
     it.each`
       shortRes     | mediumRes    | longRes
       ${undefined} | ${5}         | ${2}
       ${10}        | ${undefined} | ${2}
       ${10}        | ${5}         | ${undefined}
       ${'invalid'} | ${5}         | ${2}
+      ${NaN}       | ${5}         | ${2}
+      ${10}        | ${NaN}       | ${2}
+      ${10}        | ${5}         | ${NaN}
+      ${Infinity}  | ${5}         | ${2}
+      ${10}        | ${5}         | ${-Infinity}
     `(
       'should do nothing when results are invalid (short: $shortRes, med: $mediumRes, long: $longRes)',
       ({ shortRes, mediumRes, longRes }) => {
         onCandle(shortRes, mediumRes, longRes);
-        expect(advices).toHaveLength(0);
+        expect({ advices, logs }).toEqual({ advices: [], logs: [] });
       },
     );
 
@@ -156,6 +176,53 @@ describe('TMA Strategy', () => {
     it('should not emit advice and log debug when no clear trend', () => {
       onCandle(5, 5, 5);
       expect(logs).toContainEqual({ level: 'debug', message: 'No clear trend detected: 5/5/5' });
+    });
+  });
+
+  describe('on a flat stretch', () => {
+    // Compared strictly, SMAs one ulp apart were ordered: an uptrend, or a mixed alignment read as a downtrend. The pair is the short
+    // and the medium SMAs; long or flat, the position held when the stretch turns flat.
+    it.each`
+      case                                       | steps                                                     | expectedSides
+      ${'three ulps apart, rising, when flat'}   | ${'flatRise'}                                             | ${[]}
+      ${'pair ulps apart over long, when flat'}  | ${'pairOver'}                                             | ${[]}
+      ${'running sums at 29864.4, when flat'}    | ${'runningSums'}                                          | ${[]}
+      ${'medium ulps above both, when long'}     | ${'up completed:1 flatPeak'}                              | ${['BUY']}
+      ${'medium ulps below both, when long'}     | ${'up completed:1 flatDip'}                               | ${['BUY']}
+      ${'pair ulps apart under long, when long'} | ${'up completed:1 pairUnder'}                             | ${['BUY']}
+      ${'long crossing the pair, when long'}     | ${'up completed:1 pairOver pairUnder pairOver pairUnder'} | ${['BUY']}
+      ${'three SMAs equal, when long'}           | ${'up completed:1 flat'}                                  | ${['BUY']}
+    `('should see no trend when two SMAs are within the tolerance: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
+    });
+
+    // The other pair: the medium and the long SMAs ulps apart, the short a real amount above or below them
+    it.each`
+      case                                       | setup               | smas                     | expectedSides
+      ${'short above them, when flat'}           | ${''}               | ${[101, 100, 100 - ULP]} | ${[]}
+      ${'short below, medium on top, when long'} | ${'up completed:1'} | ${[99, 100, 100 - ULP]}  | ${['BUY']}
+      ${'short above, medium lowest, when long'} | ${'up completed:1'} | ${[101, 100, 100 + ULP]} | ${['BUY']}
+    `('should see no trend when the medium and the long SMAs are within the tolerance: $case', ({ setup, smas, expectedSides }) => {
+      play(setup);
+      onCandle(...smas);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
+    });
+
+    it.each`
+      case                                       | steps                                           | expectedSides
+      ${'three a tick apart, rising, when flat'} | ${'tickRise'}                                   | ${['BUY']}
+      ${'medium a tick above both, when long'}   | ${'up completed:1 tickPeak'}                    | ${['BUY', 'SELL']}
+      ${'flat stretch, then uptrend, when flat'} | ${'flatRise pairOver tickRise'}                 | ${['BUY']}
+      ${'flat stretch, downtrend, when long'}    | ${'up completed:1 flatPeak pairUnder tickPeak'} | ${['BUY', 'SELL']}
+    `('should trade a real alignment: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
+    });
+
+    it('should log no clear trend when two SMAs are within the tolerance', () => {
+      play('pairOver');
+      expect(logs).toContainEqual({ level: 'debug', message: `No clear trend detected: ${100 + ULP}/100/99` });
     });
   });
 
