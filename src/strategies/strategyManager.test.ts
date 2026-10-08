@@ -1285,6 +1285,90 @@ describe('StrategyManager', () => {
           expect(refuseNextSell).toThrow(ApplicationStopError);
         });
 
+        // Nothing is left for the stop to protect (sold by hand on the exchange, or by a SELL whose outcome was lost): active again, it
+        // sent a SELL refused on each minute under its stop price, until the circuit breaker stopped the bot
+        describe('once it ends without completing, by what the portfolio after it shows', () => {
+          /** Ends the SELL of the stop as `outcome` says, after selling `sold`, the portfolio after it holding `balance` of BTC, if any */
+          const endSell = (outcome: string, sold: number, price: number, balance?: BalanceDetail) => {
+            const portfolio = new Map(balance ? [['BTC', balance]] : []);
+            const order = { id: SELL_ID, symbol, side: 'SELL', type: 'MARKET', amount: 0.5, orderCreationDate } as const;
+            if (outcome === 'errors')
+              manager.onOrderErrored({
+                order: { ...order, reason: 'Insufficient balance', orderErrorDate: 61000, filled: sold },
+                exchange: { price, portfolio },
+              });
+            else
+              manager.onOrderCanceled({
+                order: { ...order, filled: sold, remaining: 0.5 - sold, orderCancelationDate: 61000 },
+                exchange: { price, portfolio },
+              });
+          };
+
+          // A MARKET order sells at least 0.0003 (the higher of the two minimums), in steps of 0.00001, for at least 5 USDT
+          beforeEach(() => {
+            manager.setMarketData(
+              new Map([[symbol, { amount: { min: 0.0001 }, market: { min: 0.0003 }, cost: { min: 5 }, precision: { amount: 0.00001 } }]]),
+            );
+          });
+
+          describe.each`
+            shows                                                   | outcome          | sold   | price    | free        | ending
+            ${'nothing free'}                                       | ${'errors'}      | ${0}   | ${48000} | ${0}        | ${'errored, no fill reported (Insufficient balance)'}
+            ${'nothing free'}                                       | ${'is canceled'} | ${0}   | ${48000} | ${0}        | ${'was canceled, no fill reported'}
+            ${'nothing free'}                                       | ${'errors'}      | ${0.2} | ${48000} | ${0}        | ${'errored after selling 0.2 BTC (Insufficient balance)'}
+            ${'less than a MARKET order sells'}                     | ${'errors'}      | ${0}   | ${48000} | ${0.0002}   | ${'errored, no fill reported (Insufficient balance)'}
+            ${'an amount worth less than 5 USDT'}                   | ${'errors'}      | ${0}   | ${10000} | ${0.0003}   | ${'errored, no fill reported (Insufficient balance)'}
+            ${'an amount worth 5 USDT until truncated to its step'} | ${'errors'}      | ${0}   | ${16200} | ${0.000309} | ${'errored, no fill reported (Insufficient balance)'}
+          `('when it $outcome after selling $sold, the portfolio after it showing $shows', ({ outcome, sold, price, free, ending }) => {
+            beforeEach(() => {
+              endSell(outcome, sold, price, { free, used: 0, total: free });
+            });
+
+            it('removes the stop', () => {
+              expect(stop()).toBeUndefined();
+            });
+
+            it('says at warning level why: nothing is left for the stop to protect', () => {
+              expect(stopWarnings()).toEqual([
+                [
+                  'strategy',
+                  `Trailing stop of BUY ${BUY_ID} removed: its SELL ${SELL_ID} ${ending}, and the portfolio after it shows ${free} BTC free, too little to sell at the minimums of the market. Nothing is left for the stop to protect`,
+                ],
+              ]);
+            });
+
+            it('sends no SELL when the price falls further', () => {
+              manager.onOneMinuteBucket(minute(48000, 40000));
+              expect(listener).not.toHaveBeenCalled();
+            });
+          });
+
+          // A market without minimums still takes nothing from a SELL of nothing
+          it('removes the stop when the portfolio after its error shows nothing free, on a market without minimums', () => {
+            manager.setMarketData(new Map([[symbol, {}]]));
+            endSell('errors', 0, 48000, { free: 0, used: 0, total: 0 });
+            expect(stop()).toBeUndefined();
+          });
+
+          // Reserved for an order the strategy did not create (placed by hand on the exchange), the asset is not the stop's to sell
+          it('removes the stop when the portfolio after its error shows all of the asset reserved, none free', () => {
+            endSell('errors', 0, 48000, { free: 0, used: 0.5, total: 0.5 });
+            expect(stop()).toBeUndefined();
+          });
+
+          // Enough to sell, or nothing that tells: the stop protects what is held, as before
+          it.each`
+            shows                                                           | price    | balance
+            ${'enough to sell'}                                             | ${48000} | ${{ free: 0.0004, used: 0, total: 0.0004 }}
+            ${'enough to sell, at a price unknown (0)'}                     | ${0}     | ${{ free: 0.0003, used: 0, total: 0.0003 }}
+            ${'no balance of the asset (before the first synchronization)'} | ${48000} | ${undefined}
+            ${'a free balance that is not a number'}                        | ${48000} | ${{ free: NaN, used: 0, total: NaN }}
+          `('makes the stop active again when the portfolio after its error shows $shows', ({ price, balance }) => {
+            endSell('errors', 0, price, balance);
+            expect(stop()?.status).toBe('active');
+          });
+        });
+
         // The SELL already sent is the strategy's: a stop canceled is not brought back by its outcome
         describe('when the strategy cancels the stop while it sells', () => {
           beforeEach(() => {
@@ -1446,6 +1530,301 @@ describe('StrategyManager', () => {
             exchange,
           });
           expect([manager['pendingTrailingStops'].size, manager['trailingStopManager'].getOrders().size]).toEqual([0, 0]);
+        });
+      });
+
+      // The exchange reserves the asset for a SELL the strategy created: a stop that triggered while that SELL was pending had its own
+      // SELL refused, then, active again, sent it on each minute under its stop price, each refusal counting towards the circuit breaker,
+      // which stopped the bot
+      describe('while a SELL the strategy created is pending on the pair', () => {
+        const BUY_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000c1';
+        const OWN_SELL_ID: UUID = '5e115e11-0000-4000-8000-0000000000c2';
+        const OTHER_SELL_ID: UUID = '5e115e11-0000-4000-8000-0000000000c3';
+        const STOP_SELL_ID: UUID = '5e115e11-0000-4000-8000-0000000000c4';
+        const LATER_BUY_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000c5';
+        const ETH_ID: UUID = 'e7e70000-0000-4000-8000-0000000000c6';
+        const exchange = { price: 48000, portfolio: new Map() };
+        let listener: Mock;
+
+        /** Creates an order as the strategy does, createOrder drawing `id` for it */
+        const create = (id: UUID, order: StrategyOrder) => {
+          vi.mocked(randomUUID).mockReturnValueOnce(id);
+          manager['createOrder'](order);
+        };
+        /** A BUY of `amount` asking for a stop of `percentage` without trigger, completed: its stop is armed */
+        const armStop = (id: UUID, amount: number, percentage: number) => {
+          create(id, { symbol, side: 'BUY', type: 'MARKET', trailing: { percentage } });
+          completeBuy(id, amount);
+        };
+        /** The take-profit `id` the strategy places: a LIMIT SELL of 0.5 above the market, whose amount the exchange reserves */
+        const placeTakeProfit = (id: UUID) => create(id, { symbol, side: 'SELL', type: 'LIMIT', amount: 0.5, price: 55000 });
+        /** The take-profit `id`, as the Trader relays its end */
+        const takeProfit = (id: UUID) =>
+          ({ id, symbol, side: 'SELL', type: 'LIMIT', amount: 0.5, price: 55000, orderCreationDate }) as const;
+        const cancelTakeProfit = (id: UUID) =>
+          manager.onOrderCanceled({ order: { ...takeProfit(id), filled: 0, remaining: 0.5, orderCancelationDate: 61000 }, exchange });
+        const failTakeProfit = (id: UUID) =>
+          manager.onOrderErrored({
+            order: { ...takeProfit(id), reason: 'Exchange unavailable', orderErrorDate: 61000, filled: 0 },
+            exchange,
+          });
+        const completeTakeProfit = (id: UUID) =>
+          manager.onOrderCompleted({ order: { ...takeProfit(id), orderExecutionDate: 61000, effectivePrice: 55000, fee: 0 }, exchange });
+        /** The stop of the BUY, as the trailing manager keeps it */
+        const stop = () => manager['trailingStopManager'].getOrders().get(BUY_ID);
+        /** What the manager said at info level of the stop of the BUY */
+        const stopLines = () =>
+          vi.mocked(info).mock.calls.filter(([, message]) => typeof message === 'string' && message.includes(`BUY ${BUY_ID}`));
+        const heldLine = (sellIds: string) => [
+          'strategy',
+          `Trailing stop of BUY ${BUY_ID} held back: a price, 48500, reached its stop price, 49000, while a SELL the strategy created on BTC/USDT is pending (${sellIds}). The stop sends no SELL until that one ends: completed, it cancels the stop; canceled or errored, the stop may trigger again from the next minute`,
+        ];
+        const resumeLine = (sellId: UUID, outcome: string) => [
+          'strategy',
+          `Trailing stop of BUY ${BUY_ID} resumes: the SELL ${sellId} the strategy created on BTC/USDT ${outcome}, and no other is pending there, so the stop may trigger again from the next minute`,
+        ];
+        /** Records every order created from now on */
+        const listen = () => {
+          listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+        };
+
+        // A stop of 2% without trigger, which a first minute sets at a peak of 50000 and a stop price of 49000, then a take-profit
+        describe('placed once the stop is armed', () => {
+          beforeEach(() => {
+            armStop(BUY_ID, 0.5, 2);
+            manager.onOneMinuteBucket(minute(50000, 49500));
+            placeTakeProfit(OWN_SELL_ID);
+            listen();
+          });
+
+          describe('when a price goes through the stop price', () => {
+            beforeEach(() => {
+              manager.onOneMinuteBucket(minute(48500, 48000));
+            });
+
+            it('sends no SELL', () => {
+              expect(listener).not.toHaveBeenCalled();
+            });
+
+            it('does not tell the strategy the stop triggered', () => {
+              expect(strategy.onTrailingStopTriggered).not.toHaveBeenCalled();
+            });
+
+            it('keeps the stop active', () => {
+              expect(stop()?.status).toBe('active');
+            });
+
+            it('says at info level that the stop is held back, by which SELL, and until when', () => {
+              expect(stopLines()).toEqual([heldLine(OWN_SELL_ID)]);
+            });
+
+            it('says it once, however long the price stays under the stop price', () => {
+              manager.onOneMinuteBucket(minute(47000, 46000));
+              expect(stopLines()).toEqual([heldLine(OWN_SELL_ID)]);
+            });
+
+            // Its open raises the peak to 55000, the stop price to 53900, which its low stays above
+            it('keeps trailing the peak: a new high raises the stop price', () => {
+              manager.onOneMinuteBucket(minute(55000, 54500));
+              expect(stop()?.stopPrice).toBe(53900);
+            });
+          });
+
+          // Canceled (moved, or given up) or errored, the take-profit left the position held: the stop protects it again
+          describe.each`
+            outcome          | end                 | said
+            ${'is canceled'} | ${cancelTakeProfit} | ${'was canceled'}
+            ${'errors'}      | ${failTakeProfit}   | ${'errored'}
+          `('once that SELL $outcome, after it held back the stop', ({ end, said }) => {
+            beforeEach(() => {
+              manager.onOneMinuteBucket(minute(48500, 48000));
+              end(OWN_SELL_ID);
+            });
+
+            it('says at info level that the stop resumes, and why', () => {
+              expect(stopLines()).toEqual([heldLine(OWN_SELL_ID), resumeLine(OWN_SELL_ID, said)]);
+            });
+
+            it('sends the SELL of the stop on the next minute at or below its stop price', () => {
+              vi.mocked(randomUUID).mockReturnValueOnce(STOP_SELL_ID);
+              manager.onOneMinuteBucket(minute(48500, 48000));
+              expect(listener).toHaveBeenCalledExactlyOnceWith(
+                expect.objectContaining({ id: STOP_SELL_ID, symbol, side: 'SELL', type: 'MARKET', amount: 0.5 }),
+              );
+            });
+
+            it('says it held the stop back again when a later SELL of the strategy does', () => {
+              placeTakeProfit(OTHER_SELL_ID);
+              manager.onOneMinuteBucket(minute(48500, 48000));
+              expect(stopLines().at(-1)).toEqual(heldLine(OTHER_SELL_ID));
+            });
+
+            it('forgets that SELL', () => {
+              expect(manager['strategySellIds'].has(OWN_SELL_ID)).toBe(false);
+            });
+          });
+
+          // It closed the position the stop protected (see 'when the strategy sells on a pair')
+          describe('once that SELL completes, after it held back the stop', () => {
+            beforeEach(() => {
+              manager.onOneMinuteBucket(minute(48500, 48000));
+              completeTakeProfit(OWN_SELL_ID);
+            });
+
+            it('cancels the stop, without a word of it resuming', () => {
+              expect(stopLines()).toEqual([
+                heldLine(OWN_SELL_ID),
+                [
+                  'strategy',
+                  `Trailing stop of BUY ${BUY_ID} canceled: the strategy sold on BTC/USDT (SELL ${OWN_SELL_ID} completed), closing the position the stop protected`,
+                ],
+              ]);
+            });
+
+            it('sends no SELL when the price falls further', () => {
+              manager.onOneMinuteBucket(minute(47000, 46000));
+              expect(listener).not.toHaveBeenCalled();
+            });
+
+            it('forgets the stop it held back', () => {
+              expect(manager['heldStopIds'].has(BUY_ID)).toBe(false);
+            });
+
+            // Its outcome came: it holds nothing back any more
+            it('lets the stop of a later BUY on the pair trigger', () => {
+              armStop(LATER_BUY_ID, 0.4, 2);
+              manager.onOneMinuteBucket(minute(50000, 48000));
+              expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ symbol, side: 'SELL', type: 'MARKET', amount: 0.4 }));
+            });
+          });
+
+          // Two take-profits: the stop is held back until neither is pending
+          describe('when another SELL the strategy created is pending there', () => {
+            beforeEach(() => {
+              placeTakeProfit(OTHER_SELL_ID);
+              listen();
+            });
+
+            it('names both as it holds the stop back', () => {
+              manager.onOneMinuteBucket(minute(48500, 48000));
+              expect(stopLines()).toEqual([heldLine(`${OWN_SELL_ID}, ${OTHER_SELL_ID}`)]);
+            });
+
+            describe('once one of them errors', () => {
+              beforeEach(() => {
+                failTakeProfit(OWN_SELL_ID);
+                manager.onOneMinuteBucket(minute(48500, 48000));
+              });
+
+              it('still holds the stop back', () => {
+                expect(listener).not.toHaveBeenCalled();
+              });
+
+              it('says nothing of the stop resuming, and names the other as it holds the stop back', () => {
+                expect(stopLines()).toEqual([heldLine(OTHER_SELL_ID)]);
+              });
+            });
+          });
+        });
+
+        // The stop triggered first; the strategy then created a SELL of its own, which reached the exchange first: the SELL of the stop
+        // was refused, all of the asset reserved for the strategy's
+        describe('when the SELL of the stop is refused, the asset reserved for a SELL the strategy created since', () => {
+          beforeEach(() => {
+            armStop(BUY_ID, 0.5, 2);
+            vi.mocked(randomUUID).mockReturnValueOnce(STOP_SELL_ID);
+            manager.onOneMinuteBucket(minute(50000, 48000)); // Peak 50000, stop price 49000, which its low goes through
+            create(OWN_SELL_ID, { symbol, side: 'SELL', type: 'STICKY' });
+            manager.onOrderErrored({
+              order: {
+                id: STOP_SELL_ID,
+                symbol,
+                side: 'SELL',
+                type: 'MARKET',
+                amount: 0.5,
+                reason: 'Insufficient balance',
+                orderCreationDate,
+                orderErrorDate: 61000,
+                filled: 0,
+              },
+              exchange: { price: 48000, portfolio: new Map([['BTC', { free: 0, used: 0.5, total: 0.5 }]]) },
+            });
+            listen();
+          });
+
+          it('makes the stop active again, though nothing is free: that SELL holds the asset', () => {
+            expect(stop()?.status).toBe('active');
+          });
+
+          it('does not send the SELL of the stop again while that SELL is pending', () => {
+            manager.onOneMinuteBucket(minute(48500, 48000));
+            expect(listener).not.toHaveBeenCalled();
+          });
+
+          it('sends it once that SELL is canceled', () => {
+            manager.onOrderCanceled({
+              order: {
+                id: OWN_SELL_ID,
+                symbol,
+                side: 'SELL',
+                type: 'STICKY',
+                amount: 0.5,
+                filled: 0,
+                remaining: 0.5,
+                orderCreationDate,
+                orderCancelationDate: 61000,
+              },
+              exchange,
+            });
+            manager.onOneMinuteBucket(minute(48500, 48000));
+            expect(listener).toHaveBeenCalledExactlyOnceWith(
+              expect.objectContaining({ symbol, side: 'SELL', type: 'MARKET', amount: 0.5 }),
+            );
+          });
+        });
+
+        // Its SELL went out before the strategy's, which holds back no trigger already sent
+        it('says nothing of resuming a stop that sells as that SELL ends', () => {
+          armStop(BUY_ID, 0.5, 2);
+          manager.onOneMinuteBucket(minute(50000, 48000));
+          placeTakeProfit(OWN_SELL_ID);
+          cancelTakeProfit(OWN_SELL_ID);
+          expect(stopLines()).toEqual([]);
+        });
+
+        // Each stop sells what its own BUY filled: the SELL of one is not a SELL of the strategy's
+        it('lets each stop the price goes through send its SELL, the SELL of one holding back no other', () => {
+          armStop(BUY_ID, 0.5, 2);
+          armStop(LATER_BUY_ID, 0.3, 5);
+          listen();
+          vi.mocked(randomUUID).mockReturnValueOnce(STOP_SELL_ID).mockReturnValueOnce(OTHER_SELL_ID);
+          manager.onOneMinuteBucket(minute(50000, 46000)); // Stop prices 49000 and 47500, both above its low
+          expect(listener.mock.calls.map(([advice]) => advice.amount)).toEqual([0.5, 0.3]);
+        });
+
+        it('holds back no stop of another pair', () => {
+          manager.setMarketData(twoPairsMarketData);
+          create(ETH_ID, { symbol: 'ETH/USDT', side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+          manager.onOrderCompleted({
+            order: {
+              id: ETH_ID,
+              symbol: 'ETH/USDT',
+              side: 'BUY',
+              type: 'MARKET',
+              amount: 2,
+              orderCreationDate,
+              orderExecutionDate: 61000,
+              effectivePrice: 3000,
+              fee: 0,
+            },
+            exchange,
+          });
+          placeTakeProfit(OWN_SELL_ID);
+          listen();
+          // Peak 3000, stop price 2940, which its low goes through
+          manager.onOneMinuteBucket(new Map([['ETH/USDT', { start: 120000, open: 3000, high: 3000, low: 2900, close: 2900, volume: 1 }]]));
+          expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ symbol: 'ETH/USDT', side: 'SELL', amount: 2 }));
         });
       });
     });

@@ -685,6 +685,90 @@ describe('TrailingStopManager', () => {
   });
 
   /* -------------------------------------------------------------------------- */
+  /*                    a stop whose trigger is held back                       */
+  /* -------------------------------------------------------------------------- */
+
+  // The StrategyManager holds back the stops of a pair while a SELL the strategy created is pending there: the exchange reserves the
+  // asset for that SELL, and a stop that triggered meanwhile had its own SELL refused, minute after minute, until the circuit breaker
+  // stopped the bot
+  describe('a stop whose trigger is held back', () => {
+    let isTriggerHeld: Mock;
+    let triggered: Mock;
+
+    beforeEach(() => {
+      isTriggerHeld = vi.fn(() => true);
+      manager = new TrailingStopManager(isTriggerHeld);
+      triggered = vi.fn();
+      manager.on(TRAILING_STOP_TRIGGERED, triggered);
+    });
+
+    describe('once active', () => {
+      /** The stop, as the manager keeps it */
+      const stop = () => manager.getOrders().get(defaultId);
+
+      beforeEach(() => {
+        manager.addOrder({ ...defaultOrder, trailing: { percentage: 2 } }); // Active at once, for 0.5
+        manager.update(ohlc(100, 100, 100, 100)); // Peak 100, stop price 98
+      });
+
+      it('is not triggered by a candle that goes through its stop price', () => {
+        manager.update(ohlc(99, 99, 97, 97.5));
+        expect(triggered).not.toHaveBeenCalled();
+      });
+
+      it('stays active', () => {
+        manager.update(ohlc(99, 99, 97, 97.5));
+        expect(stop()?.status).toBe('active');
+      });
+
+      // Met as open, low, high, close: the low is the first of its prices at or below 98
+      it('asks the hold first with the stop and the first price that reached its stop price', () => {
+        manager.update(ohlc(99, 99, 97, 97.5));
+        expect(isTriggerHeld).toHaveBeenNthCalledWith(1, expect.objectContaining({ id: defaultId, highestPeak: 100, stopPrice: 98 }), 97);
+      });
+
+      it('asks the hold with a copy of the stop, not the stop it keeps', () => {
+        manager.update(ohlc(99, 99, 97, 97.5));
+        expect(isTriggerHeld.mock.calls[0][0]).not.toBe(stop());
+      });
+
+      it('does not ask the hold while no price reaches its stop price', () => {
+        manager.update(ohlc(99, 101, 98.5, 100));
+        expect(isTriggerHeld).not.toHaveBeenCalled();
+      });
+
+      // The low (97) is held back, then the high raises the peak to 105 and the stop price to 102.9, above the close
+      it('trails on: a later price of the candle raises its peak', () => {
+        manager.update(ohlc(99, 105, 97, 104));
+        expect(stop()?.highestPeak).toBe(105);
+      });
+
+      it('is triggered by the next price at or below its stop price once the hold is lifted', () => {
+        manager.update(ohlc(99, 99, 97, 97.5));
+        isTriggerHeld.mockReturnValue(false);
+        manager.update(ohlc(97.9, 98, 97, 97.5));
+        expect(triggered).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: defaultId, status: 'selling', stopPrice: 98 }));
+      });
+    });
+
+    // Opens at the trigger and falls 2% below: without a hold, the stop triggers on that very candle (peak 50000, stop price 49000)
+    describe('on the candle that activates it', () => {
+      beforeEach(() => {
+        manager.addOrder(defaultOrder); // Trigger 50000, 2%
+        manager.update(ohlc(50000, 50200, 48900, 49000));
+      });
+
+      it('activates it', () => {
+        expect(manager.getOrders().get(defaultId)?.status).toBe('active');
+      });
+
+      it('does not trigger it', () => {
+        expect(triggered).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  /* -------------------------------------------------------------------------- */
   /*                              removeOrder                                   */
   /* -------------------------------------------------------------------------- */
 

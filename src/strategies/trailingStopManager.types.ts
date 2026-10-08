@@ -16,7 +16,8 @@ export type TrailingStopState = {
   /**
    * - dormant: armed with a trigger the price has not reached yet.
    * - active: trailing the price, from its arming without trigger, from the candle that reached its trigger, or again once its SELL
-   *   ended without completing.
+   *   ended without completing. While its trigger is held back (see TriggerHold) it trails on, its peak still rising, but a price at
+   *   or below its stop price does not trigger it.
    * - selling: triggered, its MARKET SELL (sellOrderId) sent and not ended yet. It trails no more, and is kept until that SELL ends:
    *   completed, the stop is over; errored or canceled, it is active again, from the peak and the stop price it triggered at, for
    *   what that SELL left unsold.
@@ -39,3 +40,12 @@ export type TrailingStopState = {
   /** The MARKET SELL the stop sent when it triggered, while it is selling */
   sellOrderId?: UUID;
 };
+
+/**
+ * Asked by the TrailingStopManager whenever a price reaches the stop price of an active stop, with a copy of the stop and that price:
+ * true holds the trigger back, and the stop trails on as if the price had not reached it, a later price of the candle still raising
+ * its peak. The StrategyManager holds back the stops of a pair while a SELL the strategy created is pending there: the exchange
+ * reserves the asset for that SELL, and a stop that triggered meanwhile had its own SELL refused, sent again each minute the price
+ * stayed under its stop price, until the circuit breaker stopped the bot. Nothing is held back when no hold is given.
+ */
+export type TriggerHold = (stop: TrailingStopState, price: number) => boolean;

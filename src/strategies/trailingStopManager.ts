@@ -7,7 +7,7 @@ import { addPrecise } from '@utils/math/math.utils';
 import { isNil } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { TrailingStopState } from './trailingStopManager.types';
+import { TrailingStopState, TriggerHold } from './trailingStopManager.types';
 
 type AddOrderParams = Pick<StrategyOrder, 'symbol' | 'trailing'> & {
   id: UUID;
@@ -21,6 +21,13 @@ const copyState = (order: TrailingStopState): TrailingStopState => ({ ...order, 
 
 export class TrailingStopManager extends EventEmitter {
   private orders = new Map<UUID, TrailingStopState>();
+  /** Asked before a stop triggers (see TriggerHold): nothing is held back by default */
+  private readonly isTriggerHeld: TriggerHold;
+
+  constructor(isTriggerHeld: TriggerHold = () => false) {
+    super();
+    this.isTriggerHeld = isTriggerHeld;
+  }
 
   public addOrder({ id, symbol, amount, trailing, createdAt }: AddOrderParams): void {
     if (!trailing) return;
@@ -150,6 +157,8 @@ export class TrailingStopManager extends EventEmitter {
   private trail(order: TrailingStopState, prices: number[]): void {
     for (const price of prices) {
       if (price <= order.stopPrice) {
+        // Held back, the stop meets the rest of the candle as if that price had not reached it: below its peak, it raises nothing
+        if (this.isTriggerHeld(copyState(order), price)) continue;
         // Kept, selling, until its SELL ends (see setSellOrderId and resumeSellingStop): deleted here, the stop was gone before its
         // SELL went through, or did not
         order.status = 'selling';

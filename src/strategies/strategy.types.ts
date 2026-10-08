@@ -50,6 +50,12 @@ export type Tools<T> = {
    * out loses its stops at its first SELL. The SELL a stop sends cancels no other stop, and a stop whose BUY has not completed yet is
    * kept: it protects the position that BUY opens.
    *
+   * While a SELL the strategy created is pending on a pair, the stops of that pair trail on but do not trigger (said once per stop,
+   * at info level): the exchange reserves the asset for that SELL, and the SELL of a stop would be refused. Canceled or errored, with
+   * no other SELL of the strategy pending there, that SELL releases them (at info level too): from the next minute, a price at or
+   * below a stop price triggers that stop. So a SELL left pending, a take-profit LIMIT above the market for instance, leaves the
+   * position without a working stop for as long as it pends, the part of the position it does not reserve included.
+   *
    * A BUY that errors after filling part of its amount (`order.filled` in onOrderErrored) gets its stop for that part, with a
    * warning. One that errors with no fill reported loses it, with a warning too: an order whose outcome is unknown may have executed
    * all the same. A BUY canceled loses its stop, even after a partial fill.
@@ -59,11 +65,8 @@ export type Tools<T> = {
   /**
    * Cancels the trailing stop of the BUY `orderId` (TrailingStopState.id), before or after the BUY completes, and while the stop
    * sells: the SELL it sent is then the strategy's alone, and its failure no longer brings the stop back (see
-   * Strategy.onTrailingStopTriggered). A strategy that exits need not call it: its SELL cancels the stops of the pair once it
-   * completes (see createOrder). Until then they protect the position, and one may trigger while that SELL is pending: its own SELL
-   * is then refused if nothing is left to sell, and the stop, active again, sends it again on each minute at or below its stop price
-   * until the strategy's SELL ends, each refusal counting towards the circuit breaker. Canceling the stops before sending the SELL
-   * rules that out, but leaves the position unprotected if that SELL fails.
+   * Strategy.onTrailingStopTriggered). A strategy that exits need not call it: while its SELL is pending the stops of the pair do not
+   * trigger, once that SELL completes they are canceled, and if it fails they protect the position again (see createOrder).
    */
   cancelTrailingOrder: (orderId: UUID) => void;
 };
@@ -128,9 +131,13 @@ export interface Strategy<T> {
    * The stop sells until that SELL ends (state.status 'selling', state.sellOrderId): completed, the stop is over. Errored or canceled,
    * the stop is active again, with a warning and without onTrailingStopActivated, for what that SELL did not sell, from the peak and
    * the stop price it triggered at: the next price at or below that stop price triggers it again, and this hook announces its new
-   * SELL, under a new id. A SELL refused every time (nothing left to sell, an amount out of the limits of the market) is so sent again
-   * on each such minute, each refusal counting towards the circuit breaker, which stops the bot. A strategy that takes over, with a
-   * SELL of its own once that one failed, cancels the stop first (tools.cancelTrailingOrder(state.id)).
+   * SELL, under a new id. Unless the portfolio after that SELL shows too little of the asset free to sell at the minimums of the
+   * market, while no SELL the strategy created is pending on the pair: nothing is left to protect, and the stop is removed, with a
+   * warning. A SELL refused every time with the asset still free (an amount out of the limits of the market, an exchange down) is so
+   * sent again on each such minute, each refusal counting towards the circuit breaker, which stops the bot. A strategy that takes
+   * over, with a SELL of its own once that one failed, may leave the stop: its SELL holds the stop back until it ends (see
+   * Tools.createOrder). To drop the stop, cancel it (tools.cancelTrailingOrder(state.id)), not its SELL: canceled, its SELL makes
+   * it active again.
    *
    * `tools` is the object every other hook gets, passed last so that a hook written without it still fits.
    */
