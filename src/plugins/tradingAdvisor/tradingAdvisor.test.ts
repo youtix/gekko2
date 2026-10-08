@@ -15,6 +15,7 @@ import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
 import { Exchange, MarketData } from '@services/exchange/exchange.types';
+import { error } from '@services/logger';
 import {
   InitParams,
   OnCandleEventParams,
@@ -284,6 +285,23 @@ describe('TradingAdvisor', () => {
       await expect(sendBuckets(advisor, 3)).rejects.toThrow('Indicator out of range');
     });
 
+    // Thrown before it was relayed, the error line was lost even to a strategy that caught the error and went on
+    it('queues the error line of a strategy that catches the error and goes on', async () => {
+      strategy.onEachTimeframeCandle.mockImplementation(({ tools }) => {
+        try {
+          tools.log('error', 'Indicator out of range');
+        } catch {
+          // The strategy goes on
+        }
+      });
+      const advisor = await startAdvisor();
+      await sendBuckets(advisor, 3);
+      const delivered = await flushDeferredEvents(advisor);
+      expect(delivered.get(STRATEGY_INFO_EVENT)).toEqual([
+        { timestamp: START + 3 * ONE_MINUTE, level: 'error', tag: 'strategy', message: 'Indicator out of range' },
+      ]);
+    });
+
     // In realtime the warmup candles are history, replayed with the Trader active: an order created on them is refused, which stops
     // the run before the Trader hears of it
     it.each`
@@ -356,6 +374,13 @@ describe('TradingAdvisor', () => {
       const advisor = await startAdvisor({ maxConsecutiveErrors: ORDER_IDS.length });
       await expect(SEND_ORDER_BATCH.onOrderErrored(advisor)).rejects.toThrow(ApplicationStopError);
     });
+
+    // Thrown before the strategy's hook, the circuit breaker kept the error that trips it from the strategy
+    it('onOrderErrored gives the strategy the order that trips the circuit breaker too', async () => {
+      const advisor = await startAdvisor({ maxConsecutiveErrors: ORDER_IDS.length });
+      await SEND_ORDER_BATCH.onOrderErrored(advisor).catch(() => undefined);
+      expect(strategy.onOrderErrored.mock.calls.map(([{ order }]) => order.id)).toEqual(ORDER_IDS);
+    });
   });
 
   describe('onPortfolioChange', () => {
@@ -372,6 +397,18 @@ describe('TradingAdvisor', () => {
       const advisor = await startAdvisor();
       await advisor.processCloseStream();
       expect(strategy.end).toHaveBeenCalledOnce();
+    });
+
+    // With a warmup of one 3m candle, the second one completes it: a run that ended before used to say nothing about it
+    it.each`
+      bucketCount | errors
+      ${3}        | ${[['strategy', 'Strategy ended before its warmup was over, so it never traded: 1 timeframe candle(s) processed, 2 needed (warmup.candleCount: 1, then one to trade on)']]}
+      ${6}        | ${[]}
+    `('logs $errors.length error(s) when the run ends after $bucketCount one-minute buckets', async ({ bucketCount, errors }) => {
+      const advisor = await startAdvisor({ warmupCandleCount: 1 });
+      await sendBuckets(advisor, bucketCount);
+      await advisor.processCloseStream();
+      expect(vi.mocked(error).mock.calls).toEqual(errors);
     });
   });
 });

@@ -1,10 +1,15 @@
+import { ONE_MINUTE } from '@constants/time.const';
+import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { assetsSchema, currencySchema } from '@models/schema/pairConfig.schema';
 import { TradingPair } from '@models/utility.types';
+import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
 import { binanceExchangeSchema } from '@services/exchange/binance/binance.schema';
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
 import { hyperliquidExchangeSchema } from '@services/exchange/hyperliquid/hyperliquid.schema';
 import { paperBinanceExchangeSchema } from '@services/exchange/paper/paperTradingBinanceExchange.schema';
-import { toTimestamp } from '@utils/date/date.utils';
+import { getCandleStart, getCandleTimeOffset } from '@utils/candle/candle.utils';
+import { toISOString, toTimestamp } from '@utils/date/date.utils';
+import { startOfMinute } from 'date-fns';
 import { difference, find, some } from 'lodash-es';
 import { z } from 'zod';
 import { TIMEFRAMES } from './configuration.const';
@@ -95,6 +100,24 @@ export const watchSchema = z
       });
     }
   });
+
+/**
+ * The timeframe candles a backtest of `daterange` hands the strategy, as the candle batcher makes them from the minutes the backtest
+ * reads (from the minute of `start` to that of `end`, both included): the minutes before the first timeframe boundary are skipped, and
+ * the candle the end of the range cuts is never completed. `endOfCandle(n)` is the end of the n-th candle, the start of the next one.
+ */
+const getBacktestCandles = (candleSize: CandleSize, { start, end }: { start: EpochTimeStamp; end: EpochTimeStamp }) => {
+  const firstMinute = startOfMinute(start).getTime();
+  const endOfRange = startOfMinute(end).getTime() + ONE_MINUTE;
+  const firstCandleStart = getCandleTimeOffset(candleSize, firstMinute) ? getCandleStart(candleSize, firstMinute, -1) : firstMinute;
+  const endOfCandle = (count: number) => getCandleStart(candleSize, firstCandleStart, -count);
+  // Counted at the nominal length of a candle, then moved to the calendar: exact already but for the candles of whole months, whose
+  // length varies (a 1M candle lasts 28 to 31 days, not 30)
+  let count = Math.max(0, Math.floor((endOfRange - firstCandleStart) / (candleSize * ONE_MINUTE)));
+  while (count > 0 && endOfCandle(count) > endOfRange) count--;
+  while (endOfCandle(count + 1) <= endOfRange) count++;
+  return { firstCandleStart, count, endOfCandle };
+};
 
 // Storage holds insertThreshold minutes of candles in memory (about 1.6 KB a minute for 5 pairs), then writes them in one
 // synchronous transaction per pair, which blocks the event loop (with 5 pairs: 0.1 s for a day, 0.6 to 1.2 s for a week), and a
@@ -211,5 +234,21 @@ export const configurationSchema = z
         path: ['strategy', 'name'],
         message: `strategy.name '${data.strategy.name}' must equal the TradingAdvisor strategyName '${strategyName}', which selects the strategy class`,
       });
+    }
+
+    // The warmup takes warmup.candleCount timeframe candles and the strategy trades from the next one: a backtest whose range held no
+    // more ended normally without a trade, its reports empty and nothing naming the warmup. Like the marketData rule, it only checks a
+    // configuration whose sections have no issue: zod leaves a range with an issue as written, not in epoch milliseconds.
+    const { mode, timeframe, daterange, warmup } = data.watch;
+    if (mode === 'backtest' && some(data.plugins, { name: 'TradingAdvisor' }) && timeframe && daterange && !hasSectionIssues) {
+      const { firstCandleStart, count, endOfCandle } = getBacktestCandles(TIMEFRAME_TO_MINUTES[timeframe], daterange);
+      if (count <= warmup.candleCount) {
+        const lastMinuteNeeded = endOfCandle(warmup.candleCount + 1) - ONE_MINUTE;
+        ctx.addIssue({
+          code: 'custom',
+          path: ['watch', 'daterange'],
+          message: `watch.daterange must hold more whole ${timeframe} candles than warmup.candleCount (${warmup.candleCount}), or the warmup never ends and the strategy never trades: it holds ${count} from ${toISOString(firstCandleStart)}, its first ${timeframe} boundary, so it must end at ${toISOString(lastMinuteNeeded)} or later`,
+        });
+      }
     }
   });

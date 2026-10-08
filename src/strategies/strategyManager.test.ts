@@ -8,6 +8,7 @@ import { ONE_MINUTE } from '@constants/time.const';
 import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
 import { CandleBucket } from '@models/event.types';
+import { LogLevel } from '@models/logLevel.types';
 import { BalanceDetail } from '@models/portfolio.types';
 import { config } from '@services/configuration/configuration';
 import { debug, error, info, warning } from '@services/logger';
@@ -86,6 +87,9 @@ vi.mock('@services/configuration/configuration', () => {
   });
   return { config: new Configuration() };
 });
+
+/** A text in single quotes, as util.inspect shows a string */
+const quoted = (text: string) => `'${text}'`;
 
 vi.mock('./debug/debugAdvice.startegy.ts', () => ({
   DebugAdvice: class {
@@ -456,6 +460,58 @@ describe('StrategyManager', () => {
         manager.onStrategyEnd();
         expect(warning).toHaveBeenCalledWith('strategy', 'Strategy ended with 1 active trailing stop(s) that never triggered.');
       });
+
+      // The warmup is over with candle warmupPeriod + 1, the first the strategy can trade on. A backtest too short for it used to end
+      // normally, without a trade and without a word about the warmup.
+      describe.each`
+        warmupPeriod | candleCount | counts
+        ${3}         | ${0}        | ${'0 timeframe candle(s) processed, 4 needed (warmup.candleCount: 3, then one to trade on)'}
+        ${3}         | ${3}        | ${'3 timeframe candle(s) processed, 4 needed (warmup.candleCount: 3, then one to trade on)'}
+        ${0}         | ${0}        | ${'0 timeframe candle(s) processed, 1 needed (warmup.candleCount: 0, then one to trade on)'}
+      `(
+        'when the run ends after $candleCount timeframe candles, with a warmup of $warmupPeriod',
+        ({ warmupPeriod, candleCount, counts }) => {
+          let target: StrategyManager;
+
+          beforeEach(() => {
+            target = new StrategyManager(warmupPeriod);
+            for (let candleNumber = 1; candleNumber <= candleCount; candleNumber++) {
+              target.onOneMinuteBucket(bucket);
+              target.onTimeFrameCandle(bucket);
+            }
+          });
+
+          it('says at error level that the strategy never traded, with the candles processed and needed', () => {
+            target.onStrategyEnd();
+            expect(error).toHaveBeenCalledExactlyOnceWith(
+              'strategy',
+              `Strategy ended before its warmup was over, so it never traded: ${counts}`,
+            );
+          });
+
+          it('does not throw', () => {
+            expect(() => target.onStrategyEnd()).not.toThrow();
+          });
+        },
+      );
+
+      it.each`
+        warmupPeriod | candleCount
+        ${3}         | ${4}
+        ${3}         | ${6}
+        ${0}         | ${1}
+      `(
+        'says nothing at error level when the run ends after $candleCount timeframe candles, with a warmup of $warmupPeriod',
+        ({ warmupPeriod, candleCount }) => {
+          const target = new StrategyManager(warmupPeriod);
+          for (let candleNumber = 1; candleNumber <= candleCount; candleNumber++) {
+            target.onOneMinuteBucket(bucket);
+            target.onTimeFrameCandle(bucket);
+          }
+          target.onStrategyEnd();
+          expect(error).not.toHaveBeenCalled();
+        },
+      );
     });
 
     describe('Circuit Breaker (consecutiveErrors)', () => {
@@ -502,6 +558,90 @@ describe('StrategyManager', () => {
         for (let i = 0; i < 10; i++) {
           expect(() => customManager.onOrderErrored({ order, exchange })).not.toThrow();
         }
+      });
+
+      // A breaker of two errors in a row: the first goes by, the second trips it. The second is the error of a BUY with a trailing stop,
+      // created once the warmup (of no candle) was over.
+      describe('on the error that trips it', () => {
+        let strategy: { onOrderErrored: Mock };
+        let target: StrategyManager;
+        let buyId: UUID;
+        let failure: unknown;
+
+        /** Sends the two errors and returns what the second one throws */
+        const tripBreaker = () => {
+          target.onOrderErrored({ order: { id: 'a1fe5e32-0c1b-4f53-8a5e-3c1d2b7e9f00' }, exchange } as any);
+          try {
+            target.onOrderErrored({ order: { id: buyId }, exchange } as any);
+          } catch (caught) {
+            return caught;
+          }
+        };
+
+        beforeEach(() => {
+          strategy = { onOrderErrored: vi.fn() };
+          target = new StrategyManager(0, 2);
+          target['strategy'] = strategy as any;
+          target.onOneMinuteBucket(bucket);
+          target.onTimeFrameCandle(bucket);
+          buyId = target['createOrder']({ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+          failure = undefined;
+        });
+
+        describe('when the strategy hears of it without failing', () => {
+          beforeEach(() => {
+            failure = tripBreaker();
+          });
+
+          it('stops the run with an ApplicationStopError', () => {
+            expect(failure).toBeInstanceOf(ApplicationStopError);
+          });
+
+          it('tells the strategy of that error before it stops', () => {
+            expect(strategy.onOrderErrored).toHaveBeenLastCalledWith(expect.objectContaining({ order: { id: buyId } }));
+          });
+
+          it('drops the trailing stop of that order before it stops', () => {
+            expect(target['pendingTrailingStops'].has(buyId)).toBe(false);
+          });
+        });
+
+        // The orderly stop prevails, as when two plugins fail on one bucket: a restart-on-failure supervisor leaves the bot stopped
+        describe.each`
+          kind              | thrown                                               | reason
+          ${'a GekkoError'} | ${new GekkoError('strategy', 'Retry limit reached')} | ${'[STRATEGY] Retry limit reached'}
+          ${'a string'}     | ${'Retry limit reached'}                             | ${quoted('Retry limit reached')}
+        `('when the strategy throws $kind as it hears of it', ({ thrown, reason }) => {
+          beforeEach(() => {
+            strategy.onOrderErrored.mockImplementation(({ order }) => {
+              if (order.id === buyId) throw thrown;
+            });
+            failure = tripBreaker();
+          });
+
+          it('stops the run with the ApplicationStopError all the same', () => {
+            expect(failure).toBeInstanceOf(ApplicationStopError);
+          });
+
+          it('logs the failure of the strategy', () => {
+            expect(error).toHaveBeenCalledExactlyOnceWith(
+              'strategy',
+              `The strategy's onOrderErrored failed on the error that trips the circuit breaker: ${reason}`,
+            );
+          });
+
+          it('drops the trailing stop of that order all the same', () => {
+            expect(target['pendingTrailingStops'].has(buyId)).toBe(false);
+          });
+        });
+
+        it('lets a failure of the strategy through on an error that does not trip it', () => {
+          const thrown = new GekkoError('strategy', 'Retry limit reached');
+          strategy.onOrderErrored.mockImplementation(() => {
+            throw thrown;
+          });
+          expect(() => target.onOrderErrored({ order: { id: buyId }, exchange } as any)).toThrow(thrown);
+        });
       });
     });
 
@@ -916,6 +1056,80 @@ describe('StrategyManager', () => {
           tag: 'strategy',
           message: 'Something happened',
         });
+      });
+
+      // Thrown first, the error line was never relayed, even when the strategy caught the error and went on
+      it('relays an error line before it throws', () => {
+        const listener = vi.fn();
+        manager.on(STRATEGY_INFO_EVENT, listener);
+        try {
+          manager['log']('error', 'Indicator out of range');
+        } catch {
+          // The throw has a test of its own
+        }
+        expect(listener).toHaveBeenCalledExactlyOnceWith({
+          timestamp: manager['currentTimestamp'],
+          level: 'error',
+          tag: 'strategy',
+          message: 'Indicator out of range',
+        });
+      });
+
+      /** The warning about a level outside LogLevel, the level shown as util.inspect shows it */
+      const unknownLevelWarning = (shown: string) =>
+        `Unknown log level ${shown} in tools.log: its messages are logged and relayed at info level (levels: debug, info, warn, error)`;
+
+      // Only an untyped strategy can pass these levels: Bun loads a strategyPath without type-checking it, and a JavaScript strategy has
+      // no types. They logged nothing and were relayed as they were, 'ERROR' shown on Telegram as an error that stopped nothing.
+      describe.each`
+        level        | shown
+        ${'warning'} | ${quoted('warning')}
+        ${'ERROR'}   | ${quoted('ERROR')}
+        ${undefined} | ${'undefined'}
+      `('when the strategy logs twice at the unknown level $shown', ({ level, shown }) => {
+        let listener: Mock;
+        let failure: unknown;
+
+        beforeEach(() => {
+          listener = vi.fn();
+          manager.on(STRATEGY_INFO_EVENT, listener);
+          failure = undefined;
+          try {
+            manager['log'](level, 'first');
+            manager['log'](level, 'second');
+          } catch (caught) {
+            failure = caught;
+          }
+        });
+
+        it('does not throw', () => {
+          expect(failure).toBeUndefined();
+        });
+
+        it('warns once, naming the level', () => {
+          expect(vi.mocked(warning).mock.calls).toEqual([['strategy', unknownLevelWarning(shown)]]);
+        });
+
+        it('logs each message at info level', () => {
+          expect(vi.mocked(info).mock.calls).toEqual([
+            ['strategy', 'first'],
+            ['strategy', 'second'],
+          ]);
+        });
+
+        it('relays each message at info level', () => {
+          expect(listener.mock.calls.map(([strategyInfo]) => strategyInfo.level)).toEqual(['info', 'info']);
+        });
+      });
+
+      it('warns once for each unknown level', () => {
+        manager['log']('warning' as LogLevel, 'first');
+        manager['log']('ERROR' as LogLevel, 'second');
+        manager['log']('warning' as LogLevel, 'third');
+        expect(vi.mocked(warning).mock.calls.map(([, message]) => message)).toEqual([
+          unknownLevelWarning(quoted('warning')),
+          unknownLevelWarning(quoted('ERROR')),
+        ]);
       });
     });
   });

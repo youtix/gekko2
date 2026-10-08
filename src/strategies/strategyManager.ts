@@ -28,6 +28,7 @@ import { bindAll, omit } from 'lodash-es';
 import { randomUUID, UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { isAbsolute, resolve } from 'node:path';
+import { inspect } from 'node:util';
 import { z } from 'zod';
 import { IndicatorResults, Strategy, StrategyConstructor, Tools } from './strategy.types';
 import { TrailingStopManager } from './trailingStopManager';
@@ -50,6 +51,8 @@ export class StrategyManager extends EventEmitter {
   private currentTimestamp: EpochTimeStamp = 0;
   private pendingTrailingStops = new Map<UUID, TrailingConfig>();
   private consecutiveErrors = 0;
+  /** The levels outside LogLevel the strategy logged at, each reported once */
+  private readonly unknownLogLevels = new Set<unknown>();
   private strategy?: Strategy<object>;
   private tools: Tools<object>;
 
@@ -165,12 +168,29 @@ export class StrategyManager extends EventEmitter {
   public onOrderErrored({ order, exchange }: OrderErroredEvent) {
     this.consecutiveErrors++;
     const isConsecutiveErrorsReached = this.maxConsecutiveErrors !== -1 && this.consecutiveErrors >= this.maxConsecutiveErrors;
-    if (isConsecutiveErrorsReached) throw new ApplicationStopError(`Max consecutive order errors reached (${this.maxConsecutiveErrors})`);
-    this.strategy?.onOrderErrored?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
+    // Thrown before the hook and the trailing clean-up, the breaker kept the error that trips it from the strategy, which ended holding
+    // the order as pending
+    try {
+      this.strategy?.onOrderErrored?.({ order, exchange, tools: this.tools }, ...this.indicatorsResults);
+    } catch (hookError) {
+      if (!isConsecutiveErrorsReached) throw hookError;
+      // The orderly stop prevails, as in PluginsStream: a restart-on-failure supervisor leaves the bot stopped
+      const reason = hookError instanceof Error ? hookError.message : inspect(hookError);
+      error('strategy', `The strategy's onOrderErrored failed on the error that trips the circuit breaker: ${reason}`);
+    }
     this.cancelTrailingOrder(order.id);
+    if (isConsecutiveErrorsReached) throw new ApplicationStopError(`Max consecutive order errors reached (${this.maxConsecutiveErrors})`);
   }
 
   public onStrategyEnd() {
+    // A backtest too short for its warmup ended normally, without a trade, and only analyzer warnings that did not name the warmup.
+    // The configuration refuses such a range, but a run can still stop before its warmup is over (on an error, or in realtime before
+    // the first live timeframe candle).
+    if (!this.isWarmupCompleted)
+      error(
+        'strategy',
+        `Strategy ended before its warmup was over, so it never traded: ${this.age} timeframe candle(s) processed, ${this.warmupPeriod + 1} needed (warmup.candleCount: ${this.warmupPeriod}, then one to trade on)`,
+      );
     const pendingOrders = this.trailingStopManager.getOrders();
     if (pendingOrders.size > 0)
       warning('strategy', `Strategy ended with ${pendingOrders.size} active trailing stop(s) that never triggered.`);
@@ -246,6 +266,7 @@ export class StrategyManager extends EventEmitter {
   }
 
   private log(level: LogLevel, message: string) {
+    let relayedLevel = level;
     switch (level) {
       case 'debug':
         debug('strategy', message);
@@ -258,9 +279,26 @@ export class StrategyManager extends EventEmitter {
         break;
       case 'error':
         error('strategy', message);
-        throw new GekkoError('strategy', message);
+        break;
+      default: {
+        // Bun loads a strategyPath without type-checking it, and a JavaScript strategy has no types: a level outside LogLevel ('warning',
+        // 'ERROR') logged nothing and was relayed as it was, to Telegram too. Reported once per level: a strategy logs on every candle.
+        const unknownLevel: never = level;
+        if (!this.unknownLogLevels.has(unknownLevel)) {
+          this.unknownLogLevels.add(unknownLevel);
+          warning(
+            'strategy',
+            `Unknown log level ${inspect(unknownLevel)} in tools.log: its messages are logged and relayed at info level (levels: debug, info, warn, error)`,
+          );
+        }
+        info('strategy', message);
+        relayedLevel = 'info';
+      }
     }
-    this.emit<StrategyInfo>(STRATEGY_INFO_EVENT, { timestamp: this.currentTimestamp, level, tag: 'strategy', message });
+    this.emit<StrategyInfo>(STRATEGY_INFO_EVENT, { timestamp: this.currentTimestamp, level: relayedLevel, tag: 'strategy', message });
+    // Relayed before the throw, as every other line is: thrown first, an error line was never relayed, even when the strategy caught the
+    // error and went on
+    if (level === 'error') throw new GekkoError('strategy', message);
   }
 
   /* -------------------------------------------------------------------------- */

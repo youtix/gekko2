@@ -779,4 +779,89 @@ describe('configurationSchema', () => {
       expect(result.error?.issues).toBeUndefined();
     });
   });
+
+  // The warmup takes warmup.candleCount timeframe candles and the strategy trades from the next one. A backtest whose range held no
+  // more ended normally, without a trade. The candles are counted as the batcher makes them from the minutes the backtest reads: from a
+  // timeframe boundary (2024-01-01 is a Monday), whole ones only, the seconds of the range dropped.
+  describe('warmup of a backtest', () => {
+    const tradingAdvisor = [{ name: 'TradingAdvisor', strategyName: 'DEMA' }];
+    const dummyExchange = {
+      name: 'dummy-cex',
+      simulationBalance: [{ assetName: 'USDT', balance: 1000 }],
+      marketData: [marketDataEntry('BTC/USDT')],
+    };
+    const createWarmupConfig = (
+      timeframe: string,
+      candleCount: number,
+      start: string,
+      end: string,
+      { mode = 'backtest', plugins = tradingAdvisor }: { mode?: string; plugins?: object[] } = {},
+    ) => ({
+      ...createBaseConfig(),
+      watch: { ...createBaseConfig().watch, mode, timeframe, warmup: { candleCount }, daterange: { start, end } },
+      exchange: mode === 'backtest' ? dummyExchange : createBaseConfig().exchange,
+      storage: sqliteStorage,
+      plugins,
+    });
+
+    it.each`
+      scenario                                                      | timeframe | candleCount | start                     | end                       | held  | first                         | lastMinuteNeeded
+      ${'exactly warmup.candleCount candles'}                       | ${'1m'}   | ${10}       | ${'2024-01-01T00:00:00Z'} | ${'2024-01-01T00:09:00Z'} | ${10} | ${'2024-01-01T00:00:00.000Z'} | ${'2024-01-01T00:10:00.000Z'}
+      ${'the minutes before the first boundary, which are skipped'} | ${'1h'}   | ${2}        | ${'2024-01-01T00:30:00Z'} | ${'2024-01-01T03:58:00Z'} | ${2}  | ${'2024-01-01T01:00:00.000Z'} | ${'2024-01-01T03:59:00.000Z'}
+      ${'no whole candle, without warmup'}                          | ${'1d'}   | ${0}        | ${'2024-01-01T10:00:00Z'} | ${'2024-01-01T20:00:00Z'} | ${0}  | ${'2024-01-02T00:00:00.000Z'} | ${'2024-01-02T23:59:00.000Z'}
+      ${'weeks, which start on Monday'}                             | ${'1w'}   | ${1}        | ${'2024-01-03T00:00:00Z'} | ${'2024-01-14T23:59:00Z'} | ${1}  | ${'2024-01-08T00:00:00.000Z'} | ${'2024-01-21T23:59:00.000Z'}
+      ${'calendar months, a 29-day February included'}              | ${'1M'}   | ${1}        | ${'2024-01-15T00:00:00Z'} | ${'2024-03-31T23:58:00Z'} | ${1}  | ${'2024-02-01T00:00:00.000Z'} | ${'2024-03-31T23:59:00.000Z'}
+      ${'361 days, a year not over yet'}                            | ${'1y'}   | ${0}        | ${'2023-01-01T00:00:00Z'} | ${'2023-12-27T23:59:00Z'} | ${0}  | ${'2023-01-01T00:00:00.000Z'} | ${'2023-12-31T23:59:00.000Z'}
+      ${'seconds, which the backtest drops'}                        | ${'1m'}   | ${2}        | ${'2024-01-01T00:00:30Z'} | ${'2024-01-01T00:01:59Z'} | ${2}  | ${'2024-01-01T00:00:00.000Z'} | ${'2024-01-01T00:02:00.000Z'}
+      ${'an end before the start'}                                  | ${'1d'}   | ${10}       | ${'2024-02-01T00:00:00Z'} | ${'2024-01-01T00:00:00Z'} | ${0}  | ${'2024-02-01T00:00:00.000Z'} | ${'2024-02-11T23:59:00.000Z'}
+    `(
+      'refuses a range of $timeframe candles with $scenario, saying where it must end',
+      ({ timeframe, candleCount, start, end, held, first, lastMinuteNeeded }) => {
+        const result = configurationSchema.safeParse(createWarmupConfig(timeframe, candleCount, start, end));
+        expect(result.error?.issues).toMatchObject([
+          {
+            path: ['watch', 'daterange'],
+            message: `watch.daterange must hold more whole ${timeframe} candles than warmup.candleCount (${candleCount}), or the warmup never ends and the strategy never trades: it holds ${held} from ${first}, its first ${timeframe} boundary, so it must end at ${lastMinuteNeeded} or later`,
+          },
+        ]);
+      },
+    );
+
+    // One candle more than the warmup, each range ending on the last minute the refusal above asks for
+    it.each`
+      scenario                                                      | timeframe | candleCount | start                     | end
+      ${'one candle more than warmup.candleCount'}                  | ${'1m'}   | ${10}       | ${'2024-01-01T00:00:00Z'} | ${'2024-01-01T00:10:00Z'}
+      ${'the minutes before the first boundary, which are skipped'} | ${'1h'}   | ${2}        | ${'2024-01-01T00:30:00Z'} | ${'2024-01-01T03:59:00Z'}
+      ${'one whole candle, without warmup'}                         | ${'1d'}   | ${0}        | ${'2024-01-01T10:00:00Z'} | ${'2024-01-02T23:59:00Z'}
+      ${'weeks, which start on Monday'}                             | ${'1w'}   | ${1}        | ${'2024-01-03T00:00:00Z'} | ${'2024-01-21T23:59:00Z'}
+      ${'calendar months, a 29-day February included'}              | ${'1M'}   | ${1}        | ${'2024-01-15T00:00:00Z'} | ${'2024-03-31T23:59:00Z'}
+      ${'a 28-day February, a whole month'}                         | ${'1M'}   | ${0}        | ${'2023-02-01T00:00:00Z'} | ${'2023-02-28T23:59:00Z'}
+      ${'seconds, which the backtest drops'}                        | ${'1m'}   | ${2}        | ${'2024-01-01T00:00:30Z'} | ${'2024-01-01T00:02:00Z'}
+    `('accepts a range of $timeframe candles with $scenario', ({ timeframe, candleCount, start, end }) => {
+      const result = configurationSchema.safeParse(createWarmupConfig(timeframe, candleCount, start, end));
+      expect(result.error?.issues).toBeUndefined();
+    });
+
+    // In realtime the warmup candles are history fetched before the live ones, whatever the range; a backtest without a strategy has no
+    // warmup to complete
+    it.each`
+      scenario                              | options
+      ${'in realtime mode'}                 | ${{ mode: 'realtime' }}
+      ${'in a backtest without a strategy'} | ${{ plugins: [{ name: 'RoundTripAnalyzer' }] }}
+    `('does not count the candles of the range $scenario', ({ options }) => {
+      const result = configurationSchema.safeParse(createWarmupConfig('1d', 10, '2024-01-01T00:00:00Z', '2024-01-02T00:00:00Z', options));
+      expect(result.error?.issues).toBeUndefined();
+    });
+
+    // A range of exactly warmup.candleCount candles, which a section issue leaves unreported, as with the marketData rule: zod leaves a
+    // range with an issue as written, not in epoch milliseconds
+    it.each`
+      scenario                            | path                     | value
+      ${'a tickrate below 100'}           | ${['watch', 'tickrate']} | ${50}
+      ${'an asset equal to the currency'} | ${['watch', 'assets']}   | ${['USDT']}
+    `('stands down when a section has an issue: $scenario', ({ path, value }) => {
+      const config = set(createWarmupConfig('1m', 10, '2024-01-01T00:00:00Z', '2024-01-01T00:09:00Z'), path, value);
+      expect(configurationSchema.safeParse(config).error?.issues.map(issue => issue.path)).toEqual([path]);
+    });
+  });
 });
