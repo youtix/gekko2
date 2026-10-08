@@ -1,5 +1,14 @@
+import { WilderSmoothing } from '@indicators/movingAverages/wilderSmoothing/wilderSmoothing.indicator';
+import { Candle } from '@models/candle.types';
 import { describe, expect, it } from 'vitest';
+import { DX } from '../dx/dx.indicator';
 import { ADX } from './adx.indicator';
+
+// A zigzag whose highs and lows move apart and together, long enough for every period below to seed its smoothing and run past it
+const zigzag: Candle[] = Array.from({ length: 80 }, (_, index) => {
+  const close = 100 + 10 * Math.sin(index / 3) + 5 * Math.sin(index / 7);
+  return { start: index * 60_000, open: close, high: close + 1 + (index % 3), low: close - 1 - (index % 5), close, volume: 100 };
+});
 
 describe('ADX', () => {
   const adx = new ADX({ period: 9 });
@@ -47,5 +56,28 @@ describe('ADX', () => {
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     adx.onNewCandle(candle);
     expect(adx.getResult()).toBeCloseTo(expected, 13);
+  });
+
+  it.each`
+    period
+    ${1}
+    ${2}
+    ${9}
+    ${14}
+  `('should be the Wilder smoothing of DX, nulls included, with period $period', ({ period }) => {
+    const indicator = new ADX({ period });
+    const dx = new DX({ period });
+    const smoothing = new WilderSmoothing({ period });
+    const results: (number | null)[] = [];
+    const smoothedDx: (number | null)[] = [];
+    zigzag.forEach(candle => {
+      indicator.onNewCandle(candle);
+      results.push(indicator.getResult());
+      dx.onNewCandle(candle);
+      const value = dx.getResult();
+      if (value !== null) smoothing.onNewCandle({ ...candle, close: value });
+      smoothedDx.push(smoothing.getResult());
+    });
+    expect(results).toEqual(smoothedDx);
   });
 });

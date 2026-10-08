@@ -1,6 +1,10 @@
 import { Indicator } from '@indicators/indicator';
 import { Candle } from '@models/candle.types';
 
+/**
+ * Wilder's smoothing: the mean of the first period values, then ((period − 1) × previous + value) / period. SMMA is this class
+ * under another name, and ATR, RSI and ADX smooth with it, so a change here changes them and the indicators built on them.
+ */
 export class WilderSmoothing extends Indicator<'WilderSmoothing'> {
   private period: number;
   private age: number;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { WilderSmoothing } from '../wilderSmoothing/wilderSmoothing.indicator';
 import { SMMA } from './smma.indicator';
 
 describe('SMMA', () => {
@@ -144,5 +145,9 @@ describe('SMMA', () => {
     smma26.onNewCandle(candle);
     if (expected === null) expect(smma26.getResult()).toBeNull();
     else expect(smma26.getResult()).toBeCloseTo(expected, 13);
+  });
+
+  it('should be the Wilder smoothing under another name, not a second copy of its recurrence', () => {
+    expect(new SMMA({ period: 5 })).toBeInstanceOf(WilderSmoothing);
   });
 });
