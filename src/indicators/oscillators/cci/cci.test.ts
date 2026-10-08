@@ -1,5 +1,9 @@
+import { Candle } from '@models/candle.types';
 import { describe, expect, it } from 'vitest';
 import { CCI } from './cci.indicator';
+
+const flat = (price: number): Candle => ({ start: 0, open: price, high: price, low: price, close: price, volume: 0 });
+const traded = (close: number, high: number, low: number): Candle => ({ start: 0, open: close, high, low, close, volume: 1 });
 
 describe('CCI', () => {
   const cci = new CCI({ period: 9 });
@@ -47,5 +51,65 @@ describe('CCI', () => {
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     cci.onNewCandle(candle);
     expect(cci.getResult()).toBeCloseTo(expected, 12);
+  });
+
+  // A flat window used to give ±66.67 instead of 0: its mean, summed in floating point, lands a few ulps off the price, and the mean
+  // deviation was that residue. Flat at 30000.11 it gave +66.67, flat at 30000.06 −66.67. Values near 30000 move with the order of the
+  // sums, hence 8 digits
+  const cciFlat = new CCI({ period: 5 });
+  it.each`
+    step                              | candle                                                                         | expected
+    ${'the first candle'}             | ${{ close: 30000.4, open: 29990, high: 30005.5, low: 29985.25, volume: 12 }}   | ${null}
+    ${'a second candle'}              | ${{ close: 30010.2, open: 30000.4, high: 30012.75, low: 29998.1, volume: 9 }}  | ${null}
+    ${'a third candle'}               | ${{ close: 29995.6, open: 30010.2, high: 30015, low: 29992.3, volume: 15 }}    | ${null}
+    ${'a fourth candle'}              | ${{ close: 30001.15, open: 29995.6, high: 30003.8, low: 29990.45, volume: 7 }} | ${null}
+    ${'a fifth, closing at 30000.11'} | ${{ close: 30000.11, open: 30001.15, high: 30004.9, low: 29998, volume: 11 }}  | ${2.722676001723103}
+    ${'a flat candle at 30000.11'}    | ${flat(30000.11)}                                                              | ${-42.47416020674449}
+    ${'a second flat one'}            | ${flat(30000.11)}                                                              | ${-2.0825198490837336}
+    ${'a third flat one'}             | ${flat(30000.11)}                                                              | ${16.741071428667496}
+    ${'a fourth flat one'}            | ${flat(30000.11)}                                                              | ${-41.66666666709087}
+    ${'a fifth: the window is flat'}  | ${flat(30000.11)}                                                              | ${0}
+    ${'a sixth flat one'}             | ${flat(30000.11)}                                                              | ${0}
+    ${'a move to 30000.06'}           | ${{ close: 30000.06, open: 30000.11, high: 30003, low: 29999, volume: 4 }}     | ${166.6666666646952}
+    ${'a flat candle at 30000.06'}    | ${flat(30000.06)}                                                              | ${-54.92692126342392}
+    ${'a second flat one'}            | ${flat(30000.06)}                                                              | ${-50.32317636214945}
+    ${'a third flat one'}             | ${flat(30000.06)}                                                              | ${-45.906829488009826}
+    ${'a fourth flat one'}            | ${flat(30000.06)}                                                              | ${-41.666666666817854}
+    ${'a fifth: the window is flat'}  | ${flat(30000.06)}                                                              | ${0}
+    ${'a sixth flat one'}             | ${flat(30000.06)}                                                              | ${0}
+  `('should return $expected on candle %$, $step', ({ candle, expected }) => {
+    cciFlat.onNewCandle(candle);
+    expect(cciFlat.getResult()).toEqual(expected === null ? null : expect.closeTo(expected, 8));
+  });
+
+  // Typical prices equal within the tolerance make a flat window. That also covers prices equal in exact arithmetic but an ulp apart in
+  // floating point, as a wick: a candle that traded a tick either side and closed unchanged. Read as a deviation, it gave up to
+  // period / 0.015
+  it.each`
+    window                                  | candles                                                                     | old
+    ${'5 flat at 30000.11'}                 | ${Array(5).fill(flat(30000.11))}                                            | ${66.67}
+    ${'5 flat at 0.007'}                    | ${Array(5).fill(flat(0.007))}                                               | ${-66.67}
+    ${'4 flat at 30000.05, then a wick'}    | ${[...Array(4).fill(flat(30000.05)), traded(30000.05, 30000.06, 30000.04)]} | ${333.33}
+    ${'a wick, then 4 flat at 30000.06'}    | ${[traded(30000.06, 30000.07, 30000.05), ...Array(4).fill(flat(30000.06))]} | ${83.33}
+    ${'4 flat at 30000, one 3.3e-11 above'} | ${[...Array(4).fill(flat(30000)), flat(30000.000001)]}                      | ${166.67}
+  `('should return 0 for $window, not $old', ({ candles }) => {
+    const cci = new CCI({ period: 5 });
+    for (const candle of candles) cci.onNewCandle(candle);
+    expect(cci.getResult()).toBe(0);
+  });
+
+  // One candle off an otherwise flat window gives period / 0.03 when it comes last, −period / (0.03 × (period − 1)) otherwise, however
+  // small its step, as long as it is a real one. In the last row the last typical price is within the tolerance of the mean
+  it.each`
+    window                                 | period | candles                                                                                 | expected
+    ${'4 flat at 30000, one 1e-8 above'}   | ${5}   | ${[...Array(4).fill(flat(30000)), flat(30000.0003)]}                                    | ${500 / 3}
+    ${'4 flat at 30000, one 1e-8 below'}   | ${5}   | ${[...Array(4).fill(flat(30000)), flat(29999.9997)]}                                    | ${-500 / 3}
+    ${'4 flat at 30000.05, one tick up'}   | ${5}   | ${[...Array(4).fill(flat(30000.05)), traded(30000.06, 30000.06, 30000.05)]}             | ${500 / 3}
+    ${'4 flat at 0.1, one 1e-7 above'}     | ${5}   | ${[...Array(4).fill(flat(0.1)), flat(0.10000001)]}                                      | ${500 / 3}
+    ${'99 flat at 100000, one 5e-8 above'} | ${100} | ${[...Array(50).fill(flat(100000)), flat(100000.005), ...Array(49).fill(flat(100000))]} | ${-100 / (0.03 * 99)}
+  `('should return $expected for $window', ({ period, candles, expected }) => {
+    const cci = new CCI({ period });
+    for (const candle of candles) cci.onNewCandle(candle);
+    expect(cci.getResult()).toBeCloseTo(expected, 4);
   });
 });

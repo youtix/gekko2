@@ -149,4 +149,26 @@ describe('Stochastic', () => {
     if (expected === null) expect(stochDema.getResult()).toBeNull();
     else expect(stochDema.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 13)));
   });
+
+  // StochasticRSI feeds RSI values, which over a flat stretch hold still in exact arithmetic but wobble in their last bits, here two
+  // values 2 ulps apart: the raw %K used to read that wobble as a range and flip between 0 and 100. A range whose ends are equal within
+  // the tolerance is flat; a real one, however narrow, still reads
+  const stochWobble = new Stochastic({ fastKPeriod: 3, slowKPeriod: 1, slowDPeriod: 1 });
+  it.each`
+    value                 | expected
+    ${50}                 | ${null}
+    ${57.66520289999395}  | ${null}
+    ${57.665202899993965} | ${{ k: 100, d: 100 }}
+    ${57.66520289999395}  | ${{ k: 0, d: 0 }}
+    ${57.665202899993965} | ${{ k: 0, d: 0 }}
+    ${57.66520289999395}  | ${{ k: 0, d: 0 }}
+    ${57.665202899993965} | ${{ k: 0, d: 0 }}
+    ${57.665202900005}    | ${{ k: 0, d: 0 }}
+    ${57.6653}            | ${{ k: 100, d: 100 }}
+    ${57.66525}           | ${{ k: 48.50669147794411, d: 48.50669147794411 }}
+  `('should return $expected for value %$, $value, as high, low and close', ({ value, expected }) => {
+    stochWobble.onNewCandle({ start: 0, open: value, high: value, low: value, close: value, volume: 0 });
+    if (expected === null) expect(stochWobble.getResult()).toBeNull();
+    else expect(stochWobble.getResult()).toEqual(mapValues(expected, v => expect.closeTo(v, 12)));
+  });
 });

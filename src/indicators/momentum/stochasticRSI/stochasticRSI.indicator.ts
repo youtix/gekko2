@@ -7,9 +7,10 @@ import { isNil } from 'lodash-es';
 import { Stochastic } from '../stochastic/stochastic.indicator';
 
 /**
- * TA-Lib's STOCHRSI: the Stochastic of the RSI over period. fastK is the raw %K of the last fastKPeriod RSI values, and fastD its
- * slowMaType average over fastDPeriod. The first result comes at candle period + fastKPeriod + lookback(fastD), the lookback being
- * fastDPeriod − 1, or 2 × (fastDPeriod − 1) for a dema: candle 21 by default, 23 with a dema.
+ * TA-Lib's STOCHRSI: the Stochastic of the RSI over period. fastK is the raw %K of the last fastKPeriod RSI values, 0 while the RSI
+ * holds still, as over a flat stretch, and fastD its slowMaType average over fastDPeriod. The first result comes at candle
+ * period + fastKPeriod + lookback(fastD), the lookback being fastDPeriod − 1, or 2 × (fastDPeriod − 1) for a dema: candle 21 by
+ * default, 23 with a dema.
  */
 export class StochasticRSI extends Indicator<'StochasticRSI'> {
   private rsi: RSI;

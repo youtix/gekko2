@@ -150,4 +150,35 @@ describe('StochasticRSI', () => {
     if (expected === null) expect(sRSIDema.getResult()).toBeNull();
     else expect(sRSIDema.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 12)));
   });
+
+  // Over a flat stretch the RSI holds still in exact arithmetic but wobbles in its last bits: fastK used to read that wobble as a range,
+  // 0 or 100 at random (100 on candles 11, 14, 16 and 17 here). The close holds at 102.5 from candle 9, so from candle 11 on the 3 RSI
+  // values of fastK's window are equal in exact arithmetic, and fastK is 0. Candles 7 to 10 come from a port of TA-Lib's STOCHRSI
+  const sRSIFlat = new StochasticRSI({ period: 3, fastKPeriod: 3, fastDPeriod: 2 });
+  it.each`
+    close     | expected
+    ${100.5}  | ${null}
+    ${98.5}   | ${null}
+    ${98.5}   | ${null}
+    ${100.5}  | ${null}
+    ${102.25} | ${null}
+    ${101.25} | ${null}
+    ${101.75} | ${{ fastK: 43.227250919558664, fastD: 26.945617411489586 }}
+    ${102.75} | ${{ fastK: 100, fastD: 71.61362545977933 }}
+    ${102.5}  | ${{ fastK: 39.50198001625961, fastD: 69.7509900081298 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 19.750990008129893 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 0 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 0 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 0 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 0 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 0 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 0 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 0 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 0 }}
+    ${102.5}  | ${{ fastK: 0, fastD: 0 }}
+  `('should return $expected on candle %$, closing at $close', ({ close, expected }) => {
+    sRSIFlat.onNewCandle({ start: 0, open: close, high: close, low: close, close, volume: 0 });
+    if (expected === null) expect(sRSIFlat.getResult()).toBeNull();
+    else expect(sRSIFlat.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 12)));
+  });
 });

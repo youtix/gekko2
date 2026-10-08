@@ -7,6 +7,7 @@ import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
 import { WMA } from '@indicators/movingAverages/wma/wma.indicator';
 import { Candle } from '@models/candle.types';
+import { compareWithTolerance } from '@utils/math/math.utils';
 import { isNil } from 'lodash-es';
 
 const MOVING_AVERAGES = {
@@ -18,7 +19,8 @@ const MOVING_AVERAGES = {
 
 /**
  * TA-Lib's STOCH. The raw %K places the close in the range of the last fastKPeriod candles: 0 at the lowest low, 100 at the highest
- * high, 0 when the range is flat. k is its slowKMaType average over slowKPeriod, and d the slowDMaType average of k over slowDPeriod.
+ * high, 0 when the range is flat, its ends equal within the tolerance of compareWithTolerance. k is its slowKMaType average over
+ * slowKPeriod, and d the slowDMaType average of k over slowDPeriod.
  * The first result comes at candle fastKPeriod + lookback(k) + lookback(d), where an average's lookback is period − 1, or
  * 2 × (period − 1) for a dema: candle 9 by default, 13 when both averages are 3-candle demas. A dema overshoots its input, so a k or
  * a d smoothed by one can leave [0, 100], as in TA-Lib.
@@ -68,7 +70,9 @@ export class Stochastic extends Indicator<'Stochastic'> {
     const lowest = Math.min(...this.lows);
     const highest = Math.max(...this.highs);
     const range = highest - lowest;
-    const rawK = range === 0 ? 0 : ((candle.close - lowest) / range) * 100;
+    // StochasticRSI feeds RSI values, which hold still over a flat stretch in exact arithmetic but wobble in their last bits: the range
+    // used to be that wobble, and the raw %K 0 or 100 at random. Ends equal within the tolerance make a flat range.
+    const rawK = compareWithTolerance(highest, lowest) === 0 ? 0 : ((candle.close - lowest) / range) * 100;
 
     this.maSlowK.onNewCandle({ close: rawK } as Candle);
     const slowK = this.maSlowK.getResult();
