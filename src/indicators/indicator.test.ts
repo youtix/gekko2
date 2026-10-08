@@ -44,8 +44,12 @@ describe('Indicator', () => {
     ${'Stochastic'}      | ${{}}                                                                      | ${9}
     ${'Stochastic'}      | ${{ fastKPeriod: 1, slowKPeriod: 3, slowKMaType: 'dema', slowDPeriod: 1 }} | ${5}
     ${'Stochastic'}      | ${{ fastKPeriod: 1, slowKPeriod: 1, slowDPeriod: 3, slowDMaType: 'dema' }} | ${5}
+    ${'Stochastic'}      | ${{ slowKMaType: 'dema' }}                                                 | ${11}
+    ${'Stochastic'}      | ${{ slowDMaType: 'dema' }}                                                 | ${11}
+    ${'Stochastic'}      | ${{ slowKMaType: 'dema', slowDMaType: 'dema' }}                            | ${13}
     ${'StochasticRSI'}   | ${{}}                                                                      | ${21}
-    ${'StochasticRSI'}   | ${{ fastKPeriod: 2, fastDPeriod: 5, slowMaType: 'dema' }}                  | ${23}
+    ${'StochasticRSI'}   | ${{ slowMaType: 'dema' }}                                                  | ${23}
+    ${'StochasticRSI'}   | ${{ fastKPeriod: 2, fastDPeriod: 5, slowMaType: 'dema' }}                  | ${24}
     ${'TRIX'}            | ${{}}                                                                      | ${89}
     ${'WilliamsR'}       | ${{}}                                                                      | ${14}
     ${'DEMA'}            | ${{ period: 10 }}                                                          | ${19}

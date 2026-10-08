@@ -14,14 +14,18 @@ const MOVING_AVERAGES = {
   wma: WMA,
 } as const;
 
+/**
+ * TA-Lib's STOCH. The raw %K places the close in the range of the last fastKPeriod candles: 0 at the lowest low, 100 at the highest
+ * high, 0 when the range is flat. k is its slowKMaType average over slowKPeriod, and d the slowDMaType average of k over slowDPeriod.
+ * The first result comes at candle fastKPeriod + lookback(k) + lookback(d), where an average's lookback is period − 1, or
+ * 2 × (period − 1) for a dema: candle 9 by default, 13 when both averages are 3-candle demas. A dema overshoots its input, so a k or
+ * a d smoothed by one can leave [0, 100], as in TA-Lib.
+ */
 export class Stochastic extends Indicator<'Stochastic'> {
+  private fastKPeriod: number;
   private highs: number[] = [];
   private lows: number[] = [];
-  private closes: number[] = [];
   private idxFast = 0;
-  private age: number;
-  private warmingUpPeriod: number;
-
   private maSlowK: MovingAverageClasses;
   private maSlowD: MovingAverageClasses;
 
@@ -33,30 +37,19 @@ export class Stochastic extends Indicator<'Stochastic'> {
     slowDMaType = 'sma',
   }: IndicatorRegistry['Stochastic']['input'] = {}) {
     super();
-
-    // buffers for raw Fast %K calculation
-    this.highs = [];
-    this.lows = [];
-    this.closes = [];
-    this.idxFast = 0;
-    this.age = 0;
-    this.warmingUpPeriod = fastKPeriod - 1 + slowKPeriod - 1 + slowDPeriod - 1;
-
-    // smoothing engines
+    this.fastKPeriod = fastKPeriod;
     this.maSlowK = new MOVING_AVERAGES[slowKMaType]({ period: slowKPeriod });
     this.maSlowD = new MOVING_AVERAGES[slowDMaType]({ period: slowDPeriod });
-
-    // store periods on the instance for use below
-    this.fastKPeriod = fastKPeriod;
   }
-
-  private fastKPeriod: number;
 
   public onNewCandle(candle: Candle) {
     this.highs[this.idxFast] = candle.high;
     this.lows[this.idxFast] = candle.low;
-    this.closes[this.idxFast] = candle.close;
     this.idxFast = (this.idxFast + 1) % this.fastKPeriod;
+    // The raw %K used to be taken over the partial windows of the first candles, and d fed 0 while k was not ready: an ema or a dema
+    // seeded on those values carried their error for many candles, and a warm-up count that assumed period − 1 lookbacks published
+    // a dema-smoothed result too early. Each average now only gets real values, and the result waits for d.
+    if (this.highs.length < this.fastKPeriod) return;
 
     const lowest = Math.min(...this.lows);
     const highest = Math.max(...this.highs);
@@ -65,13 +58,10 @@ export class Stochastic extends Indicator<'Stochastic'> {
 
     this.maSlowK.onNewCandle({ close: rawK } as Candle);
     const slowK = this.maSlowK.getResult();
+    if (isNil(slowK)) return;
 
-    this.maSlowD.onNewCandle({ close: slowK ?? 0 } as Candle);
+    this.maSlowD.onNewCandle({ close: slowK } as Candle);
     const slowD = this.maSlowD.getResult();
-
-    // Wait the end of warming up period. The count assumes moving averages ready after `period` values, which a dema is not: once
-    // the count was over, a %K or %D smoothed by a dema went out as null beside the other line, so the result now waits for both.
-    if (this.warmingUpPeriod !== this.age) this.age++;
-    else if (!isNil(slowK) && !isNil(slowD)) this.result = { k: slowK, d: slowD };
+    if (!isNil(slowD)) this.result = { k: slowK, d: slowD };
   }
 }
