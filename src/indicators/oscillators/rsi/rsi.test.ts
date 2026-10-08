@@ -1,4 +1,4 @@
-import { approximately } from '@indicators/indicator.mock';
+import { approximately, illiquidCandles, resultsOf } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { RSI } from './rsi.indicator';
 
@@ -48,5 +48,16 @@ describe('RSI', () => {
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     rsi.onNewCandle(candle);
     expect(rsi.getResult()).toEqual(approximately(expected, 13));
+  });
+
+  // Every close of the table above moves, so the guard for a market that never did could be dropped without a test failing. On an
+  // illiquid market, with period 2, the made-up candles it starts with neither gain nor lose: the RSI is 0, as in TA-Lib, rather than
+  // the 0 / 0 of its formula. Later, the made-up candles and the close that does not move halve both averages, so the RSI holds at
+  // 1900 / 27 over them
+  it('should return 0 on the flat start of an illiquid market, and hold over its made-up candles', () => {
+    const results = resultsOf(new RSI({ period: 2 }), illiquidCandles);
+    expect(results).toEqual(
+      approximately([null, null, 0, 100, 300 / 11, 1900 / 27, 1900 / 27, 1900 / 27, 1900 / 27, 380 / 31, 27500 / 411], 12),
+    );
   });
 });

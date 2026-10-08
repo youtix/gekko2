@@ -1,3 +1,5 @@
+import type { Indicator } from '@indicators/indicator';
+import { Candle } from '@models/candle.types';
 import { mapValues } from 'lodash-es';
 import { expect } from 'vitest';
 
@@ -16,3 +18,40 @@ export const approximately = (expected: ExpectedResult, precision: number): unkn
   if (typeof expected === 'object') return mapValues(expected, value => approximately(value, precision));
   return expect.closeTo(expected, precision);
 };
+
+/** A minute without a trade, as an exchange reports it and as the gap filler makes it up: flat at the last close, volume 0 */
+const noTrade = (price: number): Candle => ({ start: 0, open: price, high: price, low: price, close: price, volume: 0 });
+/** A minute whose trades all went through at one price: no range */
+const singleTrade = (price: number, volume: number): Candle => ({ start: 0, open: price, high: price, low: price, close: price, volume });
+
+/**
+ * The candles of an illiquid market. The 39 candles of the value tables each open at the last close, trade on both sides of it and
+ * have a volume, so until these no test met a gap, a tie, a candle without range or a volume of 0, and the code for them could go
+ * without a test failing. A short timeframe on a thin pair feeds them all, as does the gap filler, which makes up a flat candle without
+ * volume for each minute it fills. From the second candle on, the true ranges are 0, 0, 4, 5, 4, 0, 0, 2, 2, 3, and the moves up / down
+ * (+DM / −DM) 0/0, 0/0, 4/0, 0/4, 2/0, 0/0, 0/0, 0/0 (a tie), 0/1, 3/0.
+ */
+export const illiquidCandles: Candle[] = [
+  noTrade(10),
+  noTrade(10),
+  noTrade(10),
+  // A gap up: from its high to the last close, its true range is 4 over a range of 2
+  { start: 0, open: 12, high: 14, low: 12, close: 13, volume: 4 },
+  // A gap down: from its low to the last close, 5 over a range of 3
+  { start: 0, open: 11, high: 11, low: 8, close: 9, volume: 6 },
+  // A single trade away from the last close: 4 without any range
+  singleTrade(13, 1),
+  noTrade(13),
+  noTrade(13),
+  // As far above the last high as below the last low, which counts for neither move, closing unchanged on a volume of 3
+  { start: 0, open: 13, high: 14, low: 12, close: 13, volume: 3 },
+  singleTrade(11, 2),
+  { start: 0, open: 11, high: 14, low: 11, close: 13, volume: 5 },
+];
+
+/** The result after each candle, copied, so that an object result the indicator changes later cannot change an earlier one */
+export const resultsOf = (indicator: Indicator, candles: Candle[]) =>
+  candles.map(candle => {
+    indicator.onNewCandle(candle);
+    return structuredClone(indicator.getResult());
+  });

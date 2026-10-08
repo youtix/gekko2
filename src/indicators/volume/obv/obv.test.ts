@@ -1,4 +1,4 @@
-import { approximately } from '@indicators/indicator.mock';
+import { approximately, illiquidCandles, resultsOf } from '@indicators/indicator.mock';
 import { Candle } from '@models/candle.types';
 import { describe, expect, it } from 'vitest';
 import { OBV } from './obv.indicator';
@@ -82,5 +82,24 @@ describe('OBV', () => {
     const obv = new OBV({ period });
     for (const candle of candles) obv.onNewCandle(candle);
     expect(obv.getResult()).toEqual(expected);
+  });
+
+  // On an illiquid market, with period 2: its made-up first candle starts the OBV at 0, and no candle without volume moves it. Neither
+  // does the ninth, which trades a volume of 3 but closes unchanged: as in TA-Lib, an unchanged close counts for neither side. The bands
+  // of a window that holds one OBV are that OBV
+  it('should move the OBV only when the close changes, on an illiquid market', () => {
+    expect(resultsOf(new OBV({ period: 2 }), illiquidCandles)).toEqual([
+      null,
+      { obv: 0, ma: 0, upper: 0, lower: 0 },
+      { obv: 0, ma: 0, upper: 0, lower: 0 },
+      { obv: 4, ma: 2, upper: 6, lower: -2 },
+      { obv: -2, ma: 1, upper: 7, lower: -5 },
+      { obv: -1, ma: -1.5, upper: -0.5, lower: -2.5 },
+      { obv: -1, ma: -1, upper: -1, lower: -1 },
+      { obv: -1, ma: -1, upper: -1, lower: -1 },
+      { obv: -1, ma: -1, upper: -1, lower: -1 },
+      { obv: -3, ma: -2, upper: 0, lower: -4 },
+      { obv: 2, ma: -0.5, upper: 4.5, lower: -5.5 },
+    ]);
   });
 });

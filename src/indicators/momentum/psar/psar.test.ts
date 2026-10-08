@@ -91,6 +91,37 @@ describe('PSAR', () => {
     expect(psar.getResult()).toBe(expected);
   });
 
+  // By hand with a factor rising from 1/16 to 1/4, which keeps every value exact. Each row is the SAR its candle is tested against, set
+  // on the candle before, so a change of factor shows on the next row. A high or a low only equal to the extreme point leaves the factor
+  // as it is; the third new extreme takes it to 1/4 and the fourth keeps it there. A SAR that would pass the last low stops on it, and a
+  // low on the SAR reverses it, as a high on it does in a fall; each reversal brings the factor back to 1/16. The 39 candles above take
+  // the factor no higher than 0.06, and none of them equals an extreme point or lands on a SAR
+  const steppedFactor = new PSAR({ acceleration: 0.0625, maxAcceleration: 0.25 });
+  it.each`
+    move                                                 | candle                     | expected
+    ${'the first candle'}                                | ${{ high: 10, low: 8 }}    | ${null}
+    ${'a move up, which starts long'}                    | ${{ high: 11, low: 9 }}    | ${8}
+    ${'the same high again'}                             | ${{ high: 11, low: 10 }}   | ${8.1875}
+    ${'a new high'}                                      | ${{ high: 12, low: 11 }}   | ${8.36328125}
+    ${'a second new high'}                               | ${{ high: 13, low: 12 }}   | ${8.81787109375}
+    ${'a third new high, which takes the factor to 1/4'} | ${{ high: 14, low: 13 }}   | ${9.602020263671875}
+    ${'a fourth new high, which holds it there'}         | ${{ high: 15, low: 14 }}   | ${10.70151519775390625}
+    ${'a lower high, whose low stops the SAR'}           | ${{ high: 14.5, low: 12 }} | ${11.7761363983154296875}
+    ${'a low on the SAR, which reverses it'}             | ${{ high: 13, low: 12 }}   | ${15}
+    ${'a new low'}                                       | ${{ high: 12.5, low: 11 }} | ${14.8125}
+    ${'the same low again'}                              | ${{ high: 12, low: 11 }}   | ${14.3359375}
+    ${'a second new low'}                                | ${{ high: 11.5, low: 10 }} | ${13.9189453125}
+    ${'a third new low, which takes the factor to 1/4'}  | ${{ high: 11, low: 9 }}    | ${13.18414306640625}
+    ${'a fourth new low, which holds it there'}          | ${{ high: 10, low: 8 }}    | ${12.1381072998046875}
+    ${'a fifth new low, whose high stops the SAR'}       | ${{ high: 11, low: 7.5 }}  | ${11.103580474853515625}
+    ${'a high on the SAR, which reverses it'}            | ${{ high: 11, low: 9 }}    | ${7.5}
+    ${'a new high after the reversal'}                   | ${{ high: 12, low: 10 }}   | ${7.5}
+    ${'a second new high after it'}                      | ${{ high: 13, low: 11 }}   | ${8.0625}
+  `('should return $expected with a factor rising from 1/16 to 1/4 for $move', ({ candle, expected }) => {
+    steppedFactor.onNewCandle(candle);
+    expect(steppedFactor.getResult()).toBe(expected);
+  });
+
   // Such a pair used to restart the factor above its maximum after every reversal
   it('should refuse an acceleration above maxAcceleration', () => {
     expect(() => new PSAR({ acceleration: 0.3, maxAcceleration: 0.2 })).toThrow(

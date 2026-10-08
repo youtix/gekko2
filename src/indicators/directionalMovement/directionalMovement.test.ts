@@ -1,4 +1,4 @@
-import { Indicator } from '@indicators/indicator';
+import { approximately, illiquidCandles, resultsOf } from '@indicators/indicator.mock';
 import { getTrueRange } from '@indicators/volatility/trueRange/trueRange.utils';
 import { Candle } from '@models/candle.types';
 import { describe, expect, it, vi } from 'vitest';
@@ -20,12 +20,6 @@ const zigzag: Candle[] = Array.from({ length: 40 }, (_, index) => {
   const close = 100 + 10 * Math.sin(index / 3) + 5 * Math.sin(index / 7);
   return { start: index * 60_000, open: close, high: close + 1 + (index % 3), low: close - 1 - (index % 5), close, volume: 100 };
 });
-
-const resultsOf = (indicator: Indicator, candles: Candle[]) =>
-  candles.map(candle => {
-    indicator.onNewCandle(candle);
-    return indicator.getResult();
-  });
 
 describe('DirectionalMovement', () => {
   // DX used to build a PlusDI and a MinusDI, which each computed the true range of every candle: twice per candle, and 38 times in the
@@ -64,5 +58,19 @@ describe('DirectionalMovement', () => {
     ${'MinusDM'} | ${() => new MinusDM({ period: 1 })}
   `('should return 0 for $name on a candle that moves as far up as down', ({ create }) => {
     expect(resultsOf(create(), outside)).toEqual([null, 0]);
+  });
+
+  // By hand on an illiquid market, with period 2. The DIs divide the DMs by the true ranges of its gaps, 4, 5 and 4 where high − low
+  // gives 2, 3 and 0: the value tables' candles never gap, so DIs over high − low passed them. The made-up candles, and the candle that
+  // moves as far up as down, halve both DMs, so DX holds at 20 over them, as over any candle without directional movement
+  it.each`
+    name         | create                              | expected
+    ${'PlusDM'}  | ${() => new PlusDM({ period: 2 })}  | ${[null, 0, 0, 4, 2, 3, 1.5, 0.75, 0.375, 0.1875, 3.09375]}
+    ${'MinusDM'} | ${() => new MinusDM({ period: 2 })} | ${[null, 0, 0, 0, 4, 2, 1, 0.5, 0.25, 1.125, 0.5625]}
+    ${'PlusDI'}  | ${() => new PlusDI({ period: 2 })}  | ${[null, null, 0, 100, 200 / 7, 40, 40, 40, 600 / 47, 200 / 37, 6600 / 101]}
+    ${'MinusDI'} | ${() => new MinusDI({ period: 2 })} | ${[null, null, 0, 0, 400 / 7, 80 / 3, 80 / 3, 80 / 3, 400 / 47, 1200 / 37, 1200 / 101]}
+    ${'DX'}      | ${() => new DX({ period: 2 })}      | ${[null, null, 0, 100, 100 / 3, 20, 20, 20, 20, 500 / 7, 900 / 13]}
+  `('should return the values worked out by hand for $name on an illiquid market', ({ create, expected }) => {
+    expect(resultsOf(create(), illiquidCandles)).toEqual(approximately(expected, 12));
   });
 });
