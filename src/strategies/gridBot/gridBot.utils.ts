@@ -6,7 +6,7 @@ import { addPrecise } from '@utils/math/math.utils';
 import { round } from '@utils/math/round.utils';
 import { minBy } from 'lodash-es';
 import { DEFAULT_AMOUNT_PRECISION, DEFAULT_PRICE_PRECISION, EMPTY_BALANCE } from './gridBot.const';
-import { GridBotStrategyParams, GridBounds, GridSize, GridSpacingType, RebalancePlan } from './gridBot.types';
+import { GridBotStrategyParams, GridBounds, GridSize, GridSpacingType, OutOfRangeSide, RebalancePlan } from './gridBot.types';
 
 export const getPortfolioContent = (
   portfolio: Portfolio,
@@ -233,10 +233,22 @@ export const computeGridBounds = (
 };
 
 /**
- * Check if price is outside grid bounds.
+ * The side of the grid a price is out on, below its lowest price or above its highest, null in range, the bounds included. Out on a
+ * side, the price stays out on it until it is back at the grid's price next to that bound, `reentryPrices[side]`, where the grid trades
+ * again once its orders beyond the bound have filled: counted back at the bound itself, a price hovering on it would be out and back
+ * in at every other candle.
  */
-export const isOutOfRange = (currentPrice: number, bounds: GridBounds): boolean => {
-  return currentPrice < bounds.min || currentPrice > bounds.max;
+export const getOutOfRangeSide = (
+  price: number,
+  bounds: GridBounds,
+  reentryPrices: Record<OutOfRangeSide, number>,
+  previous: OutOfRangeSide | null,
+): OutOfRangeSide | null => {
+  if (price < bounds.min) return 'below';
+  if (price > bounds.max) return 'above';
+  if (previous === 'below' && price < reentryPrices.below) return 'below';
+  if (previous === 'above' && price > reentryPrices.above) return 'above';
+  return null;
 };
 
 /**

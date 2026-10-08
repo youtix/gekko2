@@ -7,6 +7,7 @@ import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
 import type { MarketData } from '@services/exchange/exchange.types';
+import { ETH_IGNORED_WARNING, logsAtInit } from '@strategies/positionTracker.mock';
 import type { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GridBot } from './gridBot.strategy';
@@ -152,6 +153,34 @@ describe('GridBot', () => {
 
   /** The orders sent once `count` had been, as `side price xamount` */
   const amountsSentAfter = (count: number) => issuedOrders.slice(count).map(({ side, price, amount }) => `${side} ${price} x${amount}`);
+
+  // GridBot traded the first pair watched and ignored the others without a word, while their candles are still required every minute
+  describe('the pair traded', () => {
+    const ethCandle: Candle = { start: 0, open: 2000, high: 2000, low: 2000, close: 2000, volume: 1 };
+    /** A bucket of BTC/USDT closing at that price, then ETH/USDT, as watch.assets lists BTC then ETH */
+    const withEth = (close: number): CandleBucket => makeCandle(close).set('ETH/USDT', ethCandle);
+
+    it.each`
+      case           | pairs                       | expected
+      ${'one pair'}  | ${['BTC/USDT']}             | ${[]}
+      ${'two pairs'} | ${['BTC/USDT', 'ETH/USDT']} | ${[ETH_IGNORED_WARNING]}
+    `('warns once, at init, when it ignores watched pairs: $case', ({ pairs, expected }) => {
+      expect(logsAtInit(new GridBot(), pairs, defaultParams)).toEqual(expected);
+    });
+
+    it('places its grid on the first pair watched, BTC/USDT, the bucket holding ETH/USDT as well', () => {
+      tools.strategyParams = defaultParams;
+      strategy.init({ candle: withEth(100), portfolio: balancedPortfolio, tools, addIndicator: vi.fn() });
+      strategy.onTimeframeCandleAfterWarmup({ candle: withEth(100), portfolio: balancedPortfolio, tools });
+
+      expect(createOrder.mock.calls.map(([{ symbol, side, price }]) => `${symbol} ${side} ${price}`)).toEqual([
+        'BTC/USDT BUY 90',
+        'BTC/USDT BUY 95',
+        'BTC/USDT SELL 105',
+        'BTC/USDT SELL 110',
+      ]);
+    });
+  });
 
   // GridBot placed its grid from init, on the first candle of the warmup: in realtime a candle of the history replayed at start-up,
   // so the Trader sent live a grid centred on a stale close, a year old with 365 daily candles
@@ -1195,29 +1224,89 @@ describe('GridBot', () => {
     });
   });
 
+  // The warning was logged on every timeframe candle out of the range, each one relayed to Telegram: 1440 a day at 1m while the price
+  // stayed out of a grid that GridBot does not move, and nothing said when it came back
   describe('out of range', () => {
-    it('logs warning when price exits grid range', () => {
+    /** Timeframe candles closing at these prices, one after the other */
+    const closeAt = (closes: number[]) =>
+      closes.forEach(close => strategy.onEachTimeframeCandle({ candle: makeCandle(close), portfolio: balancedPortfolio, tools }));
+    /** The lines logged about the range, as `level message` */
+    const rangeLogs = () =>
+      log.mock.calls.filter(([, message]) => message.includes('grid range')).map(([level, message]) => `${level} ${message}`);
+    /** The warning for a close out of the grid [min, max], whose orders wait for the price at `reentry` */
+    const out = (close: number, [min, max]: number[], reentry: number) =>
+      `warn GridBot: Price ${close} is out of grid range [${min}, ${max}]: the grid stays in place, its orders waiting for the price to come back to ${reentry}`;
+    const back = (close: number, [min, max]: number[]) => `info GridBot: Price ${close} is back in grid range [${min}, ${max}]`;
+    // The 2/2 grid at 100: 90, 95, 100, 105 and 110. Once its SELLs have filled above 110, the highest of the BUYs they armed is at
+    // 105; once its BUYs have filled below 90, the lowest of the SELLs they armed is at 95
+    const above = (close: number) => out(close, [90, 110], 105);
+    const below = (close: number) => out(close, [90, 110], 95);
+    const backIn = (close: number) => back(close, [90, 110]);
+    // All in the asset, as a sell-only grid wants it: no rebalance
+    const assetOnly: Portfolio = new Map<string, BalanceDetail>([
+      ['BTC', { free: 10, used: 0, total: 10 }],
+      ['USDT', { free: 0, used: 0, total: 0 }],
+    ]);
+
+    it.each`
+      closes                      | description                              | logged                             | expected
+      ${[130, 135, 140]}          | ${'three candles closing above it'}      | ${'one warning'}                   | ${[above(130)]}
+      ${[80, 75, 70]}             | ${'three candles closing below it'}      | ${'one warning'}                   | ${[below(80)]}
+      ${[130, 135, 140, 100]}     | ${'three above it, then one back in it'} | ${'one warning, then one info'}    | ${[above(130), backIn(100)]}
+      ${[111, 109, 111, 109]}     | ${'closes on either side of its top'}    | ${'one warning'}                   | ${[above(111)]}
+      ${[111, 109, 106, 105]}     | ${'above it, then down to 105'}          | ${'one warning, then one info'}    | ${[above(111), backIn(105)]}
+      ${[89, 91, 94, 95]}         | ${'below it, then up to 95'}             | ${'one warning, then one info'}    | ${[below(89), backIn(95)]}
+      ${[130, 100, 105, 110, 90]} | ${'one above it, four in it, on bounds'} | ${'one warning, then one info'}    | ${[above(130), backIn(100)]}
+      ${[130, 100, 80, 75]}       | ${'above it, back in it, then below it'} | ${'a warning each time it leaves'} | ${[above(130), backIn(100), below(80)]}
+      ${[80, 130, 135]}           | ${'below it, then above it at once'}     | ${'a warning on each side'}        | ${[below(80), above(130)]}
+      ${[100, 90, 110]}           | ${'in it, its bounds included'}          | ${'nothing'}                       | ${[]}
+    `('logs $logged for $description', ({ closes, expected }) => {
       startStrategy(100);
+      closeAt(closes);
 
-      strategy.onEachTimeframeCandle({
-        candle: makeCandle(150),
-        portfolio: balancedPortfolio,
-        tools,
-      });
-
-      expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('out of grid range'));
+      expect(rangeLogs()).toEqual(expected);
     });
 
-    it('does not log when price is in range', () => {
-      startStrategy(100);
+    // A one-sided grid has the center price for a bound: beyond it, the price finds the grid's orders one price inside it, as it does
+    // beyond the farthest level
+    it.each`
+      grid           | buyLevels | sellLevels | portfolio              | closes                 | expected
+      ${'buy-only'}  | ${3}      | ${0}       | ${unbalancedPortfolio} | ${[101, 99, 96, 95]}   | ${[out(101, [85, 100], 95), back(95, [85, 100])]}
+      ${'sell-only'} | ${0}      | ${3}       | ${assetOnly}           | ${[99, 101, 104, 105]} | ${[out(99, [100, 115], 105), back(105, [100, 115])]}
+      ${'1/0'}       | ${1}      | ${0}       | ${unbalancedPortfolio} | ${[94, 97, 100]}       | ${[out(94, [95, 100], 100), back(100, [95, 100])]}
+    `('logs the price a $grid grid trades again at, and the price back there', ({ buyLevels, sellLevels, portfolio, closes, expected }) => {
+      startStrategy(100, { buyLevels, sellLevels }, portfolio);
+      closeAt(closes);
 
-      strategy.onEachTimeframeCandle({
-        candle: makeCandle(100),
-        portfolio: balancedPortfolio,
-        tools,
-      });
+      expect(rangeLogs()).toEqual(expected);
+    });
+  });
 
-      expect(log).not.toHaveBeenCalledWith('warn', expect.stringContaining('out of grid range'));
+  // The warning was logged after every fill that left one side, so after every fill of a grid holding a single order
+  describe('one side of the grid', () => {
+    const oneSideWarnings = () => log.mock.calls.filter(([, message]) => message === 'GridBot: Only one side of the grid remains active');
+    // 0 BTC and 10 USDT fund one BUY 95 of 0.1, amount.min, the rebalance of 0.05 BTC being under it
+    const tenUsdt: Portfolio = new Map<string, BalanceDetail>([
+      ['BTC', { free: 0, used: 0, total: 0 }],
+      ['USDT', { free: 10, used: 0, total: 10 }],
+    ]);
+    /** The level next to the center price below it trading `fills` times: its BUY 95 fills, then the SELL 100 it arms, and so on */
+    const swings = (fills: number) =>
+      Array.from({ length: fills }, (_, i) => (i % 2 === 0 ? ['completed', 95, 'BUY'] : ['completed', 100, 'SELL']));
+    /** SELL 105 failing at every attempt, the first and the 3 retries: its level is left without an order */
+    const sellGivenUp = Array.from({ length: 4 }, () => ['errored', 105, 'SELL']);
+
+    it.each`
+      grid                                    | params                             | portfolio              | steps                             | warnings
+      ${'one BUY, all 10 USDT fund'}          | ${{}}                              | ${tenUsdt}             | ${swings(4)}                      | ${1}
+      ${'a 1/0 grid, all in currency'}        | ${{ buyLevels: 1, sellLevels: 0 }} | ${unbalancedPortfolio} | ${swings(3)}                      | ${1}
+      ${'a 1/1 grid whose SELL gave up'}      | ${{ buyLevels: 1, sellLevels: 1 }} | ${balancedPortfolio}   | ${[...sellGivenUp, ...swings(3)]} | ${1}
+      ${'a 1/1 grid, two-sided at each SELL'} | ${{ buyLevels: 1, sellLevels: 1 }} | ${balancedPortfolio}   | ${swings(5)}                      | ${3}
+    `('warns $warnings time(s) that only one side remains: $grid', ({ params, portfolio, steps, warnings }) => {
+      startStrategy(100, params, portfolio);
+      steps.forEach(([outcome, price, side]: ['completed' | 'errored', number, OrderSide]) => settle(outcome, price, side));
+
+      expect(oneSideWarnings()).toHaveLength(warnings);
     });
   });
 
@@ -1496,7 +1585,10 @@ describe('GridBot', () => {
       startStrategy(61234.56, fiveByFive, smallAccount);
       strategy.onEachTimeframeCandle({ candle: makeCandle(58500), portfolio: smallAccount, tools });
 
-      expect(log).toHaveBeenCalledWith('warn', 'GridBot: Price 58500 is out of grid range [58785.18, 63683.94]');
+      expect(log).toHaveBeenCalledWith(
+        'warn',
+        'GridBot: Price 58500 is out of grid range [58785.18, 63683.94]: the grid stays in place, its orders waiting for the price to come back to 59397.52',
+      );
     });
   });
 

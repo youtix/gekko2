@@ -57,6 +57,9 @@ export interface GridBounds {
   max: number;
 }
 
+/** The side of the grid a price is out on: under its lowest price, or over its highest */
+export type OutOfRangeSide = 'below' | 'above';
+
 /** Rebalance plan, computed when the grid starts, after the warmup (and again after a failed attempt) */
 export interface RebalancePlan {
   /** Side of rebalance order */

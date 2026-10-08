@@ -7,10 +7,10 @@ import {
   deriveLevelQuantity,
   getMaximumAmount,
   getMinimumAmount,
+  getOutOfRangeSide,
   hasOnlyOneSide,
   inferAmountPrecision,
   inferPricePrecision,
-  isOutOfRange,
   roundAmount,
   roundPrice,
   validateConfig,
@@ -99,12 +99,13 @@ describe('gridBot.utils Performance', () => {
     });
   });
 
-  describe('isOutOfRange', () => {
+  describe('getOutOfRangeSide', () => {
     const bounds = { min: 90, max: 110 };
+    const reentryPrices = { below: 95, above: 105 };
 
     bench('10000 range checks', () => {
       for (let i = 0; i < 10000; i++) {
-        isOutOfRange(100 + ((i % 50) - 25), bounds);
+        getOutOfRangeSide(100 + ((i % 50) - 25), bounds, reentryPrices, null);
       }
     });
   });

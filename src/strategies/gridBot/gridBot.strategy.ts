@@ -2,6 +2,7 @@ import { GekkoError } from '@errors/gekko.error';
 import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
+import { pickTradedPair } from '@strategies/positionTracker';
 import {
   InitParams,
   OnCandleEventParams,
@@ -15,7 +16,7 @@ import { addPrecise } from '@utils/math/math.utils';
 import type { UUID } from 'node:crypto';
 import { DEFAULT_RETRY_LIMIT } from './gridBot.const';
 import { gridBotStrategySchema } from './gridBot.schema';
-import type { GridBotStrategyParams, GridBounds, LevelState, RebalancePlan } from './gridBot.types';
+import type { GridBotStrategyParams, GridBounds, LevelState, OutOfRangeSide, RebalancePlan } from './gridBot.types';
 import {
   checkPriceTick,
   checkRoundTripFee,
@@ -24,13 +25,13 @@ import {
   computeRebalancePlan,
   deriveLevelQuantity,
   getMinimumAmount,
+  getOutOfRangeSide,
   getPortfolioContent,
   getRebalanceBuyCost,
   getRebalanceOrderPrice,
   hasOnlyOneSide,
   inferPricePrecision,
   isOutcomeUnknown,
-  isOutOfRange,
   roundPrice,
   validateConfig,
 } from './gridBot.utils';
@@ -39,6 +40,7 @@ import {
  * GridBot Strategy
  *
  * Places a grid of LIMIT orders around the current price.
+ * - It trades the first pair watched (watch.assets), and warns once, at init, of the other pairs it ignores
  * - The grid is placed on the first timeframe candle after the warmup, centred on its close
  * - Buy levels are placed below the center price
  * - Sell levels are placed above the center price
@@ -59,7 +61,9 @@ import {
  * - An order whose outcome is unknown, which may be live on the exchange, is never placed again: a grid order is left out with a
  *   warning, the run stopping once more than retryOnError orders are in that case or no level holds an order, and a rebalance
  *   stops the run
- * - When price exits the grid range, a warning is logged but trading continues
+ * - The grid stays in place when the price leaves its range: a timeframe candle that closes out of the range is warned of once, until
+ *   one closes back at the grid's price next to the bound it left, where the grid trades again, logged once at info, or out on the
+ *   other side. A fill that leaves orders on one side of the grid only is warned of once, until a fill gives it both sides again
  */
 export class GridBot implements Strategy<GridBotStrategyParams> {
   /** Parses the strategy block before the strategy is created: tools.strategyParams is its output */
@@ -75,6 +79,11 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private levels: LevelState[] = [];
   /** Grid price boundaries */
   private gridBounds?: GridBounds;
+  /**
+   * The grid's prices next to its bounds, inside them: where the grid trades again once its orders beyond a bound have filled, the
+   * bottom level's SELL below, the top level's BUY above, and where a price that left the range is back in it
+   */
+  private reentryPrices?: Record<OutOfRangeSide, number>;
   /** Quantity per level */
   private quantity = 0;
   /** Retry limit for order operations */
@@ -87,6 +96,10 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private orderToLevel = new Map<UUID, number>();
   /** Set by the first candle after the warmup, which starts the grid: it is started once, whatever the outcome */
   private isGridStarted = false;
+  /** The side of the grid the price is out on, null in range (see getOutOfRangeSide): logged at each change only */
+  private outOfRangeSide: OutOfRangeSide | null = null;
+  /** Whether the last fill left orders on one side of the grid only: warned of once, until a fill gives the grid both sides again */
+  private isOneSided = false;
 
   // Rebalance state
   private awaitingRebalance = false;
@@ -100,9 +113,9 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
   /** Reads the pair and the parameters only: the grid is started by the first candle after the warmup */
   init({ candle, tools }: InitParams<GridBotStrategyParams>): void {
-    const [pair] = candle.keys();
-    this.pair = pair;
-    const [base, quote] = pair.split('/');
+    // The first pair watched: the others used to be ignored without a word, while their candles are still required every minute
+    this.pair = pickTradedPair(candle, tools);
+    const [base, quote] = this.pair.split('/');
     this.base = base;
     this.quote = quote;
     this.reset();
@@ -110,11 +123,22 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   }
 
   onEachTimeframeCandle({ candle, tools }: OnCandleEventParams<GridBotStrategyParams>): void {
-    if (!this.gridBounds || this.awaitingRebalance) return;
+    if (!this.gridBounds || !this.reentryPrices || this.awaitingRebalance) return;
     const close = candle.get(this.pair)!.close;
 
-    if (isOutOfRange(close, this.gridBounds)) {
-      tools.log('warn', `GridBot: Price ${close} is out of grid range [${this.gridBounds.min}, ${this.gridBounds.max}]`);
+    // Logged once each time the side of the grid the price is out on changes, back in range at the grid's price next to the bound it
+    // left (see getOutOfRangeSide). The warning used to be logged on every timeframe candle out of the range, each one relayed to
+    // Telegram: 1440 a day at 1m while the price stayed out of a grid that GridBot does not move.
+    const side = getOutOfRangeSide(close, this.gridBounds, this.reentryPrices, this.outOfRangeSide);
+    if (side === this.outOfRangeSide) return;
+    this.outOfRangeSide = side;
+
+    const range = `grid range [${this.gridBounds.min}, ${this.gridBounds.max}]`;
+    if (side) {
+      const waiting = `its orders waiting for the price to come back to ${this.reentryPrices[side]}`;
+      tools.log('warn', `GridBot: Price ${close} is out of ${range}: the grid stays in place, ${waiting}`);
+    } else {
+      tools.log('info', `GridBot: Price ${close} is back in ${range}`);
     }
   }
 
@@ -240,8 +264,11 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   /** Reset all internal state */
   private reset(): void {
     this.isGridStarted = false;
+    this.outOfRangeSide = null;
+    this.isOneSided = false;
     this.levels = [];
     this.gridBounds = undefined;
+    this.reentryPrices = undefined;
     this.quantity = 0;
     this.retryCount.clear();
     this.untrackedOrders = [];
@@ -428,15 +455,20 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       );
     }
 
+    const priceAt = (steps: number) => computeLevelPrice(centerPrice, steps, this.priceDecimals, spacingType, spacingValue, this.priceStep);
     this.gridBounds = bounds;
+    // One price inside each bound: the sell price of the lowest level, the buy price of the highest
+    this.reentryPrices = { below: priceAt(1 - size.buyLevels), above: priceAt(size.sellLevels - 1) };
     this.quantity = size.quantity;
+    // Built around the center price, in range and with no fill yet
+    this.outOfRangeSide = null;
+    this.isOneSided = false;
 
     // Build level states, each between two adjacent prices of the grid, the center price being the top of level -1 and the bottom
     // of level 1
     this.levels = [];
     this.orderToLevel.clear();
     this.retryCount.clear();
-    const priceAt = (steps: number) => computeLevelPrice(centerPrice, steps, this.priceDecimals, spacingType, spacingValue, this.priceStep);
 
     // Create buy levels (negative indices, stored first), which start with their BUY
     for (let i = size.buyLevels; i >= 1; i--) {
@@ -510,10 +542,11 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     // first, and the two levels next to the center price, each the other's neighbour, armed nothing on their first fill.
     this.placeOrder(levelIndex, level.side === 'BUY' ? 'SELL' : 'BUY', tools);
 
-    // Check if only one side remains
-    if (hasOnlyOneSide(this.levels)) {
-      tools.log('warn', 'GridBot: Only one side of the grid remains active');
-    }
+    // Warned of once, until a fill gives the grid both sides again. It was warned of after every fill that left one side, so after
+    // every fill of a grid holding a single order: one whose free balances fund a single level, or whose other levels gave up.
+    const isOneSided = hasOnlyOneSide(this.levels);
+    if (isOneSided && !this.isOneSided) tools.log('warn', 'GridBot: Only one side of the grid remains active');
+    this.isOneSided = isOneSided;
   }
 
   /**

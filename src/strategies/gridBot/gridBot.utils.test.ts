@@ -20,13 +20,13 @@ import {
   getMakerFee,
   getMaximumAmount,
   getMinimumAmount,
+  getOutOfRangeSide,
   getRebalanceBuyCost,
   getRebalanceOrderPrice,
   hasOnlyOneSide,
   inferAmountPrecision,
   inferPricePrecision,
   isOutcomeUnknown,
-  isOutOfRange,
   roundAmount,
   roundPrice,
   validateConfig,
@@ -309,18 +309,31 @@ describe('gridBot.utils', () => {
     });
   });
 
-  describe('isOutOfRange', () => {
+  describe('getOutOfRangeSide', () => {
+    // A 2/2 grid at 100 spaced by 5: 90, 95, 100, 105 and 110
     const bounds: GridBounds = { min: 90, max: 110 };
+    const reentryPrices = { below: 95, above: 105 };
 
     it.each`
-      price  | expected
-      ${80}  | ${true}
-      ${90}  | ${false}
-      ${100} | ${false}
-      ${110} | ${false}
-      ${120} | ${true}
-    `('returns $expected for price=$price', ({ price, expected }) => {
-      expect(isOutOfRange(price, bounds)).toBe(expected);
+      price     | previous   | expected
+      ${80}     | ${null}    | ${'below'}
+      ${89.99}  | ${null}    | ${'below'}
+      ${90}     | ${null}    | ${null}
+      ${100}    | ${null}    | ${null}
+      ${110}    | ${null}    | ${null}
+      ${110.01} | ${null}    | ${'above'}
+      ${120}    | ${null}    | ${'above'}
+      ${94.99}  | ${'below'} | ${'below'}
+      ${95}     | ${'below'} | ${null}
+      ${105.01} | ${'above'} | ${'above'}
+      ${105}    | ${'above'} | ${null}
+      ${100}    | ${'above'} | ${null}
+      ${80}     | ${'above'} | ${'below'}
+      ${120}    | ${'below'} | ${'above'}
+      ${106}    | ${'below'} | ${null}
+      ${94}     | ${'above'} | ${null}
+    `('returns $expected for price=$price, out $previous before', ({ price, previous, expected }) => {
+      expect(getOutOfRangeSide(price, bounds, reentryPrices, previous)).toBe(expected);
     });
   });
 
