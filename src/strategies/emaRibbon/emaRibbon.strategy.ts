@@ -18,7 +18,8 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
 
   private pair?: TradingPair;
   // Every order is all-in: the strategy buys only when flat and sells only when long, never while its order is pending. An order
-  // canceled or errored is placed again by the next candle that signals it.
+  // canceled or errored is placed again by the next candle that signals it, unless what it executed before it ended changed the
+  // position (see PositionTracker).
   private readonly position = new PositionTracker();
   private lastSpreadValue?: number;
 

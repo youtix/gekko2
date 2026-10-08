@@ -172,6 +172,7 @@ describe('CCI Strategy', () => {
         expect(sides()).toEqual(expectedSides);
       });
 
+      // An outcome reports nothing of an execution, unless its step gives the BTC left free after it ('errored:2:0', see playSteps)
       it.each`
         case                                                   | steps                                                    | expectedSides
         ${'a BUY completed: long, it sells'}                   | ${'under completed:1 over'}                              | ${['BUY', 'SELL']}
@@ -180,6 +181,7 @@ describe('CCI Strategy', () => {
         ${'a SELL completed: flat, it buys again'}             | ${'under completed:1 over completed:2 under'}            | ${['BUY', 'SELL', 'BUY']}
         ${'a SELL canceled: long, it sells on the next trend'} | ${'under completed:1 over canceled:2 over neutral over'} | ${['BUY', 'SELL', 'SELL']}
         ${'a SELL errored: long, it sells on the next trend'}  | ${'under completed:1 over errored:2 over neutral over'}  | ${['BUY', 'SELL', 'SELL']}
+        ${'a SELL errored, all sold: flat, it buys again'}     | ${'under completed:1 over errored:2:0 under'}            | ${['BUY', 'SELL', 'BUY']}
         ${'another order completed: still pending'}            | ${'under completed:unknown neutral under over'}          | ${['BUY']}
         ${'another order canceled: still pending'}             | ${'under canceled:unknown neutral under over'}           | ${['BUY']}
         ${'another order errored: still pending'}              | ${'under errored:unknown neutral under over'}            | ${['BUY']}

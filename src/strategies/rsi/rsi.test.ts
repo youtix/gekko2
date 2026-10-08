@@ -119,6 +119,7 @@ describe('RSI Strategy', () => {
   });
 
   describe('order outcomes', () => {
+    // An outcome reports nothing of an execution, unless its step gives the BTC left free after it ('errored:2:0', see playSteps)
     it.each`
       case                                                   | steps                                                            | expectedSides
       ${'a BUY completed: long, it sells'}                   | ${'low low completed:1 high high'}                               | ${['BUY', 'SELL']}
@@ -127,6 +128,7 @@ describe('RSI Strategy', () => {
       ${'a SELL completed: flat, it buys again'}             | ${'low low completed:1 high high completed:2 low low'}           | ${['BUY', 'SELL', 'BUY']}
       ${'a SELL canceled: long, it sells on the next trend'} | ${'low low completed:1 high high canceled:2 high low high high'} | ${['BUY', 'SELL', 'SELL']}
       ${'a SELL errored: long, it sells on the next trend'}  | ${'low low completed:1 high high errored:2 high low high high'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored, all sold: flat, it buys again'}     | ${'low low completed:1 high high errored:2:0 low low'}           | ${['BUY', 'SELL', 'BUY']}
       ${'another order completed: still pending'}            | ${'low low completed:unknown low high high'}                     | ${['BUY']}
       ${'another order canceled: still pending'}             | ${'low low canceled:unknown low high high'}                      | ${['BUY']}
       ${'another order errored: still pending'}              | ${'low low errored:unknown low high high'}                       | ${['BUY']}

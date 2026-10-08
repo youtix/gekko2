@@ -20,7 +20,7 @@ export class TMA implements Strategy<TMAStrategyParams> {
   // An alignment holds for many candles in a row, and every order is all-in: the strategy buys once when flat and sells once when
   // long, never while its order is pending. Advised on every candle, each order after the first was sized from what the previous one
   // left, then refused once nothing was left, until maxConsecutiveErrors stopped the bot. An order canceled or errored is placed
-  // again by the next candle of its signal.
+  // again by the next candle of its signal, unless what it executed before it ended changed the position (see PositionTracker).
   private readonly position = new PositionTracker();
 
   init({ candle, tools, addIndicator }: InitParams<TMAStrategyParams>): void {

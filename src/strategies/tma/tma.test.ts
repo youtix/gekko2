@@ -160,17 +160,19 @@ describe('TMA Strategy', () => {
   });
 
   describe('order outcomes', () => {
+    // An outcome reports nothing of an execution, unless its step gives the BTC left free after it ('errored:2:0', see playSteps)
     it.each`
-      case                                        | steps                                    | expectedSides
-      ${'a BUY completed: long, it sells'}        | ${'up completed:1 down'}                 | ${['BUY', 'SELL']}
-      ${'a BUY canceled: flat, it buys again'}    | ${'up canceled:1 up'}                    | ${['BUY', 'BUY']}
-      ${'a BUY errored: flat, it buys again'}     | ${'up errored:1 up'}                     | ${['BUY', 'BUY']}
-      ${'a SELL completed: flat, it buys again'}  | ${'up completed:1 down completed:2 up'}  | ${['BUY', 'SELL', 'BUY']}
-      ${'a SELL canceled: long, it sells again'}  | ${'up completed:1 down canceled:2 down'} | ${['BUY', 'SELL', 'SELL']}
-      ${'a SELL errored: long, it sells again'}   | ${'up completed:1 down errored:2 down'}  | ${['BUY', 'SELL', 'SELL']}
-      ${'another order completed: still pending'} | ${'up completed:unknown up down'}        | ${['BUY']}
-      ${'another order canceled: still pending'}  | ${'up canceled:unknown up down'}         | ${['BUY']}
-      ${'another order errored: still pending'}   | ${'up errored:unknown up down'}          | ${['BUY']}
+      case                                               | steps                                    | expectedSides
+      ${'a BUY completed: long, it sells'}               | ${'up completed:1 down'}                 | ${['BUY', 'SELL']}
+      ${'a BUY canceled: flat, it buys again'}           | ${'up canceled:1 up'}                    | ${['BUY', 'BUY']}
+      ${'a BUY errored: flat, it buys again'}            | ${'up errored:1 up'}                     | ${['BUY', 'BUY']}
+      ${'a SELL completed: flat, it buys again'}         | ${'up completed:1 down completed:2 up'}  | ${['BUY', 'SELL', 'BUY']}
+      ${'a SELL canceled: long, it sells again'}         | ${'up completed:1 down canceled:2 down'} | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored: long, it sells again'}          | ${'up completed:1 down errored:2 down'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored, all sold: flat, it buys again'} | ${'up completed:1 down errored:2:0 up'}  | ${['BUY', 'SELL', 'BUY']}
+      ${'another order completed: still pending'}        | ${'up completed:unknown up down'}        | ${['BUY']}
+      ${'another order canceled: still pending'}         | ${'up canceled:unknown up down'}         | ${['BUY']}
+      ${'another order errored: still pending'}          | ${'up errored:unknown up down'}          | ${['BUY']}
     `('should track $case', ({ steps, expectedSides }) => {
       play(steps);
       expect(advices.map(({ side }) => side)).toEqual(expectedSides);

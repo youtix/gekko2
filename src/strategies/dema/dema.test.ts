@@ -147,6 +147,7 @@ describe('DEMA Strategy', () => {
   });
 
   describe('order outcomes', () => {
+    // An outcome reports nothing of an execution, unless its step gives the BTC left free after it ('errored:2:0', see playSteps)
     it.each`
       case                                                       | steps                                            | expectedSides
       ${'a BUY completed: long, it sells'}                       | ${'up completed:1 down'}                         | ${['BUY', 'SELL']}
@@ -155,6 +156,7 @@ describe('DEMA Strategy', () => {
       ${'a SELL completed: flat, it buys again'}                 | ${'up completed:1 down completed:2 up'}          | ${['BUY', 'SELL', 'BUY']}
       ${'a SELL canceled: long, it sells on the next downtrend'} | ${'up completed:1 down canceled:2 down up down'} | ${['BUY', 'SELL', 'SELL']}
       ${'a SELL errored: long, it sells on the next downtrend'}  | ${'up completed:1 down errored:2 down up down'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored, all sold: flat, it buys again'}         | ${'up completed:1 down errored:2:0 up'}          | ${['BUY', 'SELL', 'BUY']}
       ${'another order completed: still pending'}                | ${'up completed:unknown down up'}                | ${['BUY']}
       ${'another order canceled: still pending'}                 | ${'up canceled:unknown down up'}                 | ${['BUY']}
       ${'another order errored: still pending'}                  | ${'up errored:unknown down up'}                  | ${['BUY']}

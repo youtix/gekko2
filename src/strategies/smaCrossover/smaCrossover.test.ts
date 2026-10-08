@@ -165,6 +165,7 @@ describe('SMACrossover Strategy', () => {
   });
 
   describe('order outcomes', () => {
+    // An outcome reports nothing of an execution, unless its step gives the BTC left free after it ('errored:2:0', see playSteps)
     it.each`
       case                                                         | steps                                                     | expectedSides
       ${'a BUY completed: long, it sells on the next cross below'} | ${'below above completed:1 below'}                        | ${['BUY', 'SELL']}
@@ -173,6 +174,7 @@ describe('SMACrossover Strategy', () => {
       ${'a SELL completed: flat, it buys on the next cross above'} | ${'below above completed:1 below completed:2 above'}      | ${['BUY', 'SELL', 'BUY']}
       ${'a SELL canceled: long, it sells on the next cross below'} | ${'below above completed:1 below canceled:2 above below'} | ${['BUY', 'SELL', 'SELL']}
       ${'a SELL errored: long, it sells on the next cross below'}  | ${'below above completed:1 below errored:2 above below'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored, all sold: flat, it buys again'}           | ${'below above completed:1 below errored:2:0 above'}      | ${['BUY', 'SELL', 'BUY']}
       ${'another order completed: still pending'}                  | ${'below above completed:unknown below above'}            | ${['BUY']}
       ${'another order canceled: still pending'}                   | ${'below above canceled:unknown below above'}             | ${['BUY']}
       ${'another order errored: still pending'}                    | ${'below above errored:unknown below above'}              | ${['BUY']}

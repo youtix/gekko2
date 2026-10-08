@@ -141,6 +141,7 @@ describe('MACD Strategy', () => {
   });
 
   describe('order outcomes', () => {
+    // An outcome reports nothing of an execution, unless its step gives the BTC left free after it ('errored:2:0', see playSteps)
     it.each`
       case                                                   | steps                                                         | expectedSides
       ${'a BUY completed: long, it sells'}                   | ${'up up completed:1 down down'}                              | ${['BUY', 'SELL']}
@@ -149,6 +150,7 @@ describe('MACD Strategy', () => {
       ${'a SELL completed: flat, it buys again'}             | ${'up up completed:1 down down completed:2 up up'}            | ${['BUY', 'SELL', 'BUY']}
       ${'a SELL canceled: long, it sells on the next trend'} | ${'up up completed:1 down down canceled:2 down up down down'} | ${['BUY', 'SELL', 'SELL']}
       ${'a SELL errored: long, it sells on the next trend'}  | ${'up up completed:1 down down errored:2 down up down down'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored, all sold: flat, it buys again'}     | ${'up up completed:1 down down errored:2:0 up up'}            | ${['BUY', 'SELL', 'BUY']}
       ${'another order completed: still pending'}            | ${'up up completed:unknown up down down'}                     | ${['BUY']}
       ${'another order canceled: still pending'}             | ${'up up canceled:unknown up down down'}                      | ${['BUY']}
       ${'another order errored: still pending'}              | ${'up up errored:unknown up down down'}                       | ${['BUY']}

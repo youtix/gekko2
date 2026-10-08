@@ -1,8 +1,12 @@
 import { StrategyOrder } from '@models/advice.types';
+import { Portfolio } from '@models/portfolio.types';
+import { TradingPair } from '@models/utility.types';
+import { MarketData } from '@services/exchange/exchange.types';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { PositionTracker } from './positionTracker';
-import { OrderRecorder, playSteps, relayOrderOutcome, UNKNOWN_ORDER_ID } from './positionTracker.mock';
+import { holding, OrderOutcome, OrderRecorder, OutcomeFacts, playSteps, relayOrderOutcome, UNKNOWN_ORDER_ID } from './positionTracker.mock';
+import { LoggerFn } from './strategy.types';
 
 const symbol = 'BTC/USDT';
 const ORDER_ID: UUID = '00000000-0000-0000-0000-000000000042';
@@ -30,17 +34,18 @@ describe('PositionTracker', () => {
   });
 
   describe('position', () => {
+    // The outcomes played here report nothing of an execution (see OutcomeFacts): an order that did not complete changes nothing
     it.each`
       case                                                          | steps                                                | isLong   | isPendingOrder
       ${'nothing placed: flat'}                                     | ${''}                                                | ${false} | ${false}
       ${'a BUY placed: flat, the BUY pending'}                      | ${'buy'}                                             | ${false} | ${true}
       ${'a BUY completed: long'}                                    | ${'buy completed:1'}                                 | ${true}  | ${false}
-      ${'a BUY canceled: flat'}                                     | ${'buy canceled:1'}                                  | ${false} | ${false}
-      ${'a BUY errored: flat'}                                      | ${'buy errored:1'}                                   | ${false} | ${false}
+      ${'a BUY canceled, nothing reported: flat'}                   | ${'buy canceled:1'}                                  | ${false} | ${false}
+      ${'a BUY errored, nothing reported: flat'}                    | ${'buy errored:1'}                                   | ${false} | ${false}
       ${'a SELL placed: long, the SELL pending'}                    | ${'buy completed:1 sell'}                            | ${true}  | ${true}
       ${'a SELL completed: flat'}                                   | ${'buy completed:1 sell completed:2'}                | ${false} | ${false}
-      ${'a SELL canceled: long'}                                    | ${'buy completed:1 sell canceled:2'}                 | ${true}  | ${false}
-      ${'a SELL errored: long'}                                     | ${'buy completed:1 sell errored:2'}                  | ${true}  | ${false}
+      ${'a SELL canceled, nothing reported: long'}                  | ${'buy completed:1 sell canceled:2'}                 | ${true}  | ${false}
+      ${'a SELL errored, nothing reported: long'}                   | ${'buy completed:1 sell errored:2'}                  | ${true}  | ${false}
       ${'another order completed: the BUY still pending'}           | ${'buy completed:unknown'}                           | ${false} | ${true}
       ${'another order canceled: the BUY still pending'}            | ${'buy canceled:unknown'}                            | ${false} | ${true}
       ${'another order errored: the BUY still pending'}             | ${'buy errored:unknown'}                             | ${false} | ${true}
@@ -50,14 +55,181 @@ describe('PositionTracker', () => {
       ${'a SELL errored, then reported completed: long'}            | ${'buy completed:1 sell errored:2 completed:2'}      | ${true}  | ${false}
       ${'a stop SELL adopted: long, the SELL pending'}              | ${'buy completed:1 stop'}                            | ${true}  | ${true}
       ${'a stop SELL completed: flat'}                              | ${'buy completed:1 stop completed:2'}                | ${false} | ${false}
-      ${'a stop SELL canceled: long'}                               | ${'buy completed:1 stop canceled:2'}                 | ${true}  | ${false}
-      ${'a stop SELL errored: long'}                                | ${'buy completed:1 stop errored:2'}                  | ${true}  | ${false}
+      ${'a stop SELL canceled, nothing reported: long'}             | ${'buy completed:1 stop canceled:2'}                 | ${true}  | ${false}
+      ${'a stop SELL errored, nothing reported: long'}              | ${'buy completed:1 stop errored:2'}                  | ${true}  | ${false}
       ${'a stop SELL not adopted, completed: still long'}           | ${'buy completed:1 unadopted completed:2'}           | ${true}  | ${false}
       ${'its own SELL completed beside a stop SELL: flat, pending'} | ${'buy completed:1 sell stop completed:2'}           | ${false} | ${true}
       ${'a stop SELL completed, then its own SELL refused: flat'}   | ${'buy completed:1 sell stop completed:3 errored:2'} | ${false} | ${false}
     `('tracks $case', ({ steps, isLong, isPendingOrder }) => {
       play(steps);
       expect({ isLong: tracker.isLong, isPendingOrder: tracker.isPendingOrder }).toEqual({ isLong, isPendingOrder });
+    });
+  });
+
+  describe('position after an order that did not complete', () => {
+    // At 100 USDT the minimum cost, 5 USDT, is 0.05 BTC, above the minimum amount, 0.001 BTC; a market order takes 0.2 BTC at least.
+    // Amounts are sent truncated to 0.0001 BTC.
+    const PRICE = 100;
+    const limits: MarketData = { amount: { min: 0.001 }, cost: { min: 5 }, market: { min: 0.2 }, precision: { amount: 0.0001 } };
+    const marketData = new Map<TradingPair, MarketData>([[symbol, limits]]);
+    // A step that is not a power of ten, unlike those of Binance and Hyperliquid: the amount is not truncated
+    const quarterStep = new Map<TradingPair, MarketData>([[symbol, { ...limits, precision: { amount: 0.25 } }]]);
+    const LONG = 'buy completed:1 sell';
+    const STOP = 'buy completed:1 stop';
+
+    /** Relays the outcome of the last order placed, its event reporting the facts given, at 100 USDT on the market above by default */
+    const relayLast = (outcome: OrderOutcome, facts: OutcomeFacts) =>
+      relayOrderOutcome(tracker, outcome, orders.created(orders.ids.length)!, { price: PRICE, marketData, ...facts });
+
+    describe('the fill a cancelation reports', () => {
+      it.each`
+        case                                                               | steps    | filled    | remaining | isLong
+        ${'a BUY that filled 0.9 of 1: long'}                              | ${'buy'} | ${0.9}    | ${0.1}    | ${true}
+        ${'a BUY that filled 0.01, too little to sell: flat'}              | ${'buy'} | ${0.01}   | ${0.99}   | ${false}
+        ${'a BUY that filled nothing: flat'}                               | ${'buy'} | ${0}      | ${1}      | ${false}
+        ${'a SELL that left 0.5 of 1 unsold: long'}                        | ${LONG}  | ${0.5}    | ${0.5}    | ${true}
+        ${'a SELL that sold nothing: long'}                                | ${LONG}  | ${0}      | ${1}      | ${true}
+        ${'a SELL that left 0.0001, too little to sell: flat'}             | ${LONG}  | ${0.9999} | ${0.0001} | ${false}
+        ${'a SELL that sold everything: flat'}                             | ${LONG}  | ${1}      | ${0}      | ${false}
+        ${'a MARKET SELL (a stop) that left 0.1, under its minimum: flat'} | ${STOP}  | ${0.9}    | ${0.1}    | ${false}
+        ${'a STICKY SELL that left 0.1: long'}                             | ${LONG}  | ${0.9}    | ${0.1}    | ${true}
+      `('reads $case', ({ steps, filled, remaining, isLong }) => {
+        play(steps);
+        relayLast('canceled', { filled, remaining });
+        expect(tracker.isLong).toBe(isLong);
+      });
+
+      it.each`
+        case                                                            | steps    | filled    | remaining | free | isLong
+        ${'a BUY that filled nothing, the portfolio holding 1: flat'}   | ${'buy'} | ${0}      | ${1}      | ${1} | ${false}
+        ${'a SELL that left 0.0001, the portfolio holding 1: flat'}     | ${LONG}  | ${0.9999} | ${0.0001} | ${1} | ${false}
+        ${'a BUY that filled 0.9, the portfolio holding nothing: long'} | ${'buy'} | ${0.9}    | ${0.1}    | ${0} | ${true}
+      `('reads the fill before the portfolio: $case', ({ steps, filled, remaining, free, isLong }) => {
+        play(steps);
+        relayLast('canceled', { filled, remaining, portfolio: holding(symbol, free) });
+        expect(tracker.isLong).toBe(isLong);
+      });
+    });
+
+    describe('the portfolio after it, without a fill reported', () => {
+      it.each`
+        case                                                    | steps    | outcome       | free   | used | isLong
+        ${'a SELL errored, no BTC left: flat'}                  | ${LONG}  | ${'errored'}  | ${0}   | ${0} | ${false}
+        ${'a SELL errored, 1 BTC left: long'}                   | ${LONG}  | ${'errored'}  | ${1}   | ${0} | ${true}
+        ${'a SELL errored, 1 BTC left but reserved: flat'}      | ${LONG}  | ${'errored'}  | ${0}   | ${1} | ${false}
+        ${'a BUY errored, 0.5 BTC bought: long'}                | ${'buy'} | ${'errored'}  | ${0.5} | ${0} | ${true}
+        ${'a BUY errored, no BTC bought: flat'}                 | ${'buy'} | ${'errored'}  | ${0}   | ${0} | ${false}
+        ${'a BUY canceled without its fill, 0.4 BTC bought'}    | ${'buy'} | ${'canceled'} | ${0.4} | ${0} | ${true}
+        ${'a SELL canceled without its fill, no BTC left'}      | ${LONG}  | ${'canceled'} | ${0}   | ${0} | ${false}
+        ${'a MARKET SELL (a stop) errored, 0.1 BTC left: flat'} | ${STOP}  | ${'errored'}  | ${0.1} | ${0} | ${false}
+        ${'a STICKY SELL errored, 0.1 BTC left: long'}          | ${LONG}  | ${'errored'}  | ${0.1} | ${0} | ${true}
+      `('reads $case', ({ steps, outcome, free, used, isLong }) => {
+        play(steps);
+        relayLast(outcome, { portfolio: holding(symbol, free, used) });
+        expect(tracker.isLong).toBe(isLong);
+      });
+
+      it.each`
+        case                                                  | steps    | filled       | remaining    | free   | isLong
+        ${'a BUY canceled, its fill missing, 0.4 BTC bought'} | ${'buy'} | ${undefined} | ${0.6}       | ${0.4} | ${true}
+        ${'a SELL canceled, its remainder missing, 0.5 left'} | ${LONG}  | ${0.5}       | ${undefined} | ${0.5} | ${true}
+      `('reads $case from the portfolio', ({ steps, filled, remaining, free, isLong }) => {
+        play(steps);
+        relayLast('canceled', { filled, remaining, portfolio: holding(symbol, free) });
+        expect(tracker.isLong).toBe(isLong);
+      });
+
+      it.each`
+        case                                                            | free       | price    | data           | isLong
+        ${'0.1 BTC, enough to sell'}                                    | ${0.1}     | ${PRICE} | ${marketData}  | ${true}
+        ${'0.05 BTC, the minimum cost exactly'}                         | ${0.05}    | ${PRICE} | ${marketData}  | ${true}
+        ${'0.001 BTC at an unknown price, the minimum amount exactly'}  | ${0.001}   | ${0}     | ${marketData}  | ${true}
+        ${'0.01 BTC, above the minimum amount, under the minimum cost'} | ${0.01}    | ${PRICE} | ${marketData}  | ${false}
+        ${'0.01 BTC at an unknown price, the cost unchecked'}           | ${0.01}    | ${0}     | ${marketData}  | ${true}
+        ${'0.0005 BTC at an unknown price, under the minimum amount'}   | ${0.0005}  | ${0}     | ${marketData}  | ${false}
+        ${'0.0001 BTC on a market without data, without minimums'}      | ${0.0001}  | ${PRICE} | ${new Map()}   | ${true}
+        ${'no BTC on a market without data'}                            | ${0}       | ${PRICE} | ${new Map()}   | ${false}
+        ${'0.05269 BTC at 95 USDT, sent as 0.0526 BTC: 4.997 USDT'}     | ${0.05269} | ${95}    | ${marketData}  | ${false}
+        ${'0.0527 BTC at 95 USDT, 5.0065 USDT'}                         | ${0.0527}  | ${95}    | ${marketData}  | ${true}
+        ${'0.05269 BTC at 95 USDT, a step of 0.25 BTC not applied'}     | ${0.05269} | ${95}    | ${quarterStep} | ${true}
+      `('reads a SELL errored with $case as long ($isLong)', ({ free, price, data, isLong }) => {
+        play(LONG);
+        relayLast('errored', { portfolio: holding(symbol, free), price, marketData: data });
+        expect(tracker.isLong).toBe(isLong);
+      });
+    });
+
+    describe('nothing reported', () => {
+      // Missing from the portfolio, the asset is unknown: the portfolio was not read yet
+      const withoutBTC: Portfolio = new Map([['USDT', { free: 100, used: 0, total: 100 }]]);
+
+      it.each`
+        case                       | steps    | outcome       | isLong
+        ${'a BUY canceled: flat'}  | ${'buy'} | ${'canceled'} | ${false}
+        ${'a BUY errored: flat'}   | ${'buy'} | ${'errored'}  | ${false}
+        ${'a SELL canceled: long'} | ${LONG}  | ${'canceled'} | ${true}
+        ${'a SELL errored: long'}  | ${LONG}  | ${'errored'}  | ${true}
+      `('keeps the position after $case, the portfolio without BTC', ({ steps, outcome, isLong }) => {
+        play(steps);
+        relayLast(outcome, { portfolio: withoutBTC });
+        expect(tracker.isLong).toBe(isLong);
+      });
+    });
+
+    describe('facts it does not read', () => {
+      it('reads a BUY completed as long, even with no BTC in the portfolio', () => {
+        play('buy');
+        relayLast('completed', { portfolio: holding(symbol, 0) });
+        expect(tracker.isLong).toBe(true);
+      });
+
+      it('ignores the facts of another order', () => {
+        play('buy completed:1');
+        relayOrderOutcome(
+          tracker,
+          'errored',
+          { id: UNKNOWN_ORDER_ID, symbol },
+          { price: PRICE, marketData, portfolio: holding(symbol, 0) },
+        );
+        expect(tracker.isLong).toBe(true);
+      });
+
+      it('ignores the facts of an order already settled', () => {
+        play('buy completed:1 sell errored:2');
+        relayLast('errored', { portfolio: holding(symbol, 0) });
+        expect(tracker.isLong).toBe(true);
+      });
+    });
+
+    describe('log', () => {
+      let log: Mock<LoggerFn>;
+
+      beforeEach(() => {
+        log = vi.fn();
+      });
+
+      it.each`
+        case                                  | steps    | outcome       | facts                                    | message
+        ${'a SELL errored, no BTC left'}      | ${LONG}  | ${'errored'}  | ${{ portfolio: holding(symbol, 0) }}     | ${'[00000000-0000-0000-0000-000000000002] SELL order errored: 0 BTC free in the portfolio after it, too little to sell: the strategy is flat'}
+        ${'a BUY errored, 0.5 BTC bought'}    | ${'buy'} | ${'errored'}  | ${{ portfolio: holding(symbol, 0.5) }}   | ${'[00000000-0000-0000-0000-000000000001] BUY order errored: 0.5 BTC free in the portfolio after it, enough to sell: the strategy is long'}
+        ${'a BUY canceled after filling 0.9'} | ${'buy'} | ${'canceled'} | ${{ filled: 0.9, remaining: 0.1 }}       | ${'[00000000-0000-0000-0000-000000000001] BUY order canceled: 0.9 BTC filled, enough to sell: the strategy is long'}
+        ${'a SELL canceled with 0.0001 left'} | ${LONG}  | ${'canceled'} | ${{ filled: 0.9999, remaining: 0.0001 }} | ${'[00000000-0000-0000-0000-000000000002] SELL order canceled: 0.0001 BTC left unsold, too little to sell: the strategy is flat'}
+      `('logs the position read from $case, which changes it', ({ steps, outcome, facts, message }) => {
+        play(steps);
+        relayLast(outcome, { ...facts, log });
+        expect(log.mock.calls).toEqual([['info', message]]);
+      });
+
+      it.each`
+        case                                  | steps    | outcome       | facts
+        ${'a SELL errored, 1 BTC left'}       | ${LONG}  | ${'errored'}  | ${{ portfolio: holding(symbol, 1) }}
+        ${'a BUY canceled, nothing filled'}   | ${'buy'} | ${'canceled'} | ${{ filled: 0, remaining: 1 }}
+        ${'a SELL errored, nothing reported'} | ${LONG}  | ${'errored'}  | ${{}}
+      `('logs nothing after $case, which keeps the position', ({ steps, outcome, facts }) => {
+        play(steps);
+        relayLast(outcome, { ...facts, log });
+        expect(log).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -92,7 +264,7 @@ describe('PositionTracker', () => {
       ${'completed'} | ${'a stop SELL not adopted'}  | ${'buy completed:1 unadopted'} | ${2}         | ${false}
     `('says whether $order, $outcome, was its own ($isOwn)', ({ outcome, steps, n, isOwn }) => {
       play(steps);
-      expect(relayOrderOutcome(tracker, outcome, n === 'unknown' ? UNKNOWN_ORDER_ID : orders.ids[n - 1])).toBe(isOwn);
+      expect(relayOrderOutcome(tracker, outcome, n === 'unknown' ? { id: UNKNOWN_ORDER_ID } : orders.created(n)!)).toBe(isOwn);
     });
   });
 

@@ -133,17 +133,19 @@ describe('EMARibbon', () => {
       strategy.init({ tools: { strategyParams: {} }, addIndicator, candle: bucket } as unknown as InitParams<EMARibbonStrategyParams>);
     });
 
+    // An outcome reports nothing of an execution, unless its step gives the BTC left free after it ('errored:2:0', see playSteps)
     it.each`
-      case                                        | steps                                              | expectedSides
-      ${'a BUY completed: long, it sells'}        | ${'tight completed:1 tighter'}                     | ${['BUY', 'SELL']}
-      ${'a BUY canceled: flat, it buys again'}    | ${'tight canceled:1 tight'}                        | ${['BUY', 'BUY']}
-      ${'a BUY errored: flat, it buys again'}     | ${'tight errored:1 tight'}                         | ${['BUY', 'BUY']}
-      ${'a SELL completed: flat, it buys again'}  | ${'tight completed:1 tighter completed:2 tight'}   | ${['BUY', 'SELL', 'BUY']}
-      ${'a SELL canceled: long, it sells again'}  | ${'tight completed:1 tighter canceled:2 tightest'} | ${['BUY', 'SELL', 'SELL']}
-      ${'a SELL errored: long, it sells again'}   | ${'tight completed:1 tighter errored:2 tightest'}  | ${['BUY', 'SELL', 'SELL']}
-      ${'another order completed: still pending'} | ${'tight completed:unknown tight tighter'}         | ${['BUY']}
-      ${'another order canceled: still pending'}  | ${'tight canceled:unknown tight tighter'}          | ${['BUY']}
-      ${'another order errored: still pending'}   | ${'tight errored:unknown tight tighter'}           | ${['BUY']}
+      case                                               | steps                                              | expectedSides
+      ${'a BUY completed: long, it sells'}               | ${'tight completed:1 tighter'}                     | ${['BUY', 'SELL']}
+      ${'a BUY canceled: flat, it buys again'}           | ${'tight canceled:1 tight'}                        | ${['BUY', 'BUY']}
+      ${'a BUY errored: flat, it buys again'}            | ${'tight errored:1 tight'}                         | ${['BUY', 'BUY']}
+      ${'a SELL completed: flat, it buys again'}         | ${'tight completed:1 tighter completed:2 tight'}   | ${['BUY', 'SELL', 'BUY']}
+      ${'a SELL canceled: long, it sells again'}         | ${'tight completed:1 tighter canceled:2 tightest'} | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored: long, it sells again'}          | ${'tight completed:1 tighter errored:2 tightest'}  | ${['BUY', 'SELL', 'SELL']}
+      ${'a SELL errored, all sold: flat, it buys again'} | ${'tight completed:1 tighter errored:2:0 tight'}   | ${['BUY', 'SELL', 'BUY']}
+      ${'another order completed: still pending'}        | ${'tight completed:unknown tight tighter'}         | ${['BUY']}
+      ${'another order canceled: still pending'}         | ${'tight canceled:unknown tight tighter'}          | ${['BUY']}
+      ${'another order errored: still pending'}          | ${'tight errored:unknown tight tighter'}           | ${['BUY']}
     `('should track $case', ({ steps, expectedSides }) => {
       play(steps);
       expect(advices.map(({ side }) => side)).toEqual(expectedSides);
