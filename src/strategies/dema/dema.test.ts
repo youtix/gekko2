@@ -1,7 +1,7 @@
 import { StrategyOrder } from '@models/advice.types';
 import { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { ETH_IGNORED_WARNING, logsAtInit, OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
 import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { omit } from 'lodash-es';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -68,6 +68,15 @@ describe('DEMA Strategy', () => {
 
     it('should add SMA indicator with strategy period', () => {
       expect(addIndicator).toHaveBeenCalledWith('SMA', 'BTC/USDT', { period: 14 });
+    });
+
+    // The bucket holds a candle of every watched pair, in the order of watch.assets: the strategy trades the first one only
+    it.each`
+      case           | pairs                       | expected
+      ${'one pair'}  | ${['BTC/USDT']}             | ${[]}
+      ${'two pairs'} | ${['BTC/USDT', 'ETH/USDT']} | ${[ETH_IGNORED_WARNING]}
+    `('should warn once, at init, when it ignores watched pairs: $case', ({ pairs, expected }) => {
+      expect(logsAtInit(new DEMA(), pairs, tools.strategyParams)).toEqual(expected);
     });
   });
 

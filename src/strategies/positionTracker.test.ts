@@ -4,12 +4,24 @@ import { TradingPair } from '@models/utility.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
-import { PositionTracker } from './positionTracker';
-import { holding, OrderOutcome, OrderRecorder, OutcomeFacts, playSteps, relayOrderOutcome, UNKNOWN_ORDER_ID } from './positionTracker.mock';
+import { pickTradedPair, PositionTracker } from './positionTracker';
+import {
+  ETH_IGNORED_WARNING,
+  holding,
+  LoggedLine,
+  OrderOutcome,
+  OrderRecorder,
+  OutcomeFacts,
+  playSteps,
+  relayOrderOutcome,
+  UNKNOWN_ORDER_ID,
+} from './positionTracker.mock';
 import { LoggerFn } from './strategy.types';
 
 const symbol = 'BTC/USDT';
 const ORDER_ID: UUID = '00000000-0000-0000-0000-000000000042';
+const THREE_PAIRS_WARNING =
+  'The strategy trades ETH/USDT only, the first pair watched (watch.assets): it ignores BTC/USDT, SOL/USDT, whose candles are still required every minute';
 
 describe('PositionTracker', () => {
   let tracker: PositionTracker;
@@ -293,5 +305,34 @@ describe('PositionTracker', () => {
     `('$action returns the id of the order created', ({ action }) => {
       expect(tracker[action as 'buy' | 'sell'](createOrder, { type: 'MARKET', symbol })).toBe(ORDER_ID);
     });
+  });
+});
+
+describe('pickTradedPair', () => {
+  /** Picks the pair of a bucket holding a candle of each of `pairs`, in that order; returns it with the lines it logged */
+  const pickPair = (pairs: TradingPair[]) => {
+    const logs: LoggedLine[] = [];
+    const candle = new Map(pairs.map(pair => [pair, { start: 0, open: 100, high: 100, low: 100, close: 100, volume: 1 }]));
+    const pair = pickTradedPair(candle, { log: (level, message) => logs.push({ level, message }) });
+    return { pair, logs };
+  };
+
+  // The bucket holds a candle of every watched pair, in the order of watch.assets
+  it.each`
+    case             | pairs                                   | expected
+    ${'one pair'}    | ${['BTC/USDT']}                         | ${'BTC/USDT'}
+    ${'two pairs'}   | ${['BTC/USDT', 'ETH/USDT']}             | ${'BTC/USDT'}
+    ${'three pairs'} | ${['ETH/USDT', 'BTC/USDT', 'SOL/USDT']} | ${'ETH/USDT'}
+  `('trades the first pair of the bucket: $case', ({ pairs, expected }) => {
+    expect(pickPair(pairs).pair).toBe(expected);
+  });
+
+  it.each`
+    case             | pairs                                   | expected
+    ${'one pair'}    | ${['BTC/USDT']}                         | ${[]}
+    ${'two pairs'}   | ${['BTC/USDT', 'ETH/USDT']}             | ${[ETH_IGNORED_WARNING]}
+    ${'three pairs'} | ${['ETH/USDT', 'BTC/USDT', 'SOL/USDT']} | ${[{ level: 'warn', message: THREE_PAIRS_WARNING }]}
+  `('warns once that it ignores the other pairs: $case', ({ pairs, expected }) => {
+    expect(pickPair(pairs).logs).toEqual(expected);
   });
 });

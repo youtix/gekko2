@@ -1,10 +1,19 @@
 import { AdviceOrder, StrategyOrder } from '@models/advice.types';
+import { CandleBucket } from '@models/event.types';
+import { LogLevel } from '@models/logLevel.types';
 import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { noop, pick } from 'lodash-es';
 import { UUID } from 'node:crypto';
-import { LoggerFn, OnOrderCanceledEventParams, OnOrderCompletedEventParams, OnOrderErroredEventParams, Strategy } from './strategy.types';
+import {
+  LoggerFn,
+  OnOrderCanceledEventParams,
+  OnOrderCompletedEventParams,
+  OnOrderErroredEventParams,
+  Strategy,
+  Tools,
+} from './strategy.types';
 
 export type OrderOutcome = 'completed' | 'canceled' | 'errored';
 /** A strategy's order hooks, or those of a PositionTracker */
@@ -111,4 +120,27 @@ export const playSteps = <T>(steps: string, target: OrderHooks<T>, orders: Order
     if (!order.symbol || !/^\d+(\.\d+)?$/.test(free)) throw new Error(`No portfolio holding "${free}" after order ${n}, in "${steps}"`);
     relayOrderOutcome(target, kind as OrderOutcome, order, { portfolio: holding(order.symbol, Number(free)) });
   }
+};
+
+/** A line logged through tools.log */
+export type LoggedLine = { level: LogLevel; message: string };
+
+/** What init warns, through tools.log, on a bucket of BTC/USDT then ETH/USDT: the strategy trades the first pair only */
+export const ETH_IGNORED_WARNING: LoggedLine = {
+  level: 'warn',
+  message:
+    'The strategy trades BTC/USDT only, the first pair watched (watch.assets): it ignores ETH/USDT, whose candles are still required every minute',
+};
+
+/**
+ * Plays init as the StrategyManager does, on the first timeframe bucket: a candle of each of `pairs`, in their order (that of
+ * watch.assets), with the strategy's parameters; returns the lines it logged
+ */
+export const logsAtInit = <T>(strategy: Pick<Strategy<T>, 'init'>, pairs: TradingPair[], strategyParams: T): LoggedLine[] => {
+  const logs: LoggedLine[] = [];
+  const candle: CandleBucket = new Map(pairs.map(pair => [pair, { start: 0, open: 100, high: 100, low: 100, close: 100, volume: 1 }]));
+  const log: LoggerFn = (level, message) => logs.push({ level, message });
+  const tools = { strategyParams, log } as Tools<T>;
+  strategy.init?.({ candle, portfolio: new Map(), tools, addIndicator: noop });
+  return logs;
 };

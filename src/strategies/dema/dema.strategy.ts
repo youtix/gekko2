@@ -1,5 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import { PositionTracker } from '@strategies/positionTracker';
+import { pickTradedPair, PositionTracker } from '@strategies/positionTracker';
 import {
   IndicatorResults,
   InitParams,
@@ -27,8 +27,7 @@ export class DEMA implements Strategy<DEMAStrategyParams> {
   private readonly position = new PositionTracker();
 
   init({ candle, tools, addIndicator }: InitParams<DEMAStrategyParams>): void {
-    const [pair] = candle.keys();
-    this.pair = pair;
+    this.pair = pickTradedPair(candle, tools);
     addIndicator('DEMA', this.pair, { period: tools.strategyParams.period });
     addIndicator('SMA', this.pair, { period: tools.strategyParams.period });
   }

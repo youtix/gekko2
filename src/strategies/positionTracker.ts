@@ -1,5 +1,7 @@
 import { StrategyOrder } from '@models/advice.types';
+import { CandleBucket } from '@models/event.types';
 import { OrderSide, OrderType } from '@models/order.types';
+import { TradingPair } from '@models/utility.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { getMarketOrderLimits } from '@utils/market/market.utils';
 import { round } from '@utils/math/round.utils';
@@ -168,3 +170,21 @@ export class PositionTracker {
     return true;
   }
 }
+
+/**
+ * The pair a single-pair strategy trades: the first of the bucket its init gets, which holds a candle of every watched pair in the
+ * order of watch.assets. The strategies took it without a word: the other pairs were ignored, their candles still required every
+ * minute. Called once, from init, it warns through the strategy's log when the bucket holds more than one pair, naming the pair traded
+ * and the others.
+ */
+export const pickTradedPair = (candle: CandleBucket, tools: Pick<Tools<unknown>, 'log'>): TradingPair => {
+  const [pair, ...ignored] = candle.keys();
+  if (ignored.length > 0) {
+    const others = ignored.join(', ');
+    tools.log(
+      'warn',
+      `The strategy trades ${pair} only, the first pair watched (watch.assets): it ignores ${others}, whose candles are still required every minute`,
+    );
+  }
+  return pair;
+};

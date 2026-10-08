@@ -1,5 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import { PositionTracker } from '@strategies/positionTracker';
+import { pickTradedPair, PositionTracker } from '@strategies/positionTracker';
 import {
   IndicatorResults,
   InitParams,
@@ -25,8 +25,7 @@ export class TMA implements Strategy<TMAStrategyParams> {
 
   init({ candle, tools, addIndicator }: InitParams<TMAStrategyParams>): void {
     const { long, medium, short, src } = tools.strategyParams;
-    const [pair] = candle.keys();
-    this.pair = pair;
+    this.pair = pickTradedPair(candle, tools);
     addIndicator('SMA', this.pair, { period: short, src });
     addIndicator('SMA', this.pair, { period: medium, src });
     addIndicator('SMA', this.pair, { period: long, src });

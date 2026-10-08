@@ -1,5 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import { PositionTracker } from '@strategies/positionTracker';
+import { pickTradedPair, PositionTracker } from '@strategies/positionTracker';
 import {
   IndicatorResults,
   InitParams,
@@ -29,8 +29,7 @@ export class EMARibbon implements Strategy<EMARibbonStrategyParams> {
   private previousSpread?: number;
 
   init({ candle, tools, addIndicator }: InitParams<EMARibbonStrategyParams>): void {
-    const [pair] = candle.keys();
-    this.pair = pair;
+    this.pair = pickTradedPair(candle, tools);
     const { src, count, start, step } = tools.strategyParams;
     addIndicator('EMARibbon', this.pair, { src, count, start, step });
   }

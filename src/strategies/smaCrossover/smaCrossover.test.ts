@@ -1,7 +1,7 @@
 import type { StrategyOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
-import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { ETH_IGNORED_WARNING, logsAtInit, OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
 import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SMACrossover } from './smaCrossover.strategy';
@@ -39,15 +39,28 @@ describe('SMACrossover Strategy', () => {
     bucket.set(symbol, createCandle(price));
   };
 
-  /** Plays the steps (see playSteps): a close and an SMA (see STEPS) are a candle */
+  /**
+   * Plays a timeframe candle, the bucket set before, as the StrategyManager does: onEachTimeframeCandle on every candle, the warmup
+   * included, then, once the warmup is over, onTimeframeCandleAfterWarmup with the same SMA
+   */
+  const playCandle = (sma: unknown, afterWarmup = true) => {
+    const params = { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>;
+    strategy.onEachTimeframeCandle(params, ...makeIndicator(sma));
+    if (afterWarmup) strategy.onTimeframeCandleAfterWarmup(params, ...makeIndicator(sma));
+  };
+
+  /**
+   * Plays the steps (see playSteps): a close and an SMA (see STEPS) are a candle after the warmup, their name in parentheses a warmup
+   * candle
+   */
   const play = (steps: string) =>
     playSteps(steps, strategy, orders, step => {
-      const { close, sma } = STEPS[step as keyof typeof STEPS];
+      const isWarmup = step.startsWith('(') && step.endsWith(')');
+      const name = isWarmup ? step.slice(1, -1) : step;
+      if (!(name in STEPS)) throw new Error(`No step named ${name}, in "${steps}"`);
+      const { close, sma } = STEPS[name as keyof typeof STEPS];
       setBucket(close);
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-        ...makeIndicator(sma),
-      );
+      playCandle(sma, !isWarmup);
     });
   const sides = () => advices.map(({ side }) => side);
 
@@ -76,25 +89,34 @@ describe('SMACrossover Strategy', () => {
       customStrategy.init({ tools: customTools, addIndicator, candle: bucket } as unknown as InitParams<SMACrossoverStrategyParams>);
       expect(addIndicator).toHaveBeenCalledWith('SMA', symbol, { period: 50, src: 'high' });
     });
+
+    // The bucket holds a candle of every watched pair, in the order of watch.assets: the strategy trades the first one only
+    it.each`
+      case           | pairs                       | expected
+      ${'one pair'}  | ${['BTC/USDT']}             | ${[]}
+      ${'two pairs'} | ${['BTC/USDT', 'ETH/USDT']} | ${[ETH_IGNORED_WARNING]}
+    `('should warn once, at init, when it ignores watched pairs: $case', ({ pairs, expected }) => {
+      expect(logsAtInit(new SMACrossover(), pairs, tools.strategyParams)).toEqual(expected);
+    });
   });
 
   describe('onTimeframeCandleAfterWarmup', () => {
     it('should do nothing if pair is not defined', () => {
       const emptyStrategy = new SMACrossover();
-      emptyStrategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-        ...makeIndicator(100),
-      );
-      expect(advices).toHaveLength(0);
+      // Below the SMA, then above it: a crossover, had init picked the pair
+      for (const close of [90, 110]) {
+        setBucket(close);
+        const params = { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>;
+        emptyStrategy.onEachTimeframeCandle(params, ...makeIndicator(100));
+        emptyStrategy.onTimeframeCandleAfterWarmup(params, ...makeIndicator(100));
+      }
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
     it('should do nothing if current candle is missing', () => {
-      const emptyBucket = new Map();
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: emptyBucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-        ...makeIndicator(100),
-      );
-      expect(advices).toHaveLength(0);
+      bucket = new Map();
+      playCandle(100);
+      expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
     // Nothing logged either: a NaN SMA, compared with the price, was recorded as the price being below it
@@ -108,10 +130,7 @@ describe('SMACrossover Strategy', () => {
       ${-Infinity}
     `('should do nothing when SMA result is invalid ($smaRes)', ({ smaRes }) => {
       setBucket(100);
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-        ...makeIndicator(smaRes),
-      );
+      playCandle(smaRes);
       expect({ advices, logs }).toEqual({ advices: [], logs: [] });
     });
 
@@ -127,10 +146,7 @@ describe('SMACrossover Strategy', () => {
 
     it('should record initial state without creating an order on first candle', () => {
       setBucket(100);
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-        ...makeIndicator(95),
-      ); // price above SMA
+      playCandle(95); // price above SMA
       expect(advices).toHaveLength(0);
       expect(logs).toContainEqual(expect.objectContaining({ message: expect.stringContaining('Initial state') }));
     });
@@ -153,10 +169,7 @@ describe('SMACrossover Strategy', () => {
     `('should not create order when price $description SMA', ({ prices, sma }) => {
       for (const price of prices) {
         setBucket(price);
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-          ...makeIndicator(sma),
-        );
+        playCandle(sma);
       }
       expect(advices).toHaveLength(0);
     });
@@ -176,18 +189,54 @@ describe('SMACrossover Strategy', () => {
 
     it('should always use MARKET order type', () => {
       setBucket(90);
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-        ...makeIndicator(100),
-      );
+      playCandle(100);
 
       setBucket(110);
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<SMACrossoverStrategyParams>,
-        ...makeIndicator(100),
-      );
+      playCandle(100);
 
       expect(advices[0].type).toBe('MARKET');
+    });
+
+    // src only selects what the SMA averages: the price that crosses it is the close, whatever the open, high and low of the candle
+    it('should compare the close with the SMA, whatever source the SMA averages', () => {
+      strategy = new SMACrossover();
+      const hl2Tools = { ...tools, strategyParams: { period: 20, src: 'hl2' } };
+      strategy.init({ candle: bucket, tools: hl2Tools, addIndicator } as unknown as InitParams<SMACrossoverStrategyParams>);
+      // The close crosses the SMA upwards, while every other price of the candles, hl2, hlc3 and ohlc4 included, crosses it downwards or
+      // stays on one side of it
+      for (const candle of [
+        { open: 120, high: 130, low: 88, close: 90 },
+        { open: 85, high: 112, low: 60, close: 110 },
+      ]) {
+        bucket = new Map([[symbol, { start: 0, volume: 1, ...candle }]]);
+        playCandle(100);
+      }
+      expect(sides()).toEqual(['BUY']);
+    });
+  });
+
+  describe('the side of the price during the warmup', () => {
+    // A step in parentheses is a warmup candle: the strategy records the side of the price on it, and trades nothing
+    it.each`
+      case                                      | steps                      | expectedSides
+      ${'below at the warmup end, then above'}  | ${'(below) above'}         | ${['BUY']}
+      ${'below, on the SMA at the end, above'}  | ${'(below) (on) above'}    | ${['BUY']}
+      ${'above at the warmup end, then above'}  | ${'(above) above'}         | ${[]}
+      ${'a cross within the warmup only'}       | ${'(below) (above) above'} | ${[]}
+      ${'a cross below at the end, when flat'}  | ${'(above) below'}         | ${[]}
+      ${'no SMA in the warmup, then a cross'}   | ${'(nan) below above'}     | ${['BUY']}
+      ${'no SMA in the warmup, the first side'} | ${'(nan) above'}           | ${[]}
+    `('should trade a crossover from the last warmup candle on: $case', ({ steps, expectedSides }) => {
+      play(steps);
+      expect(sides()).toEqual(expectedSides);
+    });
+
+    it('should log the initial state from the warmup, then the crossover after it', () => {
+      play('(below) above');
+      expect(logs.filter(({ level }) => level === 'info')).toEqual([
+        { level: 'info', message: 'Initial state: price below SMA' },
+        { level: 'info', message: 'SMA crossed DOWN price (100.00000 < 110.00000) => BUY' },
+      ]);
     });
   });
 

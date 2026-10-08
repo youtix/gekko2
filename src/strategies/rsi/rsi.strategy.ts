@@ -1,5 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import { PositionTracker } from '@strategies/positionTracker';
+import { pickTradedPair, PositionTracker } from '@strategies/positionTracker';
 import {
   IndicatorResults,
   InitParams,
@@ -31,8 +31,7 @@ export class RSI implements Strategy<RSIStrategyParams> {
 
   init({ candle, tools, addIndicator }: InitParams<RSIStrategyParams>): void {
     const { period, src } = tools.strategyParams;
-    const [pair] = candle.keys();
-    this.pair = pair;
+    this.pair = pickTradedPair(candle, tools);
     addIndicator('RSI', this.pair, { period, src });
   }
 

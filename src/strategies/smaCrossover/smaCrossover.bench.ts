@@ -51,6 +51,8 @@ const generateTrendingCandles = (count: number) =>
 const makeIndicator = (res: number) => [{ results: res, symbol }] as any;
 
 describe('SMACrossover Strategy Performance', () => {
+  // Each candle as the StrategyManager plays it: onEachTimeframeCandle records the side of the price, onTimeframeCandleAfterWarmup
+  // trades its crossovers
   describe('onTimeframeCandleAfterWarmup', () => {
     bench('10 candles - oscillating (frequent crossovers)', () => {
       const strategy = new SMACrossover();
@@ -60,6 +62,7 @@ describe('SMACrossover Strategy Performance', () => {
       strategy.init({ candle: candles[0], tools, addIndicator } as any);
 
       for (const candle of candles) {
+        strategy.onEachTimeframeCandle({ candle, tools } as any, ...makeIndicator(100));
         strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, ...makeIndicator(100));
         tools.completeOrders(strategy);
       }
@@ -73,6 +76,7 @@ describe('SMACrossover Strategy Performance', () => {
       strategy.init({ candle: candles[0], tools, addIndicator } as any);
 
       for (const candle of candles) {
+        strategy.onEachTimeframeCandle({ candle, tools } as any, ...makeIndicator(100));
         strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, ...makeIndicator(100));
         tools.completeOrders(strategy);
       }
@@ -86,6 +90,7 @@ describe('SMACrossover Strategy Performance', () => {
       strategy.init({ candle: candles[0], tools, addIndicator } as any);
 
       for (const candle of candles) {
+        strategy.onEachTimeframeCandle({ candle, tools } as any, ...makeIndicator(100));
         strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, ...makeIndicator(100));
         tools.completeOrders(strategy);
       }
@@ -99,6 +104,7 @@ describe('SMACrossover Strategy Performance', () => {
       strategy.init({ candle: candles[0], tools, addIndicator } as any);
 
       for (const candle of candles) {
+        strategy.onEachTimeframeCandle({ candle, tools } as any, ...makeIndicator(50));
         strategy.onTimeframeCandleAfterWarmup({ candle, tools } as any, ...makeIndicator(50)); // SMA always below price
         tools.completeOrders(strategy);
       }

@@ -1,6 +1,6 @@
 import type { StrategyOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
-import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { ETH_IGNORED_WARNING, logsAtInit, OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
 import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { omit } from 'lodash-es';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -61,6 +61,15 @@ describe('RSI Strategy', () => {
   describe('init', () => {
     it('should add RSI indicator with strategy period and src', () => {
       expect(addIndicator).toHaveBeenCalledWith('RSI', symbol, { period: 14, src: 'close' });
+    });
+
+    // The bucket holds a candle of every watched pair, in the order of watch.assets: the strategy trades the first one only
+    it.each`
+      case           | pairs                       | expected
+      ${'one pair'}  | ${['BTC/USDT']}             | ${[]}
+      ${'two pairs'} | ${['BTC/USDT', 'ETH/USDT']} | ${[ETH_IGNORED_WARNING]}
+    `('should warn once, at init, when it ignores watched pairs: $case', ({ pairs, expected }) => {
+      expect(logsAtInit(new RSI(), pairs, tools.strategyParams)).toEqual(expected);
     });
   });
 

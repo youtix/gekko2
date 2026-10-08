@@ -1,6 +1,6 @@
 import type { AdviceOrder, StrategyOrder } from '@models/advice.types';
 import type { CandleBucket } from '@models/event.types';
-import { OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
+import { ETH_IGNORED_WARNING, logsAtInit, OrderRecorder, playSteps } from '@strategies/positionTracker.mock';
 import { InitParams, OnCandleEventParams } from '@strategies/strategy.types';
 import { omit } from 'lodash-es';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,6 +62,16 @@ describe('EMARibbon', () => {
       const params = { src: 'close' as const, count: 6, start: 8, step: 2 };
       strategy.init({ tools: { strategyParams: params }, addIndicator, candle: bucket } as unknown as InitParams<EMARibbonStrategyParams>);
       expect(addIndicator).toHaveBeenCalledWith('EMARibbon', symbol, { src: 'close', count: 6, start: 8, step: 2 });
+    });
+
+    // The bucket holds a candle of every watched pair, in the order of watch.assets: the strategy trades the first one only
+    it.each`
+      case           | pairs                       | expected
+      ${'one pair'}  | ${['BTC/USDT']}             | ${[]}
+      ${'two pairs'} | ${['BTC/USDT', 'ETH/USDT']} | ${[ETH_IGNORED_WARNING]}
+    `('warns once, at init, when it ignores watched pairs: $case', ({ pairs, expected }) => {
+      const params = { src: 'close' as const, count: 3, start: 2, step: 1, spreadCompressionThreshold: 1 };
+      expect(logsAtInit(new EMARibbon(), pairs, params)).toEqual(expected);
     });
   });
 

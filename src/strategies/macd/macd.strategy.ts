@@ -1,5 +1,5 @@
 import { TradingPair } from '@models/utility.types';
-import { PositionTracker } from '@strategies/positionTracker';
+import { pickTradedPair, PositionTracker } from '@strategies/positionTracker';
 import {
   IndicatorResults,
   InitParams,
@@ -28,8 +28,7 @@ export class MACD implements Strategy<MACDStrategyParams> {
 
   init({ candle, tools, addIndicator }: InitParams<MACDStrategyParams>): void {
     const { strategyParams } = tools;
-    const [pair] = candle.keys();
-    this.pair = pair;
+    this.pair = pickTradedPair(candle, tools);
     addIndicator('MACD', this.pair, { short: strategyParams.short, long: strategyParams.long, signal: strategyParams.signal });
     this.trend = { direction: 'none', duration: 0, persisted: false, adviced: false };
   }
