@@ -11,7 +11,7 @@ export class SMA extends Indicator<'SMA'> {
   private getPrice: (candle: Candle) => number;
 
   constructor({ period = 30, src = 'close' }: IndicatorRegistry['SMA']['input'] = {}) {
-    super('SMA', null);
+    super();
     this.period = period;
     this.buffer = [];
     this.idx = 0;
@@ -37,9 +37,5 @@ export class SMA extends Indicator<'SMA'> {
     this.idx = (this.idx + 1) % this.period;
 
     this.result = this.sum / this.period;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

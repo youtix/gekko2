@@ -6,7 +6,7 @@ export class ROC extends Indicator<'ROC'> {
   private ringBuffer: RingBuffer<number>;
 
   constructor({ period }: IndicatorRegistry['ROC']['input']) {
-    super('ROC', null);
+    super();
     this.ringBuffer = new RingBuffer(period);
   }
 
@@ -17,9 +17,5 @@ export class ROC extends Indicator<'ROC'> {
     if (!this.ringBuffer.isFull()) return;
 
     this.result = oldest === 0 ? 0 : (close / (oldest ?? close) - 1) * 100;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

@@ -10,7 +10,7 @@ declare global {
         slowDPeriod?: number;
         slowDMaType?: MovingAverageTypes;
       };
-      output: { k: number | null; d: number | null };
+      output: { k: number; d: number } | null;
     };
   }
 }

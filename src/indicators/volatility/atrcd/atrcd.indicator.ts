@@ -12,7 +12,7 @@ export class ATRCD extends Indicator<'ATRCD'> {
   private age: number;
 
   constructor({ short = 12, long = 26, signal = 9 }: IndicatorRegistry['ATRCD']['input'] = {}) {
-    super('ATRCD', { atrcd: null, signal: null, hist: null });
+    super();
 
     this.emaFast = new ATR({ period: short });
     this.emaSlow = new ATR({ period: long });
@@ -46,9 +46,5 @@ export class ATRCD extends Indicator<'ATRCD'> {
       signal: signalNum,
       hist,
     };
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

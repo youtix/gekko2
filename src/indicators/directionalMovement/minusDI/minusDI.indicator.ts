@@ -11,7 +11,7 @@ export class MinusDI extends Indicator<'MinusDI'> {
   private trueRange: TrueRange;
 
   constructor({ period }: IndicatorRegistry['MinusDI']['input']) {
-    super('MinusDI', null);
+    super();
     this.age = 0;
     this.minusDM = new MinusDM({ period });
     this.period = period;
@@ -38,9 +38,5 @@ export class MinusDI extends Indicator<'MinusDI'> {
 
     this.result = newTR === 0 ? 0 : (100 * newMinusDM) / newTR;
     this.prevTR = newTR;
-  }
-
-  public getResult(): number | null {
-    return this.result;
   }
 }

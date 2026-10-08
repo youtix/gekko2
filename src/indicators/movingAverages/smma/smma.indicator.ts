@@ -8,7 +8,7 @@ export class SMMA extends Indicator<'SMMA'> {
   private sma: SMA;
 
   constructor({ period }: IndicatorRegistry['SMMA']['input']) {
-    super('SMMA', 0);
+    super();
     this.sma = new SMA({ period });
     this.age = 0;
     this.period = period;
@@ -29,9 +29,5 @@ export class SMMA extends Indicator<'SMMA'> {
     }
 
     this.result = ((this.period - 1) * (this.result ?? 0) + candle.close) / this.period;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

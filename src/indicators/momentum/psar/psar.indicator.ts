@@ -13,7 +13,7 @@ export class PSAR extends Indicator<'PSAR'> {
   private isLong: boolean;
 
   constructor({ acceleration = 0.02, maxAcceleration = 0.2 }: IndicatorRegistry['PSAR']['input'] = {}) {
-    super('PSAR', null);
+    super();
     this.acceleration = acceleration;
     this.maxAcceleration = maxAcceleration;
     this.minusDM = new MinusDM({ period: 1 });
@@ -80,9 +80,5 @@ export class PSAR extends Indicator<'PSAR'> {
       }
     }
     this.prevCandle = candle;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

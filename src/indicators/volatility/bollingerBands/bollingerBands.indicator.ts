@@ -16,15 +16,13 @@ const MOVING_AVERAGES = {
 } as const;
 
 export class BollingerBands extends Indicator<'BollingerBands'> {
-  private period: number;
   private stdevUp: number;
   private stdevDown: number;
   private ma: MovingAverageClasses;
   private ringBuffer: RingBuffer<number>;
 
   constructor({ period = 5, stdevUp = 2, stdevDown = 2, maType = 'sma' }: IndicatorRegistry['BollingerBands']['input'] = {}) {
-    super('BollingerBands', { upper: null, middle: null, lower: null });
-    this.period = period;
+    super();
     this.stdevUp = stdevUp;
     this.stdevDown = stdevDown;
     this.ma = new MOVING_AVERAGES[maType]({ period });
@@ -48,9 +46,5 @@ export class BollingerBands extends Indicator<'BollingerBands'> {
     const lower = middle - this.stdevDown * standardDeviation;
 
     this.result = { upper, middle, lower };
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

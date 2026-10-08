@@ -7,7 +7,7 @@ export class EMARibbon extends Indicator<'EMARibbon'> {
   private emas: EMA[] = [];
 
   constructor({ count = 22, start = 3, step = 3, src = 'close' }: IndicatorRegistry['EMARibbon']['input'] = {}) {
-    super('EMARibbon', null);
+    super();
     for (let i = 0; i < count; i++) this.emas.push(new EMA({ period: start + i * step, src }));
   }
 
@@ -20,9 +20,5 @@ export class EMARibbon extends Indicator<'EMARibbon'> {
       results,
       spread: Math.max(...results) - Math.min(...results),
     };
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

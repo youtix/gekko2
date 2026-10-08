@@ -11,7 +11,7 @@ export class PlusDI extends Indicator<'PlusDI'> {
   private trueRange: TrueRange;
 
   constructor({ period }: IndicatorRegistry['PlusDI']['input']) {
-    super('PlusDI', null);
+    super();
     this.age = 0;
     this.period = period;
     this.plusDM = new PlusDM({ period });
@@ -38,9 +38,5 @@ export class PlusDI extends Indicator<'PlusDI'> {
 
     this.result = newTR === 0 ? 0 : (100 * newPlusDM) / newTR;
     this.prevTR = newTR;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

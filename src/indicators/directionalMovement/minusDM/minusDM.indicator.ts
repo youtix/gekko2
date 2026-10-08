@@ -8,7 +8,7 @@ export class MinusDM extends Indicator<'MinusDM'> {
   private lastCandle?: Candle;
 
   constructor({ period }: IndicatorRegistry['MinusDM']['input']) {
-    super('MinusDM', null);
+    super();
     this.period = period;
     this.age = 0;
     this.prevMinusDM = 0;
@@ -32,9 +32,5 @@ export class MinusDM extends Indicator<'MinusDM'> {
     const base = this.prevMinusDM - this.prevMinusDM / this.period;
     this.prevMinusDM = diffM > 0 && diffM > diffP ? base + diffM : base;
     this.result = this.prevMinusDM;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

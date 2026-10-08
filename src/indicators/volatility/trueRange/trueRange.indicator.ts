@@ -4,10 +4,6 @@ import { Candle } from '@models/candle.types';
 export class TrueRange extends Indicator<'TrueRange'> {
   private prevCandle?: Candle;
 
-  constructor() {
-    super('TrueRange', null);
-  }
-
   public onNewCandle(candle: Candle): void {
     // If there is no previous candle, store the current candle and wait for the next one.
     if (!this.prevCandle) {
@@ -34,9 +30,5 @@ export class TrueRange extends Indicator<'TrueRange'> {
 
     // Update the previous candle for the next computation.
     this.prevCandle = candle;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

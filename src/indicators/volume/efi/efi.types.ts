@@ -1,12 +1,11 @@
 import { MovingAverageTypes } from '@indicators/indicator.types';
 import { InputSources } from '@models/inputSources.types';
-import { Nullable } from '@models/utility.types';
 
 declare global {
   interface IndicatorRegistry {
     EFI: {
       input?: { period?: number; maType?: MovingAverageTypes; src?: InputSources };
-      output: { fi: Nullable<number>; smoothed: Nullable<number> };
+      output: { fi: number; smoothed: number } | null;
     };
   }
 }

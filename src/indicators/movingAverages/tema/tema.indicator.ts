@@ -9,7 +9,7 @@ export class TEMA extends Indicator<'TEMA'> {
   private ema3: EMA;
 
   constructor({ period }: IndicatorRegistry['TEMA']['input']) {
-    super('TEMA', null);
+    super();
 
     this.ema1 = new EMA({ period });
     this.ema2 = new EMA({ period });
@@ -33,9 +33,5 @@ export class TEMA extends Indicator<'TEMA'> {
     if (isNil(e3)) return;
 
     this.result = 3 * e1 - 3 * e2 + e3;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

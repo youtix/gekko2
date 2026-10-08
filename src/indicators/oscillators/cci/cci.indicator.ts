@@ -9,7 +9,7 @@ export class CCI extends Indicator<'CCI'> {
   private period: number;
 
   constructor({ period = 14 }: IndicatorRegistry['CCI']['input'] = {}) {
-    super('CCI', null);
+    super();
     this.ringBuffer = new RingBuffer(period);
     this.period = period;
   }
@@ -24,9 +24,5 @@ export class CCI extends Indicator<'CCI'> {
     const devSum = price.reduce((acc, v) => Math.abs(v - mean) + acc, 0);
     const denom = (devSum / this.period) * 0.015;
     this.result = denom === 0 ? 0 : (price[this.period - 1] - mean) / denom;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

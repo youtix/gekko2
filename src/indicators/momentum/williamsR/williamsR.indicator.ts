@@ -8,7 +8,7 @@ export class WilliamsR extends Indicator<'WilliamsR'> {
   private ringBufferClose: RingBuffer<number>;
 
   constructor({ period = 14 }: IndicatorRegistry['WilliamsR']['input'] = {}) {
-    super('WilliamsR', null);
+    super();
     this.ringBufferHigh = new RingBuffer(period);
     this.ringBufferLow = new RingBuffer(period);
     this.ringBufferClose = new RingBuffer(period);
@@ -27,9 +27,5 @@ export class WilliamsR extends Indicator<'WilliamsR'> {
     const lastClose = this.ringBufferClose.last();
     // Williams %R = (Close - HighestHigh) / (HighestHigh - LowestLow) * 100
     this.result = highest === lowest ? 0 : ((lastClose - highest) / (highest - lowest)) * 100;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

@@ -4,7 +4,7 @@ declare global {
   interface IndicatorRegistry {
     BollingerBands: {
       input?: { period?: number; stdevUp?: number; stdevDown?: number; maType?: MovingAverageTypes };
-      output: { upper: number | null; lower: number | null; middle: number | null };
+      output: { upper: number; lower: number; middle: number } | null;
     };
   }
 }

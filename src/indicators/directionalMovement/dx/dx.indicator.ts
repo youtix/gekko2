@@ -10,7 +10,7 @@ export class DX extends Indicator<'DX'> {
   private plusDI: PlusDI;
 
   constructor({ period }: IndicatorRegistry['DX']['input']) {
-    super('DX', null);
+    super();
     this.age = 0;
     this.minusDI = new MinusDI({ period });
     this.period = period;
@@ -33,9 +33,5 @@ export class DX extends Indicator<'DX'> {
     // DX = 100 * (abs(minusDI - plusDI) / (minusDI + plusDI))
     const sumDI = minusDI + plusDI;
     this.result = sumDI === 0 ? 0 : (100 * Math.abs(minusDI - plusDI)) / sumDI;
-  }
-
-  public getResult(): number | null {
-    return this.result;
   }
 }

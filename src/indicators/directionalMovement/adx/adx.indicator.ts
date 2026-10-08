@@ -11,7 +11,7 @@ export class ADX extends Indicator<'ADX'> {
   private sumDX: number;
 
   constructor({ period }: IndicatorRegistry['ADX']['input']) {
-    super('ADX', null);
+    super();
     this.dx = new DX({ period });
     this.period = period;
     this.age = 0;
@@ -39,9 +39,5 @@ export class ADX extends Indicator<'ADX'> {
     this.result = (this.prevADX * (this.period - 1) + dx) / this.period;
 
     this.prevADX = this.result;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

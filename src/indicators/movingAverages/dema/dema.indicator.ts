@@ -8,7 +8,7 @@ export class DEMA extends Indicator<'DEMA'> {
   private outer: EMA;
 
   constructor({ period }: IndicatorRegistry['DEMA']['input']) {
-    super('DEMA', null);
+    super();
 
     this.inner = new EMA({ period });
     this.outer = new EMA({ period });
@@ -22,9 +22,5 @@ export class DEMA extends Indicator<'DEMA'> {
       const outerRes = this.outer.getResult();
       if (!isNil(outerRes)) this.result = 2 * innerRes - outerRes;
     }
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

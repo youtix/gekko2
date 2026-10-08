@@ -8,7 +8,7 @@ export class WMA extends Indicator<'WMA'> {
   private age: number;
 
   constructor({ period }: IndicatorRegistry['WMA']['input']) {
-    super('WMA', null);
+    super();
     this.period = period;
     this.fifo = [];
     // divider = period * (period + 1) / 2
@@ -34,9 +34,5 @@ export class WMA extends Indicator<'WMA'> {
   private computeWMA() {
     const periodSum = this.fifo.reduce((res, price, i) => res + price * (i + 1), 0);
     return periodSum / this.divider;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

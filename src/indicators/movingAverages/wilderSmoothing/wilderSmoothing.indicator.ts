@@ -8,7 +8,7 @@ export class WilderSmoothing extends Indicator<'WilderSmoothing'> {
   private prevSmoothed: number;
 
   constructor({ period = 14 }: IndicatorRegistry['WilderSmoothing']['input'] = {}) {
-    super('WilderSmoothing', null);
+    super();
     this.period = period;
     this.age = 0;
     this.sum = 0;
@@ -32,9 +32,5 @@ export class WilderSmoothing extends Indicator<'WilderSmoothing'> {
     // Wilder's smoothing: (prev*(period-1) + close) / period
     this.prevSmoothed = (this.prevSmoothed * (this.period - 1) + close) / this.period;
     this.result = this.prevSmoothed;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

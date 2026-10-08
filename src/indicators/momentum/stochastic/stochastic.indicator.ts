@@ -5,6 +5,7 @@ import { EMA } from '@indicators/movingAverages/ema/ema.indicator';
 import { SMA } from '@indicators/movingAverages/sma/sma.indicator';
 import { WMA } from '@indicators/movingAverages/wma/wma.indicator';
 import { Candle } from '@models/candle.types';
+import { isNil } from 'lodash-es';
 
 const MOVING_AVERAGES = {
   sma: SMA,
@@ -31,7 +32,7 @@ export class Stochastic extends Indicator<'Stochastic'> {
     slowDPeriod = 3,
     slowDMaType = 'sma',
   }: IndicatorRegistry['Stochastic']['input'] = {}) {
-    super('Stochastic', { k: null, d: null });
+    super();
 
     // buffers for raw Fast %K calculation
     this.highs = [];
@@ -68,12 +69,9 @@ export class Stochastic extends Indicator<'Stochastic'> {
     this.maSlowD.onNewCandle({ close: slowK ?? 0 } as Candle);
     const slowD = this.maSlowD.getResult();
 
-    // Wait the end of warming up period
-    if (this.warmingUpPeriod === this.age) this.result = { k: slowK, d: slowD };
-    else this.age++;
-  }
-
-  public getResult() {
-    return this.result;
+    // Wait the end of warming up period. The count assumes moving averages ready after `period` values, which a dema is not: once
+    // the count was over, a %K or %D smoothed by a dema went out as null beside the other line, so the result now waits for both.
+    if (this.warmingUpPeriod !== this.age) this.age++;
+    else if (!isNil(slowK) && !isNil(slowD)) this.result = { k: slowK, d: slowD };
   }
 }

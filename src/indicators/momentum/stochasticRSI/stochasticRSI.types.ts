@@ -9,7 +9,7 @@ declare global {
         fastDPeriod?: number;
         slowMaType?: MovingAverageTypes;
       };
-      output: { fastK: number | null; fastD: number | null };
+      output: { fastK: number; fastD: number } | null;
     };
   }
 }

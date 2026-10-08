@@ -8,7 +8,7 @@ export class AO extends Indicator<'AO'> {
   private smaSlow: SMA;
 
   constructor({ short = 5, long = 34 }: IndicatorRegistry['AO']['input'] = {}) {
-    super('AO', null);
+    super();
     this.smaFast = new SMA({ period: short });
     this.smaSlow = new SMA({ period: long });
   }
@@ -26,9 +26,5 @@ export class AO extends Indicator<'AO'> {
 
     if (isNil(fastValue) || isNil(slowValue)) return;
     this.result = fastValue - slowValue;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

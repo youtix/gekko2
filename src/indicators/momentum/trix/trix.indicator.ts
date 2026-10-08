@@ -11,7 +11,7 @@ export class TRIX extends Indicator<'TRIX'> {
   private roc: ROC;
 
   constructor({ period = 30 }: IndicatorRegistry['TRIX']['input'] = {}) {
-    super('TRIX', null);
+    super();
     this.ema1 = new EMA({ period });
     this.ema2 = new EMA({ period });
     this.ema3 = new EMA({ period });
@@ -33,9 +33,5 @@ export class TRIX extends Indicator<'TRIX'> {
 
     this.roc.onNewCandle({ close: ema3Result } as Candle);
     this.result = this.roc.getResult();
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

@@ -11,7 +11,7 @@ export class MACD extends Indicator<'MACD'> {
   private age: number;
 
   constructor({ short = 12, long = 26, signal = 9, src = 'close' }: IndicatorRegistry['MACD']['input'] = {}) {
-    super('MACD', { macd: null, signal: null, hist: null });
+    super();
 
     this.emaFast = new EMA({ period: short, src });
     this.emaSlow = new EMA({ period: long, src });
@@ -45,9 +45,5 @@ export class MACD extends Indicator<'MACD'> {
       signal: signalNum,
       hist,
     };
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

@@ -11,7 +11,7 @@ export class EMA extends Indicator<'EMA'> {
   private getPrice: (candle: Candle) => number;
 
   constructor({ period = 30, src = 'close' }: IndicatorRegistry['EMA']['input'] = {}) {
-    super('EMA', null);
+    super();
     this.period = period;
     this.alpha = 2 / (period + 1);
     this.age = 0;
@@ -35,9 +35,5 @@ export class EMA extends Indicator<'EMA'> {
 
     this.prevEma = (price - this.prevEma) * this.alpha + this.prevEma;
     this.result = this.prevEma;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

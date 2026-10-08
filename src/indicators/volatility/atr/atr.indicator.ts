@@ -10,7 +10,7 @@ export class ATR extends Indicator<'ATR'> {
   private smoothing: WilderSmoothing;
 
   constructor({ period }: IndicatorRegistry['ATR']['input']) {
-    super('ATR', null);
+    super();
     this.period = period;
     this.truerange = new TrueRange();
     this.smoothing = new WilderSmoothing({ period: this.period });
@@ -23,9 +23,5 @@ export class ATR extends Indicator<'ATR'> {
 
     this.smoothing.onNewCandle({ close: tr } as Candle);
     this.result = this.smoothing.getResult();
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

@@ -19,7 +19,7 @@ export class EFI extends Indicator<'EFI'> {
   private prevClose?: number;
 
   constructor({ period = 13, maType = 'ema', src = 'close' }: IndicatorRegistry['EFI']['input'] = {}) {
-    super('EFI', { fi: null, smoothed: null });
+    super();
     this.ma = new MOVING_AVERAGES[maType]({ period, src });
   }
 
@@ -35,10 +35,7 @@ export class EFI extends Indicator<'EFI'> {
     this.ma.onNewCandle({ close: fi } as Candle);
     const smoothed = this.ma.getResult();
 
-    this.result = { fi, smoothed };
-  }
-
-  public getResult() {
-    return this.result;
+    // The force index alone went out while its moving average warmed up
+    if (!isNil(smoothed)) this.result = { fi, smoothed };
   }
 }

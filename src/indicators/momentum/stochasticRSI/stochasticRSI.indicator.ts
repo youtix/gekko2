@@ -9,7 +9,7 @@ export class StochasticRSI extends Indicator<'StochasticRSI'> {
   private stoch: Stochastic;
 
   constructor({ period = 14, fastKPeriod = 5, fastDPeriod = 3, slowMaType = 'sma' }: IndicatorRegistry['StochasticRSI']['input'] = {}) {
-    super('StochasticRSI', { fastK: null, fastD: null });
+    super();
     this.rsi = new RSI({ period });
     this.stoch = new Stochastic({
       fastKPeriod,
@@ -26,12 +26,8 @@ export class StochasticRSI extends Indicator<'StochasticRSI'> {
     if (isNil(rsiValue)) return;
 
     this.stoch.onNewCandle({ high: rsiValue, low: rsiValue, close: rsiValue } as Candle);
-    const { k: fastK, d: fastD } = this.stoch.getResult();
+    const stoch = this.stoch.getResult();
 
-    if (!isNil(fastK) && !isNil(fastD)) this.result = { fastK, fastD };
-  }
-
-  public getResult() {
-    return this.result;
+    if (!isNil(stoch)) this.result = { fastK: stoch.k, fastD: stoch.d };
   }
 }

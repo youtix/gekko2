@@ -7,7 +7,7 @@ export class ADXRibbon extends Indicator<'ADXRibbon'> {
   private adxs: ADX[] = [];
 
   constructor({ count = 19, start = 12, step = 3 }: IndicatorRegistry['ADXRibbon']['input'] = {}) {
-    super('ADXRibbon', null);
+    super();
     for (let i = 0; i < count; i++) this.adxs.push(new ADX({ period: start + i * step }));
   }
 
@@ -17,9 +17,5 @@ export class ADXRibbon extends Indicator<'ADXRibbon'> {
     if (!results.every<number>(isNumber)) return;
 
     this.result = { results, spread: Math.max(...results) - Math.min(...results) };
-  }
-
-  public getResult() {
-    return this.result;
   }
 }
