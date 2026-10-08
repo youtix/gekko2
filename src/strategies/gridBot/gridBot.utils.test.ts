@@ -1,6 +1,11 @@
+import { ORDER_ERRORED_EVENT } from '@constants/event.const';
+import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
+import { LimitOrder } from '@services/core/order/limit/limitOrder';
+import { ExchangeNetworkError } from '@services/exchange/exchange.error';
 import { MarketData } from '@services/exchange/exchange.types';
 import { omit } from 'lodash-es';
-import { describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GridBot } from './gridBot.strategy';
 import { GridBotStrategyParams, GridBounds } from './gridBot.types';
 import {
@@ -14,11 +19,20 @@ import {
   hasOnlyOneSide,
   inferAmountPrecision,
   inferPricePrecision,
+  isOutcomeUnknown,
   isOutOfRange,
   roundAmount,
   roundPrice,
   validateConfig,
 } from './gridBot.utils';
+
+// For isOutcomeUnknown, which reads the reason a real LimitOrder ends with: its configuration, its exchange and its logs
+const { fakeExchange } = vi.hoisted(() => ({ fakeExchange: { createLimitOrder: vi.fn() } }));
+vi.mock('@services/configuration/configuration', () => ({
+  config: { getWatch: () => ({ mode: 'backtest' }), getExchange: () => ({ orderSynchInterval: 1000 }) },
+}));
+vi.mock('@services/injecter/injecter', () => ({ inject: { exchange: () => fakeExchange } }));
+vi.mock('@services/logger', () => ({ debug: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() }));
 
 describe('gridBot.utils', () => {
   describe('countDecimals', () => {
@@ -477,6 +491,37 @@ describe('gridBot.utils', () => {
 
     it('returns false for empty levels', () => {
       expect(hasOnlyOneSide([])).toBe(false);
+    });
+  });
+
+  // GridBot used to place again an order whatever its error. The event carries no field saying that the order may be live: the
+  // reason, as the order layer and CCXTExchange word it, is read
+  describe('isOutcomeUnknown', () => {
+    it.each`
+      reason                                                                                                                                                             | source                                                          | expected
+      ${'Outcome unknown: the order may be live on the exchange, check it before placing it again ([EXCHANGE] binance 504 Gateway Time-out)'}                            | ${'a creation lost on the network'}                             | ${true}
+      ${'[EXCHANGE] binance answered the creation of an order on BTC/USDT with neither a status nor an id: the order may exist on the exchange, but cannot be followed'} | ${'a creation answered with neither a status nor an id'}        | ${true}
+      ${'[EXCHANGE] Insufficient currency balance (portfolio: 60, order cost: 190)'}                                                                                     | ${'a refusal of the simulated exchange'}                        | ${false}
+      ${'[EXCHANGE] binance {"code":-2010,"msg":"Account has insufficient balance for requested action."}'}                                                              | ${'a refusal of a real exchange'}                               | ${false}
+      ${new OrderOutOfRangeError('exchange', 'amount', 0.001, 0.01).message}                                                                                             | ${'an amount out of the limits of the market'}                  | ${false}
+      ${'no price known for BTC/USDT'}                                                                                                                                   | ${'an order the Trader could not place'}                        | ${false}
+      ${'[EXCHANGE] binance {"code":-2013,"msg":"Order does not exist."}'}                                                                                               | ${'a poll that failed for good, worded by the exchange itself'} | ${false}
+    `('is $expected for $source', ({ reason, expected }) => {
+      expect(isOutcomeUnknown(reason)).toBe(expected);
+    });
+
+    describe('on the reason of a real LIMIT order', () => {
+      beforeEach(() => {
+        fakeExchange.createLimitOrder.mockRejectedValue(new ExchangeNetworkError('binance POST /api/v3/order 504 Gateway Time-out'));
+      });
+
+      it('is true once its creation is lost on the network', async () => {
+        const order = new LimitOrder('BTC/USDT', randomUUID(), 'BUY', 1, 95);
+        const reason = new Promise<string>(resolve => order.once(ORDER_ERRORED_EVENT, resolve));
+        await order.launch();
+
+        expect(isOutcomeUnknown(await reason)).toBe(true);
+      });
     });
   });
 });

@@ -1,4 +1,5 @@
 import { GekkoError } from '@errors/gekko.error';
+import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import type { Candle } from '@models/candle.types';
 import type { CandleBucket } from '@models/event.types';
 import type { LogLevel } from '@models/logLevel.types';
@@ -49,12 +50,18 @@ const unbalancedPortfolio: Portfolio = new Map<string, BalanceDetail>([
   ['USDT', { free: 1000, used: 0, total: 1000 }],
 ]);
 
+// The reasons of the order errors whose outcome is unknown, as the order layer and CCXTExchange word them
+const lostOnTheNetwork =
+  'Outcome unknown: the order may be live on the exchange, check it before placing it again ([EXCHANGE] binance POST https://api.binance.com/api/v3/order 504 Gateway Time-out)';
+const answeredWithoutId =
+  '[EXCHANGE] binance answered the creation of an order on BTC/USDT with neither a status nor an id: the order may exist on the exchange, but cannot be followed';
+
 describe('GridBot', () => {
   let strategy: GridBot;
   let createOrder: ReturnType<typeof vi.fn>;
   let cancelOrder: ReturnType<typeof vi.fn>;
   let log: ReturnType<typeof vi.fn>;
-  let issuedOrders: Array<{ id: UUID; price: number; side: OrderSide; type: string }>;
+  let issuedOrders: Array<{ id: UUID; price: number; side: OrderSide; type: string; amount: number }>;
   let settledIds: Set<UUID>;
   let tools: any;
 
@@ -70,7 +77,7 @@ describe('GridBot', () => {
     cancelOrder = vi.fn();
     createOrder = vi.fn(order => {
       const id = `order-${issuedOrders.length + 1}` as UUID;
-      issuedOrders.push({ id, price: order.price ?? 0, side: order.side, type: order.type });
+      issuedOrders.push({ id, price: order.price ?? 0, side: order.side, type: order.type, amount: order.amount });
       return id;
     });
     // tools should simulate the structure expected by the strategy
@@ -110,17 +117,26 @@ describe('GridBot', () => {
     issuedOrders.find(order => order.price === price && order.side === side)?.id;
 
   /** The order a level holds now at that price and side: a level armed or placed again gets a new order at the same price */
-  const liveOrderId = (price: number, side: OrderSide): UUID | undefined =>
-    issuedOrders.findLast(order => order.price === price && order.side === side)?.id;
+  const liveOrder = (price: number, side: OrderSide) => issuedOrders.findLast(order => order.price === price && order.side === side);
 
-  /** Delivers the outcome of the live order at that price and side, as the Trader reports it */
-  const settle = (outcome: 'completed' | 'canceled' | 'errored', price: number, side: OrderSide) => {
-    const order = { id: liveOrderId(price, side), symbol: 'BTC/USDT', side, type: 'LIMIT', price } as any;
+  /**
+   * Delivers the outcome of the live order at that price and side, as the Trader reports it: a cancel with nothing filled and an
+   * error 'Test error', unless `details` say otherwise
+   */
+  const settle = (
+    outcome: 'completed' | 'canceled' | 'errored',
+    price: number,
+    side: OrderSide,
+    details: { filled?: number; remaining?: number; reason?: string } = {},
+  ) => {
+    const { id, amount } = liveOrder(price, side) ?? {};
+    const order = { id, symbol: 'BTC/USDT', side, type: 'LIMIT', amount, price } as any;
     const exchange = { price, portfolio: balancedPortfolio };
     settledIds.add(order.id);
     if (outcome === 'completed') strategy.onOrderCompleted({ order, exchange, tools });
-    if (outcome === 'canceled') strategy.onOrderCanceled({ order, exchange, tools });
-    if (outcome === 'errored') strategy.onOrderErrored({ order: { ...order, reason: 'Test error' }, exchange, tools });
+    if (outcome === 'canceled')
+      strategy.onOrderCanceled({ order: { ...order, filled: 0, remaining: amount, ...details }, exchange, tools });
+    if (outcome === 'errored') strategy.onOrderErrored({ order: { ...order, reason: 'Test error', ...details }, exchange, tools });
   };
 
   /** The orders sent and not settled, as `side price` from the lowest price: the book the exchange holds */
@@ -132,6 +148,9 @@ describe('GridBot', () => {
 
   /** The orders sent once `count` had been, as `type side price` */
   const sentAfter = (count: number) => issuedOrders.slice(count).map(({ type, side, price }) => `${type} ${side} ${price}`);
+
+  /** The orders sent once `count` had been, as `side price xamount` */
+  const amountsSentAfter = (count: number) => issuedOrders.slice(count).map(({ side, price, amount }) => `${side} ${price} x${amount}`);
 
   // GridBot placed its grid from init, on the first candle of the warmup: in realtime a candle of the history replayed at start-up,
   // so the Trader sent live a grid centred on a stale close, a year old with 365 daily candles
@@ -315,6 +334,32 @@ describe('GridBot', () => {
       });
 
       expect(log).toHaveBeenCalledWith('warn', expect.stringContaining('failed'));
+    });
+
+    // A rebalance used to be planned and placed again whatever the error: one lost on the network may be live on the exchange,
+    // untracked, and both filled, the portfolio was rebalanced twice
+    describe('when the outcome of the rebalance order is unknown', () => {
+      const loseRebalance = () =>
+        strategy.onOrderErrored({
+          order: { id: issuedOrders[0].id, reason: lostOnTheNetwork } as any,
+          exchange: { price: 100, portfolio: unbalancedPortfolio },
+          tools,
+        });
+
+      it('stops the run, the grid not built', () => {
+        startStrategy(100, {}, unbalancedPortfolio);
+
+        expect(loseRebalance).toThrow(
+          `GridBot: The rebalance, a STICKY BUY of 5, may be live on the exchange without GridBot tracking it: the grid is not built. Check it on the exchange. Last error: ${lostOnTheNetwork}`,
+        );
+      });
+
+      it('does not place the rebalance again', () => {
+        startStrategy(100, {}, unbalancedPortfolio);
+        untilStopped(loseRebalance);
+
+        expect(issuedOrders.map(({ type, side }) => `${type} ${side}`)).toEqual(['STICKY BUY']);
+      });
     });
 
     // The grid used to be built anyway on the portfolio as it was, after a tools.log('error') that had already stopped the run: these
@@ -680,6 +725,219 @@ describe('GridBot', () => {
       });
 
       expect(createOrder).toHaveBeenCalledTimes(5);
+    });
+  });
+
+  // A canceled order was placed again for the whole quantity, its attempts counted from 0 again: what had filled before the cancel
+  // was traded a second time, and an exchange that kept canceling it (self-trade prevention, a cancel by hand) brought it back
+  // without end
+  describe('a grid order canceled', () => {
+    // 2.5 per level: the 2/2 grid at 100 on 5 BTC and 500 USDT. 2.5 - 2.2 is 0.2999999999999998 in binary
+    it.each`
+      side      | price  | cancels                                                             | description                                      | expected
+      ${'BUY'}  | ${95}  | ${[{ filled: 0, remaining: 2.5 }]}                                  | ${'nothing filled'}                              | ${['BUY 95 x2.5']}
+      ${'BUY'}  | ${95}  | ${[{ filled: 1, remaining: 1.5 }]}                                  | ${'1 filled'}                                    | ${['BUY 95 x1.5']}
+      ${'BUY'}  | ${95}  | ${[{ filled: 1, remaining: 0 }]}                                    | ${'1 filled, its remaining amount not reported'} | ${['BUY 95 x1.5']}
+      ${'SELL'} | ${105} | ${[{ filled: 0.5, remaining: 2 }]}                                  | ${'0.5 filled'}                                  | ${['SELL 105 x2']}
+      ${'BUY'}  | ${95}  | ${[{ filled: 2.2, remaining: 0.3 }]}                                | ${'2.2 filled'}                                  | ${['BUY 95 x0.3']}
+      ${'BUY'}  | ${95}  | ${[{ filled: 0.3, remaining: 2.2 }, { filled: 0.2, remaining: 2 }]} | ${'0.3 filled, then 0.2 of the rest'}            | ${['BUY 95 x2.2', 'BUY 95 x2']}
+    `('places again what is left of $side $price, $description: $expected', ({ side, price, cancels, expected }) => {
+      startStrategy(100);
+      const sentBefore = issuedOrders.length;
+      cancels.forEach((cancel: { filled: number; remaining: number }) => settle('canceled', price, side, cancel));
+
+      expect(amountsSentAfter(sentBefore)).toEqual(expected);
+    });
+
+    // Order.applyOrderUpdate hands on a fill and a remaining amount the exchange did not report as 0
+    it('places again whole an order canceled with neither its fill nor its remaining amount reported', () => {
+      startStrategy(100);
+      const sentBefore = issuedOrders.length;
+      settle('canceled', 95, 'BUY', { filled: 0, remaining: 0 });
+
+      expect(amountsSentAfter(sentBefore)).toEqual(['BUY 95 x2.5']);
+    });
+
+    it('warns that an order canceled with neither its fill nor its remaining amount reported is placed again whole', () => {
+      startStrategy(100);
+      settle('canceled', 95, 'BUY', { filled: 0, remaining: 0 });
+
+      expect(log).toHaveBeenCalledWith(
+        'warn',
+        'GridBot: BUY at 95 was canceled with neither its fill nor its remaining amount reported: it is placed again whole, 2.5, which trades again any part of it that had filled',
+      );
+    });
+
+    it('turns its level to the other side once the cancel reports it filled in full, as a fill does', () => {
+      startStrategy(100);
+      const sentBefore = issuedOrders.length;
+      settle('canceled', 95, 'BUY', { filled: 2.5, remaining: 0 });
+
+      expect(amountsSentAfter(sentBefore)).toEqual(['SELL 100 x2.5']);
+    });
+
+    describe('again and again', () => {
+      /** Cancels the live order at that price and side `times` times in a row, nothing filled */
+      const cancel = (times: number, price: number, side: OrderSide) => {
+        for (let i = 0; i < times; i++) settle('canceled', price, side);
+      };
+
+      it.each`
+        side      | price  | retryOnError | attempts
+        ${'BUY'}  | ${95}  | ${1}         | ${2}
+        ${'BUY'}  | ${95}  | ${3}         | ${4}
+        ${'SELL'} | ${105} | ${3}         | ${4}
+      `(
+        'warns that the $side at $price failed after $attempts cancels, with retryOnError $retryOnError',
+        ({ side, price, retryOnError, attempts }) => {
+          startStrategy(100, { retryOnError });
+          cancel(attempts, price, side);
+
+          expect(log).toHaveBeenCalledWith(
+            'warn',
+            `GridBot: ${side} at ${price} failed after ${attempts} attempts (retryOnError: ${retryOnError}): its level is left without an order, the rest of the grid trades on. Last error: Order was canceled (filled: 0, remaining: 2.5)`,
+          );
+        },
+      );
+
+      it('is placed again after every cancel but the last', () => {
+        startStrategy(100, { retryOnError: 3 });
+        const sentBefore = issuedOrders.length;
+        cancel(4, 95, 'BUY');
+
+        expect(sentAfter(sentBefore)).toEqual(['LIMIT BUY 95', 'LIMIT BUY 95', 'LIMIT BUY 95']);
+      });
+
+      it('counts the cancels and the refusals of an order together', () => {
+        startStrategy(100, { retryOnError: 3 });
+        ['canceled', 'errored', 'canceled', 'errored'].forEach(outcome => settle(outcome as 'canceled' | 'errored', 95, 'BUY'));
+
+        expect(log).toHaveBeenCalledWith(
+          'warn',
+          'GridBot: BUY at 95 failed after 4 attempts (retryOnError: 3): its level is left without an order, the rest of the grid trades on. Last error: Test error',
+        );
+      });
+
+      it('counts the attempts from 0 again once the level fills', () => {
+        startStrategy(100, { retryOnError: 3 });
+        cancel(3, 95, 'BUY');
+        settle('completed', 95, 'BUY');
+        cancel(3, 100, 'SELL');
+
+        expect(log).not.toHaveBeenCalledWith('warn', expect.stringContaining('failed after'));
+      });
+
+      // One candle, or one poll interval, through BUY 95 and SELL 105 arms a SELL and a BUY at the center price. Should the market
+      // sit there, an exchange preventing self-trades (Binance expires the maker by default) cancels each in turn as the other is
+      // placed again: the cancels count, and both levels give up
+      it('stops placing again a SELL and a BUY at the center price that the exchange cancels in turn', () => {
+        startStrategy(100, { retryOnError: 3 });
+        settle('completed', 95, 'BUY');
+        settle('completed', 105, 'SELL');
+        const sentBefore = issuedOrders.length;
+        for (let i = 0; i < 4; i++) {
+          settle('canceled', 100, 'SELL');
+          settle('canceled', 100, 'BUY');
+        }
+
+        expect(sentAfter(sentBefore)).toEqual(Array.from({ length: 3 }, () => ['LIMIT SELL 100', 'LIMIT BUY 100']).flat());
+      });
+    });
+  });
+
+  // Every error placed the order again, an "Outcome unknown" one too: the order lost on the network may be live on the exchange,
+  // where nothing tracks it any more, so it was doubled, two lots bought or sold where the level holds one, or the copy was refused
+  // for want of the reserve the first one holds
+  describe('a grid order whose outcome is unknown', () => {
+    it.each`
+      reason               | description
+      ${lostOnTheNetwork}  | ${'a creation lost on the network'}
+      ${answeredWithoutId} | ${'a creation answered with neither a status nor an id'}
+    `('is not placed again after $description', ({ reason }) => {
+      startStrategy(100);
+      const sentBefore = issuedOrders.length;
+      settle('errored', 95, 'BUY', { reason });
+
+      expect(sentAfter(sentBefore)).toEqual([]);
+    });
+
+    it('warns that it may be live on the exchange, untracked, its level left without an order', () => {
+      startStrategy(100);
+      settle('errored', 95, 'BUY', { reason: lostOnTheNetwork });
+
+      expect(log).toHaveBeenCalledWith(
+        'warn',
+        `GridBot: BUY 2.5 at 95 may be live on the exchange without GridBot tracking it: it is not placed again, its level is left without an order, the rest of the grid trades on. Check it there. Last error: ${lostOnTheNetwork}`,
+      );
+    });
+
+    it('leaves its level without an order, the rest of the book in place', () => {
+      startStrategy(100);
+      settle('errored', 95, 'BUY', { reason: lostOnTheNetwork });
+
+      expect(openBook()).toEqual(['BUY 90', 'SELL 105', 'SELL 110']);
+    });
+
+    it('lets the rest of the grid trade on: the fill of the BUY below arms its SELL', () => {
+      startStrategy(100);
+      settle('errored', 95, 'BUY', { reason: lostOnTheNetwork });
+      const sentBefore = issuedOrders.length;
+      settle('completed', 90, 'BUY');
+
+      expect(sentAfter(sentBefore)).toEqual(['LIMIT SELL 95']);
+    });
+
+    // 1.66 per level: the 3/3 grid at 100 on 5 BTC and 500 USDT
+    it('does not stop the run while retryOnError orders or fewer may be live untracked', () => {
+      startStrategy(100, { buyLevels: 3, sellLevels: 3, retryOnError: 3 });
+
+      expect(() => [95, 90, 85].forEach(price => settle('errored', price, 'BUY', { reason: lostOnTheNetwork }))).not.toThrow();
+    });
+
+    it('stops the run once more orders than retryOnError may be live untracked, naming them', () => {
+      startStrategy(100, { buyLevels: 3, sellLevels: 3, retryOnError: 3 });
+      const loseFour = () => {
+        [95, 90, 85].forEach(price => settle('errored', price, 'BUY', { reason: lostOnTheNetwork }));
+        settle('errored', 105, 'SELL', { reason: lostOnTheNetwork });
+      };
+
+      expect(loseFour).toThrow(
+        `GridBot: BUY 1.66 at 95, BUY 1.66 at 90, BUY 1.66 at 85, SELL 1.66 at 105 may be live on the exchange without GridBot tracking them: 4 orders, more than retryOnError (3). Check them on the exchange. Last error: ${lostOnTheNetwork}`,
+      );
+    });
+
+    // All in currency, as a buy-only grid wants it: no rebalance, 10.52 on the one level
+    it('stops the run once no level of the grid holds an order any more', () => {
+      startStrategy(100, { buyLevels: 1, sellLevels: 0 }, unbalancedPortfolio);
+
+      expect(() => settle('errored', 95, 'BUY', { reason: lostOnTheNetwork })).toThrow(
+        `GridBot: BUY 10.52 at 95 may be live on the exchange without GridBot tracking it, and no level of the grid holds an order any more. Check it on the exchange. Last error: ${lostOnTheNetwork}`,
+      );
+    });
+  });
+
+  describe('a grid order refused', () => {
+    it.each`
+      reason                                                                                                | source
+      ${'[EXCHANGE] Insufficient currency balance (portfolio: 60, order cost: 190)'}                        | ${'the simulated exchange'}
+      ${'[EXCHANGE] binance {"code":-2010,"msg":"Account has insufficient balance for requested action."}'} | ${'a real exchange'}
+      ${new OrderOutOfRangeError('exchange', 'amount', 0.001, 0.01).message}                                | ${'the limits of the market'}
+      ${'no price known for BTC/USDT'}                                                                      | ${'the Trader'}
+    `('is placed again after a refusal from $source', ({ reason }) => {
+      startStrategy(100);
+      const sentBefore = issuedOrders.length;
+      settle('errored', 95, 'BUY', { reason });
+
+      expect(sentAfter(sentBefore)).toEqual(['LIMIT BUY 95']);
+    });
+
+    it('is placed again for the amount refused: what a cancel after a partial fill left of it', () => {
+      startStrategy(100);
+      const sentBefore = issuedOrders.length;
+      settle('canceled', 95, 'BUY', { filled: 1, remaining: 1.5 });
+      settle('errored', 95, 'BUY');
+
+      expect(amountsSentAfter(sentBefore)).toEqual(['BUY 95 x1.5', 'BUY 95 x1.5']);
     });
   });
 

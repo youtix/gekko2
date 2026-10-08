@@ -11,6 +11,7 @@ import {
   Strategy,
   Tools,
 } from '@strategies/strategy.types';
+import { addPrecise } from '@utils/math/math.utils';
 import type { UUID } from 'node:crypto';
 import { DEFAULT_RETRY_LIMIT } from './gridBot.const';
 import { gridBotStrategySchema } from './gridBot.schema';
@@ -23,6 +24,7 @@ import {
   getPortfolioContent,
   hasOnlyOneSide,
   inferPricePrecision,
+  isOutcomeUnknown,
   isOutOfRange,
   roundPrice,
   validateConfig,
@@ -39,8 +41,11 @@ import {
  * - Each level trades back and forth between two adjacent prices of the grid: once its BUY fills it sells one step above, once its
  *   SELL fills it buys one step below
  * - Mandatory rebalancing ensures 50/50 portfolio allocation before grid building
- * - A failed order is placed again up to retryOnError times. Then a grid order is left out with a warning, the rest of the grid
- *   trading on until no level holds an order, and a rebalance stops the run
+ * - A refused or canceled order is placed again up to retryOnError times, a canceled grid order for what is left of it. A grid order
+ *   is then left out with a warning, the rest of the grid trading on until no level holds an order, and a rebalance stops the run
+ * - An order whose outcome is unknown, which may be live on the exchange, is never placed again: a grid order is left out with a
+ *   warning, the run stopping once more than retryOnError orders are in that case or no level holds an order, and a rebalance
+ *   stops the run
  * - When price exits the grid range, a warning is logged but trading continues
  */
 export class GridBot implements Strategy<GridBotStrategyParams> {
@@ -61,8 +66,10 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private quantity = 0;
   /** Retry limit for order operations */
   private retryLimit = DEFAULT_RETRY_LIMIT;
-  /** Retry counts per level index */
+  /** Failed attempts per level index, refusals and cancels, counted until the level fills */
   private retryCount = new Map<number, number>();
+  /** Orders that ended with an unknown outcome, as `SIDE amount at price`: they may be live on the exchange, untracked */
+  private untrackedOrders: string[] = [];
   /** Reverse lookup: order ID to level index */
   private orderToLevel = new Map<UUID, number>();
   /** Set by the first candle after the warmup, which starts the grid: it is started once, whatever the outcome */
@@ -131,27 +138,8 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     }
 
     // Handle grid order completion
-    const levelIndex = this.orderToLevel.get(order.id);
-    if (levelIndex === undefined) return;
-
-    this.orderToLevel.delete(order.id);
-    const level = this.levels[levelIndex];
-    if (!level) return;
-
-    // Clear this level
-    level.orderId = undefined;
-    this.retryCount.delete(levelIndex);
-
-    // The level that filled turns to the other side, one step away: a SELL above the BUY, a BUY below the SELL. A fill used to arm
-    // the neighbouring level, and only if it held no order: a neighbour whose own fill was not reported yet was skipped, so a drop
-    // through several BUYs re-armed when a backtest reported them highest first but not when paper or live trading polled them lowest
-    // first, and the two levels next to the center price, each the other's neighbour, armed nothing on their first fill.
-    this.placeOrder(levelIndex, level.side === 'BUY' ? 'SELL' : 'BUY', tools);
-
-    // Check if only one side remains
-    if (hasOnlyOneSide(this.levels)) {
-      tools.log('warn', 'GridBot: Only one side of the grid remains active');
-    }
+    const levelIndex = this.releaseLevel(order.id);
+    if (levelIndex !== undefined) this.turnLevel(levelIndex, tools);
   }
 
   onOrderCanceled({ order, exchange, tools }: OnOrderCanceledEventParams<GridBotStrategyParams>): void {
@@ -162,50 +150,55 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       return;
     }
 
-    // Handle grid order cancellation - try to replace it
-    const levelIndex = this.orderToLevel.get(order.id);
+    // Handle grid order cancellation
+    const levelIndex = this.releaseLevel(order.id);
     if (levelIndex === undefined) return;
-
-    this.orderToLevel.delete(order.id);
     const level = this.levels[levelIndex];
-    if (!level) return;
 
-    level.orderId = undefined;
+    // What is left of the order is placed again, and the cancel counts as a failed attempt. The whole quantity used to be placed
+    // again, the attempts counted from 0: what had filled before the cancel was traded a second time, and an exchange that kept
+    // canceling the order (self-trade prevention, a cancel by hand) brought it back without end. A fill or a remaining amount the
+    // exchange did not report reaches the strategy as 0 (Order.applyOrderUpdate): with neither, the order is placed again whole.
+    const { filled, remaining } = order;
+    const isFillReported = filled > 0 || remaining > 0;
+    const left = isFillReported ? addPrecise(level.amount, -filled) : level.amount;
+    // Reported filled in full: the level turns to its other side, as after a fill
+    if (left <= 0) return this.turnLevel(levelIndex, tools);
 
-    // Re-place the order if we're not in rebalancing mode
-    if (!this.awaitingRebalance) {
-      this.retryCount.set(levelIndex, 0);
-      this.placeOrder(levelIndex, level.side, tools);
+    const isPlacedAgain = this.placeAgain(levelIndex, left, `Order was canceled (filled: ${filled}, remaining: ${remaining})`, tools);
+    if (isPlacedAgain && !isFillReported) {
+      const canceled = `${level.side} at ${this.priceOf(level)} was canceled with neither its fill nor its remaining amount reported`;
+      tools.log('warn', `GridBot: ${canceled}: it is placed again whole, ${left}, which trades again any part of it that had filled`);
     }
   }
 
   onOrderErrored({ order, exchange, tools }: OnOrderErroredEventParams<GridBotStrategyParams>): void {
     // Handle rebalance order error
     if (this.rebalanceOrderId && order.id === this.rebalanceOrderId) {
+      // A rebalance used to be planned and placed again whatever the error: one whose outcome is unknown may be live on the exchange,
+      // untracked, and both filled, the portfolio was rebalanced twice. No grid order is open yet: the run stops, for the user to
+      // check that one order before starting again.
+      if (isOutcomeUnknown(order.reason)) {
+        const plan = this.pendingRebalance;
+        const rebalance = plan ? `The rebalance, a STICKY ${plan.side} of ${plan.amount},` : 'The rebalance';
+        const untracked = `${rebalance} may be live on the exchange without GridBot tracking it: the grid is not built`;
+        this.stopRun(`${untracked}. Check it on the exchange. Last error: ${order.reason}`, tools);
+      }
       const { asset, currency } = getPortfolioContent(exchange.portfolio, this.base, this.quote);
       this.handleRebalanceFailure(order.reason ?? 'Unknown error', exchange.price, asset, currency, tools);
       return;
     }
 
     // Handle grid order error
-    const levelIndex = this.orderToLevel.get(order.id);
+    const levelIndex = this.releaseLevel(order.id);
     if (levelIndex === undefined) return;
-
-    this.orderToLevel.delete(order.id);
     const level = this.levels[levelIndex];
-    if (!level) return;
 
-    level.orderId = undefined;
-
-    // Retry if under the limit
-    const attempts = (this.retryCount.get(levelIndex) ?? 0) + 1;
-    if (attempts > this.retryLimit) {
-      this.giveUpLevel(level, attempts, order.reason, tools);
-      return;
-    }
-
-    this.retryCount.set(levelIndex, attempts);
-    this.placeOrder(levelIndex, level.side, tools);
+    // Any error used to place the order again. One whose outcome is unknown may be live on the exchange, where nothing tracks it any
+    // more: placed again, the order was doubled, two lots bought or sold where the level holds one, or the copy was refused for want
+    // of the reserve the first one holds. Any other error is taken for a refusal (see isOutcomeUnknown): placed again, as refused.
+    if (isOutcomeUnknown(order.reason)) return this.leaveUntracked(level, order.reason, tools);
+    this.placeAgain(levelIndex, level.amount, order.reason, tools);
   }
 
   /** Reset all internal state */
@@ -215,6 +208,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     this.gridBounds = undefined;
     this.quantity = 0;
     this.retryCount.clear();
+    this.untrackedOrders = [];
     this.orderToLevel.clear();
     this.awaitingRebalance = false;
     this.pendingRebalance = undefined;
@@ -360,7 +354,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     for (let i = buyLevels; i >= 1; i--) {
       const buyPrice = priceAt(-i);
       if (buyPrice > 0) {
-        this.levels.push({ index: -i, buyPrice, sellPrice: priceAt(1 - i), side: 'BUY' });
+        this.levels.push({ index: -i, buyPrice, sellPrice: priceAt(1 - i), side: 'BUY', amount: this.quantity });
       }
     }
 
@@ -368,7 +362,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     for (let i = 1; i <= sellLevels; i++) {
       const sellPrice = priceAt(i);
       if (sellPrice > 0) {
-        this.levels.push({ index: i, buyPrice: priceAt(i - 1), sellPrice, side: 'SELL' });
+        this.levels.push({ index: i, buyPrice: priceAt(i - 1), sellPrice, side: 'SELL', amount: this.quantity });
       }
     }
 
@@ -381,15 +375,18 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     tools.log('info', `GridBot: Grid built around ${centerPrice} with ${buyLevels} buy / ${sellLevels} sell levels, qty=${this.quantity}`);
   }
 
-  /** Place a LIMIT order for a level, at its buy or sell price: the level takes the side of the order */
-  private placeOrder(levelArrayIndex: number, side: OrderSide, tools: Tools<GridBotStrategyParams>): void {
+  /**
+   * Place a LIMIT order for a level, at its buy or sell price, for the quantity of a level unless told otherwise: the level takes the
+   * side and the amount of the order
+   */
+  private placeOrder(levelArrayIndex: number, side: OrderSide, tools: Tools<GridBotStrategyParams>, amount = this.quantity): void {
     const level = this.levels[levelArrayIndex];
     if (!level || level.orderId) return;
 
     const orderId = tools.createOrder({
       type: 'LIMIT',
       side,
-      amount: this.quantity,
+      amount,
       price: side === 'BUY' ? level.buyPrice : level.sellPrice,
       symbol: this.pair,
     });
@@ -399,7 +396,57 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     // unfunded, was refused on every retry. The one-side warning read the same stale sides.
     level.orderId = orderId;
     level.side = side;
+    level.amount = amount;
     this.orderToLevel.set(orderId, levelArrayIndex);
+  }
+
+  /** The array index of the level that held the order, which no longer holds it: undefined for an order that is not the grid's */
+  private releaseLevel(orderId: UUID): number | undefined {
+    const levelIndex = this.orderToLevel.get(orderId);
+    if (levelIndex === undefined) return undefined;
+
+    this.orderToLevel.delete(orderId);
+    this.levels[levelIndex].orderId = undefined;
+    return levelIndex;
+  }
+
+  /** Turns a level whose order filled to its other side, for the quantity of a level: its failed attempts are forgotten */
+  private turnLevel(levelIndex: number, tools: Tools<GridBotStrategyParams>): void {
+    const level = this.levels[levelIndex];
+    this.retryCount.delete(levelIndex);
+
+    // The level that filled turns to the other side, one step away: a SELL above the BUY, a BUY below the SELL. A fill used to arm
+    // the neighbouring level, and only if it held no order: a neighbour whose own fill was not reported yet was skipped, so a drop
+    // through several BUYs re-armed when a backtest reported them highest first but not when paper or live trading polled them lowest
+    // first, and the two levels next to the center price, each the other's neighbour, armed nothing on their first fill.
+    this.placeOrder(levelIndex, level.side === 'BUY' ? 'SELL' : 'BUY', tools);
+
+    // Check if only one side remains
+    if (hasOnlyOneSide(this.levels)) {
+      tools.log('warn', 'GridBot: Only one side of the grid remains active');
+    }
+  }
+
+  /**
+   * Places a level's order again, for `amount`, once it was refused or canceled. Each counts as a failed attempt until the level fills,
+   * and the level gives up once the first attempt and retryOnError retries failed (see giveUpLevel). Returns whether it was placed.
+   */
+  private placeAgain(levelIndex: number, amount: number, reason: string, tools: Tools<GridBotStrategyParams>): boolean {
+    const level = this.levels[levelIndex];
+    const attempts = (this.retryCount.get(levelIndex) ?? 0) + 1;
+    if (attempts > this.retryLimit) {
+      this.giveUpLevel(level, attempts, reason, tools);
+      return false;
+    }
+
+    this.retryCount.set(levelIndex, attempts);
+    this.placeOrder(levelIndex, level.side, tools, amount);
+    return true;
+  }
+
+  /** The price of the order placed last on the level */
+  private priceOf(level: LevelState): number {
+    return level.side === 'BUY' ? level.buyPrice : level.sellPrice;
   }
 
   /**
@@ -408,11 +455,34 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
    * first one to give up stopped the bot, with a message naming an array index rather than the order.
    */
   private giveUpLevel(level: LevelState, attempts: number, reason: string, tools: Tools<GridBotStrategyParams>): void {
-    const price = level.side === 'BUY' ? level.buyPrice : level.sellPrice;
-    const failure = `${level.side} at ${price} failed after ${attempts} attempts (retryOnError: ${this.retryLimit})`;
+    const failure = `${level.side} at ${this.priceOf(level)} failed after ${attempts} attempts (retryOnError: ${this.retryLimit})`;
     if (this.levels.every(({ orderId }) => !orderId))
       this.stopRun(`${failure}: no level of the grid holds an order any more. Last error: ${reason}`, tools);
     tools.log('warn', `GridBot: ${failure}: its level is left without an order, the rest of the grid trades on. Last error: ${reason}`);
+  }
+
+  /**
+   * Leaves a level without an order for good once its order ended with an unknown outcome: it may be live on the exchange, where
+   * nothing tracks it any more, and placed again it could trade twice. The rest of the grid trades on. The run stops once more
+   * orders than retryOnError ended so, many orders the bot may have lost track of, or once no level holds an order.
+   */
+  private leaveUntracked(level: LevelState, reason: string, tools: Tools<GridBotStrategyParams>): void {
+    const order = `${level.side} ${level.amount} at ${this.priceOf(level)}`;
+    this.untrackedOrders.push(order);
+    const count = this.untrackedOrders.length;
+    const them = count > 1 ? 'them' : 'it';
+    const untracked = `${this.untrackedOrders.join(', ')} may be live on the exchange without GridBot tracking ${them}`;
+    const check = `Check ${them} on the exchange. Last error: ${reason}`;
+    if (count > this.retryLimit)
+      this.stopRun(`${untracked}: ${count} orders, more than retryOnError (${this.retryLimit}). ${check}`, tools);
+    if (this.levels.every(({ orderId }) => !orderId))
+      this.stopRun(`${untracked}, and no level of the grid holds an order any more. ${check}`, tools);
+
+    const left = 'it is not placed again, its level is left without an order, the rest of the grid trades on';
+    tools.log(
+      'warn',
+      `GridBot: ${order} may be live on the exchange without GridBot tracking it: ${left}. Check it there. Last error: ${reason}`,
+    );
   }
 
   /**

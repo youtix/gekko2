@@ -322,3 +322,12 @@ export const hasOnlyOneSide = (levels: Array<{ side: 'BUY' | 'SELL'; orderId?: s
 
   return hasBuy || hasSell;
 };
+
+/**
+ * Whether an order error leaves the outcome of the order unknown: it may be live on the exchange, while the Trader, which forgets an
+ * order once it errored, tracks it no more. Read from the reason as the order layer and CCXTExchange word it, "Outcome unknown: the
+ * order may be live on the exchange" for a creation lost on the network (Order.toCreationError) and "the order may exist on the
+ * exchange" for a creation answered with neither a status nor an id, since the event carries no field saying so. An error worded by
+ * the exchange itself is not recognised, such as a poll that failed for good once the order was live.
+ */
+export const isOutcomeUnknown = (reason: string): boolean => /the order may (?:be live|exist) on the exchange/i.test(reason);

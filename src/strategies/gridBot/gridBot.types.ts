@@ -25,7 +25,15 @@ export interface LevelState {
    * BUY, a level above it with its SELL, and each fill turns the level to the other side.
    */
   side: OrderSide;
-  /** Active order ID if order is placed: none for good once the level gave up on an order that failed at every attempt */
+  /**
+   * Amount of the order placed last on the level: the quantity of every level, or what was left of it once an order was canceled
+   * after a partial fill. A fill turns the level to the other side with the whole quantity again.
+   */
+  amount: number;
+  /**
+   * Active order ID if order is placed. None for good once the level gave up on an order that failed at every attempt, or left an
+   * order whose outcome is unknown, which may be live on the exchange.
+   */
   orderId?: UUID;
 }
 
