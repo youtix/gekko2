@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { MinusDI } from './minusDI.indicator';
 
@@ -46,6 +47,6 @@ describe('MinusDI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${28.274005281866234}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     minusDI.onNewCandle(candle);
-    expect(minusDI.getResult()).toBeCloseTo(expected, 13);
+    expect(minusDI.getResult()).toEqual(approximately(expected, 13));
   });
 });

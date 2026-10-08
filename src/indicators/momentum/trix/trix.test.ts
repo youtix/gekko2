@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { TRIX } from './trix.indicator';
 
@@ -46,7 +47,6 @@ describe('TRIX', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-2.091251245539727}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     trix.onNewCandle(candle);
-    if (expected === null) expect(trix.getResult()).toBeNull();
-    else expect(trix.getResult()).toEqual(expect.closeTo(expected, 13));
+    expect(trix.getResult()).toEqual(approximately(expected, 13));
   });
 });

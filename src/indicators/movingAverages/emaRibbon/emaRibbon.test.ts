@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { EMARibbon } from './emaRibbon.indicator';
 
@@ -46,16 +47,6 @@ describe('EMARibbon', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ results: [9, 28.45239317704584, 35.33089870530239, 38.150618101587746, 39.73718691268886, 40.88409467818937, 41.81518998182122, 42.600880006954235, 43.26989576853898, 43.863015448240326, 44.35682328757339, 44.78079718202091, 45.14727438176485, 45.58013313093615, 45.82615434511225, 46.058646637492615, 46.42465588821206, 46.6332069948019, 46.95801037169956, 47.49591250833861, 48.01723602778497, 48.430015453535574], spread: 39.430015453535574 }}
   `('returns $expected when candle.close = $candle.close', ({ candle, expected }) => {
     ribbon.onNewCandle(candle);
-    const result = ribbon.getResult();
-
-    if (expected === null) {
-      expect(result).toBeNull();
-    } else {
-      expect(result).not.toBeNull();
-      expected.results.forEach((value: number, idx: number) => {
-        expect(result!.results[idx]).toBeCloseTo(value, 13);
-      });
-      expect(result!.spread).toBeCloseTo(expected.spread, 13); // same 1e-13 tolerance as the TEMA test
-    }
+    expect(ribbon.getResult()).toEqual(approximately(expected, 13));
   });
 });

@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { ADXRibbon } from './adxRibbon.indicator';
 
@@ -49,11 +50,6 @@ describe('ADXRibbon', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ results: [71.94040328553585, 44.941236134812556, 31.780359881783284, 27.819388874201774, 27.65238975463698], spread: 44.288013530898866 }}
   `('should return $expected on candle %$, closing at $candle.close', ({ candle, expected }) => {
     ribbon.onNewCandle(candle);
-    expect(ribbon.getResult()).toEqual(
-      expected && {
-        results: expected.results.map((value: number) => expect.closeTo(value, 12)),
-        spread: expect.closeTo(expected.spread, 12),
-      },
-    );
+    expect(ribbon.getResult()).toEqual(approximately(expected, 12));
   });
 });

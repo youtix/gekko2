@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { Candle } from '@models/candle.types';
 import { describe, expect, it } from 'vitest';
 import { CCI } from './cci.indicator';
@@ -50,7 +51,7 @@ describe('CCI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-47.02295552367288}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     cci.onNewCandle(candle);
-    expect(cci.getResult()).toBeCloseTo(expected, 12);
+    expect(cci.getResult()).toEqual(approximately(expected, 12));
   });
 
   // A flat window used to give ±66.67 instead of 0: its mean, summed in floating point, lands a few ulps off the price, and the mean
@@ -79,7 +80,7 @@ describe('CCI', () => {
     ${'a sixth flat one'}             | ${flat(30000.06)}                                                              | ${0}
   `('should return $expected on candle %$, $step', ({ candle, expected }) => {
     cciFlat.onNewCandle(candle);
-    expect(cciFlat.getResult()).toEqual(expected === null ? null : expect.closeTo(expected, 8));
+    expect(cciFlat.getResult()).toEqual(approximately(expected, 8));
   });
 
   // Typical prices equal within the tolerance make a flat window. That also covers prices equal in exact arithmetic but an ulp apart in
@@ -110,6 +111,6 @@ describe('CCI', () => {
   `('should return $expected for $window', ({ period, candles, expected }) => {
     const cci = new CCI({ period });
     for (const candle of candles) cci.onNewCandle(candle);
-    expect(cci.getResult()).toBeCloseTo(expected, 4);
+    expect(cci.getResult()).toEqual(approximately(expected, 4));
   });
 });

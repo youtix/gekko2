@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { ROC } from './roc.indicator';
 
@@ -46,8 +47,7 @@ describe('ROC', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-89.53488372093024}
   `('should return $expected with period 9 when candle close to $candle.close', ({ candle, expected }) => {
     roc9.onNewCandle(candle);
-    if (expected === null) expect(roc9.getResult()).toBeNull();
-    else expect(roc9.getResult()).toEqual(expect.closeTo(expected, 12));
+    expect(roc9.getResult()).toEqual(approximately(expected, 12));
   });
 
   const roc1 = new ROC({ period: 1 });
@@ -62,7 +62,6 @@ describe('ROC', () => {
     ${{ close: 7.5 }} | ${50}
   `('should return $expected with period 1 when the close moves to $candle.close', ({ candle, expected }) => {
     roc1.onNewCandle(candle);
-    if (expected === null) expect(roc1.getResult()).toBeNull();
-    else expect(roc1.getResult()).toEqual(expect.closeTo(expected, 12));
+    expect(roc1.getResult()).toEqual(approximately(expected, 12));
   });
 });

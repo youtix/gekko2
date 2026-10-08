@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { TrueRange } from './trueRange.indicator';
 
@@ -46,6 +47,6 @@ describe('TrueRange', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${62.89732934513477}
   `('should correctly calculate TrueRanges when candle is $candle', ({ candle, expected }) => {
     trange.onNewCandle(candle);
-    expect(trange.getResult()).toBeCloseTo(expected, 13);
+    expect(trange.getResult()).toEqual(approximately(expected, 13));
   });
 });

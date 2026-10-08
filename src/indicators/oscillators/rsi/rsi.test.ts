@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { RSI } from './rsi.indicator';
 
@@ -46,6 +47,6 @@ describe('RSI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${44.37238533693474}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     rsi.onNewCandle(candle);
-    expect(rsi.getResult()).toBeCloseTo(expected, 13);
+    expect(rsi.getResult()).toEqual(approximately(expected, 13));
   });
 });

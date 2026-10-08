@@ -1,4 +1,4 @@
-import { mapValues } from 'lodash-es';
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { ATRCD } from './atrcd.indicator';
 
@@ -47,7 +47,6 @@ describe('ATRCD', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ atrcd: 6.44261571847335, signal: 6.211855312056665, hist: 0.230760406416685 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     atrcdIndicator.onNewCandle(candle);
-    if (expected === null) expect(atrcdIndicator.getResult()).toBeNull();
-    else expect(atrcdIndicator.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 13)));
+    expect(atrcdIndicator.getResult()).toEqual(approximately(expected, 13));
   });
 });

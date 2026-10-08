@@ -1,4 +1,4 @@
-import { mapValues } from 'lodash-es';
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { EFI } from './efi.indicator';
 
@@ -47,8 +47,7 @@ describe('EFI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ fi: -48557, smoothed: -6966.372434439885 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     efi.onNewCandle(candle);
-    if (expected === null) expect(efi.getResult()).toBeNull();
-    else expect(efi.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 13)));
+    expect(efi.getResult()).toEqual(approximately(expected, 13));
   });
 
   // The force is the change of the src price times the volume. With a src, smoothed used to be NaN forever and fi took the close
@@ -96,7 +95,6 @@ describe('EFI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ fi: -20475.48529001177, smoothed: -2382.216803406996 }}
   `('should return $expected with src high when candle high to $candle.high', ({ candle, expected }) => {
     efiHigh.onNewCandle(candle);
-    if (expected === null) expect(efiHigh.getResult()).toBeNull();
-    else expect(efiHigh.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 13)));
+    expect(efiHigh.getResult()).toEqual(approximately(expected, 13));
   });
 });

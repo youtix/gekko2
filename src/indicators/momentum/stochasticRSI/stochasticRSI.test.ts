@@ -1,4 +1,4 @@
-import { mapValues } from 'lodash-es';
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { StochasticRSI } from './stochasticRSI.indicator';
 
@@ -47,8 +47,7 @@ describe('StochasticRSI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ fastK: 2.909373289445141, fastD: 58.71434198021284 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     sRSI.onNewCandle(candle);
-    if (expected === null) expect(sRSI.getResult()).toBeNull();
-    else expect(sRSI.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 12)));
+    expect(sRSI.getResult()).toEqual(approximately(expected, 12));
   });
 
   // The Stochastic underneath used to seed its averages on raw %K values taken over partial windows of RSI values, which an ema
@@ -97,8 +96,7 @@ describe('StochasticRSI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ fastK: 2.909373289445141, fastD: 36.43697621705033 }}
   `('should return $expected with an ema fastD when candle close to $candle.close', ({ candle, expected }) => {
     sRSIEma.onNewCandle(candle);
-    if (expected === null) expect(sRSIEma.getResult()).toBeNull();
-    else expect(sRSIEma.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 12)));
+    expect(sRSIEma.getResult()).toEqual(approximately(expected, 12));
   });
 
   // A dema fastD used to come out two candles before TA-Lib's. A dema overshoots its input: fastD tops 100 at the close of 99, as
@@ -147,8 +145,7 @@ describe('StochasticRSI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ fastK: 2.909373289445141, fastD: 24.184593892934963 }}
   `('should return $expected with a dema fastD when candle close to $candle.close', ({ candle, expected }) => {
     sRSIDema.onNewCandle(candle);
-    if (expected === null) expect(sRSIDema.getResult()).toBeNull();
-    else expect(sRSIDema.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 12)));
+    expect(sRSIDema.getResult()).toEqual(approximately(expected, 12));
   });
 
   // Over a flat stretch the RSI holds still in exact arithmetic but wobbles in its last bits: fastK used to read that wobble as a range,
@@ -178,7 +175,6 @@ describe('StochasticRSI', () => {
     ${102.5}  | ${{ fastK: 0, fastD: 0 }}
   `('should return $expected on candle %$, closing at $close', ({ close, expected }) => {
     sRSIFlat.onNewCandle({ start: 0, open: close, high: close, low: close, close, volume: 0 });
-    if (expected === null) expect(sRSIFlat.getResult()).toBeNull();
-    else expect(sRSIFlat.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 12)));
+    expect(sRSIFlat.getResult()).toEqual(approximately(expected, 12));
   });
 });

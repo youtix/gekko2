@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { ATR } from './atr.indicator';
 
@@ -46,6 +47,6 @@ describe('ATR', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${47.89432567410684}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     atr.onNewCandle(candle);
-    expect(atr.getResult()).toBeCloseTo(expected, 13);
+    expect(atr.getResult()).toEqual(approximately(expected, 13));
   });
 });

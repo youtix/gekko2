@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { DEMA } from './dema.indicator';
 
@@ -46,7 +47,7 @@ describe('DEMA', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${34.51753034604142}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     dema.onNewCandle(candle);
-    expect(dema.getResult()).toBeCloseTo(expected, 13);
+    expect(dema.getResult()).toEqual(approximately(expected, 13));
   });
 
   // The DEMA used to drop src and average the close
@@ -67,7 +68,6 @@ describe('DEMA', () => {
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${73.13346354166667}
   `('should return $expected with src hl2 when candle high to $candle.high and low to $candle.low', ({ candle, expected }) => {
     demaHl2.onNewCandle(candle);
-    if (expected === null) expect(demaHl2.getResult()).toBeNull();
-    else expect(demaHl2.getResult()).toEqual(expect.closeTo(expected, 13));
+    expect(demaHl2.getResult()).toEqual(approximately(expected, 13));
   });
 });

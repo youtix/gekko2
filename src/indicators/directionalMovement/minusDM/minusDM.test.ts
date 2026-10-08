@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { MinusDM } from './minusDM.indicator';
 
@@ -46,7 +47,7 @@ describe('MinusDM', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${121.56891717852923}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     minusDM.onNewCandle(candle);
-    expect(minusDM.getResult()).toBeCloseTo(expected, 13);
+    expect(minusDM.getResult()).toEqual(approximately(expected, 13));
   });
 
   // With period 1, −DM is each candle's own downward move, from the second candle on, as TA-Lib computes it. The first candle, which

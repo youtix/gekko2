@@ -1,5 +1,5 @@
+import { approximately } from '@indicators/indicator.mock';
 import { Candle } from '@models/candle.types';
-import { mapValues } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { BollingerBands } from './bollingerBands.indicator';
 
@@ -52,8 +52,7 @@ describe('BollingerBands', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ upper: 107.77724163216088, middle: 41, lower: -25.77724163216088 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     bbands.onNewCandle(candle);
-    if (expected === null) expect(bbands.getResult()).toBeNull();
-    else expect(bbands.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 13)));
+    expect(bbands.getResult()).toEqual(approximately(expected, 13));
   });
 
   // A middle of exactly 0 used to read as not ready: no bands on the second candle, and the previous candle's on the fourth, fifth and
@@ -102,7 +101,7 @@ describe('BollingerBands', () => {
   `('should put the three bands on the $maType middle $middle, off the close of $closes', ({ maType, closes, middle }) => {
     const bbands = new BollingerBands({ period: 2, maType });
     for (const close of closes) bbands.onNewCandle(flat(close));
-    expect(bbands.getResult()).toEqual(mapValues({ upper: middle, middle, lower: middle }, value => expect.closeTo(value, 12)));
+    expect(bbands.getResult()).toEqual(approximately({ upper: middle, middle, lower: middle }, 12));
   });
 
   // A window that moved, however little, keeps its deviation: a tick on 30000 or on 0.05, or 1e-8 of the price, is beyond the tolerance
@@ -114,6 +113,6 @@ describe('BollingerBands', () => {
   `('should keep the deviation of a window that moved by $move', ({ candles, expected }) => {
     const bbands = new BollingerBands();
     for (const candle of candles) bbands.onNewCandle(candle);
-    expect(bbands.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 9)));
+    expect(bbands.getResult()).toEqual(approximately(expected, 9));
   });
 });

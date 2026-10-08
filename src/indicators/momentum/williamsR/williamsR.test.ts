@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { WilliamsR } from './williamsR.indicator';
 
@@ -46,6 +47,6 @@ describe('WilliamsR', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-88.875557023618}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     williamsR.onNewCandle(candle);
-    expect(williamsR.getResult()).toBeCloseTo(expected, 13);
+    expect(williamsR.getResult()).toEqual(approximately(expected, 13));
   });
 });

@@ -1,5 +1,5 @@
+import { approximately } from '@indicators/indicator.mock';
 import { Candle } from '@models/candle.types';
-import { mapValues } from 'lodash-es';
 import { describe, expect, it } from 'vitest';
 import { OBV } from './obv.indicator';
 
@@ -66,8 +66,7 @@ describe('OBV', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ obv: -315, ma: 443.4, upper: 1240.7863304572006, lower: -353.98633045720067 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     obv.onNewCandle(candle);
-    if (expected === null) expect(obv.getResult()).toBeNull();
-    else expect(obv.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 13)));
+    expect(obv.getResult()).toEqual(approximately(expected, 13));
   });
 
   // Bands the OBV used to miss. A middle of exactly 0 read as not ready, so a flat start, a made-up first candle (volume 0) or a window

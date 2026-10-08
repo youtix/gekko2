@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { TEMA } from './tema.indicator';
 
@@ -46,7 +47,7 @@ describe('TEMA', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${31.30405793100294}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     tema.onNewCandle(candle);
-    expect(tema.getResult()).toBeCloseTo(expected, 13);
+    expect(tema.getResult()).toEqual(approximately(expected, 13));
   });
 
   // The TEMA used to drop src and average the close
@@ -67,7 +68,6 @@ describe('TEMA', () => {
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${71.21478949652777}
   `('should return $expected with src open when candle open to $candle.open', ({ candle, expected }) => {
     temaOpen.onNewCandle(candle);
-    if (expected === null) expect(temaOpen.getResult()).toBeNull();
-    else expect(temaOpen.getResult()).toEqual(expect.closeTo(expected, 13));
+    expect(temaOpen.getResult()).toEqual(approximately(expected, 13));
   });
 });

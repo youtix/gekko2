@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { WilderSmoothing } from '../wilderSmoothing/wilderSmoothing.indicator';
 import { SMMA } from './smma.indicator';
@@ -47,8 +48,7 @@ describe('SMMA', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${35.33089870535696}
   `('should correctly calculate SMMAs with period 2 when candle is $candle', ({ candle, expected }) => {
     smma2.onNewCandle(candle);
-    if (expected === null) expect(smma2.getResult()).toBeNull();
-    else expect(smma2.getResult()).toBeCloseTo(expected, 13);
+    expect(smma2.getResult()).toEqual(approximately(expected, 13));
   });
 
   const smma12 = new SMMA({ period: 12 });
@@ -95,8 +95,7 @@ describe('SMMA', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${47.66252582475479}
   `('should correctly calculate SMMAs with period 12 and $candle candle', ({ candle, expected }) => {
     smma12.onNewCandle(candle);
-    if (expected === null) expect(smma12.getResult()).toBeNull();
-    else expect(smma12.getResult()).toBeCloseTo(expected, 13);
+    expect(smma12.getResult()).toEqual(approximately(expected, 13));
   });
 
   const smma26 = new SMMA({ period: 26 });
@@ -143,8 +142,7 @@ describe('SMMA', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${50.32026943081009}
   `('should correctly calculate SMMAs with period 26 and $candle candle', ({ candle, expected }) => {
     smma26.onNewCandle(candle);
-    if (expected === null) expect(smma26.getResult()).toBeNull();
-    else expect(smma26.getResult()).toBeCloseTo(expected, 13);
+    expect(smma26.getResult()).toEqual(approximately(expected, 13));
   });
 
   it('should be the Wilder smoothing under another name, not a second copy of its recurrence', () => {
@@ -169,7 +167,6 @@ describe('SMMA', () => {
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${62.695219224711686}
   `('should return $expected with src open when candle open to $candle.open', ({ candle, expected }) => {
     smmaOpen.onNewCandle(candle);
-    if (expected === null) expect(smmaOpen.getResult()).toBeNull();
-    else expect(smmaOpen.getResult()).toEqual(expect.closeTo(expected, 13));
+    expect(smmaOpen.getResult()).toEqual(approximately(expected, 13));
   });
 });

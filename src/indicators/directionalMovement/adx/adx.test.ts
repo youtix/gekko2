@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { WilderSmoothing } from '@indicators/movingAverages/wilderSmoothing/wilderSmoothing.indicator';
 import { Candle } from '@models/candle.types';
 import { describe, expect, it } from 'vitest';
@@ -55,7 +56,7 @@ describe('ADX', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${27.612946871844642}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     adx.onNewCandle(candle);
-    expect(adx.getResult()).toBeCloseTo(expected, 13);
+    expect(adx.getResult()).toEqual(approximately(expected, 13));
   });
 
   // The period-2 DX of dx.test.ts, 60, then 300 / 11 from the move up by 1.5 through the same candle again, then 4500 / 59, smoothed
@@ -73,7 +74,7 @@ describe('ADX', () => {
     ${'a move down by 1.5'}    | ${{ high: 11, low: 8, close: 9 }}      | ${(345 / 11 + 4500 / 59) / 2}
   `('should return $expected with period 2 for $move', ({ candle, expected }) => {
     adx2.onNewCandle(candle);
-    expect(adx2.getResult()).toEqual(expected === null ? null : expect.closeTo(expected, 12));
+    expect(adx2.getResult()).toEqual(approximately(expected, 12));
   });
 
   it.each`

@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { WilderSmoothing } from './wilderSmoothing.indicator';
 
@@ -19,7 +20,7 @@ describe('WilderSmoothing', () => {
     ${{ close: 61.8438 }} | ${62.854043298304}
   `('should correctly calculate Wilder Smoothing when candle is $candle', ({ candle, expected }) => {
     ws.onNewCandle(candle);
-    expect(ws.getResult()).toBeCloseTo(expected, 13);
+    expect(ws.getResult()).toEqual(approximately(expected, 13));
   });
 
   // Wilder's smoothing used to drop src and smooth the close
@@ -40,7 +41,6 @@ describe('WilderSmoothing', () => {
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${65.49697708682619}
   `('should return $expected with src hl2 when candle high to $candle.high and low to $candle.low', ({ candle, expected }) => {
     wsHl2.onNewCandle(candle);
-    if (expected === null) expect(wsHl2.getResult()).toBeNull();
-    else expect(wsHl2.getResult()).toEqual(expect.closeTo(expected, 13));
+    expect(wsHl2.getResult()).toEqual(approximately(expected, 13));
   });
 });

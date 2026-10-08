@@ -1,4 +1,4 @@
-import { mapValues } from 'lodash-es';
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { MACD } from './macd.indicator';
 
@@ -48,8 +48,7 @@ describe('MACD', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ macd: -6.630182592691845, signal: -3.090728122064045, hist: -3.5394544706278004 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     macdIndicator.onNewCandle(candle);
-    if (expected === null) expect(macdIndicator.getResult()).toBeNull();
-    else expect(macdIndicator.getResult()).toEqual(mapValues(expected, value => expect.closeTo(value, 13)));
+    expect(macdIndicator.getResult()).toEqual(approximately(expected, 13));
   });
 });
 

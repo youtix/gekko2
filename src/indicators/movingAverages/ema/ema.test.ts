@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { EMA } from './ema.indicator';
 
@@ -46,7 +47,7 @@ describe('EMA', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${43.863015448240326}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     ema.onNewCandle(candle);
-    expect(ema.getResult()).toBeCloseTo(expected, 13);
+    expect(ema.getResult()).toEqual(approximately(expected, 13));
   });
 
   const emaHl2 = new EMA({ period: 3, src: 'hl2' });
@@ -66,7 +67,6 @@ describe('EMA', () => {
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${68.65234375}
   `('should return $expected with src hl2 when candle high to $candle.high and low to $candle.low', ({ candle, expected }) => {
     emaHl2.onNewCandle(candle);
-    if (expected === null) expect(emaHl2.getResult()).toBeNull();
-    else expect(emaHl2.getResult()).toEqual(expect.closeTo(expected, 13));
+    expect(emaHl2.getResult()).toEqual(approximately(expected, 13));
   });
 });
