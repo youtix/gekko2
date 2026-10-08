@@ -9,6 +9,8 @@ import { EMARibbonStrategyParams } from './emaRibbon.types';
 
 const symbol = 'BTC/USDT';
 const makeIndicator = (results?: number[], spread = 0) => [{ results: results ? { results, spread } : null, symbol }] as any;
+/** The indicator's results for these EMAs, with their spread as the EMARibbon indicator computes it */
+const ribbonOf = (emas: readonly number[]) => makeIndicator([...emas], Math.max(...emas) - Math.min(...emas));
 
 describe('EMARibbon', () => {
   let strategy: EMARibbon;
@@ -20,6 +22,28 @@ describe('EMARibbon', () => {
   let bucket: CandleBucket;
   const longAdvice = { type: 'STICKY', side: 'BUY', amount: 1, symbol } satisfies Partial<AdviceOrder>;
   const shortAdvice = { type: 'STICKY', side: 'SELL', amount: 1, symbol } satisfies Partial<AdviceOrder>;
+
+  /**
+   * Plays a timeframe candle as the StrategyManager does: onEachTimeframeCandle on every candle, the warmup included, then, once the
+   * warmup is over, onTimeframeCandleAfterWarmup with the same results
+   */
+  const playCandle = (indicators: any[], afterWarmup = true) => {
+    const params = { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>;
+    strategy.onEachTimeframeCandle(params, ...indicators);
+    if (afterWarmup) strategy.onTimeframeCandleAfterWarmup(params, ...indicators);
+  };
+
+  /**
+   * Plays the steps (see playSteps): the name of one of the ribbons is a candle after the warmup, with the spread of its EMAs, the name
+   * in parentheses a warmup candle, and 'none' a candle whose ribbon is not ready yet
+   */
+  const play = (steps: string, ribbons: Record<string, readonly number[]>) =>
+    playSteps(steps, strategy, orders, step => {
+      const isWarmup = step.startsWith('(') && step.endsWith(')');
+      const name = isWarmup ? step.slice(1, -1) : step;
+      if (name !== 'none' && !ribbons[name]) throw new Error(`No ribbon named ${name}, in "${steps}"`);
+      playCandle(name === 'none' ? makeIndicator() : ribbonOf(ribbons[name]), !isWarmup);
+    });
 
   beforeEach(() => {
     strategy = new EMARibbon();
@@ -60,10 +84,7 @@ describe('EMARibbon', () => {
       ${undefined}
       ${null}
     `('does nothing when indicator is missing or null ($indicatorRes)', ({ indicatorRes }) => {
-      strategy.onTimeframeCandleAfterWarmup({ candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>, {
-        results: indicatorRes,
-        symbol,
-      });
+      playCandle([{ results: indicatorRes, symbol }]);
       expect(advices).toHaveLength(0);
     });
 
@@ -73,43 +94,25 @@ describe('EMARibbon', () => {
       ${'not bullish: equal pair'} | ${[50, 50, 40, 30]} | ${''}
       ${'not bullish: asc step'}   | ${[30, 35, 33, 31]} | ${''}
     `('advises long when $case', ({ results, expectedCalls }) => {
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator(results),
-      );
+      playCandle(makeIndicator(results));
 
       if (expectedCalls) expect(advices).toEqual([expectedCalls === 'long' ? longAdvice : shortAdvice]);
       else expect(advices).toHaveLength(0);
     });
 
     it('goes long then flips short when spread is compressing', () => {
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([10, 9, 8, 7], 0.5),
-      );
+      playCandle(makeIndicator([10, 9, 8, 7], 0.5));
       strategy.onOrderCompleted({ order: { id: orders.ids[0] } } as any);
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([10, 11, 9, 8], 0.2),
-      );
+      playCandle(makeIndicator([10, 11, 9, 8], 0.2));
 
       expect(advices).toEqual([longAdvice, shortAdvice]);
     });
 
     it('does not reissue long while already long and still bullish', () => {
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([100, 90, 80], 0.5),
-      );
+      playCandle(makeIndicator([100, 90, 80], 0.5));
       strategy.onOrderCompleted({ order: { id: orders.ids[0] } } as any);
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([90, 80, 70], 0.5),
-      );
-      strategy.onTimeframeCandleAfterWarmup(
-        { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-        ...makeIndicator([70, 60, 50], 0.5),
-      );
+      playCandle(makeIndicator([90, 80, 70], 0.5));
+      playCandle(makeIndicator([70, 60, 50], 0.5));
 
       expect(advices).toEqual([longAdvice]);
     });
@@ -118,16 +121,6 @@ describe('EMARibbon', () => {
   describe('order outcomes', () => {
     // Bullish ribbons (each EMA above the slower one) whose spread, below the threshold of 1, narrows from one to the next
     const RIBBONS = { tight: [10.5, 10.25, 10], tighter: [10.2, 10.1, 10], tightest: [10.1, 10.05, 10] } as const;
-
-    /** Plays the steps (see playSteps): a ribbon (tight, tighter, tightest) is a candle, with the spread of its EMAs */
-    const play = (steps: string) =>
-      playSteps(steps, strategy, orders, step => {
-        const results = [...RIBBONS[step as keyof typeof RIBBONS]];
-        strategy.onTimeframeCandleAfterWarmup(
-          { candle: bucket, tools } as unknown as OnCandleEventParams<EMARibbonStrategyParams>,
-          ...makeIndicator(results, Math.max(...results) - Math.min(...results)),
-        );
-      });
 
     beforeEach(() => {
       strategy.init({ tools: { strategyParams: {} }, addIndicator, candle: bucket } as unknown as InitParams<EMARibbonStrategyParams>);
@@ -147,7 +140,122 @@ describe('EMARibbon', () => {
       ${'another order canceled: still pending'}         | ${'tight canceled:unknown tight tighter'}          | ${['BUY']}
       ${'another order errored: still pending'}          | ${'tight errored:unknown tight tighter'}           | ${['BUY']}
     `('should track $case', ({ steps, expectedSides }) => {
-      play(steps);
+      play(steps, RIBBONS);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
+    });
+  });
+
+  describe('the first candle after the warmup', () => {
+    const RIBBONS = {
+      // EMAs 2, 3 and 4 as the StrategyManager computed them over closes rising by 2 from 100 through a warmup of 6 candles, spread 2
+      // on its last three, then flat at 110: spread 1.47 on the candle after the warmup, 0.97 on the next
+      rise4: [105, 104, 103],
+      rise5: [107, 106, 105],
+      rise6: [109, 108, 107],
+      flat7: [109.66666666666667, 109, 108.2],
+      flat8: [109.88888888888889, 109.5, 108.92],
+      // The same EMAs after closes still rising, 112: spread 2 again; after a warmup flat at 100 (spread 0), a close of 103: spread 0.8
+      rise7: [111, 110, 109],
+      flat: [100, 100, 100],
+      up: [102, 101.5, 101.2],
+      // Spreads 3, 1 and 2
+      wide: [103, 101.5, 100],
+      narrow: [101, 100.5, 100],
+      middle: [102, 101, 100],
+    } as const;
+
+    beforeEach(() => {
+      tools.strategyParams.spreadCompressionThreshold = 100;
+      strategy.init({ tools: { strategyParams: {} }, addIndicator, candle: bucket } as unknown as InitParams<EMARibbonStrategyParams>);
+    });
+
+    // A bullish ribbon below the threshold buys on the first candle after the warmup only if its spread has not narrowed since the
+    // last warmup candle, as on any other candle
+    it.each`
+      case                                      | steps                                    | expectedSides
+      ${'narrower than at the warmup end'}      | ${'(rise4) (rise5) (rise6) flat7'}       | ${[]}
+      ${'then narrower again: no round trip'}   | ${'(rise4) (rise5) (rise6) flat7 flat8'} | ${[]}
+      ${'as wide as at the warmup end'}         | ${'(rise4) (rise5) (rise6) rise7'}       | ${['BUY']}
+      ${'wider than at the warmup end'}         | ${'(flat) (flat) (flat) up'}             | ${['BUY']}
+      ${'wider than the last warmup candle'}    | ${'(wide) (narrow) middle'}              | ${['BUY']}
+      ${'narrower than the last warmup candle'} | ${'(narrow) (wide) middle'}              | ${[]}
+      ${'the first of the ribbon'}              | ${'(none) (none) flat7'}                 | ${['BUY']}
+    `('advises $expectedSides when the spread is $case', ({ steps, expectedSides }) => {
+      play(steps, RIBBONS);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
+    });
+
+    it('advises nothing during the warmup, even on a ribbon that would buy', () => {
+      play('(flat) (up) (up)', RIBBONS);
+      expect(advices).toHaveLength(0);
+    });
+  });
+
+  describe('EMAs within the tolerance of each other', () => {
+    const RIBBONS = {
+      // EMAs 10 to 45 (step 5) after 612 candles flat at 30203.69 that followed a random walk: each one froze a few ulps short of the
+      // price, one or two ulps above the next, and the spread stopped narrowing
+      frozen: [
+        30203.68999999999, 30203.689999999988, 30203.68999999998, 30203.689999999977, 30203.689999999973, 30203.689999999966,
+        30203.689999999962, 30203.68999999996,
+      ],
+      // Each EMA 2e-9 above the next, beyond the tolerance (1e-9 of their magnitude)
+      apart: [1 + 4e-9, 1 + 2e-9, 1],
+      // The fastest two, or the slowest two, 5e-10 apart: within the tolerance
+      fastPairWithin: [1.0000000005, 1, 0.9],
+      slowPairWithin: [1.1, 1.0000000005, 1],
+    } as const;
+
+    beforeEach(() => {
+      strategy.init({ tools: { strategyParams: {} }, addIndicator, candle: bucket } as unknown as InitParams<EMARibbonStrategyParams>);
+    });
+
+    it.each`
+      case                                   | steps               | expectedSides
+      ${'a ribbon frozen on a flat market'}  | ${'frozen frozen'}  | ${[]}
+      ${'each EMA above the next beyond it'} | ${'apart'}          | ${['BUY']}
+      ${'the fastest two within it'}         | ${'fastPairWithin'} | ${[]}
+      ${'the slowest two within it'}         | ${'slowPairWithin'} | ${[]}
+    `('advises $expectedSides for $case', ({ steps, expectedSides }) => {
+      play(steps, RIBBONS);
+      expect(advices.map(({ side }) => side)).toEqual(expectedSides);
+    });
+  });
+
+  describe('a spread within the tolerance of the one before', () => {
+    const RIBBONS = {
+      // EMAs 10 to 45 (step 5) on two candles in a row of a straight rise from 60000 by 3.33 a candle: in exact arithmetic the spread
+      // stays 58.275, computed it fell by 1.25e-13 of itself
+      rise47: [
+        60141.52500000001, 60133.20000000001, 60124.87500000002, 60116.550000000025, 60108.22500000003, 60099.90000000002,
+        60091.57500000001, 60083.25,
+      ],
+      rise48: [
+        60144.855, 60136.53000000001, 60128.205000000016, 60119.88000000002, 60111.55500000002, 60103.230000000025, 60094.90500000001,
+        60086.58,
+      ],
+      // Spread 1, then 2e-9 less (beyond the tolerance, 1e-9 of the spreads), or 5e-10 less (within)
+      base: [2, 1.5, 1],
+      beyond: [2 - 2e-9, 1.5, 1],
+      within: [2 - 5e-10, 1.5, 1],
+    } as const;
+
+    beforeEach(() => {
+      tools.strategyParams.spreadCompressionThreshold = 500;
+      strategy.init({ tools: { strategyParams: {} }, addIndicator, candle: bucket } as unknown as InitParams<EMARibbonStrategyParams>);
+    });
+
+    // An order canceled reports nothing of an execution here: the strategy is flat again
+    it.each`
+      case                                 | steps                          | expectedSides
+      ${'long, down by rounding noise'}    | ${'rise47 completed:1 rise48'} | ${['BUY']}
+      ${'flat, down by rounding noise'}    | ${'rise47 canceled:1 rise48'}  | ${['BUY', 'BUY']}
+      ${'long, down beyond the tolerance'} | ${'base completed:1 beyond'}   | ${['BUY', 'SELL']}
+      ${'long, down within the tolerance'} | ${'base completed:1 within'}   | ${['BUY']}
+      ${'flat, down beyond the tolerance'} | ${'base canceled:1 beyond'}    | ${['BUY']}
+      ${'flat, down within the tolerance'} | ${'base canceled:1 within'}    | ${['BUY', 'BUY']}
+    `('advises $expectedSides when $case', ({ steps, expectedSides }) => {
+      play(steps, RIBBONS);
       expect(advices.map(({ side }) => side)).toEqual(expectedSides);
     });
   });
