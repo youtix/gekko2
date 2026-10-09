@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GridBot } from './gridBot.strategy';
 import { GridBotStrategyParams, GridBounds, GridSpacingType } from './gridBot.types';
 import {
+  checkLowestBuyPrice,
   checkPriceTick,
   checkRoundTripFee,
   computeGridBounds,
@@ -486,6 +487,39 @@ describe('gridBot.utils', () => {
 
       expect(validateConfig(underTick, 0.5, { price: { min: 1 }, precision: { price: 0.01 } })).toBe(
         'Center price 0.5 is below exchange minimum 1',
+      );
+    });
+  });
+
+  // Checked when the grid starts (validateConfig), and again around the price a rebalance ended at, which used to be left unchecked:
+  // lower, the lowest BUY of a fixed grid falls at or below 0, and that of a percent grid rounds to 0 on the tick after a far larger fall
+  describe('checkLowestBuyPrice', () => {
+    // 2 buy levels spaced by 5: the lowest BUY 10 under the center price
+    const fixedFive = { buyLevels: 2, spacingType: 'fixed', spacingValue: 5 } as const;
+    // 2 buy levels spaced by 49.99 % of the center price: the lowest BUY at 0.02 % of it
+    const percentAtTheBottom = { buyLevels: 2, spacingType: 'percent', spacingValue: 49.99 } as const;
+
+    it.each`
+      center   | params                            | description
+      ${10.01} | ${fixedFive}                      | ${'fixed 5 around 10.01, its lowest BUY at 0.01'}
+      ${0}     | ${{ ...fixedFive, buyLevels: 0 }} | ${'a grid without buy levels, whatever its center price, checked apart'}
+      ${100}   | ${percentAtTheBottom}             | ${'percent 49.99 around 100, its lowest BUY at 0.02'}
+    `('is null for $description', ({ center, params }) => {
+      expect(checkLowestBuyPrice(params, center, 2, 0.01)).toBeNull();
+    });
+
+    // Rounded as its order is: 0.2 is 0 on a tick of 0.5
+    it.each`
+      center | params                                 | tick    | description                                                      | expected
+      ${10}  | ${fixedFive}                           | ${0.01} | ${'at 0 itself: fixed 5 around 10'}                              | ${'the lowest of buyLevels 2, spaced by spacingValue 5 (fixed) below the center price 10, would be at 0'}
+      ${9}   | ${fixedFive}                           | ${0.01} | ${'under 0: fixed 5 around 9'}                                   | ${'the lowest of buyLevels 2, spaced by spacingValue 5 (fixed) below the center price 9, would be at -1'}
+      ${20}  | ${percentAtTheBottom}                  | ${0.01} | ${'rounded to 0 on the tick: percent 49.99 around 20, at 0.004'} | ${'the lowest of buyLevels 2, spaced by spacingValue 49.99 (percent) below the center price 20, would be at 0'}
+      ${10}  | ${{ ...fixedFive, spacingValue: 4.9 }} | ${0.5}  | ${'rounded to 0 on a tick of 0.5: fixed 4.9 around 10, at 0.2'}  | ${'the lowest of buyLevels 2, spaced by spacingValue 4.9 (fixed) below the center price 10, would be at 0'}
+    `('is the error naming the parameters and the center price for a lowest BUY $description', ({ center, params, tick, expected }) => {
+      const { priceDecimals, priceStep } = inferPricePrecision({ precision: { price: tick } });
+
+      expect(checkLowestBuyPrice(params, center, priceDecimals, priceStep)).toBe(
+        `Grid configuration would result in non-positive buy prices: ${expected}`,
       );
     });
   });

@@ -252,8 +252,8 @@ export const getOutOfRangeSide = (
 };
 
 /**
- * Validate grid configuration against the center price, the exchange limits and the price tick. The parameters themselves were
- * checked by the schema (gridBot.schema.ts) before the strategy was created.
+ * Validate grid configuration against the center price, its lowest BUY included (see checkLowestBuyPrice), the exchange limits and
+ * the price tick. The parameters themselves were checked by the schema (gridBot.schema.ts) before the strategy was created.
  * Returns an error message if invalid, null if valid.
  */
 export const validateConfig = (params: GridBotStrategyParams, centerPrice: number, marketData: MarketData): string | null => {
@@ -261,14 +261,8 @@ export const validateConfig = (params: GridBotStrategyParams, centerPrice: numbe
 
   const { priceDecimals, priceStep } = inferPricePrecision(marketData);
 
-  // Check if lowest buy price would be positive
-  const { buyLevels, spacingType, spacingValue } = params;
-  if (buyLevels > 0) {
-    const lowestBuyPrice = computeLevelPrice(centerPrice, -buyLevels, priceDecimals, spacingType, spacingValue, priceStep);
-    if (lowestBuyPrice <= 0) {
-      return `Grid configuration would result in non-positive buy prices: the lowest of buyLevels ${buyLevels}, spaced by spacingValue ${spacingValue} (${spacingType}) below the center price ${centerPrice}, would be at ${lowestBuyPrice}`;
-    }
-  }
+  const lowestBuyError = checkLowestBuyPrice(params, centerPrice, priceDecimals, priceStep);
+  if (lowestBuyError) return lowestBuyError;
 
   // Against the exchange price limits, read as the order layer reads them for every order (see checkOrderPrice)
   const priceLimits = checkOrderPrice(centerPrice, marketData);
@@ -280,6 +274,28 @@ export const validateConfig = (params: GridBotStrategyParams, centerPrice: numbe
 
   // Last, so that a configuration refused before keeps its message
   return checkPriceTick(params, centerPrice, priceDecimals, priceStep);
+};
+
+/**
+ * Checks the lowest BUY of the grid the parameters configure around the center price, rounded as its order is (see
+ * computeLevelPrice). The strategy refuses a grid whose lowest BUY is at or below 0 when it starts (see validateConfig), and again
+ * around the price a rebalance ended at, where the grid is planned again or built. Only the start's center price used to be checked:
+ * a fixed grid started with its lowest BUY a few ticks above 0, then rebalanced lower, was built without that level, with a warning
+ * that blamed the free balances, or planned again without it, without a word. Percent and logarithmic BUYs, which scale with the
+ * price, reach 0 only once rounded to the tick, after a far larger fall.
+ * Returns an error message when the lowest BUY is at or below 0, null otherwise.
+ */
+export const checkLowestBuyPrice = (
+  params: Pick<GridBotStrategyParams, 'buyLevels' | 'spacingType' | 'spacingValue'>,
+  centerPrice: number,
+  priceDecimals: number,
+  priceStep?: number,
+): string | null => {
+  const { buyLevels, spacingType, spacingValue } = params;
+  if (buyLevels <= 0) return null;
+  const lowestBuyPrice = computeLevelPrice(centerPrice, -buyLevels, priceDecimals, spacingType, spacingValue, priceStep);
+  if (lowestBuyPrice > 0) return null;
+  return `Grid configuration would result in non-positive buy prices: the lowest of buyLevels ${buyLevels}, spaced by spacingValue ${spacingValue} (${spacingType}) below the center price ${centerPrice}, would be at ${lowestBuyPrice}`;
 };
 
 /**
@@ -337,7 +353,7 @@ export const checkRoundTripFee = (params: GridBotStrategyParams, centerPrice: nu
 
 /**
  * The sums of the BUY prices of the grid from the center price down, one more level each, the first 0 for none: as far as the prices
- * are positive, buildGrid building no level priced at 0 or below
+ * are positive. The strategy plans and builds no grid with a BUY at or below 0 (see checkLowestBuyPrice), so it never reaches one.
  */
 const getBuyPriceSums = (priceAt: (steps: number) => number, buyLevels: number): number[] => {
   const buyPriceSums = [0];

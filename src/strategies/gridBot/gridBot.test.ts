@@ -631,6 +631,114 @@ describe('GridBot', () => {
 
       expect(() => startStrategy(0)).toThrow('GridBot: Center price must be positive');
     });
+
+    // The start checked the lowest BUY around its own center price only, while a grid rebalanced first is planned again or built
+    // around the price the rebalance ended at. The default grid started at 10.01 has its lowest BUY at 0.01: rebalanced at 9, it was
+    // built without its BUY at -1, with a warning that 79.87 BTC and 281.17 USDT free funded no more orders of the market minimum, or,
+    // once the rebalance had failed, a second STICKY BUY was sent, planned for a grid of one buy level
+    describe('around the price a rebalance ended at, lower than the one the start checked', () => {
+      const atNine =
+        'GridBot: Grid configuration would result in non-positive buy prices: the lowest of buyLevels 2, spaced by spacingValue 5 (fixed) below the center price 9, would be at -1';
+      // All in the asset, as a buy-only grid wants it in currency: a STICKY SELL of the 10 BTC
+      const assetOnly: Portfolio = new Map<string, BalanceDetail>([
+        ['BTC', { free: 10, used: 0, total: 10 }],
+        ['USDT', { free: 0, used: 0, total: 0 }],
+      ]);
+
+      /**
+       * Ends the rebalance, the first order sent, as the Trader reports it at `price`: filled there, without fee, from `portfolio`, or
+       * failed with nothing traded
+       */
+      const endRebalanceAt = (outcome: 'completed' | 'errored' | 'canceled', price: number, portfolio: Portfolio = unbalancedPortfolio) => {
+        const [{ id, side, amount }] = issuedOrders;
+        const order = { id, reason: 'Test error' } as any;
+        const bought = side === 'BUY' ? amount : -amount;
+        const [btc, usdt] = [portfolio.get('BTC')!.free + bought, portfolio.get('USDT')!.free - bought * price];
+        const filled: Portfolio = new Map<string, BalanceDetail>([
+          ['BTC', { free: btc, used: 0, total: btc }],
+          ['USDT', { free: usdt, used: 0, total: usdt }],
+        ]);
+        if (outcome === 'completed') strategy.onOrderCompleted({ order, exchange: { price, portfolio: filled }, tools });
+        if (outcome === 'errored') strategy.onOrderErrored({ order, exchange: { price, portfolio }, tools });
+        if (outcome === 'canceled') strategy.onOrderCanceled({ order, exchange: { price, portfolio }, tools });
+      };
+      /** The lines logged at warn and error level */
+      const warningsAndErrors = () => log.mock.calls.filter(([level]) => level === 'warn' || level === 'error');
+
+      // From 1000 USDT, a STICKY BUY of 79.87 BTC planned around 10.01
+      it('stops the run once the rebalance fills at 9, as the start would around 9, naming the price the grid would be built around', () => {
+        startStrategy(10.01, {}, unbalancedPortfolio);
+
+        expect(() => endRebalanceAt('completed', 9)).toThrow(atNine);
+      });
+
+      it.each`
+        outcome        | expected
+        ${'completed'} | ${[['error', atNine]]}
+        ${'errored'}   | ${[['warn', 'GridBot: Rebalance attempt 1 failed: Test error. Retrying...'], ['error', atNine]]}
+        ${'canceled'}  | ${[['warn', 'GridBot: Rebalance attempt 1 failed: Order was canceled. Retrying...'], ['error', atNine]]}
+      `('says why at error level once the rebalance is $outcome at 9, and warns of no level left out', ({ outcome, expected }) => {
+        startStrategy(10.01, {}, unbalancedPortfolio);
+        untilStopped(() => endRebalanceAt(outcome, 9));
+
+        expect(warningsAndErrors()).toEqual(expected);
+      });
+
+      it.each`
+        outcome
+        ${'completed'}
+        ${'errored'}
+        ${'canceled'}
+      `('sends no order once the rebalance is $outcome at 9: neither the grid nor a rebalance planned again', ({ outcome }) => {
+        startStrategy(10.01, {}, unbalancedPortfolio);
+        untilStopped(() => endRebalanceAt(outcome, 9));
+
+        expect(issuedOrders.map(({ type, side, amount }) => `${type} ${side} ${amount}`)).toEqual(['STICKY BUY 79.87']);
+      });
+
+      // As the start refuses them: a BUY at 0 is no order the market takes, and a BUY is checked at the price its order is placed at,
+      // on the tick. Spaced by 4.9 around 10.5, the lowest BUY is at 0.7, 0.5 on a tick of 0.5: around 10, at 0.2, rounded to 0.
+      it.each`
+        start    | params                   | tick    | outcome        | description                                            | expected
+        ${10.01} | ${{}}                    | ${0.01} | ${'completed'} | ${'at 0 itself, the rebalance filled at 10'}           | ${'spaced by spacingValue 5 (fixed) below the center price 10, would be at 0'}
+        ${10.5}  | ${{ spacingValue: 4.9 }} | ${0.5}  | ${'completed'} | ${'at 0 on a tick of 0.5, the rebalance filled at 10'} | ${'spaced by spacingValue 4.9 (fixed) below the center price 10, would be at 0'}
+        ${10.5}  | ${{ spacingValue: 4.9 }} | ${0.5}  | ${'errored'}   | ${'at 0 on a tick of 0.5, the rebalance failed at 10'} | ${'spaced by spacingValue 4.9 (fixed) below the center price 10, would be at 0'}
+      `('stops the run for a lowest BUY $description', ({ start, params, tick, outcome, expected }) => {
+        tools.marketData = new Map([['BTC/USDT', { ...marketDataMock, precision: { price: tick, amount: 0.01 } }]]);
+        startStrategy(start, params, unbalancedPortfolio);
+
+        expect(() => endRebalanceAt(outcome, 10)).toThrow(
+          `GridBot: Grid configuration would result in non-positive buy prices: the lowest of buyLevels 2, ${expected}`,
+        );
+      });
+
+      // Its only BUY at -1 left the grid without a level: it stopped for an insufficient portfolio, 0 BTC and 90 USDT free
+      it('says why a buy-only grid, its BTC sold at 9, is not built: its lowest BUY, not its portfolio', () => {
+        startStrategy(10.01, { buyLevels: 1, sellLevels: 0, spacingValue: 10 }, assetOnly);
+
+        expect(() => endRebalanceAt('completed', 9, assetOnly)).toThrow(
+          'GridBot: Grid configuration would result in non-positive buy prices: the lowest of buyLevels 1, spaced by spacingValue 10 (fixed) below the center price 9, would be at -1',
+        );
+      });
+
+      it.each`
+        start    | price    | description                        | expected
+        ${11}    | ${10.01} | ${'lower, its lowest BUY at 0.01'} | ${['BUY 0.01 x34.48', 'BUY 5.01 x34.48', 'SELL 15.01 x34.48', 'SELL 20.01 x34.48']}
+        ${10.01} | ${10.5}  | ${'higher'}                        | ${['BUY 0.5 x26.89', 'BUY 5.5 x26.89', 'SELL 15.5 x26.89', 'SELL 20.5 x26.89']}
+      `('builds the grid as before once the rebalance planned at $start fills $description, at $price', ({ start, price, expected }) => {
+        startStrategy(start, {}, unbalancedPortfolio);
+        endRebalanceAt('completed', price);
+
+        expect(amountsSentAfter(1)).toEqual(expected);
+      });
+
+      it('places the rebalance again as before once it failed lower, every BUY above 0: at 10.01, planned at 11', () => {
+        startStrategy(11, {}, unbalancedPortfolio);
+        endRebalanceAt('errored', 10.01);
+
+        expect(issuedOrders.map(({ type, side, amount }) => `${type} ${side} ${amount}`)).toEqual(['STICKY BUY 68.96', 'STICKY BUY 79.87']);
+      });
+    });
   });
 
   // A spacing under the price tick used to be accepted, the prices of the grid rounded onto each other: percent 0.001 at 100 put a

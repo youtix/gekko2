@@ -19,6 +19,7 @@ import { DEFAULT_RETRY_LIMIT } from './gridBot.const';
 import { gridBotStrategySchema } from './gridBot.schema';
 import type { GridBotStrategyParams, GridBounds, LevelState, OutOfRangeSide, RebalancePlan } from './gridBot.types';
 import {
+  checkLowestBuyPrice,
   checkPriceTick,
   checkRoundTripFee,
   computeGridBounds,
@@ -50,6 +51,8 @@ import {
  * - Spacing between adjacent prices is configurable: fixed (in price units), percent (of the center price, the same between any two
  *   adjacent prices, as fixed spacing) or logarithmic (a ratio between adjacent prices). A spacing that rounds two adjacent prices of
  *   the grid to the same tick stops the run, and one under the round-trip fee, two maker fees, is warned of once
+ * - A grid whose lowest BUY would be at or below 0 stops the run: around the close it starts on, and again around the price a
+ *   rebalance ended at, where it is planned again or built
  * - Prices are rounded to the tick of the market (precision.price) as they are written, in decimal, a tie upwards. A market that states
  *   no tick has them rounded to 8 decimals, with a warning
  * - Each level trades back and forth between two adjacent prices of the grid: once its BUY fills it sells one step above, once its
@@ -314,6 +317,12 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
    * would refuse the rebalance, under its minimum order, or when they cannot pay for it
    */
   private rebalanceOrBuild(centerPrice: number, asset: BalanceDetail, currency: BalanceDetail, tools: Tools<GridBotStrategyParams>): void {
+    // The start checked the lowest BUY around its own center price (see validateConfig), while a plan made again after a failed
+    // rebalance is centred on the price the rebalance ended at: lower, the plan was made, and its STICKY order sent, for a grid without
+    // the BUYs at or below 0 there, without a word. Refused before the plan, as at the start.
+    const lowestBuyError = checkLowestBuyPrice(tools.strategyParams, centerPrice, this.priceDecimals, this.priceStep);
+    if (lowestBuyError) this.stopRun(lowestBuyError, tools);
+
     const plan = computeRebalancePlan(centerPrice, asset.free, currency.free, tools.strategyParams, tools.marketData.get(this.pair)!);
 
     if (!plan || this.isRebalanceLeftOut(plan, asset, currency, tools)) {
@@ -419,6 +428,13 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   private buildGrid(centerPrice: number, assetFree: number, currencyFree: number, tools: Tools<GridBotStrategyParams>): void {
     const { buyLevels, sellLevels, spacingType, spacingValue } = tools.strategyParams;
 
+    // A grid rebalanced first is built around the price the rebalance ended at, which the start did not check. Lower, a fixed grid
+    // started with its lowest BUY a few ticks above 0 put it at or below 0: the sizing left that level out, with a warning that the
+    // free balances funded no more orders of the market minimum, or stopped the run for an insufficient portfolio when no other level
+    // was left. Refused before the sizing, as at the start.
+    const lowestBuyError = checkLowestBuyPrice(tools.strategyParams, centerPrice, this.priceDecimals, this.priceStep);
+    if (lowestBuyError) this.stopRun(lowestBuyError, tools);
+
     const marketData = tools.marketData.get(this.pair)!;
 
     // Derive the quantity per level, and the levels the free balances fund with orders the market takes (see deriveLevelQuantity)
@@ -482,20 +498,14 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     this.orderToLevel.clear();
     this.retryCount.clear();
 
-    // Create buy levels (negative indices, stored first), which start with their BUY
+    // Create buy levels (negative indices, stored first), which start with their BUY: every one above 0, the lowest checked first
     for (let i = size.buyLevels; i >= 1; i--) {
-      const buyPrice = priceAt(-i);
-      if (buyPrice > 0) {
-        this.levels.push({ index: -i, buyPrice, sellPrice: priceAt(1 - i), side: 'BUY', amount: this.quantity });
-      }
+      this.levels.push({ index: -i, buyPrice: priceAt(-i), sellPrice: priceAt(1 - i), side: 'BUY', amount: this.quantity });
     }
 
-    // Create sell levels (positive indices), which start with their SELL
+    // Create sell levels (positive indices), which start with their SELL, above the center price
     for (let i = 1; i <= size.sellLevels; i++) {
-      const sellPrice = priceAt(i);
-      if (sellPrice > 0) {
-        this.levels.push({ index: i, buyPrice: priceAt(i - 1), sellPrice, side: 'SELL', amount: this.quantity });
-      }
+      this.levels.push({ index: i, buyPrice: priceAt(i - 1), sellPrice: priceAt(i), side: 'SELL', amount: this.quantity });
     }
 
     // Place initial orders

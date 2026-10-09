@@ -6,7 +6,10 @@ import { DEFAULT_RETRY_LIMIT } from './gridBot.const';
 // quoted logarithmic spacingValue ('0.01') was concatenated into a multiplier of 10.01.
 export const gridBotStrategySchema = z
   .strictObject({
-    /** Number of buy levels below the center price */
+    /**
+     * Number of buy levels below the center price. The lowest must stay above 0: a grid whose lowest BUY would be at or below 0 stops
+     * the run, when it starts and again around the price a rebalance ended at
+     */
     buyLevels: z.int().min(0),
     /** Number of sell levels above the center price */
     sellLevels: z.int().min(0),
