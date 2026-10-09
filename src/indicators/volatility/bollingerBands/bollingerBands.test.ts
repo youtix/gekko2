@@ -52,7 +52,7 @@ describe('BollingerBands', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ upper: 107.77724163216088, middle: 41, lower: -25.77724163216088 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     bbands.onNewCandle(candle);
-    expect(bbands.getResult()).toEqual(approximately(expected, 13));
+    expect(bbands.getResult()).toEqual(approximately(expected, 12));
   });
 
   // A middle of another kind than the sma, or multipliers other than 2, had no table on a window that moves. The deviation stays that
@@ -127,7 +127,8 @@ describe('BollingerBands', () => {
     expect(bbands.getResult()).toEqual(approximately({ upper: middle, middle, lower: middle }, 12));
   });
 
-  // A window that moved, however little, keeps its deviation: a tick on 30000 or on 0.05, or 1e-8 of the price, is beyond the tolerance
+  // A window that moved, however little, keeps its deviation: a tick on 30000 or on 0.05, or 1e-8 of the price, is beyond the tolerance.
+  // Prices of 30000, hence 9 digits (see approximately)
   it.each`
     move                 | candles                                                                             | expected
     ${'a tick on 30000'} | ${[...Array(2).fill(flat(30000)), flat(30000.01), ...Array(2).fill(flat(30000))]}   | ${{ upper: 30000.01, middle: 30000.002, lower: 29999.994 }}

@@ -48,7 +48,7 @@ describe('PSAR', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${1.0545784076109253}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     psar.onNewCandle(candle);
-    expect(psar.getResult()).toEqual(approximately(expected, 13));
+    expect(psar.getResult()).toEqual(approximately(expected, 12));
   });
 
   // An acceleration equal to its maximum keeps the factor fixed, as TA-Lib does with an acceleration above it. By hand with 0.25, which

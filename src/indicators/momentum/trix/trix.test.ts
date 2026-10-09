@@ -47,6 +47,6 @@ describe('TRIX', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-2.091251245539727}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     trix.onNewCandle(candle);
-    expect(trix.getResult()).toEqual(approximately(expected, 13));
+    expect(trix.getResult()).toEqual(approximately(expected, 12));
   });
 });

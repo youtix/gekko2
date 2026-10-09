@@ -47,7 +47,7 @@ describe('RSI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${44.37238533693474}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     rsi.onNewCandle(candle);
-    expect(rsi.getResult()).toEqual(approximately(expected, 13));
+    expect(rsi.getResult()).toEqual(approximately(expected, 12));
   });
 
   // Every close of the table above moves, so the guard for a market that never did could be dropped without a test failing. On an

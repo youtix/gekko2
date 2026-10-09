@@ -45,9 +45,9 @@ describe('TrueRange', () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${91.92450046724366}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${29.65549529899084}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${62.89732934513477}
-  `('should correctly calculate TrueRanges when candle is $candle', ({ candle, expected }) => {
+  `('should return $expected on candle %$, closing at $candle.close', ({ candle, expected }) => {
     trange.onNewCandle(candle);
-    expect(trange.getResult()).toEqual(approximately(expected, 13));
+    expect(trange.getResult()).toEqual(approximately(expected, 12));
   });
 
   // Each candle of the table above opens at the last close and trades on both sides of it, so the true range was always the candle's

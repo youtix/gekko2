@@ -47,7 +47,7 @@ describe('SMA', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${39.42857142857143}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     sma.onNewCandle(candle);
-    expect(sma.getResult()).toEqual(approximately(expected, 13));
+    expect(sma.getResult()).toEqual(approximately(expected, 12));
   });
 
   const smaOpen = new SMA({ period: 3, src: 'open' });
@@ -67,6 +67,6 @@ describe('SMA', () => {
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${62.333333333333336}
   `('should return $expected with src open when candle open to $candle.open', ({ candle, expected }) => {
     smaOpen.onNewCandle(candle);
-    expect(smaOpen.getResult()).toEqual(approximately(expected, 13));
+    expect(smaOpen.getResult()).toEqual(approximately(expected, 12));
   });
 });

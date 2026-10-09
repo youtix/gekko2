@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { MACD } from './macd.indicator';
 
 describe('MACD', () => {
-  const macdIndicator = new MACD({ short: 4, long: 12, signal: 3 });
+  const macd = new MACD({ short: 4, long: 12, signal: 3 });
 
   it.each`
     candle                                                                                      | expected
@@ -47,8 +47,8 @@ describe('MACD', () => {
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${{ macd: 6.297960979220697, signal: 0.4487263485637554, hist: 5.849234630656942 }}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ macd: -6.630182592691845, signal: -3.090728122064045, hist: -3.5394544706278004 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
-    macdIndicator.onNewCandle(candle);
-    expect(macdIndicator.getResult()).toEqual(approximately(expected, 13));
+    macd.onNewCandle(candle);
+    expect(macd.getResult()).toEqual(approximately(expected, 12));
   });
 
   // A MACD that read the close whatever its src said, in one of its EMAs or in both, used to pass this file: no row set one. Each value
@@ -73,5 +73,3 @@ describe('MACD', () => {
     expect(macdHl2.getResult()).toEqual(approximately(expected, 12));
   });
 });
-
-//

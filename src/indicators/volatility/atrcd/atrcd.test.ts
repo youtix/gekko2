@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ATRCD } from './atrcd.indicator';
 
 describe('ATRCD', () => {
-  const atrcdIndicator = new ATRCD({ short: 4, long: 12, signal: 3 });
+  const atrcd = new ATRCD({ short: 4, long: 12, signal: 3 });
   it.each`
     candle                                                                                      | expected
     ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}    | ${null}
@@ -46,7 +46,7 @@ describe('ATRCD', () => {
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${{ atrcd: 4.57493376494015, signal: 5.981094905639979, hist: -1.406161140699829 }}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ atrcd: 6.44261571847335, signal: 6.211855312056665, hist: 0.230760406416685 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
-    atrcdIndicator.onNewCandle(candle);
-    expect(atrcdIndicator.getResult()).toEqual(approximately(expected, 13));
+    atrcd.onNewCandle(candle);
+    expect(atrcd.getResult()).toEqual(approximately(expected, 12));
   });
 });

@@ -47,7 +47,7 @@ describe('Stochastic', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ k: 59.605122886428084, d: 54.67925325407148 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     stoch.onNewCandle(candle);
-    expect(stoch.getResult()).toEqual(approximately(expected, 13));
+    expect(stoch.getResult()).toEqual(approximately(expected, 12));
   });
 
   // The averages used to get the raw %K of the first candles' partial windows, and %D zeros until %K was ready. An sma has dropped
@@ -96,7 +96,7 @@ describe('Stochastic', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ k: 38.26289927350266, d: 46.054131424046815 }}
   `('should return $expected with ema averages when candle close to $candle.close', ({ candle, expected }) => {
     stochEma.onNewCandle(candle);
-    expect(stochEma.getResult()).toEqual(approximately(expected, 13));
+    expect(stochEma.getResult()).toEqual(approximately(expected, 12));
   });
 
   // A 3-candle dema needs 5 values: the result used to come at candle 9, as with an sma, instead of TA-Lib's candle 13
@@ -144,7 +144,7 @@ describe('Stochastic', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ k: 30.471667122958507, d: 43.81445327756229 }}
   `('should return $expected with dema averages when candle close to $candle.close', ({ candle, expected }) => {
     stochDema.onNewCandle(candle);
-    expect(stochDema.getResult()).toEqual(approximately(expected, 13));
+    expect(stochDema.getResult()).toEqual(approximately(expected, 12));
   });
 
   // StochasticRSI feeds RSI values, which over a flat stretch hold still in exact arithmetic but wobble in their last bits, here two

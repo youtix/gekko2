@@ -11,6 +11,13 @@ type ExpectedResult = null | number | ExpectedResult[] | { [field: string]: Expe
  * `precision` digits, field by field in an object or an array. The tables used to assert with toBeCloseTo, which reads null as 0: a
  * null row passed when the indicator published 0 while it warmed up, as TRIX did, and a row of 0 passed when it published null.
  * expect.closeTo matches numbers only. As with it, a NaN matches nothing: assert one with toBe.
+ *
+ * `precision` follows from the largest magnitude the table works at, that of its values or of the prices they come from when those
+ * are larger: the most digits whose tolerance, 10^-precision / 2, spans 16 ulps of it, room for the float operations to run in another
+ * order, which moves a value by a few ulps. From 16 to 256 that is 12, then 11 up to 2048, 10 up to 16384 and 9 up to 262144. Most
+ * tables took 13 whatever their magnitude, which from 256 on is bit equality: an ulp of 256 is 5.7e-14, more than the tolerance of
+ * 5e-14, so EFI's and OBV's values had to match to the last bit. A value that divides by a small difference of prices, as CCI's on a
+ * window almost flat, carries their rounding further: its table says how far.
  */
 export const approximately = (expected: ExpectedResult, precision: number): unknown => {
   if (expected === null) return null;

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ROC } from './roc.indicator';
 
 describe('ROC', () => {
+  // Rates of up to 1950 %, hence 11 digits (see approximately): with 12, the largest had 2 ulps of room
   const roc9 = new ROC({ period: 9 });
   it.each`
     candle                                                                                      | expected
@@ -47,7 +48,7 @@ describe('ROC', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-89.53488372093024}
   `('should return $expected with period 9 when candle close to $candle.close', ({ candle, expected }) => {
     roc9.onNewCandle(candle);
-    expect(roc9.getResult()).toEqual(approximately(expected, 12));
+    expect(roc9.getResult()).toEqual(approximately(expected, 11));
   });
 
   const roc1 = new ROC({ period: 1 });

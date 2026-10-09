@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { EFI } from './efi.indicator';
 
 describe('EFI', () => {
+  // Forces of up to 5e4, hence 9 digits (see approximately): with 13, every value from 256 on had to match to the last bit
   const efi = new EFI();
   it.each`
     candle                                                                                      | expected
@@ -47,7 +48,7 @@ describe('EFI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ fi: -48557, smoothed: -6966.372434439885 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     efi.onNewCandle(candle);
-    expect(efi.getResult()).toEqual(approximately(expected, 13));
+    expect(efi.getResult()).toEqual(approximately(expected, 9));
   });
 
   // The force is the change of the src price times the volume. With a src, smoothed used to be NaN forever and fi took the close
@@ -95,6 +96,6 @@ describe('EFI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ fi: -20475.48529001177, smoothed: -2382.216803406996 }}
   `('should return $expected with src high when candle high to $candle.high', ({ candle, expected }) => {
     efiHigh.onNewCandle(candle);
-    expect(efiHigh.getResult()).toEqual(approximately(expected, 13));
+    expect(efiHigh.getResult()).toEqual(approximately(expected, 9));
   });
 });

@@ -47,7 +47,7 @@ describe('DX', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${21.17078863227643}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     dx.onNewCandle(candle);
-    expect(dx.getResult()).toEqual(approximately(expected, 13));
+    expect(dx.getResult()).toEqual(approximately(expected, 12));
   });
 
   // By hand with period 2: from the second candle +DM is 1, 0.5, 1.75, 0.875, 0.4375, 0.21875 and −DM 0, 2, 1, 0.5, 0.25, 1.625, and the

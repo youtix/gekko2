@@ -47,7 +47,7 @@ describe('WilliamsR', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-88.875557023618}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     williamsR.onNewCandle(candle);
-    expect(williamsR.getResult()).toEqual(approximately(expected, 13));
+    expect(williamsR.getResult()).toEqual(approximately(expected, 12));
   });
 
   // Every window of the table above has a range, so the guard for a flat one could be dropped without a test failing. On an illiquid

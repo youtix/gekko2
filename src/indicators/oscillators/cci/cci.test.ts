@@ -100,7 +100,8 @@ describe('CCI', () => {
   });
 
   // One candle off an otherwise flat window gives period / 0.03 when it comes last, −period / (0.03 × (period − 1)) otherwise, however
-  // small its step, as long as it is a real one. In the last row the last typical price is within the tolerance of the mean
+  // small its step, as long as it is a real one. In the last row the last typical price is within the tolerance of the mean. A step this
+  // small is held only to the rounding of the price, which puts the CCI up to 4.2e-6 off these exact values: hence 4 digits
   it.each`
     window                                 | period | candles                                                                                 | expected
     ${'4 flat at 30000, one 1e-8 above'}   | ${5}   | ${[...Array(4).fill(flat(30000)), flat(30000.0003)]}                                    | ${500 / 3}

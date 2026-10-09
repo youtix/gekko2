@@ -20,6 +20,8 @@ const walkThenStill = [
 ].map(([close, volume]) => candleAt(close, volume));
 
 describe('OBV', () => {
+  // The OBV and its bands reach 3.6e3, hence 10 digits (see approximately): with 13, every value from 256 on had to match to the last bit
+
   // The OBV starts at the first candle's volume, 403, as TA-Lib's does, so its bands come on candle 5. It used to skip that candle and
   // start at 0 a candle later: every value was 403 lower and the first result came on candle 6
   const obv = new OBV({ period: 5 });
@@ -66,7 +68,30 @@ describe('OBV', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ obv: -315, ma: 443.4, upper: 1240.7863304572006, lower: -353.98633045720067 }}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     obv.onNewCandle(candle);
-    expect(obv.getResult()).toEqual(approximately(expected, 13));
+    expect(obv.getResult()).toEqual(approximately(expected, 10));
+  });
+
+  // OBV hands stdevUp and stdevDown on to its bands, and an OBV that handed them over swapped used to pass this file: every table took
+  // 2 and 2. With 1 up and 3 down, the bands are those of a BollingerBands with these multipliers fed the OBV, worked out apart from
+  // the classes, and each row from the fifth candle differs from the swapped bands
+  const obvOneUpThreeDown = new OBV({ period: 5, stdevUp: 1, stdevDown: 3 });
+  it.each`
+    candle                                                                                     | expected
+    ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}   | ${null}
+    ${{ close: 24, open: 81, high: 83.85720988022568, low: 21.142790119774318, volume: 814 }}  | ${null}
+    ${{ close: 75, open: 24, high: 76.94326596315126, low: 22.056734036848734, volume: 1064 }} | ${null}
+    ${{ close: 21, open: 75, high: 79.67167346434113, low: 16.328326535658874, volume: 330 }}  | ${null}
+    ${{ close: 34, open: 21, high: 34.711649023641215, low: 20.28835097635878, volume: 964 }}  | ${{ obv: 1287, ma: 451, upper: 998.9839413705479, lower: -1192.9518241116436 }}
+    ${{ close: 25, open: 34, high: 36.18138133787512, low: 22.818618662124877, volume: 214 }}  | ${{ obv: 1073, ma: 585, upper: 1184.3716710022254, lower: -1213.1150130066767 }}
+    ${{ close: 72, open: 25, high: 73.33035016836122, low: 23.669649831638775, volume: 860 }}  | ${{ obv: 1933, ma: 1053.8, upper: 1605.6066327981207, lower: -601.619898394362 }}
+    ${{ close: 92, open: 72, high: 94.97523624952838, low: 69.02476375047162, volume: 486 }}   | ${{ obv: 2419, ma: 1407, upper: 2128.3642630460704, lower: -757.0927891382107 }}
+    ${{ close: 99, open: 92, high: 101.5127586628106, low: 89.4872413371894, volume: 647 }}    | ${{ obv: 3066, ma: 1955.6, upper: 2686.9340139771975, lower: -238.40204193159343 }}
+    ${{ close: 2, open: 99, high: 99.0804764241746, low: 1.9195235758253941, volume: 396 }}    | ${{ obv: 2670, ma: 2232.2, upper: 2918.5017995022304, lower: 173.2946014933077 }}
+    ${{ close: 86, open: 2, high: 86.08306699694582, low: 1.916933003054178, volume: 252 }}    | ${{ obv: 2922, ma: 2602, upper: 3002.8416146060686, lower: 1399.4751561817943 }}
+    ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${{ obv: 2623, ma: 2740, upper: 2968.4863234419076, lower: 2054.5410296742775 }}
+  `('should return $expected with 1 deviation up and 3 down when candle close to $candle.close', ({ candle, expected }) => {
+    obvOneUpThreeDown.onNewCandle(candle);
+    expect(obvOneUpThreeDown.getResult()).toEqual(approximately(expected, 10));
   });
 
   // Bands the OBV used to miss. A middle of exactly 0 read as not ready, so a flat start, a made-up first candle (volume 0) or a window

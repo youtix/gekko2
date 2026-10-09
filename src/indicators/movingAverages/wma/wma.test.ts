@@ -63,7 +63,7 @@ describe('WMA', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${39.48888888888889}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     wma.onNewCandle(candle);
-    expect(wma.getResult()).toEqual(approximately(expected, 13));
+    expect(wma.getResult()).toEqual(approximately(expected, 12));
   });
   const wma2 = new WMA({ period: 5 });
   it.each`
@@ -78,7 +78,7 @@ describe('WMA', () => {
     ${{ close: 27.25 }}   | ${25.6396}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     wma2.onNewCandle(candle);
-    expect(wma2.getResult()).toEqual(approximately(expected, 13));
+    expect(wma2.getResult()).toEqual(approximately(expected, 12));
   });
 
   // The WMA used to drop src and average the close
@@ -99,7 +99,7 @@ describe('WMA', () => {
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${64.58333333333333}
   `('should return $expected with src hl2 when candle high to $candle.high and low to $candle.low', ({ candle, expected }) => {
     wmaHl2.onNewCandle(candle);
-    expect(wmaHl2.getResult()).toEqual(approximately(expected, 13));
+    expect(wmaHl2.getResult()).toEqual(approximately(expected, 12));
   });
 
   // Each candle used to sum the whole window again, O(period). The sums now slide in O(1) and are summed afresh every period candles:

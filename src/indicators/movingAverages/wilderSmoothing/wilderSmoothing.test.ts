@@ -18,9 +18,9 @@ describe('WilderSmoothing', () => {
     ${{ close: 63.4062 }} | ${63.2738801536}
     ${{ close: 62.4375 }} | ${63.10660412288}
     ${{ close: 61.8438 }} | ${62.854043298304}
-  `('should correctly calculate Wilder Smoothing when candle is $candle', ({ candle, expected }) => {
+  `('should return $expected on candle %$, closing at $candle.close', ({ candle, expected }) => {
     ws.onNewCandle(candle);
-    expect(ws.getResult()).toEqual(approximately(expected, 13));
+    expect(ws.getResult()).toEqual(approximately(expected, 12));
   });
 
   // Wilder's smoothing used to drop src and smooth the close
@@ -41,6 +41,6 @@ describe('WilderSmoothing', () => {
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${65.49697708682619}
   `('should return $expected with src hl2 when candle high to $candle.high and low to $candle.low', ({ candle, expected }) => {
     wsHl2.onNewCandle(candle);
-    expect(wsHl2.getResult()).toEqual(approximately(expected, 13));
+    expect(wsHl2.getResult()).toEqual(approximately(expected, 12));
   });
 });

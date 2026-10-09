@@ -46,9 +46,9 @@ describe('SMMA', () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${55.32359482142783}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${61.661797410713916}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${35.33089870535696}
-  `('should correctly calculate SMMAs with period 2 when candle is $candle', ({ candle, expected }) => {
+  `('should return $expected with period 2 on candle %$, closing at $candle.close', ({ candle, expected }) => {
     smma2.onNewCandle(candle);
-    expect(smma2.getResult()).toEqual(approximately(expected, 13));
+    expect(smma2.getResult()).toEqual(approximately(expected, 12));
   });
 
   const smma12 = new SMMA({ period: 12 });
@@ -93,9 +93,9 @@ describe('SMMA', () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${49.64796461788999}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${51.177300899732494}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${47.66252582475479}
-  `('should correctly calculate SMMAs with period 12 and $candle candle', ({ candle, expected }) => {
+  `('should return $expected with period 12 on candle %$, closing at $candle.close', ({ candle, expected }) => {
     smma12.onNewCandle(candle);
-    expect(smma12.getResult()).toEqual(approximately(expected, 13));
+    expect(smma12.getResult()).toEqual(approximately(expected, 12));
   });
 
   const smma26 = new SMMA({ period: 26 });
@@ -140,9 +140,9 @@ describe('SMMA', () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${51.332003416364195}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${51.9730802080425}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${50.32026943081009}
-  `('should correctly calculate SMMAs with period 26 and $candle candle', ({ candle, expected }) => {
+  `('should return $expected with period 26 on candle %$, closing at $candle.close', ({ candle, expected }) => {
     smma26.onNewCandle(candle);
-    expect(smma26.getResult()).toEqual(approximately(expected, 13));
+    expect(smma26.getResult()).toEqual(approximately(expected, 12));
   });
 
   it('should be the Wilder smoothing under another name, not a second copy of its recurrence', () => {
@@ -167,6 +167,6 @@ describe('SMMA', () => {
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${62.695219224711686}
   `('should return $expected with src open when candle open to $candle.open', ({ candle, expected }) => {
     smmaOpen.onNewCandle(candle);
-    expect(smmaOpen.getResult()).toEqual(approximately(expected, 13));
+    expect(smmaOpen.getResult()).toEqual(approximately(expected, 12));
   });
 });
