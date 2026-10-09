@@ -129,6 +129,8 @@ function createOrderMock(type: 'STICKY' | 'MARKET' | 'LIMIT', requiresPrice = fa
     // No fill reported, unless a test says otherwise: a refused order executed nothing (see Trader.reportRejected), and the summary
     // of a filled order that reported none is estimated from the amount ordered (see Trader.estimateOrderSummary)
     this.getFilledAmount = vi.fn(() => 0);
+    // Nor its price: the price of an estimated summary comes from the Trader (see Trader.estimateExecutionPrice)
+    this.getAverageFillPrice = vi.fn(() => undefined);
     this.removeAllListeners = vi.fn(() => {
       listenersStore.set(this, new Map());
     });
@@ -1533,12 +1535,14 @@ describe('Trader', () => {
 
     // Each figure of the estimate comes from the best source known (see Trader.estimateOrderSummary)
     describe('the summary estimated when the exchange cannot create it', () => {
-      // Created with a requested price of 95, at a market price of 100; the last market price is 105, unless unknown by then
-      const completeWithoutSummary = async (type: AdviceOrder['type'], filled: number, marketPrice?: number) => {
+      // Created with a requested price of 95, at a market price of 100; the last market price is 105, unless unknown by then. The
+      // order reports the price of its fills when given one.
+      const completeWithoutSummary = async (type: AdviceOrder['type'], filled: number, marketPrice?: number, fillPrice?: number) => {
         vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
         const order = await prepareOrder('creation', buildAdvice({ type, amount: 1, price: 95 }));
         order.createSummary.mockRejectedValue(new Error('fetchMyTrades failed'));
         order.getFilledAmount.mockReturnValue(filled);
+        order.getAverageFillPrice.mockReturnValue(fillPrice);
         trader['prices'].clear();
         if (marketPrice) trader['prices'].set('BTC/USDT', marketPrice);
         await order.emitAndSettle(ORDER_COMPLETED_EVENT);
@@ -1562,15 +1566,20 @@ describe('Trader', () => {
         });
       });
 
+      // A STICKY order that rested at 100.01 and filled there was reported at the market, 105 by then: its fills say where it executed.
+      // Not those of a MARKET order, whose price reported can be the bound of its slippage.
       describe.each`
-        type        | marketPrice  | source                             | price  | note
-        ${'LIMIT'}  | ${105}       | ${'its limit price'}               | ${95}  | ${'price 95 (its limit price)'}
-        ${'MARKET'} | ${105}       | ${'the last market price'}         | ${105} | ${'price 105 (the last market price)'}
-        ${'STICKY'} | ${105}       | ${'the last market price'}         | ${105} | ${'price 105 (the last market price)'}
-        ${'MARKET'} | ${undefined} | ${'the price it was created with'} | ${95}  | ${'price 95 (the price it was created with: no market price known)'}
-      `('when the price of a $type order comes from $source', ({ type, marketPrice, price, note }) => {
+        type        | marketPrice  | fillPrice    | source                                             | price     | note
+        ${'LIMIT'}  | ${105}       | ${undefined} | ${'its limit price'}                               | ${95}     | ${'price 95 (its limit price)'}
+        ${'MARKET'} | ${105}       | ${undefined} | ${'the last market price'}                         | ${105}    | ${'price 105 (the last market price)'}
+        ${'STICKY'} | ${105}       | ${undefined} | ${'the last market price'}                         | ${105}    | ${'price 105 (the last market price)'}
+        ${'MARKET'} | ${undefined} | ${undefined} | ${'the price it was created with'}                 | ${95}     | ${'price 95 (the price it was created with: no market price known)'}
+        ${'STICKY'} | ${105}       | ${100.01}    | ${'the prices of its fills'}                       | ${100.01} | ${'price 100.01 (the prices of its fills, as the exchange reported them)'}
+        ${'LIMIT'}  | ${105}       | ${94.99}     | ${'the prices of its fills'}                       | ${94.99}  | ${'price 94.99 (the prices of its fills, as the exchange reported them)'}
+        ${'MARKET'} | ${105}       | ${110.25}    | ${'the last market price, whatever its fills say'} | ${105}    | ${'price 105 (the last market price)'}
+      `('when the price of a $type order comes from $source', ({ type, marketPrice, fillPrice, price, note }) => {
         beforeEach(async () => {
-          await completeWithoutSummary(type, 0.98, marketPrice);
+          await completeWithoutSummary(type, 0.98, marketPrice, fillPrice);
         });
 
         it(`relays a price of ${price}`, () => {

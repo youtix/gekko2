@@ -24,6 +24,22 @@ describe('trader.utils', () => {
       expect(result).toEqual(expected);
     });
 
+    // In binary, and as the total over the amount, each came out an ulp or two off: the effective price of the first at
+    // 100.05000400000002, that of the second at 104.54444000000001, the fee of the third at 0.06630148799999999, the total of the
+    // fourth at 497.31386523983997
+    it.each`
+      side      | price     | amount     | feePercent | expected
+      ${'BUY'}  | ${100.01} | ${4.99825} | ${0.04}    | ${{ effectivePrice: 100.050004, base: 499.8749825, fee: 0.199949993, total: 500.074932493 }}
+      ${'BUY'}  | ${104.44} | ${0.12}    | ${0.1}     | ${{ effectivePrice: 104.54444, base: 12.5328, fee: 0.0125328, total: 12.5453328 }}
+      ${'SELL'} | ${99}     | ${1.67428} | ${0.04}    | ${{ effectivePrice: 98.9604, base: 165.75372, fee: 0.066301488, total: 165.687418512 }}
+      ${'SELL'} | ${99.99}  | ${4.97712} | ${0.07}    | ${{ effectivePrice: 99.920007, base: 497.6622288, fee: 0.34836356016, total: 497.31386523984 }}
+    `(
+      'works out the $side of $amount at $price with a fee of $feePercent % in decimal',
+      ({ side, price, amount, feePercent, expected }) => {
+        expect(computeOrderPricing(side, price, amount, feePercent)).toEqual(expected);
+      },
+    );
+
     it.each`
       description                   | price | amount
       ${'price is not positive'}    | ${0}  | ${1}

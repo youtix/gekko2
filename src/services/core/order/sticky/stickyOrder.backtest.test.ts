@@ -129,9 +129,11 @@ describe.each`
           expect(terminalEvents).toEqual([ORDER_COMPLETED_EVENT]);
         });
 
+        // Placed at the close plus or minus price.min worked out in binary (101.2 + 0.01 is 101.21000000000001), it is summarized at
+        // the decimal it stands for
         it(`executes it at ${movedTo}`, async () => {
           const { price } = await order.createSummary();
-          expect(price).toBeCloseTo(movedTo, 8);
+          expect(price).toBe(movedTo);
         });
       });
     });
@@ -181,9 +183,10 @@ describe.each`
       await settle();
     });
 
+    // Not the market price of its creation, 100, nor the price it was first placed at: the price it filled at
     it(`relays its execution at ${movedTo}, where the bucket after its creation moved it`, () => {
       const completed = addDeferredEmit.mock.calls.find(([event]) => event === ORDER_COMPLETED_EVENT)?.[1] as OrderCompletedEvent;
-      expect(completed?.order.price).toBeCloseTo(movedTo, 8);
+      expect(completed?.order.price).toBe(movedTo);
     });
 
     it('relays no other end of the order', () => {

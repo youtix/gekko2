@@ -290,7 +290,19 @@ describe('order', () => {
 
       it('records the transaction', () => {
         record();
-        expect(getTransaction()).toEqual({ id: 'tx1', status: 'open', filled: 2, timestamp: 1000 });
+        expect(getTransaction()).toEqual({ id: 'tx1', status: 'open', filled: 2, price: 100, timestamp: 1000 });
+      });
+
+      // The price of a limit order, at which it fills: the Trader estimates a fill from it when the exchange cannot give its trades
+      it.each`
+        kind              | price        | recorded
+        ${'a price'}      | ${100}       | ${100}
+        ${'no price'}     | ${undefined} | ${undefined}
+        ${'a price of 0'} | ${0}         | ${undefined}
+        ${'a NaN price'}  | ${NaN}       | ${undefined}
+      `('records a price of $recorded when the state reports $kind', ({ price, recorded }) => {
+        record({ price });
+        expect(getTransaction()?.price).toBe(recorded);
       });
 
       it('makes it the transaction of the order', () => {
@@ -344,6 +356,16 @@ describe('order', () => {
       it('records the new status', () => {
         record({ status: 'canceled' });
         expect(getTransaction()?.status).toBe('canceled');
+      });
+
+      it.each`
+        kind              | price        | recorded
+        ${'a new price'}  | ${101}       | ${101}
+        ${'no price'}     | ${undefined} | ${100}
+        ${'a price of 0'} | ${0}         | ${100}
+      `('records a price of $recorded given $kind', ({ price, recorded }) => {
+        record({ price });
+        expect(getTransaction()?.price).toBe(recorded);
       });
 
       it.each`
@@ -402,6 +424,7 @@ describe('order', () => {
       ${'a fill, then a state without fill'}     | ${[{ filled: 2 }, { filled: undefined, status: 'closed' }]}              | ${2}
       ${'the fills of two transactions'}         | ${[{ filled: 2 }, { id: 'tx2', filled: 3 }]}                             | ${5}
       ${'a transaction without fill and a fill'} | ${[{ filled: undefined, status: 'canceled' }, { id: 'tx2', filled: 3 }]} | ${3}
+      ${'fills of 0.02 and 0.07, in decimal'}    | ${[{ filled: 0.02 }, { id: 'tx2', filled: 0.07 }]}                       | ${0.09}
     `('returns $expected given $kind', ({ states, expected }) => {
       record(states);
       expect(testOrder.getFilledAmount()).toBe(expected);
@@ -411,6 +434,29 @@ describe('order', () => {
     it('counts a transaction recorded without a fill as 0', () => {
       testOrder['transactions'].set('tx1', { id: 'tx1', status: 'closed', timestamp: 1000 });
       expect(testOrder.getFilledAmount()).toBe(0);
+    });
+  });
+
+  // The price the Trader estimates a fill at when the exchange cannot give its trades (see Trader.estimateExecutionPrice): the price
+  // the exchange reported for each transaction that filled, weighted by that fill
+  describe('getAverageFillPrice', () => {
+    const record = (states: Partial<OrderState>[]) =>
+      states.forEach(state => testOrder['recordOrderUpdate']({ id: 'tx1', status: 'open', timestamp: 1000, ...state }));
+
+    it.each`
+      kind                                               | states                                                                         | expected
+      ${'no state'}                                      | ${[]}                                                                          | ${undefined}
+      ${'a transaction priced, without fill'}            | ${[{ price: 100 }]}                                                            | ${undefined}
+      ${'a transaction priced, filled 0'}                | ${[{ price: 100, filled: 0 }]}                                                 | ${undefined}
+      ${'a fill at 100.01'}                              | ${[{ price: 100.01, filled: 2 }]}                                              | ${100.01}
+      ${'a fill priced in binary at 101.2 + 0.01'}       | ${[{ price: 101.21000000000001, filled: 1 }]}                                  | ${101.21}
+      ${'two transactions filled at 104.44 and 104.46'}  | ${[{ price: 104.44, filled: 0.3 }, { id: 'tx2', price: 104.46, filled: 0.3 }]} | ${104.45}
+      ${'a fill, and a transaction priced without fill'} | ${[{ price: 100, filled: 2 }, { id: 'tx2', price: 105 }]}                      | ${100}
+      ${'a fill without its price'}                      | ${[{ filled: 2 }]}                                                             | ${undefined}
+      ${'a fill priced, and a fill without its price'}   | ${[{ price: 100, filled: 2 }, { id: 'tx2', filled: 1 }]}                       | ${undefined}
+    `('returns $expected given $kind', ({ states, expected }) => {
+      record(states);
+      expect(testOrder.getAverageFillPrice()).toBe(expected);
     });
   });
 
@@ -470,6 +516,21 @@ describe('order', () => {
       states.forEach((update: Partial<OrderState>) => apply(update));
       const [payload] = listener.mock.calls.at(-1) ?? [];
       expect({ filled: payload?.filled, remaining: payload?.remaining }).toEqual({ filled, remaining });
+    });
+
+    // Added up in binary, the two fills made 0.09000000000000001 filled and 0.009999999999999995 remaining
+    it.each`
+      field          | expected
+      ${'filled'}    | ${0.09}
+      ${'remaining'} | ${0.01}
+    `('reports $expected $field for an order of 0.1 whose two transactions filled 0.02 and 0.07', ({ field, expected }) => {
+      const order = new TestOrder('BTC/USDT', 'ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 'STICKY', 0.1);
+      const listener = vi.fn();
+      order.on(ORDER_CANCELED_EVENT, listener);
+      order['applyOrderUpdate']({ id: 'tx1', status: 'open', filled: 0.02, timestamp: 1000 });
+      order['applyOrderUpdate']({ id: 'tx2', status: 'canceled', filled: 0.07, timestamp: 2000 });
+      const [payload] = listener.mock.calls.at(-1) ?? [];
+      expect(payload?.[field]).toBe(expected);
     });
 
     // Reported once per transaction: a poll of a transaction that stays open changes nothing

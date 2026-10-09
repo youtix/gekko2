@@ -6,11 +6,15 @@ import { TradingPair } from '@models/utility.types';
 import { Exchange } from '@services/exchange/exchange.types';
 import { debug } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { weightedMean } from '@utils/math/math.utils';
+import { addPrecise, isFiniteNumber } from '@utils/math/math.utils';
+import { countDecimals, round } from '@utils/math/round.utils';
 import { startOfSecond } from 'date-fns';
-import { filter, isNil, last, map, min, sortBy, sumBy } from 'lodash-es';
+import { filter, isNil, last, map, min, sortBy } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { OrderSummary, Transaction } from './order.types';
+
+/** The significant digits a double keeps of any decimal: past them, a number computed in binary carries only noise */
+const SIGNIFICANT_DIGITS = 15;
 
 /**
  * A failure as an Error. Nobody awaits launch(), cancel() or checkOrder() (the Trader floats them, an interval runs checkOrder),
@@ -18,6 +22,39 @@ import { OrderSummary, Transaction } from './order.types';
  * the order still ends with ORDER_ERRORED_EVENT.
  */
 export const toError = (value: unknown) => (value instanceof Error ? value : new Error(String(value)));
+
+/**
+ * a × b as the two are written: the double nearest to the product of their decimals, where the binary product can come out an ulp
+ * off it (100.01 × 0.0004 is 0.040004000000000005, 0.040004 here). Exact while the product, written with the decimals of a and b
+ * added up, has about 15 significant digits or fewer; beyond, as close as the binary product.
+ */
+export const multiplyPrecise = (a: number, b: number): number => round(a * b, countDecimals(a) + countDecimals(b));
+
+/**
+ * value to 15 significant digits: the decimal it stands for, without the noise of the binary arithmetic that made it. A mean is a
+ * quotient, and the simulator or an exchange may hand over a figure computed in binary: a STICKY order placed at 101.2 + 0.01 executes
+ * at 101.21000000000001, a fee rate of 0.0007 is reported as 0.06999999999999999 %.
+ */
+const toSignificantDigits = (value: number): number => {
+  if (!Number.isFinite(value) || value === 0) return value;
+  return round(value, SIGNIFICANT_DIGITS - 1 - Math.floor(Math.log10(Math.abs(value))));
+};
+
+/**
+ * The mean of `values` weighted by `weights`, worked out in decimal: the products and the sums exactly (see multiplyPrecise and
+ * addPrecise), the one division to 15 significant digits (see toSignificantDigits). Values all the same give that value. Worked out
+ * in binary, the mean of a single price came out off it (104.44 for 2.5 gave 104.44000000000001), and so did a mean as short as the
+ * prices (104.44 and 104.46 for 0.3 each gave 104.44999999999999). NaN when the lists differ in length, are empty, or when the
+ * weights add up to 0 or to no finite number.
+ */
+export const getWeightedAverage = (values: number[], weights: number[]): number => {
+  if (values.length !== weights.length || !values.length) return NaN;
+  const totalWeight = weights.reduce((sum, weight) => addPrecise(sum, weight), 0);
+  if (!isFiniteNumber(totalWeight) || totalWeight === 0) return NaN;
+  if (values.every(value => value === values[0])) return toSignificantDigits(values[0]);
+  const total = values.reduce((sum, value, index) => addPrecise(sum, multiplyPrecise(value, weights[index])), 0);
+  return toSignificantDigits(total / totalWeight);
+};
 
 type CreateOrderSummaryParams = {
   id: UUID;
@@ -46,7 +83,7 @@ type RatedTrade = Trade & { fee: { rate: number } };
  */
 const getFeePercent = (trades: Trade[]) => {
   const ratedTrades = trades.filter((trade): trade is RatedTrade => Number.isFinite(trade.fee?.rate));
-  const feePercent = weightedMean(
+  const feePercent = getWeightedAverage(
     ratedTrades.map(({ fee }) => fee.rate),
     map(ratedTrades, 'amount'),
   );
@@ -79,9 +116,11 @@ export const createOrderSummary = async ({
 
   if (!trades.length || !orderExecutionDate) return { ...EMPTY_ORDER_SUMMARY, side };
 
+  // The trades' amounts added up, and their prices averaged, in decimal (see getWeightedAverage): the price of a LIMIT order filled
+  // at 104.44 came out as 104.44000000000001, and two trades of 0.1 and 0.2 made an amount of 0.30000000000000004
   return {
-    amount: sumBy(trades, 'amount'),
-    price: weightedMean(map(trades, 'price'), map(trades, 'amount')),
+    amount: trades.reduce((sum, { amount }) => addPrecise(sum, amount), 0),
+    price: getWeightedAverage(map(trades, 'price'), map(trades, 'amount')),
     feePercent: getFeePercent(trades),
     side,
     orderExecutionDate,

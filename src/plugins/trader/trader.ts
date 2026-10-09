@@ -317,7 +317,7 @@ export class Trader extends Plugin {
     const amountSource = isFillReported
       ? 'the fill reported'
       : 'the amount ordered: no fill reported, and a filled order executed it in full, up to lot rounding';
-    const { price, priceSource } = this.estimateExecutionPrice(order);
+    const { price, priceSource } = this.estimateExecutionPrice(orderInstance, order);
 
     error(
       'trader',
@@ -333,11 +333,18 @@ export class Trader extends Plugin {
   }
 
   /**
-   * The price a filled order executed at, estimated (see estimateOrderSummary): a LIMIT order executed at its price, or better. Any
-   * other one at the market, which a STICKY order follows: the last price known, else the price the order was created with. That
-   * price is kept with the order until its end is reported (see reportCompleted).
+   * The price a filled order executed at, estimated (see estimateOrderSummary). A LIMIT or STICKY order places limit orders, which
+   * execute at their price, or better: first, the prices the exchange reported for those that filled, weighted by their fills (see
+   * Order.getAverageFillPrice). A STICKY order was estimated at the market, which it follows, whatever its transactions filled at: one
+   * that rested at 100.01 and filled before the market fell to 99 was reported at 99. Not a MARKET order: the price reported for it can
+   * be the bound of its slippage, Hyperliquid placing it as a limit order 5 % beyond the market. Without them, a LIMIT order executed
+   * at its price. Any other one at the market: the last price known, else the price the order was created with. That price is kept
+   * with the order until its end is reported (see reportCompleted).
    */
-  private estimateExecutionPrice({ id, symbol, type }: RelayedOrder) {
+  private estimateExecutionPrice(orderInstance: OrderInstance, { id, symbol, type }: RelayedOrder) {
+    const fillPrice = type === 'MARKET' ? undefined : orderInstance.getAverageFillPrice();
+    if (!isNil(fillPrice)) return { price: fillPrice, priceSource: 'the prices of its fills, as the exchange reported them' };
+
     const creationPrice = this.orders.get(id)?.price ?? NaN;
     if (type === 'LIMIT') return { price: creationPrice, priceSource: 'its limit price' };
 

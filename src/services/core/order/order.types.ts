@@ -13,6 +13,8 @@ export type Transaction = {
   timestamp: EpochTimeStamp;
   /** The cumulative fill the exchange reported for it, the largest seen; undefined while no state reported one (see recordOrderUpdate) */
   filled?: number;
+  /** The price the exchange last reported for it, a limit order's own; undefined while no state reported one above 0 */
+  price?: number;
   status: 'open' | 'canceled' | 'closed';
 };
 export type OrderSummary = {

@@ -3,6 +3,9 @@ import { Timeframe } from '@models/configuration.types';
 import { OrderSide } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
+import { multiplyPrecise } from '@services/core/order/order.utils';
+import { addPrecise } from '@utils/math/math.utils';
+import { shiftDecimalPoint } from '@utils/math/round.utils';
 import { isNil } from 'lodash-es';
 
 type OrderPricing = {
@@ -24,18 +27,25 @@ type ComputeOrderPricingFn = (
   feePercent?: number,
 ) => OrderPricing;
 
+/**
+ * Worked out in decimal (see multiplyPrecise and addPrecise), the effective price as the price plus or minus its share of the fee: in
+ * binary, and as the total over the amount, a BUY of 4.99825 at 100.01 with a fee of 0.04 % came out at 100.05000400000002, where it
+ * is 100.050004.
+ */
 export const computeOrderPricing: ComputeOrderPricingFn = (side, price, amount, feePercent) => {
   // Invalid price or amount due to exchange returning invalid data or order not filled correctly
   if (Number.isNaN(price) || Number.isNaN(amount) || !(price > 0) || !(amount > 0))
     return { effectivePrice: NaN, base: NaN, fee: NaN, total: NaN };
 
-  const base = amount * price;
+  const base = multiplyPrecise(amount, price);
 
   if (!isNil(feePercent) && Number.isFinite(feePercent)) {
-    const feeRate = Math.max(0, feePercent) / 100;
-    const fee = base * feeRate;
-    const total = side === 'BUY' ? base + fee : side === 'SELL' ? base - fee : base;
-    const effectivePrice = total / amount;
+    const feeRate = shiftDecimalPoint(Math.max(0, feePercent), -2);
+    const fee = multiplyPrecise(base, feeRate);
+    // A BUY pays its fee on top of the price, a SELL has it taken off
+    const sign = side === 'BUY' ? 1 : side === 'SELL' ? -1 : 0;
+    const total = addPrecise(base, sign * fee);
+    const effectivePrice = addPrecise(price, sign * multiplyPrecise(price, feeRate));
     return { effectivePrice, base, fee, total };
   }
 

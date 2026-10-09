@@ -17,11 +17,11 @@ import { inject } from '@services/injecter/injecter';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { addPrecise, isFiniteNumber } from '@utils/math/math.utils';
-import { isNil, sumBy } from 'lodash-es';
+import { isNil } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
 import { OrderCancelDetails, OrderCancelEventPayload, OrderErrorEventPayload, OrderStatus, OrderSummary, Transaction } from './order.types';
-import { createOrderSummary, toError } from './order.utils';
+import { createOrderSummary, getWeightedAverage, toError } from './order.utils';
 
 export abstract class Order extends EventEmitter {
   private status: OrderStatus;
@@ -59,12 +59,31 @@ export abstract class Order extends EventEmitter {
   }
 
   /**
-   * What the order has executed, as far as the exchange reported it: the cumulative fills of its transactions added up (a STICKY
-   * order places one after the other). 0 while none is reported, and an exchange may answer an order without its fill (see
-   * recordOrderUpdate). The Trader estimates the summary of a fill from it when the exchange cannot give one.
+   * What the order has executed, as far as the exchange reported it: the cumulative fills of its transactions added up in decimal (a
+   * STICKY order places one after the other; in binary, 0.02 and 0.07 made 0.09000000000000001). 0 while none is reported, and an
+   * exchange may answer an order without its fill (see recordOrderUpdate). The Trader estimates the summary of a fill from it when
+   * the exchange cannot give one.
    */
   public getFilledAmount() {
-    return sumBy(Array.from(this.transactions.values()), ({ filled }) => filled ?? 0);
+    return Array.from(this.transactions.values()).reduce((total, { filled }) => addPrecise(total, filled ?? 0), 0);
+  }
+
+  /**
+   * The price of what the order has executed, as far as the exchange reported it: the price it reported for each transaction that
+   * filled, weighted by that fill (see getWeightedAverage). A resting limit order fills at its own price, so does each transaction of
+   * a STICKY order. Undefined when nothing filled, or when a transaction that filled has no price reported. The Trader estimates the
+   * price of a fill from it when the exchange cannot give its trades: a STICKY order was estimated at the last market price, or at the
+   * ticker of its creation, whatever its transactions filled at.
+   */
+  public getAverageFillPrice(): number | undefined {
+    const fills = [...this.transactions.values()].filter(({ filled }) => (filled ?? 0) > 0);
+    const prices = fills.map(({ price }) => price);
+    if (!fills.length || !prices.every(isFiniteNumber)) return undefined;
+    const price = getWeightedAverage(
+      prices,
+      fills.map(({ filled }) => filled ?? 0),
+    );
+    return isFiniteNumber(price) ? price : undefined;
   }
 
   /**
@@ -207,7 +226,8 @@ export abstract class Order extends EventEmitter {
    * state may carry the time of its last update, or no time at all, read as now (mapCcxtOrderToOrder): after the fills. Its fill is
    * cumulative: a state that reports none, or less than already recorded (the answer to a cancelation after a poll), leaves it as it
    * is, and it stays undefined until a state reports one, so that a fill never reported is not taken for nothing filled (see
-   * getCancelationFill). ORDER_PARTIALLY_FILLED_EVENT is emitted when it grows.
+   * getCancelationFill). ORDER_PARTIALLY_FILLED_EVENT is emitted when it grows. Its price is the last one a state reported above 0
+   * (see getAverageFillPrice).
    */
   protected recordOrderUpdate(order: OrderState) {
     const { id, status, filled, remaining, price, timestamp } = order;
@@ -226,6 +246,7 @@ export abstract class Order extends EventEmitter {
       id,
       timestamp: transaction?.timestamp ?? timestamp,
       filled: isFillGrowing ? reportedFill : (recordedFill ?? reportedFill),
+      price: isFiniteNumber(price) && price > 0 ? price : transaction?.price,
       status,
     });
     if (isFillGrowing) this.orderPartiallyFilled(reportedFill);
