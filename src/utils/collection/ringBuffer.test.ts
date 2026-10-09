@@ -118,25 +118,17 @@ describe('RingBuffer', () => {
     });
   });
 
-  describe('first, last and at', () => {
+  describe('first and at', () => {
     it.each`
-      read       | size | values                   | expected
-      ${'first'} | ${3} | ${[]}                    | ${undefined}
-      ${'first'} | ${3} | ${[1, 2]}                | ${1}
-      ${'first'} | ${3} | ${[1, 2, 3]}             | ${1}
-      ${'first'} | ${3} | ${[1, 2, 3, 4]}          | ${2}
-      ${'first'} | ${3} | ${[1, 2, 3, 4, 5, 6, 7]} | ${5}
-      ${'first'} | ${1} | ${[1, 2]}                | ${2}
-      ${'last'}  | ${3} | ${[]}                    | ${undefined}
-      ${'last'}  | ${3} | ${[1, 2]}                | ${2}
-      ${'last'}  | ${3} | ${[1, 2, 3]}             | ${3}
-      ${'last'}  | ${3} | ${[1, 2, 3, 4]}          | ${4}
-      ${'last'}  | ${3} | ${[1, 2, 3, 4, 5, 6, 7]} | ${7}
-      ${'last'}  | ${1} | ${[1, 2]}                | ${2}
-    `('should return $expected from $read() after pushing $values into $size slots', ({ read, size, values, expected }) => {
-      const rb = filled<number>(size, values);
-
-      expect(read === 'first' ? rb.first() : rb.last()).toBe(expected);
+      size | values                   | expected
+      ${3} | ${[]}                    | ${undefined}
+      ${3} | ${[1, 2]}                | ${1}
+      ${3} | ${[1, 2, 3]}             | ${1}
+      ${3} | ${[1, 2, 3, 4]}          | ${2}
+      ${3} | ${[1, 2, 3, 4, 5, 6, 7]} | ${5}
+      ${1} | ${[1, 2]}                | ${2}
+    `('should return $expected from first() after pushing $values into $size slots', ({ size, values, expected }) => {
+      expect(filled<number>(size, values).first()).toBe(expected);
     });
 
     it.each`
@@ -225,11 +217,10 @@ describe('RingBuffer', () => {
   });
 
   describe('reading in place', () => {
-    // first and last used to copy the whole buffer through toArray on every call
+    // first used to copy the whole buffer through toArray on every call
     it.each`
       read        | call
       ${'first'}  | ${(rb: RingBuffer<number>) => rb.first()}
-      ${'last'}   | ${(rb: RingBuffer<number>) => rb.last()}
       ${'at'}     | ${(rb: RingBuffer<number>) => rb.at(1)}
       ${'max'}    | ${(rb: RingBuffer<number>) => rb.max()}
       ${'min'}    | ${(rb: RingBuffer<number>) => rb.min()}

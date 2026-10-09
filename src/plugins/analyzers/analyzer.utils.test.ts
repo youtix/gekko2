@@ -2,7 +2,7 @@ import { warning } from '@services/logger';
 import { calculateSharpeRatio, calculateSortinoRatio } from '@utils/finance/stats.utils';
 import { describe, expect, it, vi } from 'vitest';
 import { PerformanceStatisticsInput } from './analyzer.types';
-import { calculatePerformanceStatistics, isFetchedPortfolio } from './analyzer.utils';
+import { calculatePerformanceStatistics } from './analyzer.utils';
 
 vi.mock('@services/logger', () => ({ warning: vi.fn() }));
 
@@ -98,16 +98,5 @@ describe('calculatePerformanceStatistics', () => {
     ${[2, -1]} | ${1.5}     | ${'returns of 2 and -1'}
   `('should report a volatility of $volatility with $description', ({ returns, volatility }) => {
     expect(calculatePerformanceStatistics({ ...INPUT, returns }, 'portfolio analyzer').volatility).toBe(volatility);
-  });
-});
-
-describe('isFetchedPortfolio', () => {
-  it.each`
-    portfolio                                                                                       | fetched  | description
-    ${new Map()}                                                                                    | ${false} | ${'the empty one the Trader starts with'}
-    ${new Map([['USDT', { free: 0, used: 0, total: 0 }]])}                                          | ${true}  | ${'an account that holds nothing'}
-    ${new Map([['BTC', { free: 1, used: 0, total: 1 }], ['USDT', { free: 5, used: 0, total: 5 }]])} | ${true}  | ${'an account that holds an asset and the currency'}
-  `('should tell that a portfolio was fetched ($fetched) for $description', ({ portfolio, fetched }) => {
-    expect(isFetchedPortfolio(portfolio)).toBe(fetched);
   });
 });

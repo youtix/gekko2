@@ -18,14 +18,14 @@ import {
   calculateMaxDrawdown,
   calculateReturns,
 } from '@utils/finance/stats.utils';
-import { calculatePortfolioTotalValue, getAssetBalance } from '@utils/portfolio/portfolio.utils';
+import { calculatePortfolioTotalValue, getAssetBalance, isFetchedPortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { first, isNil, omit } from 'lodash-es';
 import { Plugin } from '../../plugin';
 import { DUST_TOLERANCE } from '../analyzer.const';
 import { analyzerSchema } from '../analyzer.schema';
 import { AnalyzerConfig } from '../analyzer.types';
-import { calculatePerformanceStatistics, isFetchedPortfolio } from '../analyzer.utils';
+import { calculatePerformanceStatistics } from '../analyzer.utils';
 import { DEFAULT_BENCHMARK_ASSET, EMPTY_PORTFOLIO_REPORT, PLUGIN_NAME } from './portfolioAnalyzer.const';
 import { PortfolioReport } from './portfolioAnalyzer.types';
 import { logPortfolioReport } from './portfolioAnalyzer.utils';

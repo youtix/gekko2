@@ -4,8 +4,10 @@ import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { Asset, TradingPair } from '@models/utility.types';
 import {
   calculatePortfolioTotalValue,
+  createEmptyPortfolio,
   getAssetBalance,
   initializePortfolio,
+  isFetchedPortfolio,
   isPortfolioEmpty,
   updateAssetBalance,
   ZERO_BALANCE,
@@ -180,6 +182,22 @@ describe('isPortfolioEmpty', () => {
   ])('returns $expected for $description', ({ entries, expected }) => {
     const portfolio: Portfolio = new Map(entries as any);
     expect(isPortfolioEmpty(portfolio)).toBe(expected);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// isFetchedPortfolio
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('isFetchedPortfolio', () => {
+  // The balance of an exchange lists every watched asset and currency, at 0 included: an account holding nothing was fetched too
+  it.each`
+    portfolio                                                                | fetched  | description
+    ${createEmptyPortfolio()}                                                | ${false} | ${'the empty one the Trader starts with'}
+    ${initializePortfolio(['BTC/USDT'])}                                     | ${true}  | ${'an account holding nothing'}
+    ${initializePortfolio(['BTC/USDT'], new Map([['BTC', 1], ['USDT', 5]]))} | ${true}  | ${'an account holding BTC and USDT'}
+  `('returns $fetched for $description', ({ portfolio, fetched }) => {
+    expect(isFetchedPortfolio(portfolio)).toBe(fetched);
   });
 });
 

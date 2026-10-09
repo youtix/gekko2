@@ -4,9 +4,9 @@ import { isNumber } from 'lodash-es';
 const addFromFirst = (sum: number | undefined, item: number) => (sum === undefined ? item : sum + item);
 
 /**
- * The last `size` items pushed, read oldest first. Every read works on the items in place: first, last and at are index arithmetic,
- * and max, min, sum and reduce walk the items once without copying them. first and last used to take the whole window through
- * toArray, three arrays per call, on every candle of ROC, WilliamsR and TRIX; CCI and BollingerBands copied it to sum it.
+ * The last `size` items pushed, read oldest first. Every read works on the items in place: first and at are index arithmetic, and
+ * max, min, sum and reduce walk the items once without copying them. first used to take the whole window through toArray, three
+ * arrays per call, on every candle of ROC (TRIX through it); CCI and BollingerBands copied it to sum it.
  */
 export class RingBuffer<T> {
   private size: number;
@@ -68,7 +68,7 @@ export class RingBuffer<T> {
     return accumulator;
   }
 
-  /** The item `index` places after the oldest, read in place: undefined outside the items held */
+  /** The item `index` places after the oldest, read in place (the newest at length - 1): undefined outside the items held */
   at(index: number): T | undefined {
     if (index < 0 || index >= this.buffer.length) return undefined;
     const cursor = (this.isFull() ? this.index : 0) + index;
@@ -78,11 +78,6 @@ export class RingBuffer<T> {
   /** The oldest item, undefined while empty */
   first() {
     return this.at(0);
-  }
-
-  /** The newest item, undefined while empty */
-  last() {
-    return this.at(this.buffer.length - 1);
   }
 
   push(...items: T[]) {

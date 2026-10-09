@@ -16,18 +16,12 @@ import { CandleBucketBatcher } from '@services/core/batcher/candleBatcher/candle
 import { MarketData, OpenOrder } from '@services/exchange/exchange.types';
 import { error, info } from '@services/logger';
 import { StrategyManager } from '@strategies/strategyManager';
+import { isFetchedPortfolio } from '@utils/portfolio/portfolio.utils';
 import { bindAll, filter } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { inspect } from 'node:util';
 import { tradingAdvisorSchema } from './tradingAdvisor.schema';
 import { TradingAdvisorConfiguration } from './tradingAdvisor.types';
-
-/**
- * Whether the portfolio an order event carries was read from the exchange: until one of its synchronizations succeeds, the Trader
- * relays the end of an order with the empty portfolio it starts with, while the balance of an exchange always lists the asset and the
- * currency of every watched pair. The analyzers go by the same rule.
- */
-const isFetchedPortfolio = (portfolio: Portfolio) => portfolio.size > 0;
 
 export class TradingAdvisor extends Plugin {
   private bucketBatcher: CandleBucketBatcher;

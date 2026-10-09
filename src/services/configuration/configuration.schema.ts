@@ -149,7 +149,8 @@ export const configurationSchema = z
     ]),
     storage: storageSchema.nullable().optional().default(null),
     // Loose on purpose, unlike the rest of the configuration: the pipeline parses each plugin entry again with the strict schema
-    // of the plugin its name selects, and the strategy block is handed whole to the strategy, whose parameters are its own.
+    // of the plugin its name selects, and the StrategyManager parses the strategy block, without its name, with the schema of the
+    // strategy class strategyName selects. Every built-in strategy declares one; a class without one gets the block unchecked.
     plugins: z.array(z.looseObject({ name: z.string() })),
     strategy: z.looseObject({ name: z.string() }).optional(),
     [disclaimerField]: z.boolean().nullable().default(null),

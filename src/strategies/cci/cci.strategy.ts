@@ -66,8 +66,10 @@ export class CCI implements Strategy<CCIStrategyParams> {
         this.position.buy(createOrder, { type: 'STICKY', symbol: this.pair });
       }
     } else {
+      // Counted from 1, as a trend's first candle is: reset to 0, the first neutral candle after a trend logged "nodirection for 0",
+      // where the first of a run logs "for 1". Only the log reads it: a trend starts over on its first candle, whatever came before.
       if (this.trend.direction !== 'nodirection') {
-        this.trend = { direction: 'nodirection', duration: 0, persisted: false, adviced: false };
+        this.trend = { direction: 'nodirection', duration: 1, persisted: false, adviced: false };
       } else {
         this.trend.duration++;
       }

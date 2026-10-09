@@ -17,7 +17,12 @@ vi.mock('@services/logger');
 vi.mock('@utils/finance/stats.utils');
 vi.mock('@utils/math/math.utils');
 vi.mock('@utils/math/round.utils', () => ({ round: (val: number) => val }));
-vi.mock('@utils/portfolio/portfolio.utils');
+// The two the tests drive; isFetchedPortfolio stays actual, an automock would read every portfolio as one the Trader never fetched
+vi.mock('@utils/portfolio/portfolio.utils', async importOriginal => ({
+  ...(await importOriginal<typeof import('@utils/portfolio/portfolio.utils')>()),
+  calculatePairEquity: vi.fn(),
+  getAssetBalance: vi.fn(),
+}));
 vi.mock('./roundTripAnalyzer.utils');
 
 // Mock Configuration

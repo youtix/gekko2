@@ -1,4 +1,3 @@
-import { Portfolio } from '@models/portfolio.types';
 import { Tag } from '@models/tag.types';
 import { warning } from '@services/logger';
 import {
@@ -16,15 +15,6 @@ import { stdev } from '@utils/math/math.utils';
 import { differenceInMilliseconds, formatDuration, intervalToDuration } from 'date-fns';
 import { MIN_ANNUALIZATION_HORIZON_MS } from './analyzer.const';
 import { PerformanceStatistics, PerformanceStatisticsInput } from './analyzer.types';
-
-/**
- * Whether the portfolio an order event carries was fetched from the exchange. The Trader sends the end of an order with the portfolio it
- * knows, read by the synchronization its report waits for, best effort: until one of its synchronizations succeeds, that is the empty
- * portfolio it starts with, while the balance of an exchange always lists the asset and the currency of every watched pair. Taken as
- * the latest portfolio, that empty one would value the account at 0, and give a start equity of 0 if the warmup completed then, which
- * leaves the report empty.
- */
-export const isFetchedPortfolio = (portfolio: Portfolio): boolean => portfolio.size > 0;
 
 /**
  * The statistics both analyzers report, computed the same way from their own period, equities and returns. The annualized return, the

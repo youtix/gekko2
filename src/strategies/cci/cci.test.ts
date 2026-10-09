@@ -34,6 +34,18 @@ describe('CCI Strategy', () => {
       });
     });
   const sides = () => advices.map(({ side }) => side);
+  /** Plays the steps one by one, and gives each order advised as `<side>@<candle>`: the candle it came on, from 1 */
+  const advisedOn = (steps: string) => {
+    const advised: string[] = [];
+    let candle = 0;
+    for (const step of steps.split(' ')) {
+      if (!step.includes(':')) candle++;
+      const before = advices.length;
+      play(step);
+      advised.push(...advices.slice(before).map(({ side }) => `${side}@${candle}`));
+    }
+    return advised;
+  };
 
   beforeEach(() => {
     strategy = new CCI();
@@ -122,14 +134,40 @@ describe('CCI Strategy', () => {
       expect(sides()).toEqual(expectedSides);
     });
 
-    it('should log the trend and its duration on each candle', () => {
-      play('neutral neutral over neutral');
-      expect(logs.filter(({ level }) => level === 'debug')).toEqual([
-        { level: 'debug', message: 'Trend: nodirection for 1' },
-        { level: 'debug', message: 'Trend: nodirection for 2' },
-        { level: 'debug', message: 'Trend: overbought for 1' },
-        { level: 'debug', message: 'Trend: nodirection for 0' },
-      ]);
+    // The duration counts the candles of the trend, the current one included. The first neutral candle after a trend logged 0, where
+    // the first neutral candle of a run and the first candle of a trend log 1. A null candle is skipped, and counts for nothing.
+    it.each`
+      steps                             | expected
+      ${'neutral neutral'}              | ${['nodirection for 1', 'nodirection for 2']}
+      ${'neutral neutral over neutral'} | ${['nodirection for 1', 'nodirection for 2', 'overbought for 1', 'nodirection for 1']}
+      ${'over over neutral neutral'}    | ${['overbought for 1', 'overbought for 2', 'nodirection for 1', 'nodirection for 2']}
+      ${'under neutral neutral'}        | ${['oversold for 1', 'nodirection for 1', 'nodirection for 2']}
+      ${'over under under'}             | ${['overbought for 1', 'oversold for 1', 'oversold for 2']}
+      ${'over neutral null neutral'}    | ${['overbought for 1', 'nodirection for 1', 'nodirection for 2']}
+    `('should log the trend and its duration on each candle of $steps', ({ steps, expected }: { steps: string; expected: string[] }) => {
+      play(steps);
+      expect(logs.filter(({ level }) => level === 'debug')).toEqual(
+        expected.map(trend => ({ level: 'debug', message: `Trend: ${trend}` })),
+      );
+    });
+
+    // The duration of a neutral stretch decides no order: the trend that follows starts over on its first candle, whatever came before.
+    // A persistence of 1 waits for the second candle of a trend, as 2 does, where MACD and RSI advise on the first (kept as it is).
+    it.each`
+      case                                    | persistence | steps                                               | expected
+      ${'oversold after neutral, at 0'}       | ${0}        | ${'neutral under'}                                  | ${['BUY@2']}
+      ${'overbought after neutral, at 0'}     | ${0}        | ${'under completed:1 neutral over'}                 | ${['BUY@1', 'SELL@3']}
+      ${'oversold after neutral, at 1'}       | ${1}        | ${'neutral under under'}                            | ${['BUY@3']}
+      ${'oversold broken by neutral, at 1'}   | ${1}        | ${'under neutral under'}                            | ${[]}
+      ${'oversold after neutral, at 2'}       | ${2}        | ${'neutral under under'}                            | ${['BUY@3']}
+      ${'oversold broken by neutral, at 2'}   | ${2}        | ${'under neutral under under'}                      | ${['BUY@4']}
+      ${'oversold after two neutrals, at 2'}  | ${2}        | ${'under neutral neutral under under'}              | ${['BUY@5']}
+      ${'overbought after neutral, at 2'}     | ${2}        | ${'under under completed:1 neutral over over'}      | ${['BUY@2', 'SELL@5']}
+      ${'overbought broken by neutral, at 2'} | ${2}        | ${'under under completed:1 over neutral over over'} | ${['BUY@2', 'SELL@6']}
+      ${'oversold broken by neutral, at 3'}   | ${3}        | ${'under under neutral under under under'}          | ${['BUY@6']}
+    `('should advise on the candle it did: $case', ({ persistence, steps, expected }) => {
+      tools.strategyParams.thresholds.persistence = persistence;
+      expect(advisedOn(steps)).toEqual(expected);
     });
 
     describe('persistence = 3', () => {

@@ -36,6 +36,14 @@ export const isPortfolioEmpty = (portfolio: Portfolio): boolean => {
 };
 
 /**
+ * Whether a portfolio was read from the exchange. The end of an order carries the portfolio the Trader read last, which is the empty
+ * one it starts with (createEmptyPortfolio) until one of its synchronizations succeeds, while the balance of an exchange lists the asset
+ * and the currency of every watched pair, at 0 included. Taken as the latest, that empty one read as an account holding nothing. Not
+ * the opposite of isPortfolioEmpty: an account read from the exchange may hold nothing.
+ */
+export const isFetchedPortfolio = (portfolio: Portfolio): boolean => portfolio.size > 0;
+
+/**
  * Calculate the equity of a trading pair.
  * Equity = (Asset Total * Price) + Currency Total
  */

@@ -6,7 +6,7 @@ import { debug, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { calculateMarketReturnPct, calculateWinRate, extractTopMAEs } from '@utils/finance/stats.utils';
 import { round } from '@utils/math/round.utils';
-import { calculatePairEquity, getAssetBalance } from '@utils/portfolio/portfolio.utils';
+import { calculatePairEquity, getAssetBalance, isFetchedPortfolio } from '@utils/portfolio/portfolio.utils';
 import { formatAmount, formatSignedPercent } from '@utils/string/string.utils';
 import { addMinutes, differenceInMilliseconds } from 'date-fns';
 import { first, isNil, sumBy } from 'lodash-es';
@@ -14,7 +14,7 @@ import { Plugin } from '../../plugin';
 import { DUST_TOLERANCE } from '../analyzer.const';
 import { analyzerSchema } from '../analyzer.schema';
 import { AnalyzerConfig } from '../analyzer.types';
-import { calculatePerformanceStatistics, isFetchedPortfolio } from '../analyzer.utils';
+import { calculatePerformanceStatistics } from '../analyzer.utils';
 import { DateRange, Fill, OpenRoundTrip, OrderFill, Start, TradingReport } from './roundTrip.types';
 import { EMPTY_TRADING_REPORT, PLUGIN_NAME } from './roundTripAnalyzer.const';
 import { logFinalize, logRoundtrip } from './roundTripAnalyzer.utils';
@@ -187,11 +187,13 @@ export class RoundTripAnalyzer extends Plugin {
   }
 
   /**
-   * The report describes the period alone (see dates): what the strategy traded during the warmup, such as the order its init may place
-   * on the first timeframe candle, is left out of it. The round trips closed by then are dropped, with their exposure and the trades
-   * counted so far. A round trip still open is rebased at the start of the period: entered then, at the start price, with the start
-   * equity, so that its P&L, its exposure and its adverse excursion (tracked after the warmup only) measure the period. Its amounts are
-   * kept, and with them the mean price of the SELLs it made: the rule that ends it needs them (see registerSell). Both are logged.
+   * The report describes the period alone (see dates): a trade counted before it starts is left out of it. None is any more:
+   * createOrder refuses an order until the warmup is over, init's too, and the warmup event reaches the analyzers before the end of any
+   * order created after it. Should one be counted all the same, the round trips closed by then are dropped, with their exposure and
+   * the trades counted so far, and a round trip still open is rebased at the start of the period: entered then, at the start price, with
+   * the start equity, so that its P&L, its exposure and its adverse excursion (tracked after the warmup only) measure the period. Its
+   * amounts are kept, and with them the mean price of the SELLs it made: the rule that ends it needs them (see registerSell). Both are
+   * logged.
    */
   private leaveOutWarmupTrading(startPrice: number): void {
     if (this.tradeCount > 0) {
