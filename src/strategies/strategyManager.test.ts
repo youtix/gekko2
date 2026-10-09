@@ -8,6 +8,7 @@ import { ONE_MINUTE } from '@constants/time.const';
 import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
 import { AdviceOrder, StrategyOrder, TrailingConfig } from '@models/advice.types';
+import { Candle } from '@models/candle.types';
 import { CandleBucket, ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
 import { OrderSide } from '@models/order.types';
@@ -23,22 +24,21 @@ import { AddIndicatorFn, IndicatorResults, InitParams, OnCandleEventParams, Tool
 import { StrategyManager } from './strategyManager';
 import { TrailingStopState } from './trailingStopManager.types';
 
-const indicatorMocks = vi.hoisted(() => {
-  const indicatorInstances: Array<{
-    onNewCandle: ReturnType<typeof vi.fn>;
-    getResult: ReturnType<typeof vi.fn>;
-  }> = [];
-  const IndicatorMock = vi.fn().mockImplementation((_parameters: unknown) => {
-    const instance = {
-      onNewCandle: vi.fn(),
-      getResult: vi.fn().mockReturnValue('indicator-result'),
-    };
-    indicatorInstances.push(instance);
-    return instance;
-  });
+/** An indicator as the manager uses it: fed each timeframe candle of its pair, then asked for its result */
+type FakeIndicator = { onNewCandle: Mock<(candle: Candle) => void>; getResult: Mock<() => number | null> };
 
-  return { IndicatorMock, indicatorInstances };
-});
+// The indicators of the registry, which the manager builds with `new`: an SMA of the closes it is fed, null until it holds `period` of
+// them. The implementation is given to vi.fn, which mockReset restores before each test: set with mockImplementation, it was wiped,
+// and `new` built an object without onNewCandle or getResult.
+const indicatorMocks = vi.hoisted(() => ({
+  IndicatorMock: vi.fn(function (this: FakeIndicator, { period }: { period: number }) {
+    const closes: number[] = [];
+    this.onNewCandle = vi.fn(({ close }: Candle) => {
+      closes.push(close);
+    });
+    this.getResult = vi.fn(() => (closes.length < period ? null : closes.slice(-period).reduce((sum, close) => sum + close, 0) / period));
+  }),
+}));
 
 vi.mock('@indicators/index', () => ({
   SMA: indicatorMocks.IndicatorMock,
@@ -104,17 +104,11 @@ const LEVELS_BY_SEVERITY: LogLevel[] = ['error', 'warn', 'info', 'debug'];
 const setGekkoLogLevel = (gekkoLogLevel: LogLevel) =>
   vi.mocked(isLevelEnabled).mockImplementation(level => LEVELS_BY_SEVERITY.indexOf(level) <= LEVELS_BY_SEVERITY.indexOf(gekkoLogLevel));
 
+/** The strategy exported by the file the strategyPath tests load */
+const externalStrategyMocks = vi.hoisted(() => ({ DebugAdvice: class DebugAdvice {} }));
+
 vi.mock('./debug/debugAdvice.strategy.ts', () => ({
-  DebugAdvice: class {
-    init = vi.fn();
-    onEachTimeframeCandle = vi.fn();
-    onTimeframeCandleAfterWarmup = vi.fn();
-    onOrderCompleted = vi.fn();
-    onOrderCanceled = vi.fn();
-    onOrderErrored = vi.fn();
-    log = vi.fn();
-    end = vi.fn();
-  },
+  DebugAdvice: externalStrategyMocks.DebugAdvice,
   // The same class as the registry's, loaded from a strategyPath
   SchemaStrategy: strategyMocks.SchemaStrategy,
   MissingStrategy: undefined,
@@ -169,23 +163,22 @@ describe('StrategyManager', () => {
   });
 
   describe('createStrategy', () => {
+    const DEBUG_ADVICE_PATH = path.resolve(__dirname, './debug/debugAdvice.strategy.ts');
+
     it('instantiates a built-in strategy', async () => {
       await manager.createStrategy('DummyStrategy');
       expect(manager['strategy']).toBeInstanceOf(strategyMocks.DummyStrategy);
     });
 
-    it('loads a strategy from a custom path', async () => {
-      const strategyPath = path.resolve(__dirname, './debug/debugAdvice.strategy.ts');
+    // The docs give strategyPath relative to the directory Gekko is started from (./strategies/myStrategy.strategy.ts): no test loaded
+    // such a path, so a regression in how it is resolved would only have shown as those configurations failed at start-up
+    it.each`
+      form                                                        | strategyPath
+      ${'an absolute path'}                                       | ${DEBUG_ADVICE_PATH}
+      ${'a path relative to the directory Gekko is started from'} | ${`./${path.relative(process.cwd(), DEBUG_ADVICE_PATH)}`}
+    `('loads the strategy of that name from $form', async ({ strategyPath }) => {
       await manager.createStrategy('DebugAdvice', strategyPath);
-      const strategy: any = manager['strategy'];
-      expect(strategy).toBeDefined();
-      expect(strategy.constructor.name).toBe('DebugAdvice');
-    });
-
-    it('loads a strategy from an absolute custom path directly', async () => {
-      const absolutePath = path.resolve(__dirname, './debug/debugAdvice.strategy.ts');
-      await manager.createStrategy('DebugAdvice', absolutePath);
-      expect(manager['strategy']).toBeDefined();
+      expect(manager['strategy']).toBeInstanceOf(externalStrategyMocks.DebugAdvice);
     });
 
     it('throws when built-in strategy is missing', async () => {
@@ -193,14 +186,13 @@ describe('StrategyManager', () => {
     });
 
     it('throws when external module does not expose the strategy', async () => {
-      const strategyPath = path.resolve(__dirname, './debug/debugAdvice.strategy.ts');
-      await expect(manager.createStrategy('MissingStrategy', strategyPath)).rejects.toThrow(GekkoError);
+      await expect(manager.createStrategy('MissingStrategy', DEBUG_ADVICE_PATH)).rejects.toThrow(GekkoError);
     });
 
     describe.each`
       origin               | strategyPath
       ${'the registry'}    | ${undefined}
-      ${'a strategy path'} | ${path.resolve(__dirname, './debug/debugAdvice.strategy.ts')}
+      ${'a strategy path'} | ${DEBUG_ADVICE_PATH}
     `('of a class from $origin that declares a schema', ({ strategyPath }) => {
       describe('when the strategy block is valid', () => {
         beforeEach(async () => {
@@ -277,15 +269,16 @@ describe('StrategyManager', () => {
 
   describe('strategy events', () => {
     describe('onOneMinuteBucket', () => {
-      it('updates time and trailing stop manager', () => {
-        const updateSpy = vi.spyOn(manager['trailingStopManager'], 'update');
-        // Add second candle to avoid reference identity check issues if needed
-        const secondCandle = { ...candle, start: 1000 };
-        const minBucket = new Map([['BTC/USDT', secondCandle]]) as any;
-        manager.onOneMinuteBucket(minBucket);
+      // The clock is the end of the minute being processed: the minute of the bucket starts at 1000
+      it('sets the clock to the end of the minute of the bucket', () => {
+        manager.onOneMinuteBucket(bucket);
+        expect(manager['currentTimestamp']).toBe(61000);
+      });
 
-        expect(manager['currentTimestamp']).toBe(new Date(1000 + 60000).getTime());
-        expect(updateSpy).toHaveBeenCalledWith(minBucket);
+      it('gives the bucket to the trailing stops', () => {
+        const updateSpy = vi.spyOn(manager['trailingStopManager'], 'update');
+        manager.onOneMinuteBucket(bucket);
+        expect(updateSpy).toHaveBeenCalledExactlyOnceWith(bucket);
       });
 
       // init ran on the first timeframe candle: up to a day after start-up on 1d without warmup (a month on 1M), which is when an
@@ -378,14 +371,9 @@ describe('StrategyManager', () => {
 
         describe('then on the first timeframe candle', () => {
           const TIMEFRAME_ETH_CANDLE = { ...ETH_CANDLE, high: 3100, close: 3050, volume: 5 };
-          let sma: { onNewCandle: Mock; getResult: Mock };
 
           beforeEach(() => {
-            sma = { onNewCandle: vi.fn(), getResult: vi.fn(() => 42) };
-            indicatorMocks.IndicatorMock.mockImplementation(function () {
-              return sma;
-            });
-            strategy.init.mockImplementation(({ addIndicator }) => addIndicator('SMA', 'ETH/USDT', { period: 10 }));
+            strategy.init.mockImplementation(({ addIndicator }) => addIndicator('SMA', 'ETH/USDT', { period: 1 }));
             manager.onOneMinuteBucket(firstMinute());
             manager.onTimeFrameCandle(
               new Map([
@@ -396,17 +384,34 @@ describe('StrategyManager', () => {
           });
 
           it('feeds the indicators init registered that candle', () => {
-            expect(sma.onNewCandle).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_ETH_CANDLE);
+            expect(indicatorMocks.IndicatorMock.mock.instances[0].onNewCandle).toHaveBeenCalledExactlyOnceWith(TIMEFRAME_ETH_CANDLE);
           });
 
+          // An SMA of one candle: the close of that candle
           it('gives the hooks of that candle their results', () => {
-            expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.anything(), { results: 42, symbol: 'ETH/USDT' });
+            expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+              results: 3050,
+              symbol: 'ETH/USDT',
+            });
           });
         });
       });
     });
 
     describe('onTimeFrameCandle', () => {
+      /** The 1m candle numbered `candleNumber` (from 1): the minute starting candleNumber - 1 minutes after 0, flat at candleNumber */
+      const candleBucket = (candleNumber: number): CandleBucket => {
+        const [start, price] = [(candleNumber - 1) * ONE_MINUTE, candleNumber];
+        return new Map([['BTC/USDT', { start, open: price, high: price, low: price, close: price, volume: 1 }]]);
+      };
+      /** Sends `target` the candles numbered 1 to `count` as the TradingAdvisor does: each minute, then the 1m candle it completes */
+      const sendCandles = (target: StrategyManager, count: number) => {
+        for (let candleNumber = 1; candleNumber <= count; candleNumber++) {
+          target.onOneMinuteBucket(candleBucket(candleNumber));
+          target.onTimeFrameCandle(candleBucket(candleNumber));
+        }
+      };
+
       it('runs no init: the first one-minute bucket does', () => {
         const strategy = { init: vi.fn() };
         manager['strategy'] = strategy as any;
@@ -414,71 +419,140 @@ describe('StrategyManager', () => {
         expect(strategy.init).not.toHaveBeenCalled();
       });
 
-      it('processes indicators, and emits warmup completion', () => {
-        const indicator = { onNewCandle: vi.fn(), getResult: vi.fn().mockReturnValue(42) };
-        manager['indicators'].push({ indicator, symbol: 'BTC/USDT' } as any);
-        const strategy = {
-          onEachTimeframeCandle: vi.fn(),
-          log: vi.fn(),
-          onTimeframeCandleAfterWarmup: vi.fn(),
-        };
-        manager['strategy'] = strategy as any;
-        const warmupListener = vi.fn();
-        manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);
+      // The warmup of the manager is one candle: the first candle is spent on it, the second completes it
+      describe('with a warmup of one candle', () => {
+        type CandleHook = 'onEachTimeframeCandle' | 'log' | 'onTimeframeCandleAfterWarmup';
+        let strategy: Record<CandleHook, Mock>;
+        let warmupListener: Mock;
 
-        // 1st Candle: Warmup phase (age 0 -> 1)
-        manager.onTimeFrameCandle(bucket);
+        beforeEach(() => {
+          strategy = { onEachTimeframeCandle: vi.fn(), log: vi.fn(), onTimeframeCandleAfterWarmup: vi.fn() };
+          manager['strategy'] = strategy as any;
+          warmupListener = vi.fn();
+          manager.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);
+        });
 
-        expect(indicator.onNewCandle).toHaveBeenCalledWith(candle);
-        expect(indicator.getResult).toHaveBeenCalled();
-        expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(1);
+        describe('on candle 1, spent on the warmup', () => {
+          beforeEach(() => sendCandles(manager, 1));
 
-        const [params, indicatorResult] = strategy.onEachTimeframeCandle.mock.calls[0] as [any, any];
-        expect(params.candle).toEqual(bucket);
-        expect(indicatorResult).toEqual({ results: 42, symbol: 'BTC/USDT' });
+          it('gives onEachTimeframeCandle that candle', () => {
+            expect(strategy.onEachTimeframeCandle).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ candle: candleBucket(1) }));
+          });
 
-        // Log/AfterWarmup NOT called yet, as age was 0 during execution, now incremented to 1
-        expect(strategy.log).not.toHaveBeenCalled();
-        expect(strategy.onTimeframeCandleAfterWarmup).not.toHaveBeenCalled();
-        expect(warmupListener).not.toHaveBeenCalled();
+          it.each`
+            hook
+            ${'log'}
+            ${'onTimeframeCandleAfterWarmup'}
+          `('does not call $hook yet', ({ hook }: { hook: CandleHook }) => {
+            expect(strategy[hook]).not.toHaveBeenCalled();
+          });
 
-        // The implementation checks: `if (this.warmupPeriod === this.age)`.
-        // Constructor sets warmupPeriod = 1.
-        // First call: age 0. logic runs. at end: age becomes 1.
-        // Wait, the implementation says:
-        // if (this.warmupPeriod === this.age) emit
-        // if (this.warmupPeriod <= this.age) log/afterWarmup
-        // if (this.warmupPeriod >= this.age) age++
+          it('does not emit the warmup event yet', () => {
+            expect(warmupListener).not.toHaveBeenCalled();
+          });
+        });
 
-        // So:
-        // Start: age = 0, warmup = 1.
-        // Logic runs.
-        // Check 1: 1 === 0 (false)
-        // Check 2: 1 <= 0 (false)
-        // Check 3: 1 >= 0 (true) -> age becomes 1.
+        describe('on candle 2, which completes the warmup', () => {
+          beforeEach(() => sendCandles(manager, 2));
 
-        // 2nd Candle: Age = 1. Warmup = 1.
+          it('emits the warmup event with that candle', () => {
+            expect(warmupListener).toHaveBeenCalledExactlyOnceWith(candleBucket(2));
+          });
 
-        // 2nd execution
-        manager.onTimeFrameCandle(bucket);
+          it('gives onEachTimeframeCandle that candle', () => {
+            expect(strategy.onEachTimeframeCandle).toHaveBeenLastCalledWith(expect.objectContaining({ candle: candleBucket(2) }));
+          });
 
-        // Check 1: 1 === 1 (true) -> emit
-        expect(warmupListener).toHaveBeenCalledWith(bucket);
-
-        // Check 2: 1 <= 1 (true) -> log/afterWarmup
-        expect(strategy.log).toHaveBeenCalledTimes(1);
-        expect(strategy.onTimeframeCandleAfterWarmup).toHaveBeenCalledTimes(1);
-        expect(strategy.onEachTimeframeCandle).toHaveBeenCalledTimes(2);
-
-        // Check 3: 1 >= 1 (true) -> age becomes 2.
+          it.each`
+            hook
+            ${'log'}
+            ${'onTimeframeCandleAfterWarmup'}
+          `('calls $hook for the first time, with that candle', ({ hook }: { hook: CandleHook }) => {
+            expect(strategy[hook]).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ candle: candleBucket(2) }));
+          });
+        });
       });
 
-      it('does not increment age if warmup phase is not reached', () => {
-        const customManager = new StrategyManager(5);
-        customManager.onTimeFrameCandle(bucket);
-        // Age starts at 0, warmup is 5.
-        // So 5 > 0, age is bumped to 1.
-        expect(customManager['age']).toBe(1);
+      // Candle warmupPeriod + 1 completes the warmup. Emitted again on every candle after it, as with `<=` in place of `===`, the event
+      // would make the analyzers restart their period on each: only the e2e backtest saw such a regression
+      it.each`
+        warmupPeriod | completing
+        ${0}         | ${1}
+        ${1}         | ${2}
+        ${3}         | ${4}
+      `(
+        'emits the warmup event once, with candle $completing, over that candle and the 3 after it, with a warmup of $warmupPeriod',
+        ({ warmupPeriod, completing }) => {
+          const target = new StrategyManager(warmupPeriod);
+          const warmupListener = vi.fn();
+          target.on(STRATEGY_WARMUP_COMPLETED_EVENT, warmupListener);
+          sendCandles(target, completing + 3);
+          expect(warmupListener).toHaveBeenCalledExactlyOnceWith(candleBucket(completing));
+        },
+      );
+
+      // The candles processed, counted up to the one that completes the warmup: what onStrategyEnd reports of a run that ended before
+      // it, and no more is needed
+      it.each`
+        warmupPeriod | candles | age
+        ${5}         | ${1}    | ${1}
+        ${5}         | ${5}    | ${5}
+        ${5}         | ${6}    | ${6}
+        ${5}         | ${9}    | ${6}
+        ${0}         | ${3}    | ${1}
+      `('counts $age candle(s) of $candles, with a warmup of $warmupPeriod', ({ warmupPeriod, candles, age }) => {
+        const target = new StrategyManager(warmupPeriod);
+        sendCandles(target, candles);
+        expect(target['age']).toBe(age);
+      });
+
+      // TMA registers three SMAs on its pair, DEMA a DEMA then an SMA: handed their results in another order, such a strategy would take
+      // one for another
+      describe('with two indicators init registers on one pair, an SMA of 1 candle then an SMA of 2', () => {
+        type OrderHook = 'onOrderCompleted' | 'onOrderCanceled' | 'onOrderErrored';
+        /** Their results on candle 2, at a price of 2 after 1: the last price, then the mean of the two */
+        const RESULTS: IndicatorResults[] = [
+          { results: 2, symbol: 'BTC/USDT' },
+          { results: 1.5, symbol: 'BTC/USDT' },
+        ];
+        let strategy: Record<'init' | 'onEachTimeframeCandle' | 'log' | 'onTimeframeCandleAfterWarmup' | OrderHook, Mock>;
+
+        beforeEach(() => {
+          strategy = {
+            init: vi.fn(({ addIndicator }: InitParams<object>) => {
+              addIndicator('SMA', 'BTC/USDT', { period: 1 });
+              addIndicator('SMA', 'BTC/USDT', { period: 2 });
+            }),
+            onEachTimeframeCandle: vi.fn(),
+            log: vi.fn(),
+            onTimeframeCandleAfterWarmup: vi.fn(),
+            onOrderCompleted: vi.fn(),
+            onOrderCanceled: vi.fn(),
+            onOrderErrored: vi.fn(),
+          };
+          manager['strategy'] = strategy as any;
+          sendCandles(manager, 2); // Candle 2 completes the warmup
+        });
+
+        it.each`
+          hook
+          ${'onEachTimeframeCandle'}
+          ${'log'}
+          ${'onTimeframeCandleAfterWarmup'}
+        `('gives $hook of candle 2 their results, in the order init registered them', ({ hook }: { hook: keyof typeof strategy }) => {
+          expect(strategy[hook].mock.lastCall?.slice(1)).toEqual(RESULTS);
+        });
+
+        // Until the next candle
+        it.each`
+          hook
+          ${'onOrderCompleted'}
+          ${'onOrderCanceled'}
+          ${'onOrderErrored'}
+        `('gives $hook their results on candle 2, in the order init registered them', ({ hook }: { hook: OrderHook }) => {
+          manager[hook]({ order: { id: 'db2254e3-c749-448c-b7b6-aa28831bbae7' }, exchange: { price: 2, portfolio: new Map() } } as any);
+          expect(strategy[hook].mock.lastCall?.slice(1)).toEqual(RESULTS);
+        });
       });
 
       // An indicator is on a watched pair (addIndicator refuses any other), and a timeframe bucket holds a candle of every watched pair
@@ -522,22 +596,49 @@ describe('StrategyManager', () => {
         );
       });
 
-      it('adds pending trailing stop to trailing stop manager', () => {
-        const order = { id: '1', symbol: 'BTC/USDT', amount: 1, orderCreationDate: 123 } as any;
-        const trailing = { percentage: 2 };
-        manager['pendingTrailingStops'].set(order.id, trailing);
-        const addOrderSpy = vi.spyOn(manager['trailingStopManager'], 'addOrder');
+      // An all-in BUY created on the minute ending at 61000, which completes on the next minute after filling 0.5. Its stop waits
+      // until then: what it sells is what the BUY filled.
+      describe('when a BUY asking for a stop completes', () => {
+        const BUY_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000b1';
 
-        manager.onOrderCompleted({ order, exchange: {} } as any);
-
-        expect(addOrderSpy).toHaveBeenCalledWith({
-          id: order.id,
-          symbol: order.symbol,
-          amount: order.amount,
-          trailing: trailing,
-          createdAt: order.orderCreationDate,
+        beforeEach(() => {
+          completeWarmup(); // Orders wait for it
+          vi.mocked(randomUUID).mockReturnValueOnce(BUY_ID);
+          manager['createOrder']({ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', trailing: { percentage: 2, trigger: 51000 } });
+          manager.onOneMinuteBucket(new Map([['BTC/USDT', { ...candle, start: 61000 }]]));
+          manager.onOrderCompleted({
+            order: {
+              id: BUY_ID,
+              symbol: 'BTC/USDT',
+              side: 'BUY',
+              type: 'MARKET',
+              amount: 0.5,
+              orderCreationDate: 61000,
+              orderExecutionDate: 121000,
+              effectivePrice: 50000,
+              fee: 0,
+            },
+            exchange: { price: 50000, portfolio: new Map() },
+          });
         });
-        expect(manager['pendingTrailingStops'].has(order.id)).toBe(false);
+
+        it('arms its stop for what the BUY filled, dated with the creation of the BUY', () => {
+          expect(manager['trailingStopManager'].getOrders().get(BUY_ID)).toEqual({
+            id: BUY_ID,
+            symbol: 'BTC/USDT',
+            amount: 0.5,
+            config: { percentage: 2, trigger: 51000 },
+            status: 'dormant',
+            highestPeak: 0,
+            stopPrice: 0,
+            activationPrice: 51000,
+            createdAt: 61000,
+          });
+        });
+
+        it('keeps the stop pending no more', () => {
+          expect(manager['pendingTrailingStops'].has(BUY_ID)).toBe(false);
+        });
       });
     });
 
@@ -607,12 +708,47 @@ describe('StrategyManager', () => {
         expect(strategy.end).toHaveBeenCalledExactlyOnceWith(interruption);
       });
 
-      it('logs warning if pending orders present', () => {
-        vi.spyOn(manager['trailingStopManager'], 'getOrders').mockReturnValue(
-          new Map([['db2254e3-c749-448c-b7b6-aa28831bbae7', {} as any]]),
-        );
-        manager.onStrategyEnd();
-        expect(warning).toHaveBeenCalledWith('strategy', 'Strategy ended with 1 active trailing stop(s) that never triggered.');
+      // An all-in BUY with a stop of 2% without trigger, which filled 0.5: its stop is armed, active at once
+      describe('when the strategy ends with a stop armed', () => {
+        const BUY_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000b2';
+
+        beforeEach(() => {
+          completeWarmup(); // Orders wait for it
+          vi.mocked(randomUUID).mockReturnValueOnce(BUY_ID);
+          manager['createOrder']({ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+          manager.onOrderCompleted({
+            order: {
+              id: BUY_ID,
+              symbol: 'BTC/USDT',
+              side: 'BUY',
+              type: 'MARKET',
+              amount: 0.5,
+              orderCreationDate: 61000,
+              orderExecutionDate: 61000,
+              effectivePrice: 50000,
+              fee: 0,
+            },
+            exchange: { price: 50000, portfolio: new Map() },
+          });
+          manager.onStrategyEnd();
+        });
+
+        it('warns that the stop never triggered', () => {
+          expect(warning).toHaveBeenCalledExactlyOnceWith(
+            'strategy',
+            'Strategy ended with 1 active trailing stop(s) that never triggered.',
+          );
+        });
+
+        // The strategy is over: a stop no longer reaches it, nor sends a SELL for it
+        it('relays no SELL when a later minute goes through the stop price', () => {
+          const listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+          manager.onOneMinuteBucket(
+            new Map([['BTC/USDT', { start: 120000, open: 50000, high: 50000, low: 48000, close: 48000, volume: 1 }]]),
+          );
+          expect(listener).not.toHaveBeenCalled();
+        });
       });
 
       // The warmup is over with candle warmupPeriod + 1, the first the strategy can trade on. A backtest too short for it used to end
@@ -672,46 +808,37 @@ describe('StrategyManager', () => {
       const order = { id: '3' } as any;
       const exchange = { price: 12 } as any;
 
-      it('should increment consecutive errors on order errored and throw ApplicationStopError when limit reached', () => {
-        // First 4 errors should not throw
-        for (let i = 0; i < 4; i++) {
-          expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
+      /** Sends `target` at most `count` errors in a row: the number of the first that throws, and what it throws, if one does */
+      const firstErrorThatThrows = (target: StrategyManager, count: number) => {
+        for (let errorNumber = 1; errorNumber <= count; errorNumber++) {
+          try {
+            target.onOrderErrored({ order, exchange });
+          } catch (thrown) {
+            return { errorNumber, thrown };
+          }
         }
-        // 5th error should throw ApplicationStopError
-        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError(ApplicationStopError);
-        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError('Max consecutive order errors reached (5)');
+      };
+
+      it('stops the run with an ApplicationStopError on the 5th error in a row, maxConsecutiveErrors by default', () => {
+        expect(firstErrorThatThrows(manager, 6)).toEqual({
+          errorNumber: 5,
+          thrown: new ApplicationStopError('Max consecutive order errors reached (5)'),
+        });
       });
 
-      it('should reset consecutive errors on order completed', () => {
-        expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
-        manager.onOrderCompleted({ order, exchange });
-
-        // Next 4 errors should not throw
-        for (let i = 0; i < 4; i++) {
-          expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
-        }
-        // 5th throws
-        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError(ApplicationStopError);
+      // An order that does not end with an error breaks the run of errors
+      it.each`
+        outcome          | end
+        ${'completes'}   | ${() => manager.onOrderCompleted({ order, exchange })}
+        ${'is canceled'} | ${() => manager.onOrderCanceled({ order, exchange })}
+      `('counts the errors from 0 again once an order $outcome', ({ end }) => {
+        manager.onOrderErrored({ order, exchange });
+        end();
+        expect(firstErrorThatThrows(manager, 6)?.errorNumber).toBe(5);
       });
 
-      it('should reset consecutive errors on order canceled', () => {
-        expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
-        manager.onOrderCanceled({ order, exchange });
-
-        // Next 4 errors should not throw
-        for (let i = 0; i < 4; i++) {
-          expect(() => manager.onOrderErrored({ order, exchange })).not.toThrow();
-        }
-        // 5th throws
-        expect(() => manager.onOrderErrored({ order, exchange })).toThrowError(ApplicationStopError);
-      });
-
-      it('should not throw if maxConsecutiveErrors is -1', () => {
-        const customManager = new StrategyManager(1, -1);
-
-        for (let i = 0; i < 10; i++) {
-          expect(() => customManager.onOrderErrored({ order, exchange })).not.toThrow();
-        }
+      it('never stops the run when maxConsecutiveErrors is -1', () => {
+        expect(firstErrorThatThrows(new StrategyManager(1, -1), 10)).toBeUndefined();
       });
 
       // A breaker of two errors in a row: the first goes by, the second trips it. The second is the error of a BUY with a trailing stop,
@@ -917,6 +1044,18 @@ describe('StrategyManager', () => {
           },
           manager['tools'],
         );
+      });
+
+      // Its stop is armed once the strategy has heard of the BUY: the activation of a stop without trigger is announced right after
+      it('tells the strategy that the BUY completed, then that its stop is active', () => {
+        const heard: string[] = [];
+        manager['strategy'] = {
+          onOrderCompleted: () => heard.push('onOrderCompleted'),
+          onTrailingStopActivated: () => heard.push('onTrailingStopActivated'),
+        };
+        const id = manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+        completeBuy(id, 0.5);
+        expect(heard).toEqual(['onOrderCompleted', 'onTrailingStopActivated']);
       });
 
       it('activates a stop without trigger once, not again when it starts trailing', () => {
@@ -2469,27 +2608,54 @@ describe('StrategyManager', () => {
       // Orders are available once the warmup is over: the manager's is one candle, which the second candle completes
       beforeEach(() => completeWarmup());
 
-      it('createOrder emits the advice event', () => {
-        const listener = vi.fn();
-        manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
-        const order = { side: 'BUY', type: 'STICKY', quantity: 1, symbol: 'BTC/USDT' } as const;
+      // A LIMIT BUY with every field a StrategyOrder has, on the minute ending at 61000: the Trader gets each of them, with the id and
+      // the date of the order, but the trailing stop, which the manager keeps until the BUY completes
+      describe('when the strategy creates an order', () => {
+        const ID: UUID = '0c0c0c0c-0000-4000-8000-000000000001';
+        let listener: Mock;
+        let id: UUID;
 
-        const id = manager['createOrder'](order);
+        beforeEach(() => {
+          listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+          vi.mocked(randomUUID).mockReturnValueOnce(ID);
+          id = manager['tools'].createOrder({
+            symbol: 'BTC/USDT',
+            side: 'BUY',
+            type: 'LIMIT',
+            amount: 0.5,
+            price: 49000,
+            trailing: { percentage: 2 },
+          });
+        });
 
-        expect(id).toBe('db2254e3-c749-448c-b7b6-aa28831bbae7');
-        // Dated with the clock as it is: already the end of the minute being processed (its bucket starts at candle.start), which is
-        // when the Trader and the simulated exchange date fills and errors. A minute added to it dated the order after its own fill.
-        expect(listener).toHaveBeenCalledWith({
-          ...order,
-          id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
-          orderCreationDate: candle.start + ONE_MINUTE,
+        // Dated with the clock as it is: already the end of the minute being processed, which is when the Trader and the simulated
+        // exchange date fills and errors. A minute added to it dated the order after its own fill.
+        it('relays it with the id it draws and the clock as its date, without its trailing stop', () => {
+          expect(listener).toHaveBeenCalledExactlyOnceWith({
+            symbol: 'BTC/USDT',
+            side: 'BUY',
+            type: 'LIMIT',
+            amount: 0.5,
+            price: 49000,
+            id: ID,
+            orderCreationDate: 61000,
+          });
+        });
+
+        it('returns the id it relays the order with', () => {
+          expect(id).toBe(ID);
         });
       });
 
-      it('throws if no timestamp available', () => {
-        manager['currentTimestamp'] = 0;
-        const order = { side: 'BUY', type: 'STICKY', quantity: 1, symbol: 'BTC/USDT' } as const;
-        expect(() => manager['createOrder'](order)).toThrow('No candle when relaying advice');
+      // Only a one-minute bucket sets the clock: the TradingAdvisor always sends one before a timeframe candle
+      it('refuses an order while no one-minute bucket has set the clock', () => {
+        const target = new StrategyManager(0);
+        target.setMarketData(defaultMarketData);
+        target.onTimeFrameCandle(bucket); // A warmup of no candle is over with the first one
+        expect(() => target['createOrder']({ symbol: 'BTC/USDT', side: 'BUY', type: 'STICKY', amount: 1 })).toThrow(
+          '[STRATEGY] No candle when relaying advice',
+        );
       });
 
       // An order on a pair that is not watched reached the Trader: given a price, a live exchange placed it (an all-in BUY spending the
@@ -2934,26 +3100,39 @@ describe('StrategyManager', () => {
       });
     });
 
+    // The strategy gives the id of the BUY, whose stop waits for the BUY to complete, then trails
     describe('cancelTrailingOrder', () => {
-      it('cancelTrailingOrder removes from pending orders and trailing stop manager', () => {
-        const orderId = 'db2254e3-c749-448c-b7b6-aa28831bbae7' as UUID;
-
-        manager['pendingTrailingStops'].set(orderId, { percentage: 2 });
-        manager['trailingStopManager'].addOrder({
-          id: orderId,
-          symbol: 'BTC/USDT',
-          amount: 1,
-          trailing: { percentage: 2 },
-          createdAt: 123456789,
+      const BUY_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000b3';
+      const cancel = () => manager['tools'].cancelTrailingOrder(BUY_ID);
+      const completeBuy = () =>
+        manager.onOrderCompleted({
+          order: {
+            id: BUY_ID,
+            symbol: 'BTC/USDT',
+            side: 'BUY',
+            type: 'MARKET',
+            amount: 0.5,
+            orderCreationDate: 61000,
+            orderExecutionDate: 61000,
+            effectivePrice: 50000,
+            fee: 0,
+          },
+          exchange: { price: 50000, portfolio: new Map() },
         });
 
-        expect(manager['pendingTrailingStops'].has(orderId)).toBe(true);
-        expect(manager['trailingStopManager'].getOrders().has(orderId)).toBe(true);
+      beforeEach(() => {
+        completeWarmup(); // Orders wait for it
+        vi.mocked(randomUUID).mockReturnValueOnce(BUY_ID);
+        manager['createOrder']({ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', trailing: { percentage: 2 } });
+      });
 
-        manager['cancelTrailingOrder'](orderId);
-
-        expect(manager['pendingTrailingStops'].has(orderId)).toBe(false);
-        expect(manager['trailingStopManager'].getOrders().has(orderId)).toBe(false);
+      it.each`
+        when                          | steps
+        ${'before its BUY completes'} | ${[cancel, completeBuy]}
+        ${'once its BUY completed'}   | ${[completeBuy, cancel]}
+      `('leaves no stop when the strategy cancels it $when', ({ steps }: { steps: (() => void)[] }) => {
+        for (const step of steps) step();
+        expect(manager['trailingStopManager'].getOrders().has(BUY_ID)).toBe(false);
       });
     });
 
@@ -3002,14 +3181,14 @@ describe('StrategyManager', () => {
         });
       });
 
-      it('emits STRATEGY_INFO_EVENT with metadata', () => {
+      // Dated with the clock: the end of the minute being processed, which starts at 1000 here
+      it('relays a line as strategy info, dated with the clock', () => {
         const listener = vi.fn();
         manager.on(STRATEGY_INFO_EVENT, listener);
-
+        manager.onOneMinuteBucket(bucket);
         manager['log']('info', 'Something happened');
-
-        expect(listener).toHaveBeenCalledWith({
-          timestamp: manager['currentTimestamp'],
+        expect(listener).toHaveBeenCalledExactlyOnceWith({
+          timestamp: 61000,
           level: 'info',
           tag: 'strategy',
           message: 'Something happened',
@@ -3020,13 +3199,14 @@ describe('StrategyManager', () => {
       it('relays an error line before it throws', () => {
         const listener = vi.fn();
         manager.on(STRATEGY_INFO_EVENT, listener);
+        manager.onOneMinuteBucket(bucket);
         try {
           manager['log']('error', 'Indicator out of range');
         } catch {
           // The throw has a test of its own
         }
         expect(listener).toHaveBeenCalledExactlyOnceWith({
-          timestamp: manager['currentTimestamp'],
+          timestamp: 61000,
           level: 'error',
           tag: 'strategy',
           message: 'Indicator out of range',
