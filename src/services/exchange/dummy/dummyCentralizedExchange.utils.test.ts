@@ -7,8 +7,8 @@ describe('roundToStep', () => {
   it.each`
     value                     | step       | expected      | scenario
     ${0.00008595077805222816} | ${0.00001} | ${0.00008}    | ${'a quantity of GridBot, left unrounded'}
-    ${0.015514114905047087}   | ${1e-8}    | ${0.01551411} | ${'an all-in BUY of 17 significant digits'}
-    ${0.031028229810094173}   | ${0.00001} | ${0.03102}    | ${'an all-in BUY of 17 significant digits'}
+    ${0.015514114905047087}   | ${1e-8}    | ${0.01551411} | ${'an amount of 17 significant digits'}
+    ${0.031028229810094173}   | ${0.00001} | ${0.03102}    | ${'an amount of 17 significant digits'}
     ${0.29}                   | ${0.01}    | ${0.29}       | ${'a multiple whose binary quotient is 28.999999999999996'}
     ${0.30000000000000004}    | ${0.01}    | ${0.3}        | ${'a binary sum'}
     ${1.005}                  | ${0.01}    | ${1}          | ${'a half, truncated'}

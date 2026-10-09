@@ -56,9 +56,9 @@ export const getPriceTick = (price: number, precision: MarketData['precision']):
  * The amount and the price of an order as CCXTExchange sends them to the exchange (see its roundToMarketPrecision): the amount truncated
  * to the step of the market, the price rounded half up to its tick at that price (see getPriceTick). The simulator checks the limits
  * of the market, books the balances and fills the order on them. It used to take them as they came, and so filled quantities a live
- * run never sends: GridBot's 0.00008595077805222816 BTC on a step of 0.00001, which CCXTExchange sends as 0.00008, or an all-in BUY of
- * 17 significant digits, such as the 0.031028229810094173 BTC that 2000 USDT buy at 61234.56 once the Trader keeps 5 % back, sent as
- * 0.03102.
+ * run never sends: GridBot's 0.00008595077805222816 BTC on a step of 0.00001, which CCXTExchange sends as 0.00008, or an amount of 17
+ * significant digits, 0.031028229810094173 BTC, what 2000 USDT bought at 61234.56 with 5 % kept back before the Trader sized an all-in
+ * BUY to 15 digits (0.0310282298100942), both sent as 0.03102.
  */
 export const roundToMarketPrecision = (amount: number, price: number, { precision }: MarketData) => ({
   amount: roundToStep(amount, precision?.amount, 'down'),

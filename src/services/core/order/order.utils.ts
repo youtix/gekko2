@@ -12,9 +12,6 @@ import { filter, isNil, last, map, min, sortBy } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { OrderSummary, Transaction } from './order.types';
 
-// The Trader's pricing (trader.utils.ts) still imports multiplyPrecise from here, until its import moves to @utils/math/math.utils
-export { multiplyPrecise } from '@utils/math/math.utils';
-
 /**
  * A failure as an Error. Nobody awaits launch(), cancel() or checkOrder() (the Trader floats them, an interval runs checkOrder),
  * so an order reports a failure through orderErrored and never throws. A non-Error value is wrapped rather than dropped, so that

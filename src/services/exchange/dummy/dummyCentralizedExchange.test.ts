@@ -550,7 +550,7 @@ describe('DummyCentralizedExchange', () => {
   // CCXTExchange truncates the amount of an order to the step of the market and rounds its price half up to the tick, then checks the
   // limits and sends the order (see roundToMarketPrecision). The simulator used to take them as they came, and so filled quantities a
   // live run never sends: GridBot's 0.00008595077805222816 BTC, which CCXTExchange sends as 0.00008 and refuses for a cost under 5 USDT,
-  // or an all-in BUY of 17 significant digits. The market below has the steps of Binance's BTC/USDT, 0.01 for a price and 0.00001 for
+  // or an amount of 17 significant digits. The market below has the steps of Binance's BTC/USDT, 0.01 for a price and 0.00001 for
   // an amount, and the documented fees: maker 0.04 %, taker 0.07 %, charged in USDT.
   describe('Amounts and prices put on the steps of the market', () => {
     const steppedMarketData = {
@@ -560,8 +560,8 @@ describe('DummyCentralizedExchange', () => {
       precision: { price: 0.01, amount: 0.00001 },
       fee: { maker: 0.0004, taker: 0.0007 },
     };
-    // What the Trader buys with 2000 USDT at 61234.56 when the strategy gives no amount, 5 % kept back for the fee: 0.03102 BTC once
-    // truncated, where rounded it would be 0.03103
+    // What the Trader bought with 2000 USDT at 61234.56 when the strategy gave no amount, 5 % kept back for the fee, before it sized an
+    // all-in BUY to 15 significant digits (0.0310282298100942 now): 0.03102 BTC once truncated, where rounded it would be 0.03103
     const ALL_IN_AMOUNT = 0.031028229810094173;
 
     /** An exchange on that market, or on `marketData`, quoting BTC/USDT at `price` for its bid and its ask, with 1 BTC and 2000 USDT */
