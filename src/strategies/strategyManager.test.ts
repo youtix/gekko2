@@ -2822,6 +2822,110 @@ describe('StrategyManager', () => {
         );
       });
 
+      // The Trader reads the keys of StrategyOrder alone: any other was relayed and ignored. A LIMIT whose price was misspelt was placed
+      // at the last price of the pair, which it reached at once, an amount given as quantity made the order all-in, and a trailing stop
+      // given under another name was dropped
+      describe('on the keys it holds', () => {
+        /** What an order holding keys StrategyOrder does not declare is told, the keys shown as util.inspect shows them */
+        const keysIssue = (shown: string) =>
+          `order keys must be one of 'symbol', 'side', 'type', 'amount', 'price', 'trailing', got ${shown}`;
+        let listener: Mock;
+
+        /** Creates `order` as an untyped strategy does, and returns what it throws */
+        const createAs = (order: object) => {
+          try {
+            manager['createOrder'](order as StrategyOrder);
+          } catch (caught) {
+            return caught;
+          }
+        };
+
+        beforeEach(() => {
+          listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+        });
+
+        // The last rows have another problem as well: the keys are checked first, before the pair, the fields and the trailing stop, so
+        // that a misspelt key is named, not reported as an undefined pair, side or type
+        describe.each`
+          problem                                   | order                                                                                                                | reason
+          ${'a LIMIT BUY, price spelt limitPrice'}  | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', amount: 0.5, limitPrice: 49000 }}                                | ${keysIssue(quoted('limitPrice'))}
+          ${'a LIMIT SELL, price spelt prise'}      | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'LIMIT', amount: 0.5, prise: 52000 }}                                    | ${keysIssue(quoted('prise'))}
+          ${'a MARKET BUY of a quantity'}           | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', quantity: 0.5 }}                                                | ${keysIssue(quoted('quantity'))}
+          ${'a STICKY SELL with a comment'}         | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'STICKY', amount: 0.5, comment: 'take profit' }}                         | ${keysIssue(quoted('comment'))}
+          ${'a BUY, its stop spelt trailingStop'}   | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', trailingStop: { percentage: 2 } }}                              | ${keysIssue(quoted('trailingStop'))}
+          ${'a LIMIT BUY, prise left undefined'}    | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', amount: 0.5, prise: undefined }}                                 | ${keysIssue(quoted('prise'))}
+          ${'a BUY with an id of its own'}          | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', id: '1d1d1d1d-0000-4000-8000-000000000001' }}                   | ${keysIssue(quoted('id'))}
+          ${'a SELL of a quantity, with a comment'} | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', quantity: 0.5, comment: 'exit' }}                              | ${keysIssue(`${quoted('quantity')}, ${quoted('comment')}`)}
+          ${'a BUY with a stop and a comment'}      | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', trailing: { percentage: 2 }, comment: 'entry' }}                | ${keysIssue(quoted('comment'))}
+          ${'a BUY of a quantity on ETH/USDT'}      | ${{ symbol: 'ETH/USDT', side: 'BUY', type: 'MARKET', quantity: 0.5 }}                                                | ${keysIssue(quoted('quantity'))}
+          ${'a BUY whose symbol is given as pair'}  | ${{ pair: 'BTC/USDT', side: 'BUY', type: 'MARKET' }}                                                                 | ${keysIssue(quoted('pair'))}
+          ${'a BUY whose side is spelt Side'}       | ${{ symbol: 'BTC/USDT', Side: 'BUY', type: 'MARKET' }}                                                               | ${keysIssue(quoted('Side'))}
+          ${'a BUY of NaN, with a quantity'}        | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', amount: NaN, quantity: 0.5 }}                                   | ${keysIssue(quoted('quantity'))}
+          ${'a SELL with a stop and a comment'}     | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', trailing: { percentage: 2 }, comment: 'exit' }}                | ${keysIssue(quoted('comment'))}
+          ${'a BUY with a triger and a comment'}    | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET', trailing: { percentage: 2, triger: 50000 }, comment: 'entry' }} | ${keysIssue(quoted('comment'))}
+        `('when the strategy creates $problem', ({ order, reason }) => {
+          let failure: unknown;
+
+          beforeEach(() => {
+            failure = createAs(order);
+          });
+
+          it('refuses the order with a GekkoError', () => {
+            expect(failure).toBeInstanceOf(GekkoError);
+          });
+
+          it('names the order and the keys it does not take, and lists those it takes', () => {
+            expect(failure).toHaveProperty(
+              'message',
+              `[STRATEGY] Impossible to create the ${order.side} ${order.type} order on ${order.symbol}: ${reason}`,
+            );
+          });
+
+          it('draws no id', () => {
+            expect(randomUUID).not.toHaveBeenCalled();
+          });
+
+          it('relays no order', () => {
+            expect(listener).not.toHaveBeenCalled();
+          });
+
+          it('keeps no trailing stop', () => {
+            expect(manager['pendingTrailingStops'].size).toBe(0);
+          });
+
+          it('keeps no SELL of the strategy', () => {
+            expect(manager['strategySellIds'].size).toBe(0);
+          });
+        });
+
+        // Each key StrategyOrder declares, given or left undefined (a strategy passing its own optional parameter)
+        describe.each`
+          kind                                        | order                                                                                                                         | relayed
+          ${'its symbol, side and type alone'}        | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET' }}                                                                        | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'MARKET' }}
+          ${'every key'}                              | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', amount: 0.5, price: 49000, trailing: { percentage: 2, trigger: 51000 } }} | ${{ symbol: 'BTC/USDT', side: 'BUY', type: 'LIMIT', amount: 0.5, price: 49000 }}
+          ${'every key, the optional ones undefined'} | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', amount: undefined, price: undefined, trailing: undefined }}             | ${{ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET' }}
+        `('when the strategy creates an order holding $kind', ({ order, relayed }) => {
+          let failure: unknown;
+
+          beforeEach(() => {
+            failure = createAs(order);
+          });
+
+          it('accepts the order', () => {
+            expect(failure).toBeUndefined();
+          });
+
+          it('relays it with its id and its date, without its trailing stop', () => {
+            expect(listener).toHaveBeenCalledExactlyOnceWith({
+              ...relayed,
+              id: 'db2254e3-c749-448c-b7b6-aa28831bbae7',
+              orderCreationDate: candle.start + ONE_MINUTE,
+            });
+          });
+        });
+      });
+
       // An order on a pair that is not watched reached the Trader: given a price, a live exchange placed it (an all-in BUY spending the
       // currency of the watched pairs), though Gekko has no candle or balance of that pair, while the simulator refused it
       describe('on the pair it names', () => {

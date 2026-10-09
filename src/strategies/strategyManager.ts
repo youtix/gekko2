@@ -60,6 +60,32 @@ const showValues = (values: readonly unknown[]) => values.map(value => inspect(v
 /** Whether a value is a number above 0: not NaN, not Infinity, and not a quoted number, which Number.isFinite does not coerce */
 const isAboveZero = (value: unknown) => isFiniteNumber(value) && value > 0;
 
+/** The keys of `object` that are not among `keys`, in the order `object` holds them, whatever their values: undefined ones included */
+const getUnknownKeys = (object: object, keys: readonly string[]) => Object.keys(object).filter(key => !keys.includes(key));
+
+/** The keys of an order, those of StrategyOrder: the record is typed to hold each of them and no other */
+const ORDER_KEYS = Object.keys({
+  symbol: true,
+  side: true,
+  type: true,
+  amount: true,
+  price: true,
+  trailing: true,
+} satisfies Record<keyof StrategyOrder, true>);
+
+/**
+ * What is wrong with the keys of an order, or undefined when it holds none but those of StrategyOrder. The Trader reads those alone,
+ * and any other key was relayed and ignored: a LIMIT whose price was misspelt (limitPrice, prise) was placed at the last price of the
+ * pair, where it filled at once, a take-profit SELL selling at the market; an amount given as quantity made the order all-in; a
+ * trailing stop given under another name was dropped, the BUY going without it. Refused whatever its value, undefined included: a
+ * misspelt key fed from an optional parameter is caught at the first order, not on the first run that sets it. Checked before the
+ * fields, a misspelt symbol, side or type is named, not reported as undefined.
+ */
+const getKeysProblem = (order: StrategyOrder): string | undefined => {
+  const unknownKeys = getUnknownKeys(order, ORDER_KEYS);
+  if (unknownKeys.length) return `order keys must be one of ${showValues(ORDER_KEYS)}, got ${showValues(unknownKeys)}`;
+};
+
 /**
  * What is wrong with the side, the type, the amount or the price of an order, or undefined when nothing is: a side of ORDER_SIDES and a
  * type of ORDER_TYPES as they are spelt there, an amount and a price above 0 or left out (undefined, or null from an untyped strategy,
@@ -90,7 +116,7 @@ const getTrailingProblem = ({ side, trailing }: StrategyOrder): string | undefin
   if (!trailing) return;
   if (side !== 'BUY') return 'trailing applies to BUY orders only: its stop sells what the BUY filled';
   // A misspelt key was ignored: { percentage: 2, triger: 50000 } armed a stop active at once, not one waiting for 50000
-  const unknownKeys = Object.keys(trailing).filter(key => !TRAILING_KEYS.includes(key));
+  const unknownKeys = getUnknownKeys(trailing, TRAILING_KEYS);
   if (unknownKeys.length) return `trailing keys must be one of ${showValues(TRAILING_KEYS)}, got ${showValues(unknownKeys)}`;
   const { percentage, trigger } = trailing;
   if (!(Number.isFinite(percentage) && percentage > 0 && percentage < 100))
@@ -523,15 +549,16 @@ export class StrategyManager extends EventEmitter {
   }
 
   /**
-   * Refuses, before anything is relayed, an order the strategy cannot have meant. One on a pair that is not watched, given a price, was
-   * placed on a live exchange (an all-in BUY spending the currency of the watched pairs), though Gekko has no candle or balance of that
-   * pair: what it bought was missing from the portfolio and its stop never trailed. A side, a type, an amount or a price an untyped
-   * strategy got wrong was relayed as it was (see getOrderProblem). The trailing stop of a BUY was only checked once the BUY had
-   * completed: an invalid one was refused then, with a warning, and the position the BUY had just opened kept no stop. One given to a
-   * SELL was dropped without a word.
+   * Refuses, before anything is relayed, an order the strategy cannot have meant. A key the Trader does not read was ignored (see
+   * getKeysProblem). One on a pair that is not watched, given a price, was placed on a live exchange (an all-in BUY spending the
+   * currency of the watched pairs), though Gekko has no candle or balance of that pair: what it bought was missing from the portfolio
+   * and its stop never trailed. A side, a type, an amount or a price an untyped strategy got wrong was relayed as it was (see
+   * getOrderProblem). The trailing stop of a BUY was only checked once the BUY had completed: an invalid one was refused then, with a
+   * warning, and the position the BUY had just opened kept no stop. One given to a SELL was dropped without a word.
    */
   private checkOrder(order: StrategyOrder) {
-    const problem = getPairProblem(order.symbol, this.marketData) ?? getOrderProblem(order) ?? getTrailingProblem(order);
+    const problem =
+      getKeysProblem(order) ?? getPairProblem(order.symbol, this.marketData) ?? getOrderProblem(order) ?? getTrailingProblem(order);
     if (!problem) return;
     const { side, type, symbol } = order;
     throw new GekkoError('strategy', `Impossible to create the ${side} ${type} order on ${symbol}: ${problem}`);

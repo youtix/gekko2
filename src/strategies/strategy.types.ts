@@ -59,6 +59,12 @@ export type Tools<T> = {
    * Available once the warmup is over: from log and onTimeframeCandleAfterWarmup on the candle that completes it (the first one
    * with `warmup.candleCount: 0`), then from every hook. Before that, and so always in init, it throws a GekkoError: the bot stops.
    *
+   * The order holds no key but those of StrategyOrder: `symbol`, `side`, `type`, `amount`, `price` and `trailing`. Any other, whatever
+   * its value, throws a GekkoError naming it, and the order is not sent: the bot stops. The Trader reads those keys alone and ignored
+   * any other: a LIMIT whose price was misspelt (`limitPrice`, `prise`) went at the last price of the pair, an amount given as
+   * `quantity` made the order all-in, a stop given under another name was dropped. The order of an event, passed as it is, holds keys
+   * of its own, such as `id` and `orderCreationDate`: build the order from its fields.
+   *
    * `symbol` must be a watched pair, a key of `marketData`: Gekko has no candle, price or balance of any other pair, so it could
    * neither follow the position nor trail its stop, while a live exchange would still execute the order. Any other symbol throws a
    * GekkoError naming it and the watched pairs, and the order is not sent: the bot stops.
