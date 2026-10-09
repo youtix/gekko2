@@ -2,7 +2,7 @@
  * value * 10 ** places, by moving the decimal point of value as String writes it, the shortest decimal that reads back as value.
  * This is exact where the binary product is not: 8.2 has no exact binary value, so 8.2 * 100 is 819.9999999999999 while 8.2e2 is 820.
  */
-const shiftDecimalPoint = (value: number, places: number): number => {
+export const shiftDecimalPoint = (value: number, places: number): number => {
   if (value === 0) return value; // String writes -0 as '0'
   const [mantissa, exponent = '0'] = String(value).split('e');
   return Number(`${mantissa}e${Number(exponent) + places}`);
@@ -12,7 +12,7 @@ const shiftDecimalPoint = (value: number, places: number): number => {
  * The decimals of value as String writes it: 2 for 8.25, 8 for 1.5e-7, -21 for 1e21, and -2 for 1200, whose zeros need no rounding to
  * tens or hundreds. Counted as decimals, they would make 123456789012345680000 to tens a product past 2 ** 53, beyond what a double holds.
  */
-const countDecimals = (value: number): number => {
+export const countDecimals = (value: number): number => {
   const [mantissa, exponent = '0'] = String(value).split('e');
   const [integer, fraction] = mantissa.split('.');
   return (fraction?.length ?? integer.replace(/0+$/, '').length - integer.length) - Number(exponent);

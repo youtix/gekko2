@@ -1,5 +1,5 @@
 import { bench, describe } from 'vitest';
-import { addPrecise, linreg, percentile, stdev, weightedMean } from './math.utils';
+import { addPrecise, stdev, weightedMean } from './math.utils';
 
 // Sample data for benchmarks
 const smallArray = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -20,28 +20,6 @@ describe('stdev Performance', () => {
   });
 });
 
-describe('percentile Performance', () => {
-  bench('percentile - small array (10 elements)', () => {
-    percentile(smallArray, 0.25);
-  });
-
-  bench('percentile - medium array (100 elements)', () => {
-    percentile(mediumArray, 0.25);
-  });
-
-  bench('percentile - large array (1000 elements)', () => {
-    percentile(largeArray, 0.25);
-  });
-
-  bench('percentile - multiple percentiles', () => {
-    percentile(mediumArray, 0.1);
-    percentile(mediumArray, 0.25);
-    percentile(mediumArray, 0.5);
-    percentile(mediumArray, 0.75);
-    percentile(mediumArray, 0.9);
-  });
-});
-
 describe('weightedMean Performance', () => {
   const weightsSmall = smallArray.map(() => Math.random());
   const weightsMedium = mediumArray.map(() => Math.random());
@@ -57,27 +35,6 @@ describe('weightedMean Performance', () => {
 
   bench('weightedMean - large array (1000 elements)', () => {
     weightedMean(largeArray, weightsLarge);
-  });
-});
-
-describe('linreg Performance', () => {
-  const xSmall = smallArray;
-  const ySmall = smallArray.map(x => x * 2 + Math.random());
-  const xMedium = mediumArray;
-  const yMedium = mediumArray.map(x => x * 2 + Math.random());
-  const xLarge = largeArray;
-  const yLarge = largeArray.map(x => x * 2 + Math.random());
-
-  bench('linreg - small array (10 elements)', () => {
-    linreg(xSmall, ySmall);
-  });
-
-  bench('linreg - medium array (100 elements)', () => {
-    linreg(xMedium, yMedium);
-  });
-
-  bench('linreg - large array (1000 elements)', () => {
-    linreg(xLarge, yLarge);
   });
 });
 

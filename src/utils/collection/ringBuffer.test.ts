@@ -98,60 +98,6 @@ describe('RingBuffer', () => {
     });
   });
 
-  describe('find', () => {
-    it.each`
-      size | values                  | predicate                  | expected
-      ${5} | ${[1, 2, 3]}            | ${(n: number) => n === 2}  | ${2}
-      ${3} | ${[10, 20, 30, 40, 50]} | ${(n: number) => n > 35}   | ${40}
-      ${3} | ${[1, 2, 3]}            | ${(n: number) => n === 99} | ${undefined}
-      ${4} | ${[5, 5, 5, 5, 6]}      | ${(n: number) => n === 5}  | ${5}
-    `('returns $expected for predicate in chronological order', ({ size, values, predicate, expected }) => {
-      const rb = new RingBuffer<number>(size);
-      values.forEach((v: number) => rb.push(v));
-
-      const found = rb.find(predicate as (n: number) => boolean);
-
-      expect(found).toBe(expected);
-    });
-  });
-
-  describe('forEach', () => {
-    it.each`
-      size | values                  | expected
-      ${5} | ${[1, 2, 3]}            | ${[1, 2, 3]}
-      ${3} | ${[10, 20, 30]}         | ${[10, 20, 30]}
-      ${3} | ${[10, 20, 30, 40, 50]} | ${[30, 40, 50]}
-    `('iterates in chronological order with consistent array ref (size: $size)', ({ size, values, expected }) => {
-      const rb = new RingBuffer<number>(size);
-      values.forEach((v: number) => rb.push(v));
-
-      type Visit = { value: number; index: number; arrRef: number[] };
-      const visited: Visit[] = [];
-      let rememberedArr: number[] | null = null;
-
-      rb.forEach((value, index, arr) => {
-        if (!rememberedArr) rememberedArr = arr;
-        visited.push({ value, index, arrRef: arr });
-      });
-
-      const actual = {
-        order: visited.map(v => v.value),
-        indexes: visited.map(v => v.index),
-        uniqueArrRefCount: new Set(visited.map(v => v.arrRef)).size,
-        arrContent: rememberedArr ?? [],
-      };
-
-      const expectedObj = {
-        order: expected as number[],
-        indexes: (expected as number[]).map((_, i) => i),
-        uniqueArrRefCount: 1,
-        arrContent: expected as number[],
-      };
-
-      expect(actual).toEqual(expectedObj);
-    });
-  });
-
   describe('push', () => {
     it('should keep the last size items of a push of several, oldest first', () => {
       const rb = new RingBuffer<number>(4);

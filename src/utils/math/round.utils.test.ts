@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { round } from './round.utils';
+import { countDecimals, round, shiftDecimalPoint } from './round.utils';
 
 describe('round', () => {
   // Scaled by a binary product, these decimals landed on the wrong side of the floor or of the tie: 8.2 * 100 is 819.9999999999999,
@@ -75,5 +75,36 @@ describe('round', () => {
 
   it('should round to an integer, a tie up, by default', () => {
     expect(round(2.5)).toBe(3);
+  });
+});
+
+// addPrecise moves its operands with these too: they read the digits String writes, where 8.2 * 100 is 819.9999999999999 in binary
+describe('shiftDecimalPoint', () => {
+  it.each`
+    value     | places  | expected
+    ${8.2}    | ${2}    | ${820}
+    ${820}    | ${-2}   | ${8.2}
+    ${1.5e-7} | ${7}    | ${1.5}
+    ${12345}  | ${-2}   | ${123.45}
+    ${5}      | ${-324} | ${5e-324}
+    ${-0}     | ${3}    | ${-0}
+  `('should move the decimal point of $value by $places places to $expected', ({ value, places, expected }) => {
+    expect(shiftDecimalPoint(value, places)).toBe(expected);
+  });
+});
+
+describe('countDecimals', () => {
+  // Below 0, the zeros an integer ends with: 1200 needs no rounding to tens or hundreds
+  it.each`
+    value     | expected
+    ${8.25}   | ${2}
+    ${-2.5}   | ${1}
+    ${1.5e-7} | ${8}
+    ${5e-324} | ${324}
+    ${1200}   | ${-2}
+    ${-1200}  | ${-2}
+    ${1e21}   | ${-21}
+  `('should count $expected decimals in $value', ({ value, expected }) => {
+    expect(countDecimals(value)).toBe(expected);
   });
 });

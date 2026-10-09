@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addPrecise, compareWithTolerance, isFiniteNumber, linreg, percentile, stdev, weightedMean } from './math.utils';
+import { addPrecise, compareWithTolerance, isFiniteNumber, stdev, weightedMean } from './math.utils';
 
 describe('stdev', () => {
   it.each`
@@ -12,56 +12,6 @@ describe('stdev', () => {
     ${'take in account strings'}              | ${[600, 470, 170, 430, 300]} | ${147.32277488562318}
   `('should $description', ({ input, expected }) => {
     expect(stdev(input)).toBe(expected);
-  });
-});
-
-describe('percentile', () => {
-  const scores = [4, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 9, 9, 9, 10, 10, 10];
-  const scores2 = [3, 5, 7, 8, 9, 11, 13, 15];
-  const scores3 = [15, 20, 35, 40, 50];
-  const scores4 = [100, 200];
-
-  it.each`
-    input        | ptile        | expected
-    ${undefined} | ${0.25}      | ${NaN}
-    ${null}      | ${0.25}      | ${NaN}
-    ${[]}        | ${0.25}      | ${NaN}
-    ${scores}    | ${undefined} | ${NaN}
-    ${scores}    | ${0.5}       | ${7}
-    ${scores}    | ${0.25}      | ${5}
-    ${scores}    | ${0.85}      | ${9.15}
-    ${scores2}   | ${0.25}      | ${6.5}
-    ${scores3}   | ${0.4}       | ${29}
-    ${scores4}   | ${0.9}       | ${190}
-  `('should return $expected when input is $input and percentile $ptile', ({ input, ptile, expected }) => {
-    if (Number.isFinite(expected)) expect(percentile(input, ptile)).toBeCloseTo(expected, 2);
-    else expect(percentile(input, ptile)).toBeNaN();
-  });
-});
-
-describe('linreg', () => {
-  // Test cases for valid input arrays.
-  it.each`
-    valuesX            | valuesY             | expectedM | expectedB
-    ${[1, 2, 3, 4, 5]} | ${[2, 4, 6, 8, 10]} | ${2}      | ${0}
-    ${[1, 2, 3]}       | ${[1, 2, 3]}        | ${1}      | ${0}
-    ${[1, 2, 3]}       | ${[2, 2, 2]}        | ${0}      | ${2}
-    ${[1, 2, 3, 4, 5]} | ${[1, 3, 2, 5, 4]}  | ${0.8}    | ${0.6}
-  `('should calculate regression for valuesX: $valuesX and valuesY: $valuesY', ({ valuesX, valuesY, expectedM, expectedB }) => {
-    const [m, b] = linreg(valuesX, valuesY);
-    // Compare the Big numbers by converting them to string.
-    expect(m).toBeCloseTo(expectedM);
-    expect(b).toBeCloseTo(expectedB);
-  });
-
-  // Test that when the input arrays are empty, the function returns [].
-  it('should return [] when given empty arrays', () => {
-    expect(linreg([], [])).toEqual([]);
-  });
-
-  // Test that the function throws an error if the input arrays are not the same length.
-  it('should throw an error when valuesX and valuesY have different lengths', () => {
-    expect(() => linreg([1, 2, 3], [1, 2])).toThrow('The parameters valuesX and valuesY need to have same size!');
   });
 });
 
@@ -101,16 +51,31 @@ describe('weightedMean', () => {
 });
 
 describe('addPrecise', () => {
+  // 1.2345678901234567, its decimal point moved by its 16 decimals, is 12345678901234567, past 2 ** 53, which a double holds as
+  // 12345678901234568: added to -0.5 so moved, the sum, back under 2 ** 53, would read back as 0.7345678901234568. addPrecise is then
+  // a + b, as for a sum past 2 ** 53. Moved by a binary product, the values came back off from 2 ** 51 already, further than a + b.
   it.each`
-    a           | b           | expected
-    ${0.1}      | ${0.2}      | ${0.3}
-    ${1.005}    | ${0.005}    | ${1.01}
-    ${123.456}  | ${0.444}    | ${123.9}
-    ${0}        | ${0}        | ${0}
-    ${-1.1}     | ${2.2}      | ${1.1}
-    ${1e-7}     | ${2e-7}     | ${3e-7}
-    ${1.234567} | ${8.765433} | ${10}
-  `('returns $expected for $a + $b', ({ a, b, expected }) => {
+    description                                               | a                     | b                     | expected
+    ${'0.1 + 0.2, 0.30000000000000004 in binary'}             | ${0.1}                | ${0.2}                | ${0.3}
+    ${'1.005 + 0.005, 1.0099999999999998 in binary'}          | ${1.005}              | ${0.005}              | ${1.01}
+    ${'2.5 - 2.2, 0.2999999999999998 in binary'}              | ${2.5}                | ${-2.2}               | ${0.3}
+    ${'0.3 - 0.1, 0.19999999999999998 in binary'}             | ${0.3}                | ${-0.1}               | ${0.2}
+    ${'values the binary sum adds right'}                     | ${123.456}            | ${0.444}              | ${123.9}
+    ${'zeros'}                                                | ${0}                  | ${0}                  | ${0}
+    ${'negative zeros, a negative zero'}                      | ${-0}                 | ${-0}                 | ${-0}
+    ${'a negative value'}                                     | ${-1.1}               | ${2.2}                | ${1.1}
+    ${'values written with an exponent'}                      | ${1e-7}               | ${2e-7}               | ${3e-7}
+    ${'a sum without decimals'}                               | ${1.234567}           | ${8.765433}           | ${10}
+    ${'16 digits, an ulp below through a binary product'}     | ${567095.51811}       | ${57385.8976364135}   | ${624481.4157464135}
+    ${'16 digits, an ulp above through a binary product'}     | ${4310369.491577148}  | ${3184194.5648193}    | ${7494564.056396448}
+    ${'past 2 ** 53 once moved: a + b, not an ulp above'}     | ${123456.78901234567} | ${1e-8}               | ${123456.78901235567}
+    ${'the first past 2 ** 53 once moved, the sum under it'}  | ${1.2345678901234567} | ${-0.5}               | ${0.7345678901234567}
+    ${'the second past 2 ** 53 once moved, the sum under it'} | ${-0.5}               | ${1.2345678901234567} | ${0.7345678901234567}
+    ${'both under 2 ** 53 once moved, their sum past it'}     | ${583868605058252.8}  | ${478743844670668.7}  | ${1062612449728921.5}
+    ${'310 decimals, NaN through a binary product'}           | ${1e-300}             | ${1e-310}             | ${1.0000000001e-300}
+    ${'NaN, as a + b'}                                        | ${NaN}                | ${1}                  | ${NaN}
+    ${'Infinity, as a + b'}                                   | ${Infinity}           | ${1}                  | ${Infinity}
+  `('should return $expected for $a + $b: $description', ({ a, b, expected }) => {
     expect(addPrecise(a, b)).toBe(expected);
   });
 });

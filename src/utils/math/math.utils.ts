@@ -1,4 +1,5 @@
 import { add, divide, map, mean, multiply, reduce, sum } from 'lodash-es';
+import { countDecimals, shiftDecimalPoint } from './round.utils';
 
 const valuesMinusMeanSquared = (values: number[] = []) => {
   const average = mean(values);
@@ -8,31 +9,6 @@ const valuesMinusMeanSquared = (values: number[] = []) => {
 export const stdev = (vals: number[] = []) => {
   // average squared deviation from mean
   return Math.sqrt(mean(valuesMinusMeanSquared(vals)));
-};
-
-export const percentile = (values: number[] = [], ptile?: number): number => {
-  if (!values?.length || ptile === undefined || ptile < 0) return NaN;
-
-  // Convert 0–100 → 0–1
-  let p = ptile;
-  if (p > 1) p /= 100;
-  if (p > 1) p = 1;
-
-  // Sort ascending without mutating the caller’s array
-  const vals = [...values].sort((a, b) => a - b);
-
-  // Exact endpoints
-  if (p === 0) return vals[0];
-  if (p === 1) return vals[vals.length - 1];
-
-  // Rank-based interpolation: (n-1) · p
-  const rank = (vals.length - 1) * p;
-  const lower = Math.floor(rank);
-  const upper = Math.ceil(rank);
-  const weight = rank - lower;
-
-  // Linear interpolate between the two bracketing values
-  return vals[lower] * (1 - weight) + vals[upper] * weight;
 };
 
 export const weightedMean = (values: number[], weights: number[]): number => {
@@ -46,45 +22,21 @@ export const weightedMean = (values: number[], weights: number[]): number => {
   return divide(numerator, totalWeight);
 };
 
-/** Least squares linear regression fitting. */
-export const linreg = (valuesX: number[], valuesY: number[]): [number, number] | [] => {
-  if (valuesX.length !== valuesY.length) throw new Error('The parameters valuesX and valuesY need to have same size!');
-
-  const n = valuesX.length;
-  if (n === 0) return [];
-
-  const sumX = reduce(valuesX, (acc, x) => acc + x, 0);
-  const sumY = reduce(valuesY, (acc, y) => acc + y, 0);
-  const sumXX = reduce(valuesX, (acc, x) => acc + x * x, 0);
-  const sumXY = reduce(valuesX, (acc, x, i) => acc + x * valuesY[i], 0);
-
-  const numerator = n * sumXY - sumX * sumY;
-  const denominator = n * sumXX - sumX * sumX;
-
-  if (denominator === 0) return [NaN, NaN]; // Degenerate case (vertical line)
-
-  const m = numerator / denominator;
-  const b = sumY / n - m * (sumX / n);
-
-  return [m, b];
-};
-
-export const addPrecise = (a: number, b: number) => {
-  const [aDecimals, bDecimals] = [a, b].map(countDecimals);
-  const factor = 10 ** Math.max(aDecimals, bDecimals);
-
-  const result = (Math.round(a * factor) + Math.round(b * factor)) / factor;
-  return result;
-};
-
-const countDecimals = (num: number) => {
-  const s = num.toString();
-  if (s.includes('e')) {
-    // Handle scientific notation like 1e-7
-    const [base, exp] = s.split('e');
-    return Math.max(0, (base.split('.')[1]?.length || 0) - Number(exp));
-  }
-  return s.split('.')[1]?.length || 0;
+/**
+ * a + b as the two are written: the double nearest to the sum of the decimals String gives them, where binary addition can come out an
+ * ulp off it. 0.1 + 0.2 is 0.3, not 0.30000000000000004, and 2.5 - 2.2 is 0.3, not 0.2999999999999998, truncated to 0.29 on a step of
+ * 0.01. For the amounts and prices that must come out as decimals: what an order leaves after its fills, the SELLs the Trader counts,
+ * the prices of a grid. Exact while both, their decimal point moved to the decimals of the longer, and their sum are safe integers
+ * (below 2 ** 53, about 15 significant digits); beyond, a + b. Scaled by a binary product, as they used to be, values of 16 or 17
+ * significant digits came back further off than a + b (123456.78901234567 + 1e-8), and values of more than 308 decimals as NaN.
+ */
+export const addPrecise = (a: number, b: number): number => {
+  const decimals = Math.max(countDecimals(a), countDecimals(b));
+  const scaledA = shiftDecimalPoint(a, decimals);
+  const scaledB = shiftDecimalPoint(b, decimals);
+  const scaledSum = scaledA + scaledB;
+  if (!Number.isSafeInteger(scaledA) || !Number.isSafeInteger(scaledB) || !Number.isSafeInteger(scaledSum)) return a + b;
+  return shiftDecimalPoint(scaledSum, -decimals);
 };
 
 /**
