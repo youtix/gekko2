@@ -195,7 +195,7 @@ plugins:
   - name: TradingAdvisor
     strategyName: RSI
 
-  - name: Trader             # Fills the orders on paper: some strategies wait for their outcome before signalling again
+  - name: Trader             # Fills the orders on paper: every built-in strategy waits for its order to end before it signals again
 
   - name: EventSubscriber
     token: YOUR_TELEGRAM_BOT_TOKEN
@@ -209,7 +209,7 @@ plugins:
 GEKKO_CONFIG_FILE_PATH=./config/screener.yml ./dist/gekko2
 ```
 
-Gekko watches the market and sends Telegram messages when buy/sell signals trigger. No real trades are executed: the orders are only simulated, on the `simulationBalance` portfolio.
+Gekko watches the market and sends Telegram messages when buy/sell signals trigger. No real trades are executed: the orders are only simulated, on the `simulationBalance` portfolio. Keep the `Trader` all the same: without it no order ever ends, so the strategy signals once per run, and Gekko warns at start-up (a `warn` line, which `GEKKO_LOG_LEVEL=warn` shows).
 
 ---
 
@@ -335,7 +335,7 @@ Gekko executes real trades with real money. Monitor closely and use stop-losses.
 
 ## Next Steps
 
-- Explore built-in strategies in `src/strategies/`
-- Create custom strategies in `src/strategies/custom/`
+- Explore the [built-in strategies](./built-in-strategies.md), whose code is in `src/strategies/`
+- Write your own with the [Custom Strategies](./custom-strategies.md) guide: a file of your own anywhere, loaded through the TradingAdvisor's `strategyPath`, or a private strategy kept in your checkout's `src/strategies/custom/`, exported from its `index.ts`
 - Adjust strategy parameters and backtest again
 - Set up Telegram monitoring with EventSubscriber or Supervision plugins
