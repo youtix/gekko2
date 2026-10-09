@@ -60,18 +60,17 @@ export type OrderErroredEvent = OrderInitiatedEvent & {
     /**
      * What the order executed before its error, as far as the exchange reported it (see Order.getFilledAmount): an error may follow
      * fills, those of a STICKY order whose relaunch failed, or of an order whose poll or cancelation failed for good. 0 when none was
-     * reported, which does not prove that nothing executed: an order whose outcome is unknown may have. Left out by an emitter that
-     * does not know it.
+     * reported, which does not prove that nothing executed when the order may still be live (see mayBeLive).
      */
-    filled?: number;
+    filled: number;
     /**
      * Whether the order may still be live on the exchange, where nothing follows it any more, the Trader forgetting an order once it
-     * errored: its creation's outcome is unknown (lost on the network, or created and not read back), or a poll, a cancelation or the
-     * read-back of one failed for good while it was open. Placed again, it could be doubled. False when the exchange refused it, or
-     * when nothing of it was open (a STICKY order whose relaunch failed before it was placed). Set by the order, and relayed by the
-     * Trader on every such event; left out only by the code that builds the event itself, as tests do.
+     * errored: its creation's outcome is unknown (lost on the network, created and not read back, or failed by the exchange without a
+     * refusal), or a poll, a cancelation or the read-back of one failed for good while it was open. It may then have executed more than
+     * `filled`, or execute later, and no event will tell: placed again, it could be doubled. False when the exchange refused it, or when
+     * nothing of it was open (a STICKY order whose relaunch failed before it was placed). Set by the order, and relayed by the Trader.
      */
-    mayBeLive?: boolean;
+    mayBeLive: boolean;
   };
 };
 /** Can return NaN values in price, amount,effectivePrice, fee, feePercent */

@@ -151,7 +151,7 @@ const orderCanceled = (id: UUID): OrderCanceledEvent => ({
   exchange: EXCHANGE_EVENT,
 });
 const orderErrored = (id: UUID): OrderErroredEvent => ({
-  order: { ...ORDER, id, orderErrorDate: START, reason: 'Insufficient balance' },
+  order: { ...ORDER, id, orderErrorDate: START, reason: 'Insufficient balance', filled: 0, mayBeLive: false },
   exchange: EXCHANGE_EVENT,
 });
 

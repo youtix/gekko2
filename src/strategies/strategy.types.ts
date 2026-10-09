@@ -1,4 +1,4 @@
-import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
+import { IndicatorNames, IndicatorParameters } from '@indicators/indicator.types';
 import { StrategyOrder } from '@models/advice.types';
 import { CandleBucket, ExchangeEvent, OrderCanceledEvent, OrderCompletedEvent, OrderErroredEvent } from '@models/event.types';
 import { LogLevel } from '@models/logLevel.types';
@@ -25,7 +25,7 @@ export type IndicatorResults<T = unknown> = { results: T; symbol: TradingPair };
  * Available in init only: called once init has returned, kept from it, it throws a GekkoError and the bot stops. An indicator added
  * later would only be fed from then on, and would give every hook one more argument.
  */
-export type AddIndicatorFn = <T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>) => void;
+export type AddIndicatorFn = <T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParameters<T>) => void;
 /**
  * Logs a message under the strategy tag, printed if GEKKO_LOG_LEVEL lets its level through.
  *
@@ -65,10 +65,11 @@ export type Tools<T> = {
    *
    * `side` must be 'BUY' or 'SELL', and `type` 'MARKET', 'STICKY' or 'LIMIT', in upper case: ccxt spells them in lower case, which
    * only an untyped strategy can pass. `amount` and `price` must be numbers above 0, or left out. An amount left out makes the order
-   * all-in: all the currency free for a BUY, all the asset free for a SELL. A price left out is the last price of the pair: the limit
-   * of a LIMIT order, and what an all-in BUY is sized at. Anything else (NaN, 0, a negative number, Infinity, a quoted number) throws a
-   * GekkoError naming the field and what it accepts, and the order is not sent: the bot stops, even for an amount a strategy computed
-   * as 0, which used to come back as an order error.
+   * all-in, sized by the Trader from the portfolio of its last synchronization: a BUY spends the currency free less the 5 % the Trader
+   * keeps back for the fee (DEFAULT_FEE_BUFFER), at the price of the order; a SELL sells the asset free, less what the SELLs placed
+   * since then take. A price left out is the last price of the pair: the limit of a LIMIT order, and what an all-in BUY is sized at.
+   * Anything else (NaN, 0, a negative number, Infinity, a quoted number) throws a GekkoError naming the field and what it accepts, and
+   * the order is not sent: the bot stops, even for an amount a strategy computed as 0, which used to come back as an order error.
    *
    * A `trailing` is checked before anything is relayed: on a BUY only, with a percentage above 0 and below 100, a trigger above 0 or
    * left out, and no other key (a trigger misspelt `triger` armed a stop active at once). Anything else throws a GekkoError and the
@@ -87,8 +88,9 @@ export type Tools<T> = {
    * position without a working stop for as long as it pends, the part of the position it does not reserve included.
    *
    * A BUY that errors after filling part of its amount (`order.filled` in onOrderErrored) gets its stop for that part, with a
-   * warning. One that errors with no fill reported loses it, with a warning too: an order whose outcome is unknown may have executed
-   * all the same. A BUY canceled loses its stop, even after a partial fill.
+   * warning. One that errors with no fill reported loses it, with a warning too. When the BUY may still be live on the exchange
+   * (`order.mayBeLive`), the warning adds that what it may still fill, or may have executed unreported, has no stop. A BUY canceled
+   * loses its stop, even after a partial fill.
    */
   createOrder: (order: StrategyOrder) => UUID;
   cancelOrder: (orderId: UUID) => void;
@@ -172,12 +174,24 @@ export interface Strategy<T> {
   log?(params: OnCandleEventParams<T>, ...indicators: IndicatorResults[]): void;
   /** On each order completed successfully by the exchange */
   onOrderCompleted?(params: OnOrderCompletedEventParams<T>, ...indicators: IndicatorResults[]): void;
-  /** On each order canceled, by the strategy (tools.cancelOrder) or by the exchange (expired, canceled from its interface) */
+  /**
+   * On each order canceled, by the strategy (tools.cancelOrder) or by the exchange (expired, canceled from its interface). It may have
+   * executed part of its amount first: `order.filled` is the largest fill any answer of the exchange reported for it, a poll before
+   * the cancelation included, and `order.remaining` what was left of its amount. A number, 0 included, is a fact: 0 filled means that
+   * nothing executed. Both are undefined when no answer reported a fill: unknown, not 0 filled, and the portfolio after the order
+   * (`exchange.portfolio`) tells what is held.
+   */
   onOrderCanceled?(params: OnOrderCanceledEventParams<T>, ...indicators: IndicatorResults[]): void;
   /**
    * On each order errored, or rejected by the exchange. It may have executed part of its amount first: `order.filled` is what the
-   * exchange reported it filled, 0 when it reported nothing, which does not prove that nothing executed (an order whose outcome is
-   * unknown says so in its reason).
+   * exchange reported it filled, 0 when it reported nothing.
+   *
+   * `order.mayBeLive` says whether the order may still be live on the exchange, where Gekko follows it no more: its creation's outcome
+   * is unknown (its answer lost on the network, the order created but its state not read back, or the creation failed by the exchange
+   * without a refusal), or a poll or a cancelation failed for good while it was open. It may then have executed more than
+   * `order.filled`, or execute later, and no event will tell: placed again, it may be doubled. Check it on the exchange before placing
+   * it again, or go by the portfolio the next hooks get, rather than take the error for the end of the order. False when the exchange
+   * refused it, or nothing of it was left open: what it executed is `order.filled`, as far as the exchange reported.
    */
   onOrderErrored?(params: OnOrderErroredEventParams<T>, ...indicators: IndicatorResults[]): void;
   /**
@@ -204,11 +218,15 @@ export interface Strategy<T> {
    * the stop price it triggered at: the next price at or below that stop price triggers it again, and this hook announces its new
    * SELL, under a new id. Unless the portfolio after that SELL shows too little of the asset free to sell at the minimums of the
    * market, while no SELL the strategy created is pending on the pair: nothing is left to protect, and the stop is removed, with a
-   * warning. A SELL refused every time with the asset still free (an amount out of the limits of the market, an exchange down) is so
-   * sent again on each such minute, each refusal counting towards the circuit breaker, which stops the bot. A strategy that takes
-   * over, with a SELL of its own once that one failed, may leave the stop: its SELL holds the stop back until it ends (see
-   * Tools.createOrder). To drop the stop, cancel it (tools.cancelTrailingOrder(state.id)), not its SELL: canceled, its SELL makes
-   * it active again.
+   * warning. A SELL that errored while it may still be live on the exchange (`order.mayBeLive` in onOrderErrored) makes the stop
+   * active again all the same, with a warning to check that SELL there: a MARKET SELL rests on no book, it may only have executed.
+   * If it did, the portfolio after it shows the asset gone and the stop is removed, or the next SELL of the stop is refused for lack
+   * of anything to sell and its refusal removes the stop; unless the account holds other coins of the asset free, which that next
+   * SELL sells, up to the stop's amount. If it did not, the stop still protects the position. A SELL refused every time with the
+   * asset still free (an amount out of the limits of the market, an API key refused) is so sent again on each such minute, each
+   * refusal counting towards the circuit breaker, which stops the bot. A strategy that takes over, with a SELL of its own once that
+   * one failed, may leave the stop: its SELL holds the stop back until it ends (see Tools.createOrder). To drop the stop, cancel it
+   * (tools.cancelTrailingOrder(state.id)), not its SELL: canceled, its SELL makes it active again.
    *
    * `tools` is the object every other hook gets, passed last so that a hook written without it still fits.
    */

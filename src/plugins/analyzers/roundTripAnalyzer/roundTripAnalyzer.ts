@@ -169,9 +169,10 @@ export class RoundTripAnalyzer extends Plugin {
   }
 
   /**
-   * An order that ended in error only refreshes the latest portfolio (see latestPortfolio). It may have filled in part before, but its
-   * event does not say how much, and that part counts in no round trip: what the account still holds catches the part a SELL sold (see
-   * registerSell), not the part a BUY bought.
+   * An order that ended in error only refreshes the latest portfolio (see latestPortfolio). It may have filled in part before, as its
+   * event says (`order.filled`, what the exchange reported, more having maybe executed when the order may still be live), but that
+   * part counts in no round trip: what the account still holds catches the part a SELL sold (see registerSell), not the part a BUY
+   * bought.
    */
   public onOrderErrored(events: OrderErroredEvent[]): void {
     for (const { exchange } of events) this.refreshLatestPortfolio(exchange.portfolio);

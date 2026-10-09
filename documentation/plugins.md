@@ -498,8 +498,8 @@ Control your subscriptions via Telegram commands:
 | `strat_create`       | New order signals from strategy                                                                                                              |
 | `strat_cancel`       | Order cancellation signals from strategy                                                                                                     |
 | `order_init`         | Order submitted to exchange                                                                                                                  |
-| `order_cancel`       | Order cancellation confirmed                                                                                                                 |
-| `order_error`        | Order execution failed                                                                                                                       |
+| `order_cancel`       | Order cancellation confirmed, with what it filled first: `Filled amount: not reported` when the exchange reported no fill                    |
+| `order_error`        | Order execution failed, with a line saying so when the order may still be live on the exchange, to be checked there                          |
 | `order_complete`     | Order fully executed                                                                                                                         |
 | `roundtrip_complete` | Round trip closed, with its PnL (needs the `RoundTripAnalyzer`)                                                                              |
 

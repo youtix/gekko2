@@ -53,12 +53,10 @@ const unbalancedPortfolio: Portfolio = new Map<string, BalanceDetail>([
   ['USDT', { free: 1000, used: 0, total: 1000 }],
 ]);
 
-// The reasons of the order errors whose outcome is unknown, as the order layer and CCXTExchange word them, for an event that does not
-// say whether the order may be live (OrderErroredEvent.mayBeLive), which GridBot then reads from the reason
+// The reason the order layer ends a creation lost on the network with, an order that says it may be live on the exchange
+// (OrderErroredEvent.mayBeLive)
 const lostOnTheNetwork =
   'Outcome unknown: the order may be live on the exchange, check it before placing it again ([EXCHANGE] binance POST https://api.binance.com/api/v3/order 504 Gateway Time-out)';
-const answeredWithoutId =
-  '[EXCHANGE] binance answered the creation of an order on BTC/USDT with neither a status nor an id: the order may exist on the exchange, but cannot be followed';
 
 describe('GridBot', () => {
   let strategy: GridBot;
@@ -125,7 +123,7 @@ describe('GridBot', () => {
 
   /**
    * Delivers the outcome of the live order at that price and side, as the Trader reports it: a cancel with nothing filled and an
-   * error 'Test error', unless `details` say otherwise. An error says whether the order may be live only when `details` do.
+   * error 'Test error' that filled nothing and is not live, a refusal, unless `details` say otherwise
    */
   const settle = (
     outcome: 'completed' | 'canceled' | 'errored',
@@ -140,7 +138,8 @@ describe('GridBot', () => {
     if (outcome === 'completed') strategy.onOrderCompleted({ order, exchange, tools });
     if (outcome === 'canceled')
       strategy.onOrderCanceled({ order: { ...order, filled: 0, remaining: amount, ...details }, exchange, tools });
-    if (outcome === 'errored') strategy.onOrderErrored({ order: { ...order, reason: 'Test error', ...details }, exchange, tools });
+    if (outcome === 'errored')
+      strategy.onOrderErrored({ order: { ...order, reason: 'Test error', filled: 0, mayBeLive: false, ...details }, exchange, tools });
   };
 
   /** The orders sent and not settled, as `side price` from the lowest price: the book the exchange holds */
@@ -442,7 +441,7 @@ describe('GridBot', () => {
     describe('when the outcome of the rebalance order is unknown', () => {
       const loseRebalance = () =>
         strategy.onOrderErrored({
-          order: { id: issuedOrders[0].id, reason: lostOnTheNetwork } as any,
+          order: { id: issuedOrders[0].id, reason: lostOnTheNetwork, mayBeLive: true } as any,
           exchange: { price: 100, portfolio: unbalancedPortfolio },
           tools,
         });
@@ -1291,12 +1290,12 @@ describe('GridBot', () => {
     // As the Trader relays it: whether the order may be live is the order's to say, whatever the words of its reason. A poll that
     // failed for good, worded by the exchange itself, used to be taken for a refusal, and the order placed again beside the one live
     const pollFailed = '[EXCHANGE] binance {"code":-2013,"msg":"Order does not exist."}';
+    // A creation lost on the network, which the order says may be live
+    const lost = { reason: lostOnTheNetwork, mayBeLive: true };
     it.each`
       details                                          | description
       ${{ reason: pollFailed, mayBeLive: true }}       | ${'its poll failed for good, the order said maybe live'}
       ${{ reason: lostOnTheNetwork, mayBeLive: true }} | ${'a creation lost on the network, the order said maybe live'}
-      ${{ reason: lostOnTheNetwork }}                  | ${'a creation lost on the network, read from the reason'}
-      ${{ reason: answeredWithoutId }}                 | ${'a creation answered with neither a status nor an id, read from the reason'}
     `('is not placed again after $description', ({ details }) => {
       startStrategy(100);
       const sentBefore = issuedOrders.length;
@@ -1326,7 +1325,7 @@ describe('GridBot', () => {
 
     it('warns that it may be live on the exchange, untracked, its level left without an order', () => {
       startStrategy(100);
-      settle('errored', 95, 'BUY', { reason: lostOnTheNetwork });
+      settle('errored', 95, 'BUY', lost);
 
       expect(log).toHaveBeenCalledWith(
         'warn',
@@ -1336,14 +1335,14 @@ describe('GridBot', () => {
 
     it('leaves its level without an order, the rest of the book in place', () => {
       startStrategy(100);
-      settle('errored', 95, 'BUY', { reason: lostOnTheNetwork });
+      settle('errored', 95, 'BUY', lost);
 
       expect(openBook()).toEqual(['BUY 90', 'SELL 105', 'SELL 110']);
     });
 
     it('lets the rest of the grid trade on: the fill of the BUY below arms its SELL', () => {
       startStrategy(100);
-      settle('errored', 95, 'BUY', { reason: lostOnTheNetwork });
+      settle('errored', 95, 'BUY', lost);
       const sentBefore = issuedOrders.length;
       settle('completed', 90, 'BUY');
 
@@ -1354,14 +1353,14 @@ describe('GridBot', () => {
     it('does not stop the run while retryOnError orders or fewer may be live untracked', () => {
       startStrategy(100, { buyLevels: 3, sellLevels: 3, retryOnError: 3 });
 
-      expect(() => [95, 90, 85].forEach(price => settle('errored', price, 'BUY', { reason: lostOnTheNetwork }))).not.toThrow();
+      expect(() => [95, 90, 85].forEach(price => settle('errored', price, 'BUY', lost))).not.toThrow();
     });
 
     it('stops the run once more orders than retryOnError may be live untracked, naming them', () => {
       startStrategy(100, { buyLevels: 3, sellLevels: 3, retryOnError: 3 });
       const loseFour = () => {
-        [95, 90, 85].forEach(price => settle('errored', price, 'BUY', { reason: lostOnTheNetwork }));
-        settle('errored', 105, 'SELL', { reason: lostOnTheNetwork });
+        [95, 90, 85].forEach(price => settle('errored', price, 'BUY', lost));
+        settle('errored', 105, 'SELL', lost);
       };
 
       expect(loseFour).toThrow(
@@ -1373,7 +1372,7 @@ describe('GridBot', () => {
     it('stops the run once no level of the grid holds an order any more', () => {
       startStrategy(100, { buyLevels: 1, sellLevels: 0 }, unbalancedPortfolio);
 
-      expect(() => settle('errored', 95, 'BUY', { reason: lostOnTheNetwork })).toThrow(
+      expect(() => settle('errored', 95, 'BUY', lost)).toThrow(
         `GridBot: BUY 10.52 at 95 may be live on the exchange without GridBot tracking it, and no level of the grid holds an order any more. Check it on the exchange. Last error: ${lostOnTheNetwork}`,
       );
     });

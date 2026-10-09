@@ -57,6 +57,7 @@ const getUntaggedMessage = (err: unknown) => (err instanceof Error ? err.message
  *   the outcome of the request is unknown. A creation answered without the status of the order, and a cancelation answered
  *   without its id or its status, are completed by a fetchOrder, a read (see getCreatedOrderState and getCanceledOrderState). A
  *   creation that leaves nothing to follow the order by, that read failing, throws OrderOutcomeUnknown: the order may be live too.
+ *   So does a creation the exchange answers with a failure that is not a refusal of the order (see sendCreation).
  * ccxt's own retries are off too (maxRetriesOnFailure: 0 in createExchange).
  */
 export class CCXTExchange implements Exchange {
@@ -292,7 +293,7 @@ export class CCXTExchange implements Exchange {
       const rounded = this.roundToMarketPrecision(symbol, amount, price);
       const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', ...rounded, marketData: limits });
 
-      const order = await this.privateClient.createOrder(symbol, 'limit', side, orderAmount, orderPrice);
+      const order = await this.sendCreation(symbol, 'limit', side, orderAmount, orderPrice);
       return this.getCreatedOrderState(symbol, order);
     });
   }
@@ -316,7 +317,7 @@ export class CCXTExchange implements Exchange {
       // The price goes with the order. Hyperliquid has no market order: ccxt sends an immediate-or-cancel limit order at this price
       // plus or minus its defaultSlippage option (5%), and refuses a market order without a price. Binance ignores it, its
       // quoteOrderQty option being off (see createExchange).
-      const order = await this.privateClient.createOrder(symbol, 'market', side, orderAmount, orderPrice);
+      const order = await this.sendCreation(symbol, 'market', side, orderAmount, orderPrice);
       return this.getCreatedOrderState(symbol, order);
     });
   }
@@ -365,6 +366,24 @@ export class CCXTExchange implements Exchange {
       ),
       price: round(price, precision?.price, value => client.priceToPrecision(symbol, value)),
     };
+  }
+
+  /**
+   * Sends the creation of an order to the exchange, once. A failure that is not a refusal of the order is an OrderOutcomeUnknown: a
+   * ccxt OperationFailed that is not a NetworkError (translateErrors makes that one an ExchangeNetworkError). ccxt 4.5.39 throws it
+   * for an answer it could not read (BadResponse), and for Binance's internal errors: -1000 (unknown error) and -1006 (unexpected
+   * response, "execution status unknown"), which ccxt files with -1001, -1004 and -1008 (disconnected, busy, overloaded), -1010
+   * (error message received) and -1112 (no orders on the book). Left as it was, such a failure ended the order as one that placed
+   * nothing, which a strategy then placed again, beside the first if it had gone through.
+   */
+  private async sendCreation(symbol: string, type: 'limit' | 'market', side: OrderSide, amount: number, price: number) {
+    try {
+      return await this.privateClient.createOrder(symbol, type, side, amount, price);
+    } catch (err) {
+      if (!(err instanceof ccxt.OperationFailed) || err instanceof ccxt.NetworkError) throw err;
+      const failure = `${this.exchangeName} answered the creation of an order on ${symbol} with a failure that is not a refusal`;
+      throw new OrderOutcomeUnknown(`${failure}: ${err.message}`, { cause: err });
+    }
   }
 
   /**

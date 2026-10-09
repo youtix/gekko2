@@ -159,6 +159,8 @@ describe('EventSubscriber', () => {
           ...initiated.order,
           reason: 'r',
           orderErrorDate: eventTimestamp,
+          filled: 0,
+          mayBeLive: false,
           ...overrides.order,
         },
         exchange: { ...initiated.exchange, ...overrides.exchange },
@@ -805,14 +807,53 @@ describe('EventSubscriber', () => {
       expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested limit price: 321 USD'));
     });
 
-    it('includes fill details when reporting canceled orders', () => {
-      fakeBot.sendMessage.mockReset();
+    // An order leaves its fill and what remains out when no answer of the exchange reported a fill: printed as they were, both read
+    // "undefined". 0 filled is a fact, reported as such.
+    it.each`
+      filled       | remaining    | line
+      ${1}         | ${1}         | ${'Filled amount: 1 / 2 BTC'}
+      ${1}         | ${1}         | ${'Remaining amount: 1 BTC'}
+      ${0}         | ${2}         | ${'Filled amount: 0 / 2 BTC'}
+      ${0}         | ${2}         | ${'Remaining amount: 2 BTC'}
+      ${undefined} | ${undefined} | ${'Filled amount: not reported / 2 BTC'}
+    `('reports "$line" for a canceled order of 2 that filled $filled', async ({ filled, remaining, line }) => {
       plugin['handleCommand']('/sub_order_cancel');
-      onOrderCanceled(plugin, {
-        order: { type: 'LIMIT', side: 'SELL', amount: 2, filled: 1, remaining: 1, price: 999 },
+      onOrderCanceled(plugin, { order: { type: 'LIMIT', side: 'SELL', amount: 2, filled, remaining, price: 999 } });
+      await settle();
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining(`\n${line}\n`));
+    });
+
+    it('reports no remaining amount for a canceled order whose fill no answer of the exchange reported', async () => {
+      plugin['handleCommand']('/sub_order_cancel');
+      onOrderCanceled(plugin, { order: { amount: 2, filled: undefined, remaining: undefined } });
+      await settle();
+      expect(fakeBot.sendMessage).not.toHaveBeenCalledWith(expect.stringContaining('Remaining amount'));
+    });
+
+    it('reports the limit price of a canceled LIMIT order', async () => {
+      plugin['handleCommand']('/sub_order_cancel');
+      onOrderCanceled(plugin, { order: { type: 'LIMIT', side: 'SELL', amount: 2, filled: 1, remaining: 1, price: 999 } });
+      await settle();
+      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('\nRequested limit price: 999 USD\n'));
+    });
+
+    // Nothing follows an order once it errored: one that may still be live is to be checked on the exchange, where it may fill
+    describe('the message of an errored order', () => {
+      const HEAD = [`BUY STICKY order errored (${baseOrder.id}) for BTC/USD`, 'Due to r'];
+      const MAY_BE_LIVE = 'It may still be live on the exchange, where Gekko follows it no more: check it there';
+      const TAIL = ['At time: 2022-01-01T00:00:00.000Z', 'Requested amount: 1', 'Current price: 42 USD', '------'];
+
+      it.each`
+        mayBeLive | case                                   | lines
+        ${true}   | ${'may still be live on the exchange'} | ${[...HEAD, MAY_BE_LIVE, ...TAIL]}
+        ${false}  | ${'was refused'}                       | ${[...HEAD, ...TAIL]}
+      `('reports an order that $case', async ({ mayBeLive, lines }) => {
+        plugin['processOneMinuteBucket'](new Map([[symbol, { close: 42 }]]) as any);
+        plugin['handleCommand']('/sub_order_error');
+        plugin.onOrderErrored([makeOrderErroredEvent({ order: { mayBeLive } })]);
+        await settle();
+        expect(fakeBot.sendMessage).toHaveBeenCalledExactlyOnceWith(lines.join('\n'));
       });
-      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Filled amount: 1 / 2 BTC'));
-      expect(fakeBot.sendMessage).toHaveBeenCalledWith(expect.stringContaining('Requested limit price: 999 USD'));
     });
 
     // An unknown fee rate (undefined since createOrderSummary averages only the rates the trades report, never defaulted to 0) must

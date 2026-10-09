@@ -11,7 +11,7 @@ import { ApplicationStopError } from '@errors/applicationStop.error';
 import { GekkoError } from '@errors/gekko.error';
 import * as indicators from '@indicators/index';
 import { Indicator } from '@indicators/indicator';
-import { IndicatorNames, IndicatorParamaters } from '@indicators/indicator.types';
+import { IndicatorNames, IndicatorParameters } from '@indicators/indicator.types';
 import { AdviceOrder, StrategyOrder, TrailingConfig } from '@models/advice.types';
 import {
   CandleBucket,
@@ -31,9 +31,7 @@ import { debug, error, info, isLevelEnabled, warning } from '@services/logger';
 import * as strategies from '@strategies/index';
 import { getBucketTimestamp, getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
-import { getMarketOrderLimits } from '@utils/market/market.utils';
 import { isFiniteNumber } from '@utils/math/math.utils';
-import { round } from '@utils/math/round.utils';
 import { clonePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { bindAll, cloneDeep, isNil, omit } from 'lodash-es';
@@ -42,6 +40,7 @@ import EventEmitter from 'node:events';
 import { isAbsolute, resolve } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
+import { isSellable } from './positionTracker';
 import { IndicatorResults, Strategy, StrategyConstructor, Tools } from './strategy.types';
 import { TrailingStopManager } from './trailingStopManager';
 import { TrailingStopState } from './trailingStopManager.types';
@@ -98,23 +97,6 @@ const getTrailingProblem = ({ side, trailing }: StrategyOrder): string | undefin
     return `trailing.percentage must be a number above 0 and below 100 (2.5 for 2.5%), got ${inspect(percentage)}`;
   if (!isNil(trigger) && !(Number.isFinite(trigger) && trigger > 0))
     return `trailing.trigger must be a price above 0, or left out for a stop active as soon as its BUY completes, got ${inspect(trigger)}`;
-};
-
-/** Whether a value above 0 is below a market minimum: one left undefined sets no bound */
-const isBelowMinimum = (value: number, minimum?: number) => minimum !== undefined && value < minimum;
-
-/**
- * Whether a MARKET SELL of `amount` passes the minimums of the market as the exchange checks them, the rule the PositionTracker
- * applies: the amount truncated to the step of the market (a power of ten) as CCXTExchange sends it, against the minimum amount of
- * a market order, then its cost at `price`, unchecked while the price is unknown (0). Less is dust, which no SELL can sell.
- */
-const isSellable = (amount: number, price: number, marketData: MarketData = {}) => {
-  const limits = getMarketOrderLimits(marketData);
-  const step = limits.precision?.amount;
-  const decimals = step !== undefined && step > 0 ? -Math.log10(step) : NaN;
-  const sent = Number.isInteger(decimals) ? round(amount, decimals, 'down') : amount;
-  if (!(sent > 0) || isBelowMinimum(sent, limits.amount?.min)) return false;
-  return !(price > 0) || !isBelowMinimum(sent * price, limits.cost?.min);
 };
 
 /**
@@ -324,9 +306,15 @@ export class StrategyManager extends EventEmitter {
     }
     // What the order executed before its error, as far as the exchange reported it
     const filled = isFiniteNumber(order.filled) && order.filled > 0 ? order.filled : 0;
-    if (this.trailingStopSellIds.delete(order.id)) this.resumeTrailingStop(order.id, 'errored', filled, exchange, order.reason);
-    else if (this.strategySellIds.delete(order.id)) this.releaseTriggersOfPair(order, 'errored');
-    else this.settleTrailingStopOfErroredBuy(order, filled);
+    if (this.trailingStopSellIds.delete(order.id)) {
+      this.resumeTrailingStop(order.id, 'errored', filled, exchange, order.reason, order.mayBeLive);
+    } else if (this.strategySellIds.delete(order.id)) {
+      // Released even when that SELL may still be live on the exchange: no outcome of it will follow, and the stops it held would never
+      // trigger again
+      this.releaseTriggersOfPair(order, 'errored');
+    } else {
+      this.settleTrailingStopOfErroredBuy(order, filled);
+    }
     if (isConsecutiveErrorsReached) throw new ApplicationStopError(`Max consecutive order errors reached (${this.maxConsecutiveErrors})`);
   }
 
@@ -395,7 +383,7 @@ export class StrategyManager extends EventEmitter {
   /*                  FUNCTIONS USED IN TRADER STRATEGIES                       */
   /* -------------------------------------------------------------------------- */
 
-  private addIndicator<T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParamaters<T>): void {
+  private addIndicator<T extends IndicatorNames>(name: T, symbol: TradingPair, parameters: IndicatorParameters<T>): void {
     // Kept from init and called from a later hook, it added an indicator fed from then on only, and one more argument to every hook:
     // one per candle for a strategy that called it on each
     if (this.isInitialized)
@@ -560,28 +548,33 @@ export class StrategyManager extends EventEmitter {
   /**
    * Settles the stop an errored BUY asked for. Armed for what the BUY filled when the exchange reported a fill: a STICKY order whose
    * relaunch failed, or an order whose poll or cancelation failed for good, errors after its fills, and the stop, dropped, left the
-   * coins bought without protection. Dropped otherwise, with a warning: an order whose outcome is unknown (its creation lost on the
-   * network) may have executed all the same, but nothing tells what to arm, and kept pending the stop would never be armed, no
-   * completion following an error (the Trader relays the first end of an order only).
+   * coins bought without protection. Dropped otherwise, with a warning: nothing tells what to arm, and kept pending the stop would
+   * never be armed, no completion following an error (the Trader relays the first end of an order only). The warnings say that the
+   * BUY may have executed, or may fill more, only when it may still be live on the exchange (OrderErroredEvent.mayBeLive): they said
+   * so of every BUY that errored, one the exchange refused included.
    */
   private settleTrailingStopOfErroredBuy(order: OrderErroredEvent['order'], filled: number) {
-    const { id, symbol, amount, reason } = order;
+    const { id, symbol, amount, reason, mayBeLive } = order;
     if (!this.pendingTrailingStops.has(id)) return;
     if (filled > 0) {
       const [asset] = symbol.split('/');
+      const rest = mayBeLive ? ', and the rest of it may still fill on the exchange, without a stop' : '';
       warning(
         'strategy',
-        `BUY ${id} errored after it filled ${filled} of ${amount} ${asset} (${reason}): its trailing stop is armed for that part`,
+        `BUY ${id} errored after it filled ${filled} of ${amount} ${asset} (${reason}): its trailing stop is armed for that part${rest}`,
       );
       this.armPendingTrailingStop(order, filled);
       return;
     }
+    const notArmed = `Trailing stop of BUY ${id} not armed: the BUY errored`;
     warning(
       'strategy',
-      [
-        `Trailing stop of BUY ${id} not armed: the BUY errored, no fill reported (${reason}).`,
-        'If it executed all the same, as an order whose outcome is unknown may have, what it bought has no stop',
-      ].join(' '),
+      mayBeLive
+        ? [
+            `${notArmed}, no fill reported (${reason}).`,
+            'If it executed all the same, as an order whose outcome is unknown may have, what it bought has no stop',
+          ].join(' ')
+        : `${notArmed}, nothing filled (${reason})`,
     );
     this.cancelTrailingOrder(id);
   }
@@ -589,17 +582,33 @@ export class StrategyManager extends EventEmitter {
   /**
    * Makes the stop whose SELL ended without completing active again, for what that SELL left unsold (see
    * TrailingStopManager.resumeSellingStop), with a warning. A SELL refused every time (an amount out of the limits of the market, an
-   * exchange down) is then sent again on each minute whose price reaches the stop price, each refusal counting towards the circuit
+   * API key refused) is then sent again on each minute whose price reaches the stop price, each refusal counting towards the circuit
    * breaker, which stops the bot: rather than run on with the position held without any stop. A stop removed while it sold (canceled
    * by the strategy, or by a SELL the strategy created) stays removed: that SELL is the strategy's.
+   *
+   * A stop whose SELL errored while it may still be live on the exchange (`mayBeLive`: its creation's answer lost, the exchange busy
+   * or overloaded) is made active again too, with a warning that says so. That SELL is a MARKET order: it may have executed, it rests
+   * on no book. If it did, the portfolio read once it errored shows the asset gone, and the stop is removed (below); read too early,
+   * the next SELL of the stop, which the Trader caps to the free balance less the SELLs placed since, is refused for lack of anything
+   * to sell, and that refusal removes it. Removed at once, the stop left the position without protection whenever the exchange lost
+   * its answer or was busy, a crash on an overloaded exchange included. What is left of the risk: a second sale, of the stop's amount
+   * at most, of coins of the asset the account holds besides.
    *
    * Unless the portfolio after that SELL (`exchange`) shows too little of the asset free to sell: nothing is left for the stop to
    * protect (sold by hand on the exchange, or by a SELL whose outcome was lost), and resumed it sent a SELL refused on each such minute
    * until the breaker stopped the bot. It is removed, with a warning. Not while a SELL the strategy created is pending on the pair,
    * whose reservation of the asset leaves little free while the position is held: that SELL decides (see isTriggerHeld). Nor when the
-   * portfolio does not list the asset, read before the first synchronization: nothing tells then.
+   * portfolio does not list the asset, read before the first synchronization: nothing tells then. Too little is the PositionTracker's
+   * rule (see isSellable), for the MARKET SELL the stop sends.
    */
-  private resumeTrailingStop(sellId: UUID, outcome: string, sold: number, { portfolio, price }: ExchangeEvent, reason?: string) {
+  private resumeTrailingStop(
+    sellId: UUID,
+    outcome: string,
+    sold: number,
+    { portfolio, price }: ExchangeEvent,
+    reason?: string,
+    mayBeLive = false,
+  ) {
     const stop = this.trailingStopManager.resumeSellingStop(sellId, sold);
     if (!stop) return;
     const [asset] = stop.symbol.split('/');
@@ -607,7 +616,7 @@ export class StrategyManager extends EventEmitter {
     const ending = `${outcome}${sale}${reason ? ` (${reason})` : ''}`;
     const free = portfolio.get(asset)?.free;
     const isStrategySelling = this.getStrategySellIds(stop.symbol).length > 0;
-    if (isFiniteNumber(free) && !isStrategySelling && !isSellable(free, price, this.marketData.get(stop.symbol))) {
+    if (isFiniteNumber(free) && !isStrategySelling && !isSellable(free, price, 'MARKET', this.marketData.get(stop.symbol))) {
       this.trailingStopManager.removeOrder(stop.id);
       warning(
         'strategy',
@@ -618,12 +627,18 @@ export class StrategyManager extends EventEmitter {
       );
       return;
     }
+    const stopPrice = `its stop price, ${stop.stopPrice}, trailing from its peak, ${stop.highestPeak}`;
+    const selling = `${stop.amount} ${asset} once a price reaches ${stopPrice}`;
+    if (!mayBeLive) {
+      warning('strategy', `Trailing stop of BUY ${stop.id} active again: its SELL ${sellId} ${ending}. It sells ${selling}`);
+      return;
+    }
     warning(
       'strategy',
       [
-        `Trailing stop of BUY ${stop.id} active again: its SELL ${sellId} ${ending}.`,
-        `It sells ${stop.amount} ${asset} once a price reaches its stop price, ${stop.stopPrice},`,
-        `trailing from its peak, ${stop.highestPeak}`,
+        `Trailing stop of BUY ${stop.id} kept: its SELL ${sellId} ${ending}, and may still have gone through on the exchange, where`,
+        `Gekko follows it no more. Check that SELL there. The stop stays armed, selling ${selling}: if that SELL went through, the next`,
+        `one is refused for lack of free ${asset} and the stop removed, unless the account holds other ${asset} free, which it would sell`,
       ].join(' '),
     );
   }

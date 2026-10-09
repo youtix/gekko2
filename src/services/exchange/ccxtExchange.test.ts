@@ -1186,6 +1186,93 @@ describe('CCXTExchange', () => {
     });
   });
 
+  // What ccxt 4.5.39 throws for Binance's -1006, an internal error whose outcome Binance says is unknown: an OperationFailed, which is
+  // not a NetworkError. Left as it was, it ended the order as one that placed nothing, and a strategy placed the order again.
+  const unexpectedResponse = new ccxt.OperationFailed(
+    'binance {"code":-1006,"msg":"An unexpected response was received from the message bus. Execution status unknown."}',
+  );
+
+  describe.each`
+    method                 | call
+    ${'createLimitOrder'}  | ${(e: CCXTExchange) => e.createLimitOrder('BTC/USDT', 'BUY', 1, 100)}
+    ${'createMarketOrder'} | ${(e: CCXTExchange) => e.createMarketOrder('BTC/USDT', 'BUY', 1)}
+  `('$method, a creation the exchange fails without refusing the order', ({ call }) => {
+    const limits = { amount: { min: 0.1, max: 10 }, price: { min: 1, max: 1000 }, cost: { min: 10 } };
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(binanceConfig);
+      instance = (ccxt as any).binance.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits });
+      instance.fetchTicker.mockResolvedValue({ ask: 101, bid: 100, last: 100.5 });
+    });
+
+    describe.each`
+      description                                                   | failure
+      ${'an internal error of Binance (-1006, an OperationFailed)'} | ${unexpectedResponse}
+      ${'an answer ccxt could not read (a BadResponse)'}            | ${new ccxt.BadResponse('could not parse the response into json')}
+    `('with $description', ({ failure }) => {
+      beforeEach(() => {
+        instance.createOrder.mockRejectedValue(failure);
+      });
+
+      it('has sent the creation to the exchange only once', async () => {
+        await call(exchange).catch(() => undefined);
+        expect(instance.createOrder).toHaveBeenCalledOnce();
+      });
+
+      it('rejects with an OrderOutcomeUnknown: the order may be live', async () => {
+        await expect(call(exchange)).rejects.toBeInstanceOf(OrderOutcomeUnknown);
+      });
+
+      it('says that the failure is not a refusal, with the message of ccxt', async () => {
+        await expect(call(exchange)).rejects.toThrow(
+          `[EXCHANGE] binance answered the creation of an order on BTC/USDT with a failure that is not a refusal: ${failure.message}`,
+        );
+      });
+
+      it('keeps the ccxt error as the cause', async () => {
+        await expect(call(exchange)).rejects.toHaveProperty('cause', failure);
+      });
+    });
+
+    // A NetworkError keeps its own translation (see 'network errors'), and so do a refusal and any other ccxt error
+    const timeout = new ccxt.RequestTimeout('binance POST https://api.binance.com/api/v3/order request timed out (10000 ms)');
+    const rateLimit = new ccxt.RateLimitExceeded('binance {"code":-1003,"msg":"Too many requests queued."}');
+    const refusal = new ccxt.InsufficientFunds('binance Account has insufficient balance for requested action.');
+    const keyRefused = new ccxt.AuthenticationError('binance {"code":-2015,"msg":"Invalid API-key, IP, or permissions for action."}');
+    it.each`
+      description                                       | failure       | expected
+      ${'a timeout, a NetworkError'}                    | ${timeout}    | ${ExchangeNetworkError}
+      ${'a rate limit (-1003), a NetworkError'}         | ${rateLimit}  | ${ExchangeNetworkError}
+      ${'a refusal (-2010), an InsufficientFunds'}      | ${refusal}    | ${InvalidOrder}
+      ${'an API key refused (-2015), an ExchangeError'} | ${keyRefused} | ${ccxt.AuthenticationError}
+    `('rejects a creation failed with $description as before, not with an OrderOutcomeUnknown', async ({ failure, expected }) => {
+      instance.createOrder.mockRejectedValue(failure);
+      await expect(call(exchange)).rejects.toBeInstanceOf(expected);
+    });
+  });
+
+  // Nothing was sent: the ticker of a market order failed before its creation
+  it('rejects a market order whose ticker failed with an internal error of Binance as not sent, not as an outcome unknown', async () => {
+    const exchange = new CCXTExchange(binanceConfig);
+    const instance = (ccxt as any).binance.mock.instances.at(-1);
+    instance.market.mockReturnValue({ limits: { amount: { min: 0.1, max: 10 }, cost: { min: 10 } } });
+    instance.fetchTicker.mockRejectedValue(unexpectedResponse);
+    await expect(exchange.createMarketOrder('BTC/USDT', 'BUY', 1)).rejects.toThrow(
+      `[EXCHANGE] Market order not sent: ticker unavailable (${unexpectedResponse.message})`,
+    );
+  });
+
+  // A cancelation that fails so is not a creation: the order layer tells whether the order is still open (see Order.orderErrored)
+  it('rejects a cancelation failed with an internal error of Binance with that error, not an OrderOutcomeUnknown', async () => {
+    const exchange = new CCXTExchange(binanceConfig);
+    const instance = (ccxt as any).binance.mock.instances.at(-1);
+    instance.cancelOrder.mockRejectedValue(unexpectedResponse);
+    await expect(exchange.cancelOrder('BTC/USDT', '1')).rejects.toBe(unexpectedResponse);
+  });
+
   describe('network errors', () => {
     const limits = { amount: { min: 0.1, max: 10 }, price: { min: 1, max: 1000 }, cost: { min: 10 } };
     // A NetworkError: the exchange may have executed the request, only its response is lost

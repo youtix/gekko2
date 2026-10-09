@@ -1256,8 +1256,8 @@ describe('StrategyManager', () => {
             },
             exchange,
           });
-        /** Reports the error of the SELL `id` on BTC/USDT */
-        const fail = (id: UUID) =>
+        /** Reports the error of the SELL `id` on BTC/USDT, refused unless it may still be live on the exchange */
+        const fail = (id: UUID, mayBeLive = false) =>
           manager.onOrderErrored({
             order: {
               id,
@@ -1268,6 +1268,8 @@ describe('StrategyManager', () => {
               reason: 'Insufficient balance',
               orderCreationDate,
               orderErrorDate: 61000,
+              filled: 0,
+              mayBeLive,
             },
             exchange,
           });
@@ -1367,11 +1369,13 @@ describe('StrategyManager', () => {
           });
         });
 
-        // Ended without completing, the SELL left the position held, in part at least: the stop keeps protecting it
+        // Ended without completing, the SELL left the position held, in part at least: the stop keeps protecting it. So it does when that
+        // SELL may still be live on the exchange: nothing tells that it sold
         it.each`
-          outcome       | end
-          ${'canceled'} | ${cancel}
-          ${'errored'}  | ${fail}
+          outcome                                  | end
+          ${'canceled'}                            | ${cancel}
+          ${'errored'}                             | ${fail}
+          ${'errored, maybe live on the exchange'} | ${(id: UUID) => fail(id, true)}
         `('leaves the stop of the pair armed when a SELL it created is $outcome', ({ end }) => {
           armStop(ACTIVE_ID, symbol, { percentage: 2 });
           create(SELL_ID, { symbol, side: 'SELL', type: 'STICKY' });
@@ -1393,10 +1397,11 @@ describe('StrategyManager', () => {
 
         // Told apart from the SELLs the strategy created until its outcome arrives, the SELL of a stop is then forgotten
         it.each`
-          outcome        | end
-          ${'completed'} | ${(id: UUID) => complete(id, 'SELL', symbol, 0.5)}
-          ${'canceled'}  | ${cancel}
-          ${'errored'}   | ${fail}
+          outcome                                  | end
+          ${'completed'}                           | ${(id: UUID) => complete(id, 'SELL', symbol, 0.5)}
+          ${'canceled'}                            | ${cancel}
+          ${'errored'}                             | ${fail}
+          ${'errored, maybe live on the exchange'} | ${(id: UUID) => fail(id, true)}
         `('forgets the SELL of a stop once it is $outcome', ({ end }) => {
           armStop(ACTIVE_ID, symbol, { percentage: 2 });
           vi.mocked(randomUUID).mockReturnValueOnce(STOP_SELL_ID);
@@ -1414,13 +1419,18 @@ describe('StrategyManager', () => {
         const NEXT_SELL_ID: UUID = '5e115e11-0000-4000-8000-00000000000c';
         const DORMANT_ID: UUID = 'd0e1a000-0000-4000-8000-00000000000d';
         const OWN_SELL_ID: UUID = '5e115e11-0000-4000-8000-00000000000e';
+        /** The reason the order layer ends a creation lost on the network with: the SELL may have been placed all the same */
+        const CREATION_LOST = 'Outcome unknown: the order may be live on the exchange, check it before placing it again (Request timeout)';
         const exchange = { price: 48000, portfolio: new Map() };
         let listener: Mock;
 
         /** The stop of the BUY, as the trailing manager keeps it */
         const stop = () => manager['trailingStopManager'].getOrders().get(BUY_ID);
-        /** Reports the error of the SELL of the stop, with what it sold, if the event says */
-        const sellErrored = (filled?: number) =>
+        /**
+         * Reports the error of the SELL of the stop, refused for `reason` unless it may still be live on the exchange, with what it sold
+         * if the event says: the Trader always does, an event without it is read as no fill reported
+         */
+        const sellErrored = (filled?: number, { mayBeLive = false, reason = 'Insufficient balance' } = {}) =>
           manager.onOrderErrored({
             order: {
               id: SELL_ID,
@@ -1428,11 +1438,12 @@ describe('StrategyManager', () => {
               side: 'SELL',
               type: 'MARKET',
               amount: 0.5,
-              reason: 'Insufficient balance',
+              reason,
               orderCreationDate,
               orderErrorDate: 61000,
               ...(filled !== undefined && { filled }),
-            },
+              mayBeLive,
+            } as OrderErroredEvent['order'],
             exchange,
           });
         /** Reports the cancelation of the SELL of the stop, with what it sold */
@@ -1572,6 +1583,61 @@ describe('StrategyManager', () => {
           });
         });
 
+        // Its outcome unknown, that MARKET SELL may have executed, and rests on no book. Kept, the stop protects what it did not sell; if
+        // it did sell, the next SELL of the stop finds nothing to sell, and its refusal removes the stop. Removed at once, the stop left
+        // the position unprotected whenever the exchange lost its answer or was busy.
+        describe.each`
+          case                                         | sold   | reason               | amount | sale
+          ${'its creation lost on the network'}        | ${0}   | ${CREATION_LOST}     | ${0.5} | ${`errored, no fill reported (${CREATION_LOST})`}
+          ${'its poll failed for good after 0.2 sold'} | ${0.2} | ${'Order not found'} | ${0.3} | ${'errored after selling 0.2 BTC (Order not found)'}
+        `('once it errors, $case, and may still be live on the exchange', ({ sold, reason, amount, sale }) => {
+          beforeEach(() => {
+            vi.mocked(randomUUID).mockReturnValueOnce(NEXT_SELL_ID);
+            sellErrored(sold, { mayBeLive: true, reason });
+          });
+
+          it('makes the stop active again', () => {
+            expect(stop()?.status).toBe('active');
+          });
+
+          it(`sends a SELL of ${amount}, what is left, on the next minute at or below its stop price`, () => {
+            manager.onOneMinuteBucket(minute(48500, 48000));
+            expect(listener).toHaveBeenCalledExactlyOnceWith(
+              expect.objectContaining({ id: NEXT_SELL_ID, symbol, side: 'SELL', type: 'MARKET', amount }),
+            );
+          });
+
+          it('says at warning level that the stop is kept, that its SELL may have gone through, and what follows if it did', () => {
+            expect(stopWarnings()).toEqual([
+              [
+                'strategy',
+                `Trailing stop of BUY ${BUY_ID} kept: its SELL ${SELL_ID} ${sale}, and may still have gone through on the exchange, where Gekko follows it no more. Check that SELL there. The stop stays armed, selling ${amount} BTC once a price reaches its stop price, 49000, trailing from its peak, 50000: if that SELL went through, the next one is refused for lack of free BTC and the stop removed, unless the account holds other BTC free, which it would sell`,
+              ],
+            ]);
+          });
+
+          // That SELL went through after all: the next one, refused for lack of anything to sell, is read with the portfolio after it
+          it('removes the stop once its next SELL is refused, the portfolio after it showing nothing free', () => {
+            manager.onOneMinuteBucket(minute(48500, 48000));
+            manager.onOrderErrored({
+              order: {
+                id: NEXT_SELL_ID,
+                symbol,
+                side: 'SELL',
+                type: 'MARKET',
+                amount,
+                reason: 'Insufficient balance',
+                orderCreationDate: 121000,
+                orderErrorDate: 121000,
+                filled: 0,
+                mayBeLive: false,
+              },
+              exchange: { price: 48000, portfolio: new Map([['BTC', { free: 0, used: 0, total: 0 }]]) },
+            });
+            expect(stop()).toBeUndefined();
+          });
+        });
+
         // Nothing left to sell (by hand on the exchange), or an amount out of the limits of the market: its SELL is sent again on each
         // minute at or below the stop price, and the refusals count towards the circuit breaker, which stops the run
         it('stops the run once the SELL of a stop is refused maxConsecutiveErrors times in a row', () => {
@@ -1617,6 +1683,7 @@ describe('StrategyManager', () => {
                 orderCreationDate: createdAt,
                 orderErrorDate: 61000,
                 filled: 0,
+                mayBeLive: false,
               },
               exchange,
             });
@@ -1629,13 +1696,22 @@ describe('StrategyManager', () => {
         // Nothing is left for the stop to protect (sold by hand on the exchange, or by a SELL whose outcome was lost): active again, it
         // sent a SELL refused on each minute under its stop price, until the circuit breaker stopped the bot
         describe('once it ends without completing, by what the portfolio after it shows', () => {
-          /** Ends the SELL of the stop as `outcome` says, after selling `sold`, the portfolio after it holding `balance` of BTC, if any */
-          const endSell = (outcome: string, sold: number, price: number, balance?: BalanceDetail) => {
+          /**
+           * Ends the SELL of the stop as `outcome` says, after selling `sold`, the portfolio after it holding `balance` of BTC, if any:
+           * an error is a refusal for `reason`, unless it may still be live on the exchange
+           */
+          const endSell = (
+            outcome: string,
+            sold: number,
+            price: number,
+            balance?: BalanceDetail,
+            { mayBeLive = false, reason = 'Insufficient balance' } = {},
+          ) => {
             const portfolio = new Map(balance ? [['BTC', balance]] : []);
             const order = { id: SELL_ID, symbol, side: 'SELL', type: 'MARKET', amount: 0.5, orderCreationDate } as const;
             if (outcome === 'errors')
               manager.onOrderErrored({
-                order: { ...order, reason: 'Insufficient balance', orderErrorDate: 61000, filled: sold },
+                order: { ...order, reason, orderErrorDate: 61000, filled: sold, mayBeLive },
                 exchange: { price, portfolio },
               });
             else
@@ -1708,6 +1784,32 @@ describe('StrategyManager', () => {
             endSell('errors', 0, price, balance);
             expect(stop()?.status).toBe('active');
           });
+
+          // A SELL that may still be live is read by the portfolio after it as any other: what is free there is what the stop protects
+          it('makes the stop active again when its SELL may still be live and the portfolio after it shows enough to sell', () => {
+            endSell('errors', 0, 48000, { free: 0.0004, used: 0, total: 0.0004 }, { mayBeLive: true, reason: CREATION_LOST });
+            expect(stop()?.status).toBe('active');
+          });
+
+          // That SELL went through: the portfolio read once it errored shows the asset gone
+          describe('when its SELL may still be live and the portfolio after it shows nothing free', () => {
+            beforeEach(() => {
+              endSell('errors', 0, 48000, { free: 0, used: 0, total: 0 }, { mayBeLive: true, reason: CREATION_LOST });
+            });
+
+            it('removes the stop', () => {
+              expect(stop()).toBeUndefined();
+            });
+
+            it('says at warning level that nothing is left for the stop to protect', () => {
+              expect(stopWarnings()).toEqual([
+                [
+                  'strategy',
+                  `Trailing stop of BUY ${BUY_ID} removed: its SELL ${SELL_ID} errored, no fill reported (${CREATION_LOST}), and the portfolio after it shows 0 BTC free, too little to sell at the minimums of the market. Nothing is left for the stop to protect`,
+                ],
+              ]);
+            });
+          });
         });
 
         // The SELL already sent is the strategy's: a stop canceled is not brought back by its outcome
@@ -1726,6 +1828,16 @@ describe('StrategyManager', () => {
           it('does not bring it back when that SELL errors', () => {
             sellErrored();
             expect(stop()).toBeUndefined();
+          });
+
+          it('says nothing of it when that SELL errors and may still be live on the exchange', () => {
+            sellErrored(0, { mayBeLive: true, reason: CREATION_LOST });
+            expect(stopWarnings()).toEqual([]);
+          });
+
+          it('leaves the other stop of the pair armed when that SELL errors and may still be live on the exchange', () => {
+            sellErrored(0, { mayBeLive: true, reason: CREATION_LOST });
+            expect(manager['trailingStopManager'].getOrders().has(DORMANT_ID)).toBe(true);
           });
 
           it('cancels no other stop of the pair when that SELL completes: it sold what the stop protected', () => {
@@ -1761,8 +1873,11 @@ describe('StrategyManager', () => {
         const OUTCOME_UNKNOWN =
           'Outcome unknown: the order may be live on the exchange, check it before placing it again (Request timeout)';
         const exchange = { price: 50000, portfolio: new Map() };
-        /** Reports the error of the BUY `id` of 1, with what it filled, if the event says */
-        const fail = (id: UUID, reason: string, filled?: number) =>
+        /**
+         * Reports the error of the BUY `id` of 1, which may still be live on the exchange as `mayBeLive` says, with what it filled if
+         * the event says: the Trader always does, an event without it is read as no fill reported
+         */
+        const fail = (id: UUID, reason: string, filled: number | undefined, mayBeLive: boolean) =>
           manager.onOrderErrored({
             order: {
               id,
@@ -1774,7 +1889,8 @@ describe('StrategyManager', () => {
               orderCreationDate,
               orderErrorDate: 61000,
               ...(filled !== undefined && { filled }),
-            },
+              mayBeLive,
+            } as OrderErroredEvent['order'],
             exchange,
           });
 
@@ -1783,9 +1899,10 @@ describe('StrategyManager', () => {
           manager['createOrder']({ symbol, side: 'BUY', type: 'STICKY', amount: 1, trailing: { percentage: 2 } });
         });
 
+        // Its relaunch failed before it was placed: nothing of it is live
         describe('after it filled part of its amount', () => {
           beforeEach(() => {
-            fail(BUY_ID, 'Ticker unavailable (0.6 of 1 already filled)', 0.6);
+            fail(BUY_ID, 'Ticker unavailable (0.6 of 1 already filled)', 0.6, false);
           });
 
           it('arms its stop for what it filled', () => {
@@ -1820,6 +1937,27 @@ describe('StrategyManager', () => {
           });
         });
 
+        // Its relaunch lost on the network once it had filled 0.6: what it bought gets its stop, and the relaunch may fill more, which
+        // nothing follows any more
+        describe('after it filled part of its amount, when it may still be live on the exchange', () => {
+          const RELAUNCH_LOST = `${OUTCOME_UNKNOWN} (0.6 of 1 already filled)`;
+
+          beforeEach(() => {
+            fail(BUY_ID, RELAUNCH_LOST, 0.6, true);
+          });
+
+          it('arms its stop for what it filled', () => {
+            expect(manager['trailingStopManager'].getOrders().get(BUY_ID)?.amount).toBe(0.6);
+          });
+
+          it('says so at warning level, and that the rest of it may fill on the exchange without a stop', () => {
+            expect(warning).toHaveBeenCalledExactlyOnceWith(
+              'strategy',
+              `BUY ${BUY_ID} errored after it filled 0.6 of 1 BTC (${RELAUNCH_LOST}): its trailing stop is armed for that part, and the rest of it may still fill on the exchange, without a stop`,
+            );
+          });
+        });
+
         // Its outcome unknown, its creation lost on the network, it may have executed all the same: nothing tells what to arm (nor does a
         // fill that is not a number above 0), and kept pending the stop would never be armed, no completion following an error
         describe.each`
@@ -1830,7 +1968,7 @@ describe('StrategyManager', () => {
           ${'Infinity'} | ${Infinity}
         `('reporting $report', ({ filled }) => {
           beforeEach(() => {
-            fail(BUY_ID, OUTCOME_UNKNOWN, filled);
+            fail(BUY_ID, OUTCOME_UNKNOWN, filled, true);
           });
 
           it('arms no stop', () => {
@@ -1849,8 +1987,30 @@ describe('StrategyManager', () => {
           });
         });
 
+        // The exchange refused it: nothing executed, nor can, and the warning no longer says that it may have
+        describe('when the exchange refused it, nothing filled', () => {
+          beforeEach(() => {
+            fail(BUY_ID, 'Insufficient balance', 0, false);
+          });
+
+          it('arms no stop', () => {
+            expect(manager['trailingStopManager'].getOrders().size).toBe(0);
+          });
+
+          it('drops its pending stop', () => {
+            expect(manager['pendingTrailingStops'].has(BUY_ID)).toBe(false);
+          });
+
+          it('says at warning level that its stop is not armed, nothing filled', () => {
+            expect(warning).toHaveBeenCalledExactlyOnceWith(
+              'strategy',
+              `Trailing stop of BUY ${BUY_ID} not armed: the BUY errored, nothing filled (Insufficient balance)`,
+            );
+          });
+        });
+
         it('says nothing of a stop when an errored order asked for none', () => {
-          fail(OTHER_ID, 'Ticker unavailable (0.6 of 1 already filled)', 0.6);
+          fail(OTHER_ID, 'Ticker unavailable (0.6 of 1 already filled)', 0.6, false);
           expect(warning).not.toHaveBeenCalled();
         });
 
@@ -1904,9 +2064,10 @@ describe('StrategyManager', () => {
           ({ id, symbol, side: 'SELL', type: 'LIMIT', amount: 0.5, price: 55000, orderCreationDate }) as const;
         const cancelTakeProfit = (id: UUID) =>
           manager.onOrderCanceled({ order: { ...takeProfit(id), filled: 0, remaining: 0.5, orderCancelationDate: 61000 }, exchange });
-        const failTakeProfit = (id: UUID) =>
+        /** The error of the take-profit `id`, refused unless it may still be live on the exchange */
+        const failTakeProfit = (id: UUID, mayBeLive = false) =>
           manager.onOrderErrored({
-            order: { ...takeProfit(id), reason: 'Exchange unavailable', orderErrorDate: 61000, filled: 0 },
+            order: { ...takeProfit(id), reason: 'Exchange unavailable', orderErrorDate: 61000, filled: 0, mayBeLive },
             exchange,
           });
         const completeTakeProfit = (id: UUID) =>
@@ -1972,11 +2133,13 @@ describe('StrategyManager', () => {
             });
           });
 
-          // Canceled (moved, or given up) or errored, the take-profit left the position held: the stop protects it again
+          // Canceled (moved, or given up) or errored, the take-profit left the position held: the stop protects it again. So it does when
+          // that SELL may still be live on the exchange: no outcome of it will follow, and held, the stop would never trigger again
           describe.each`
-            outcome          | end                 | said
-            ${'is canceled'} | ${cancelTakeProfit} | ${'was canceled'}
-            ${'errors'}      | ${failTakeProfit}   | ${'errored'}
+            outcome                                            | end                                       | said
+            ${'is canceled'}                                   | ${cancelTakeProfit}                       | ${'was canceled'}
+            ${'errors'}                                        | ${failTakeProfit}                         | ${'errored'}
+            ${'errors, and may still be live on the exchange'} | ${(id: UUID) => failTakeProfit(id, true)} | ${'errored'}
           `('once that SELL $outcome, after it held back the stop', ({ end, said }) => {
             beforeEach(() => {
               manager.onOneMinuteBucket(minute(48500, 48000));
@@ -2088,6 +2251,7 @@ describe('StrategyManager', () => {
                 orderCreationDate,
                 orderErrorDate: 61000,
                 filled: 0,
+                mayBeLive: false,
               },
               exchange: { price: 48000, portfolio: new Map([['BTC', { free: 0, used: 0.5, total: 0.5 }]]) },
             });
@@ -2313,7 +2477,7 @@ describe('StrategyManager', () => {
           exchange: exchangeEvent(),
         }),
         onOrderErrored: (): OrderErroredEvent => ({
-          order: { ...order, orderErrorDate: 60000, reason: 'Insufficient balance', filled: 0.2 },
+          order: { ...order, orderErrorDate: 60000, reason: 'Insufficient balance', filled: 0.2, mayBeLive: false },
           exchange: exchangeEvent(),
         }),
       };

@@ -285,11 +285,15 @@ export class EventSubscriber extends Plugin {
       const [asset, currency] = symbol.split('/');
       const currentPrice = this.prices.get(symbol) ?? 0;
       const priceLine = price ? `Requested limit price: ${price} ${currency}` : `Current price: ${currentPrice} ${currency}`;
+      // An order leaves both amounts out when no answer of the exchange reported a fill (see OrderCanceledEvent): printed as they were,
+      // they read "undefined"
+      const fillLines = isNil(filled)
+        ? [`Filled amount: not reported / ${amount} ${asset}`]
+        : [`Filled amount: ${filled} / ${amount} ${asset}`, `Remaining amount: ${remaining} ${asset}`];
       return [
         `${side} ${type} order canceled (${id}) for ${symbol}`,
         `At time: ${toISOString(orderCancelationDate)}`,
-        `Filled amount: ${filled} / ${amount} ${asset}`,
-        `Remaining amount: ${remaining} ${asset}`,
+        ...fillLines,
         priceLine,
         '------',
       ].join('\n');
@@ -298,12 +302,14 @@ export class EventSubscriber extends Plugin {
 
   public onOrderErrored(payloads: OrderErroredEvent[]) {
     this.notify('order_error', payloads, ({ order }) => {
-      const { id, amount, side, type, reason, orderErrorDate, symbol } = order;
+      const { id, amount, side, type, reason, orderErrorDate, symbol, mayBeLive } = order;
       const [, currency] = symbol.split('/');
       const currentPrice = this.prices.get(symbol) ?? 0;
       return [
         `${side} ${type} order errored (${id}) for ${symbol}`,
         `Due to ${reason}`,
+        // The Trader follows it no more: only a look at the exchange tells whether it is there, and what it executed
+        ...(mayBeLive ? ['It may still be live on the exchange, where Gekko follows it no more: check it there'] : []),
         `At time: ${toISOString(orderErrorDate)}`,
         `Requested amount: ${amount}`,
         `Current price: ${currentPrice} ${currency}`,

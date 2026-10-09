@@ -33,7 +33,6 @@ import {
   getRebalanceOrderPrice,
   hasOnlyOneSide,
   inferPricePrecision,
-  mayBeLive,
   roundPrice,
   validateConfig,
 } from './gridBot.utils';
@@ -254,7 +253,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       // A rebalance used to be planned and placed again whatever the error: one whose outcome is unknown may be live on the exchange,
       // untracked, and both filled, the portfolio was rebalanced twice. No grid order is open yet: the run stops, for the user to
       // check that one order before starting again.
-      if (mayBeLive(order)) {
+      if (order.mayBeLive) {
         const plan = this.pendingRebalance;
         const rebalance = plan ? `The rebalance, a STICKY ${plan.side} of ${plan.amount},` : 'The rebalance';
         const untracked = `${rebalance} may be live on the exchange without GridBot tracking it: the grid is not built`;
@@ -272,8 +271,9 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
     // Any error used to place the order again. One that may be live on the exchange, where nothing tracks it any more, its creation
     // lost on the network or its poll failed for good, was doubled: two lots bought or sold where the level holds one, or the copy
-    // refused for want of the reserve the first one holds. Any other error is a refusal (see mayBeLive): placed again, as refused.
-    if (mayBeLive(order)) return this.leaveUntracked(level, order.reason, tools);
+    // refused for want of the reserve the first one holds. The order says whether it may be (OrderErroredEvent.mayBeLive); any other
+    // error is a refusal: placed again, as refused.
+    if (order.mayBeLive) return this.leaveUntracked(level, order.reason, tools);
     this.placeAgain(levelIndex, level.amount, order.reason, tools);
   }
 

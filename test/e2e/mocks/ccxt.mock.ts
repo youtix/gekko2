@@ -336,10 +336,12 @@ export class MockCCXTExchange {
 }
 
 /**
- * ccxt's error classes, with ccxt's own inheritance (OrderNotFound extends InvalidOrder, BadSymbol extends BadRequest), so that
- * translateCcxtError (src/services/exchange/exchange.utils.ts) can run its instanceof checks against the mocked module.
+ * ccxt's error classes, with ccxt's own inheritance (NetworkError extends OperationFailed, OrderNotFound extends InvalidOrder, BadSymbol
+ * extends BadRequest), so that translateCcxtError (src/services/exchange/exchange.utils.ts) and the creations of CCXTExchange can run
+ * their instanceof checks against the mocked module.
  */
-export class MockNetworkError extends Error {}
+export class MockOperationFailed extends Error {}
+export class MockNetworkError extends MockOperationFailed {}
 export class MockExchangeError extends Error {}
 export class MockInvalidOrder extends MockExchangeError {}
 export class MockOrderNotFound extends MockInvalidOrder {}
@@ -348,6 +350,7 @@ export class MockBadRequest extends MockExchangeError {}
 export class MockBadSymbol extends MockBadRequest {}
 
 const mockCcxtErrorClasses = {
+  OperationFailed: MockOperationFailed,
   NetworkError: MockNetworkError,
   ExchangeError: MockExchangeError,
   InvalidOrder: MockInvalidOrder,

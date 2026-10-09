@@ -20,7 +20,8 @@ export type TrailingStopState = {
    *   or below its stop price does not trigger it.
    * - selling: triggered, its MARKET SELL (sellOrderId) sent and not ended yet. It trails no more, and is kept until that SELL ends:
    *   completed, the stop is over; errored or canceled, it is active again, from the peak and the stop price it triggered at, for
-   *   what that SELL left unsold.
+   *   what that SELL left unsold. The StrategyManager removes it instead when the portfolio after that SELL shows nothing left to
+   *   protect.
    */
   status: 'dormant' | 'active' | 'selling';
   /**
