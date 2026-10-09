@@ -37,6 +37,36 @@ type Prices = Pick<Candle, 'low' | 'high' | 'close'>;
 const createBucket = (minute: number, { low, high, close }: Prices) =>
   new Map<TradingPair, Candle>([[SYMBOL, { start: START + minute * ONE_MINUTE, open: close, high, low, close, volume: 1 }]]);
 
+/** The simulated exchange of the backtest, which the orders reach through the injecter, once it has settled the first bucket */
+const startBacktest = async (firstBucket: Map<TradingPair, Candle>) => {
+  mockConfig.getWatch.mockReturnValue({
+    mode: 'backtest',
+    pairs: [{ symbol: SYMBOL, timeframe: '1m' }],
+    timeframe: '1m',
+    warmup: { candleCount: 0 },
+    assets: ['BTC'],
+    currency: 'USDT',
+    daterange: { start: START, end: START + 10 * ONE_MINUTE },
+  });
+  mockConfig.getExchange.mockReturnValue({ name: 'dummy-cex', exchangeSynchInterval: 600_000, orderSynchInterval: 1_000 });
+  mockConfig.getStrategy.mockReturnValue({});
+
+  const exchange = new DummyCentralizedExchange({
+    name: 'dummy-cex',
+    exchangeSynchInterval: 600_000,
+    orderSynchInterval: 1_000,
+    marketData: new Map([[SYMBOL, marketData]]),
+    simulationBalance: new Map([
+      ['BTC', 1],
+      ['USDT', 1_000],
+    ]),
+    initialTicker: new Map(),
+  });
+  injected.exchange = exchange;
+  await exchange.processOneMinuteBucket(firstBucket);
+  return exchange;
+};
+
 // The order is placed at the close of 100 of the first minute. The next candle never reaches it, and closes past it: the order is
 // moved one step beyond that close. The candle after reaches that new price, but not the first one.
 describe.each`
@@ -50,34 +80,9 @@ describe.each`
   let cancelOrder: MockInstance<DummyCentralizedExchange['cancelOrder']>;
 
   beforeEach(async () => {
-    mockConfig.getWatch.mockReturnValue({
-      mode: 'backtest',
-      pairs: [{ symbol: SYMBOL, timeframe: '1m' }],
-      timeframe: '1m',
-      warmup: { candleCount: 0 },
-      assets: ['BTC'],
-      currency: 'USDT',
-      daterange: { start: START, end: START + 10 * ONE_MINUTE },
-    });
-    mockConfig.getExchange.mockReturnValue({ name: 'dummy-cex', exchangeSynchInterval: 600_000, orderSynchInterval: 1_000 });
-    mockConfig.getStrategy.mockReturnValue({});
-
-    exchange = new DummyCentralizedExchange({
-      name: 'dummy-cex',
-      exchangeSynchInterval: 600_000,
-      orderSynchInterval: 1_000,
-      marketData: new Map([[SYMBOL, marketData]]),
-      simulationBalance: new Map([
-        ['BTC', 1],
-        ['USDT', 1_000],
-      ]),
-      initialTicker: new Map(),
-    });
-    injected.exchange = exchange;
+    exchange = await startBacktest(firstBucket);
     createLimitOrder = vi.spyOn(exchange, 'createLimitOrder');
     cancelOrder = vi.spyOn(exchange, 'cancelOrder');
-
-    await exchange.processOneMinuteBucket(firstBucket);
   });
 
   // As the Trader checks it: once the simulated exchange has settled the bucket (see PluginsStream)
@@ -100,7 +105,7 @@ describe.each`
     });
 
     it(`is placed at ${placedAt}`, () => {
-      expect(createLimitOrder).toHaveBeenCalledWith(SYMBOL, side, 1, expect.closeTo(placedAt, 8), expect.any(Function));
+      expect(createLimitOrder).toHaveBeenCalledWith(SYMBOL, side, 1, placedAt, expect.any(Function));
     });
 
     describe('when the next candle closes past it without reaching it', () => {
@@ -112,8 +117,9 @@ describe.each`
         expect(cancelOrder.mock.calls).toEqual([[SYMBOL, firstTransaction.id]]);
       });
 
+      // Worked out in decimal: in binary, 101.2 + 0.01 was 101.21000000000001 and 98.8 - 0.01 was 98.78999999999999
       it(`places it again one step beyond the close, at ${movedTo}, to be settled through the callback`, () => {
-        expect(createLimitOrder).toHaveBeenLastCalledWith(SYMBOL, side, 1, expect.closeTo(movedTo, 8), expect.any(Function));
+        expect(createLimitOrder).toHaveBeenLastCalledWith(SYMBOL, side, 1, movedTo, expect.any(Function));
       });
 
       it('does not end the order', () => {
@@ -129,8 +135,7 @@ describe.each`
           expect(terminalEvents).toEqual([ORDER_COMPLETED_EVENT]);
         });
 
-        // Placed at the close plus or minus price.min worked out in binary (101.2 + 0.01 is 101.21000000000001), it is summarized at
-        // the decimal it stands for
+        // At the price it was placed at: the simulated exchange fills a limit order at its own price
         it(`executes it at ${movedTo}`, async () => {
           const { price } = await order.createSummary();
           expect(price).toBe(movedTo);
@@ -193,5 +198,43 @@ describe.each`
       const relayed = addDeferredEmit.mock.calls.map(([event]) => event).filter(event => relayedEvents.includes(event));
       expect(relayed).toEqual([ORDER_COMPLETED_EVENT]);
     });
+  });
+});
+
+// A candle that reaches the price of the order exactly fills it. Worked out in binary, one step beyond the close was an ulp short of
+// that price (130.01 + 0.01 was 130.01999999999998, 129.99 - 0.01 was 129.98000000000002), which the simulated exchange took as it
+// was: the candle missed the order, and it was moved instead
+describe.each`
+  side      | close     | placedAt  | touch
+  ${'BUY'}  | ${130.01} | ${130.02} | ${{ low: 130.02, high: 130.5, close: 130.3 }}
+  ${'SELL'} | ${129.99} | ${129.98} | ${{ low: 129.5, high: 129.98, close: 129.7 }}
+`('A STICKY $side order placed in backtest one step beyond a close of $close', ({ side, close, placedAt, touch }) => {
+  let createLimitOrder: MockInstance<DummyCentralizedExchange['createLimitOrder']>;
+  let cancelOrder: MockInstance<DummyCentralizedExchange['cancelOrder']>;
+  let terminalEvents: string[];
+
+  beforeEach(async () => {
+    const exchange = await startBacktest(createBucket(0, { low: close, high: close, close }));
+    createLimitOrder = vi.spyOn(exchange, 'createLimitOrder');
+    cancelOrder = vi.spyOn(exchange, 'cancelOrder');
+    const order = new StickyOrder(SYMBOL, ORDER_ID, side, 1);
+    terminalEvents = [];
+    TERMINAL_EVENTS.forEach(event => order.on(event, () => terminalEvents.push(event)));
+    await order.launch();
+    // As the Trader checks it: once the simulated exchange has settled the bucket (see PluginsStream)
+    await exchange.processOneMinuteBucket(createBucket(1, touch));
+    await order.checkOrder();
+  });
+
+  it(`is placed at ${placedAt}`, () => {
+    expect(createLimitOrder).toHaveBeenCalledWith(SYMBOL, side, 1, placedAt, expect.any(Function));
+  });
+
+  it(`is completed by the next candle, which reaches ${placedAt} exactly`, () => {
+    expect(terminalEvents).toEqual([ORDER_COMPLETED_EVENT]);
+  });
+
+  it('is not moved', () => {
+    expect(cancelOrder).not.toHaveBeenCalled();
   });
 });

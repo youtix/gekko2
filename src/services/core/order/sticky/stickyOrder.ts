@@ -59,7 +59,7 @@ export class StickyOrder extends Order {
       // What is left, in decimal. In binary, 2.5 - 2.2 was 0.2999999999999998, which the exchange truncates to its step: 0.29 was
       // placed, one step short, and a remainder of exactly the market's minimum was refused, the order then taken for filled without it
       // (see handleCreateOrderError)
-      amount = addPrecise(this.amount, -this.getTotalFilled());
+      amount = addPrecise(this.amount, -this.getFilledAmount());
     } catch (err) {
       return this.orderErrored(toError(err));
     }
@@ -135,11 +135,13 @@ export class StickyOrder extends Order {
     }
   }
 
+  // One price.min beyond the best bid (ask), worked out in decimal. In binary, 130.01 + 0.01 was 130.01999999999998: the simulated
+  // exchange took the order at that price, so a candle down to 130.02 did not fill it, and the order was moved instead
   private async processStickyPrice() {
     const { bid, ask } = await this.exchange.fetchTicker(this.symbol);
     const marketData = this.exchange.getMarketData(this.symbol);
     const minimalPrice = marketData?.price?.min ?? 0;
-    return this.side === 'BUY' ? bid + minimalPrice : ask - minimalPrice;
+    return this.side === 'BUY' ? addPrecise(bid, minimalPrice) : addPrecise(ask, -minimalPrice);
   }
 
   /**
@@ -149,22 +151,15 @@ export class StickyOrder extends Order {
    * it again at the same price: a cancelation and a creation every orderSynchInterval, its priority in the queue lost each time,
    * and the order out of the book in between. So it moves only once it is no longer the best: a higher bid for a BUY, a lower ask
    * for a SELL. A lower bid (higher ask) leaves it where it is. The price compared is the one the exchange reports for the order,
-   * rounded to its tick, never a sum computed here (101.2 + 0.01 is 101.21000000000001 in floating point). The simulated exchange
-   * quotes the close as both bid and ask: a BUY moves once the close is above its price.
+   * rounded to its tick, never a sum computed here. The simulated exchange quotes the close as both bid and ask: a BUY moves once the
+   * close is above its price.
    */
   private isOutpriced(price: number, { bid, ask }: Ticker) {
     return this.side === 'BUY' ? bid > price : ask < price;
   }
 
   private isOrderPartiallyFilled() {
-    return !this.isOrderCompleted() && this.getTotalFilled() > 0;
-  }
-
-  // The fills of the transactions added up in decimal, a fill the exchange never reported counted as 0. Added up in binary, 0.02 and
-  // 0.07 made 0.09000000000000001, and the 0.01 left of an order of 0.1 came out as 0.009999999999999995, which the exchange truncated
-  // to nothing, even subtracted in decimal (see launch)
-  private getTotalFilled() {
-    return Array.from(this.transactions.values()).reduce((total, { filled }) => addPrecise(total, filled ?? 0), 0);
+    return !this.isOrderCompleted() && this.getFilledAmount() > 0;
   }
 
   /**
@@ -208,7 +203,7 @@ export class StickyOrder extends Order {
     if (!this.recordOrderUpdate(order)) return;
 
     const { status, remaining, price, timestamp } = order;
-    if (status === 'closed' || remaining === 0 || this.getTotalFilled() >= this.amount) return this.orderFilled();
+    if (status === 'closed' || remaining === 0 || this.getFilledAmount() >= this.amount) return this.orderFilled();
 
     // Accepted, but not completed yet: the transaction is still live, neither canceled nor to be placed again. The order stays
     // canceling, or the move waits for the transaction to be seen canceled (see isMovePending), and the next check carries on.
@@ -283,7 +278,7 @@ export class StickyOrder extends Order {
   // moves saw it: that part is executed.
   protected orderErrored(error: Error, mayBeLive?: boolean) {
     this.endMove();
-    const filled = this.getTotalFilled();
+    const filled = this.getFilledAmount();
     const reported = filled > 0 ? new Error(`${error.message} (${filled} of ${this.amount} already filled)`, { cause: error }) : error;
     super.orderErrored(reported, mayBeLive);
   }

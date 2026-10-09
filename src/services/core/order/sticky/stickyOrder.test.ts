@@ -125,6 +125,24 @@ describe('StickyOrder', () => {
       },
     );
 
+    // One price.min beyond the best bid (ask), worked out in decimal: in binary, 101.2 + 0.01 was 101.21000000000001 and 0.3 - 0.1 was
+    // 0.19999999999999998, the price the order was created at
+    it.each`
+      side      | bid      | ask      | marketMin | expectedPrice
+      ${'BUY'}  | ${101.2} | ${101.3} | ${0.01}   | ${101.21}
+      ${'SELL'} | ${0.1}   | ${0.3}   | ${0.1}    | ${0.2}
+    `(
+      'places an initial $side limit order at $expectedPrice given a bid of $bid, an ask of $ask and a price.min of $marketMin',
+      async ({ side, bid, ask, marketMin, expectedPrice }) => {
+        fakeExchange.fetchTicker.mockResolvedValue({ bid, ask });
+        fakeExchange.getMarketData.mockReturnValue({ price: { min: marketMin } });
+
+        await createOrder(side);
+
+        expect(fakeExchange.createLimitOrder).toHaveBeenCalledWith('BTC/USDT', side, 5, expectedPrice, expect.any(Function));
+      },
+    );
+
     it('creates additional orders using the remaining amount after fills', async () => {
       const order = await createOrder('SELL', 6); // Initial launch
       // Simulate partial fill on first order
@@ -1949,7 +1967,7 @@ describe('StickyOrder', () => {
         await moveAfterEachFill(amount, fills);
         fakeExchange.fetchOrder.mockResolvedValueOnce(state(`order-${placed.length}`, 'closed', { filled: placed.at(-1), remaining: 0 }));
         await order.checkOrder();
-        expect(order['getTotalFilled']()).toBe(amount);
+        expect(order.getFilledAmount()).toBe(amount);
       });
     });
   });
