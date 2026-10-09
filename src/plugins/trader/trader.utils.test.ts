@@ -1,7 +1,7 @@
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { describe, expect, it, vi } from 'vitest';
-import { computeOrderPricing, PortfolioUpdatesConfig, shouldEmitPortfolio } from './trader.utils';
+import { computeOrderPricing, getBuyBudget, PortfolioUpdatesConfig, shouldEmitPortfolio } from './trader.utils';
 
 // Mock logger
 vi.mock('@services/logger', () => ({
@@ -48,6 +48,22 @@ describe('trader.utils', () => {
     `('should return NaNs when $description', ({ price, amount }) => {
       const result = computeOrderPricing('BUY', price, amount, 0.5);
       expect(result).toEqual({ effectivePrice: NaN, base: NaN, fee: NaN, total: NaN });
+    });
+  });
+
+  // The currency an all-in BUY of that amount is sized from at that price: what it buys is 95 % of it, the 5 % left kept back for the
+  // fee. In binary, the cost of the last two comes out an ulp off (114.99999999999999 and 7.000000000000001), and so does their budget.
+  describe('getBuyBudget', () => {
+    it.each`
+      amount     | price  | budget
+      ${9.5}     | ${100} | ${1000}
+      ${4.75}    | ${100} | ${500}
+      ${2}       | ${95}  | ${200}
+      ${0.00095} | ${100} | ${0.1}
+      ${1.15}    | ${100} | ${121.05263157894737}
+      ${0.07}    | ${100} | ${7.36842105263158}
+    `('is $budget for a BUY of $amount at $price', ({ amount, price, budget }) => {
+      expect(getBuyBudget(amount, price)).toBe(budget);
     });
   });
 

@@ -1,3 +1,4 @@
+import { DEFAULT_FEE_BUFFER } from '@constants/order.const';
 import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
 import { Timeframe } from '@models/configuration.types';
 import { OrderSide } from '@models/order.types';
@@ -52,6 +53,15 @@ export const computeOrderPricing: ComputeOrderPricingFn = (side, price, amount, 
   // Exchange did not provide fee information, assuming no fees.
   return { effectivePrice: price, base, fee: 0, total: base };
 };
+
+/**
+ * The currency a BUY of `amount` at `price` may spend: the currency an all-in BUY of that amount is sized from, its cost at that price
+ * (worked out in decimal, see multiplyPrecise) and the share DEFAULT_FEE_BUFFER keeps back for the fee. Counted at its cost alone, a
+ * BUY would leave the BUYs after it nothing for its fee when the exchange takes it in the currency, as the simulated exchange does,
+ * nor for a price above the one it was sized at (a MARKET order executes at the market, a STICKY order follows it up): together they
+ * would spend more than is held.
+ */
+export const getBuyBudget = (amount: number, price: number): number => multiplyPrecise(amount, price) / (1 - DEFAULT_FEE_BUFFER);
 
 export const isEmptyPortfolio = (portfolio: Portfolio): boolean => {
   for (const balance of portfolio.values()) {

@@ -681,6 +681,11 @@ describe('Trader', () => {
       return emitCalls.find(call => call[0] === ORDER_INITIATED_EVENT)?.[1];
     };
     const getInitiatedOrder = () => getInitiatedEvent()?.order;
+    const getPlacedAmount = ({ id }: AdviceOrder) => getOrderInstance(id)?.amount;
+    const getInitiatedAmount = ({ id }: AdviceOrder) =>
+      (trader['addDeferredEmit'] as unknown as Mock).mock.calls.find(
+        ([event, { order }]) => event === ORDER_INITIATED_EVENT && order.id === id,
+      )?.[1].order.amount;
 
     beforeEach(() => {
       trader['prices'].set('BTC/USDT', 100);
@@ -816,11 +821,6 @@ describe('Trader', () => {
           ['ETH', { free: 2, used: 0, total: 2 }],
           ['USDT', { free: 1000, used: 0, total: 1000 }],
         ]);
-      const getPlacedAmount = ({ id }: AdviceOrder) => getOrderInstance(id)?.amount;
-      const getInitiatedAmount = ({ id }: AdviceOrder) =>
-        (trader['addDeferredEmit'] as unknown as Mock).mock.calls.find(
-          ([event, { order }]) => event === ORDER_INITIATED_EVENT && order.id === id,
-        )?.[1].order.amount;
 
       beforeEach(() => {
         trader['portfolio'] = balance(0.7992);
@@ -961,6 +961,168 @@ describe('Trader', () => {
         await trader.onStrategyCancelOrder([placed[0].id]);
         await trader.onStrategyCreateOrder([allInSell]);
         expect(getPlacedAmount(allInSell)).toBe(amount);
+      });
+    });
+
+    // Two all-in BUYs on one candle, as a strategy with two entry signals sends them, or a BUY then an all-in BUY: each was sized from
+    // the whole of the 1000 USDT read, and the second was refused for insufficient balance
+    describe('when BUYs are placed before the balance is read again', () => {
+      const buy = (id: number, amount?: number, type: AdviceOrder['type'] = 'MARKET', symbol: AdviceOrder['symbol'] = 'BTC/USDT') =>
+        buildAdvice({
+          id: `00000000-0000-4000-8000-00000000001${id}`,
+          side: 'BUY',
+          type,
+          amount,
+          symbol,
+          price: type === 'LIMIT' ? 95 : undefined,
+        });
+      const firstAllIn = buy(1);
+      const secondAllIn = buy(2);
+      const sell = (amount?: number) => buildAdvice({ id: '00000000-0000-4000-8000-000000000020', side: 'SELL', type: 'MARKET', amount });
+      const balance = (usdtFree: number) =>
+        new Map<string, BalanceDetail>([
+          ['BTC', { free: 0.7992, used: 0, total: 0.7992 }],
+          ['ETH', { free: 2, used: 0, total: 2 }],
+          ['USDT', { free: usdtFree, used: 0, total: usdtFree }],
+        ]);
+
+      beforeEach(() => {
+        trader['portfolio'] = balance(1000);
+        trader['prices'].set('ETH/USDT', 10);
+        fakeExchange.fetchTickers.mockResolvedValue({ 'BTC/USDT': { bid: 100 } });
+      });
+
+      describe('in one batch', () => {
+        beforeEach(async () => {
+          await trader.onStrategyCreateOrder([firstAllIn, secondAllIn]);
+        });
+
+        it.each`
+          order       | advice         | amount
+          ${'first'}  | ${firstAllIn}  | ${9.5}
+          ${'second'} | ${secondAllIn} | ${0}
+        `('places the $order for $amount', ({ advice, amount }) => {
+          expect(getPlacedAmount(advice)).toBe(amount);
+        });
+
+        it('relays what the first leaves as the amount of the second', () => {
+          expect(getInitiatedAmount(secondAllIn)).toBe(0);
+        });
+      });
+
+      // A BUY may spend its cost and the 5 % an all-in BUY keeps back for the fee, at the price of the order: for a LIMIT order the price
+      // asked for, 95 here, the market at 100
+      it.each`
+        description                                                       | before                                       | advice         | amount
+        ${'an all-in BUY for what a BUY of 4.75 leaves'}                  | ${[buy(3, 4.75)]}                            | ${secondAllIn} | ${4.75}
+        ${'an all-in BUY for what a LIMIT BUY of 2 at 95 leaves'}         | ${[buy(4, 2, 'LIMIT')]}                      | ${secondAllIn} | ${7.6}
+        ${'an all-in BUY for 0 once a BUY may spend more than was read'}  | ${[buy(5, 9.6)]}                             | ${secondAllIn} | ${0}
+        ${'an all-in BUY of BTC for 0 once an all-in BUY of ETH took it'} | ${[buy(6, undefined, 'MARKET', 'ETH/USDT')]} | ${secondAllIn} | ${0}
+        ${'a BUY as asked whatever the BUYs before may spend'}            | ${[firstAllIn]}                              | ${buy(7, 3)}   | ${3}
+        ${'an all-in BUY for the whole currency after a SELL'}            | ${[sell(0.5)]}                               | ${secondAllIn} | ${9.5}
+        ${'an all-in SELL for the whole asset after a BUY'}               | ${[firstAllIn]}                              | ${sell()}      | ${0.7992}
+      `('places $description', async ({ before, advice, amount }) => {
+        await trader.onStrategyCreateOrder([...before, advice]);
+        expect(getPlacedAmount(advice)).toBe(amount);
+      });
+
+      it.each`
+        before            | sized  | sent    | taken
+        ${[firstAllIn]}   | ${0}   | ${0}    | ${1000}
+        ${[buy(3, 4.75)]} | ${500} | ${4.75} | ${500}
+      `('warns of an all-in BUY sized from the $sized USDT the BUYs before it leave', async ({ before, sized, sent, taken }) => {
+        await trader.onStrategyCreateOrder([...before, secondAllIn]);
+        expect(logger.warning).toHaveBeenCalledWith(
+          'trader',
+          `[${secondAllIn.id}] All-in BUY MARKET order sized from ${sized} USDT: ${sent} BTC sent (1000 USDT free at the last synchronization, less ${taken} USDT for the BUYs placed since, the 5 % kept back for their fee included)`,
+        );
+      });
+
+      it('does not warn of an all-in BUY placed alone', async () => {
+        await trader.onStrategyCreateOrder([firstAllIn]);
+        expect(logger.warning).not.toHaveBeenCalled();
+      });
+
+      // The first takes the currency it was sized from, to the last digit: worked out again from the amount it was sized to, it comes out
+      // at 1000.0099999999999, and the second would be sized to 1.1e-15 BTC
+      it('places a second all-in BUY for 0 whatever the currency the first was sized from', async () => {
+        trader['portfolio'] = balance(1000.01);
+        trader['prices'].set('BTC/USDT', 97.3);
+        await trader.onStrategyCreateOrder([firstAllIn, secondAllIn]);
+        expect(getPlacedAmount(secondAllIn)).toBe(0);
+      });
+
+      // Refused by the exchange, it takes nothing from the currency
+      it.each`
+        amount
+        ${NaN}
+        ${Infinity}
+        ${0}
+        ${-0.5}
+      `('places an all-in BUY for what the BUYs before leave when one asks for $amount', async ({ amount }) => {
+        await trader.onStrategyCreateOrder([buy(5, amount), buy(3, 4.75), secondAllIn]);
+        expect(getPlacedAmount(secondAllIn)).toBe(4.75);
+      });
+
+      // A price of Infinity passes the Trader's check of the price: an all-in BUY at it is sized to 0, and the exchange refuses either
+      it.each`
+        description         | amount
+        ${'an all-in BUY'}  | ${undefined}
+        ${'a BUY of 2 BTC'} | ${2}
+      `('places an all-in BUY for the whole currency after $description at a price of Infinity', async ({ amount }) => {
+        await trader.onStrategyCreateOrder([buildAdvice({ ...buy(5, amount, 'LIMIT'), price: Infinity }), secondAllIn]);
+        expect(getPlacedAmount(secondAllIn)).toBe(9.5);
+      });
+
+      // Its read shows the first BUY, filled: taken from it a second time, that BUY would have left the next one short
+      describe('once a synchronization started after them has read the balance', () => {
+        beforeEach(async () => {
+          await trader.onStrategyCreateOrder([firstAllIn]);
+          fakeExchange.fetchBalance.mockResolvedValue(balance(50));
+          await trader['synchronize']();
+          await trader.onStrategyCreateOrder([secondAllIn]);
+        });
+
+        it('places the next all-in BUY from that balance alone', () => {
+          expect(getPlacedAmount(secondAllIn)).toBe(0.475);
+        });
+
+        it('does not warn of it', () => {
+          expect(logger.warning).not.toHaveBeenCalled();
+        });
+      });
+
+      // The balance read before them is still the one held
+      it('places the next all-in BUY for what the first leaves once a synchronization has failed to read the balance', async () => {
+        await trader.onStrategyCreateOrder([buy(3, 4.75)]);
+        fakeExchange.fetchBalance.mockRejectedValueOnce(new Error('network down'));
+        await trader['synchronize']().catch(noop);
+        await trader.onStrategyCreateOrder([secondAllIn]);
+        expect(getPlacedAmount(secondAllIn)).toBe(4.75);
+      });
+
+      // It read the balance before the BUY reached the exchange
+      it('places the next all-in BUY for what the first leaves once a synchronization started before them has read the balance', async () => {
+        const read = deferred<Portfolio>();
+        fakeExchange.fetchBalance.mockReturnValueOnce(read.promise);
+        const inFlight = trader['synchronize']();
+        await trader.onStrategyCreateOrder([buy(3, 4.75)]);
+        read.resolve(balance(1000));
+        await inFlight;
+        await trader.onStrategyCreateOrder([secondAllIn]);
+        expect(getPlacedAmount(secondAllIn)).toBe(4.75);
+      });
+
+      // The exchange gets the cancelation first, and releases what the canceled BUY reserved
+      it.each`
+        description                                               | placed                                      | amount
+        ${'the whole currency once the strategy cancels its BUY'} | ${[buy(4, 2, 'LIMIT')]}                     | ${9.5}
+        ${'what the BUY it does not cancel leaves'}               | ${[buy(4, 2, 'LIMIT'), buy(8, 2, 'LIMIT')]} | ${7.6}
+      `('places an all-in BUY for $description', async ({ placed, amount }) => {
+        await trader.onStrategyCreateOrder(placed);
+        await trader.onStrategyCancelOrder([placed[0].id]);
+        await trader.onStrategyCreateOrder([secondAllIn]);
+        expect(getPlacedAmount(secondAllIn)).toBe(amount);
       });
     });
 
