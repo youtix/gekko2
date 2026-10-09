@@ -50,6 +50,28 @@ describe('MACD', () => {
     macdIndicator.onNewCandle(candle);
     expect(macdIndicator.getResult()).toEqual(approximately(expected, 13));
   });
+
+  // A MACD that read the close whatever its src said, in one of its EMAs or in both, used to pass this file: no row set one. Each value
+  // here differs from the close's, and from a MACD with a single EMA on hl2
+  const macdHl2 = new MACD({ short: 3, long: 5, signal: 2, src: 'hl2' });
+  it.each`
+    candle                                                                                     | expected
+    ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}   | ${null}
+    ${{ close: 24, open: 81, high: 83.85720988022568, low: 21.142790119774318, volume: 814 }}  | ${null}
+    ${{ close: 75, open: 24, high: 76.94326596315126, low: 22.056734036848734, volume: 1064 }} | ${null}
+    ${{ close: 21, open: 75, high: 79.67167346434113, low: 16.328326535658874, volume: 330 }}  | ${null}
+    ${{ close: 34, open: 21, high: 34.711649023641215, low: 20.28835097635878, volume: 964 }}  | ${null}
+    ${{ close: 25, open: 34, high: 36.18138133787512, low: 22.818618662124877, volume: 214 }}  | ${{ macd: -8.716666666666676, signal: -9.375000000000007, hist: 0.6583333333333314 }}
+    ${{ close: 72, open: 25, high: 73.33035016836122, low: 23.669649831638775, volume: 860 }}  | ${{ macd: -3.6583333333333385, signal: -5.563888888888895, hist: 1.9055555555555568 }}
+    ${{ close: 92, open: 72, high: 94.97523624952838, low: 69.02476375047162, volume: 486 }}   | ${{ macd: 4.220833333333331, signal: 0.9592592592592553, hist: 3.261574074074076 }}
+    ${{ close: 99, open: 92, high: 101.5127586628106, low: 89.4872413371894, volume: 647 }}    | ${{ macd: 8.393749999999997, signal: 5.915586419753083, hist: 2.478163580246914 }}
+    ${{ close: 2, open: 99, high: 99.0804764241746, low: 1.9195235758253941, volume: 396 }}    | ${{ macd: 0.8857638888888886, signal: 2.5623713991769534, hist: -1.6766075102880649 }}
+    ${{ close: 86, open: 2, high: 86.08306699694582, low: 1.916933003054178, volume: 252 }}    | ${{ macd: -2.8478587962962933, signal: -1.0444487311385444, hist: -1.803410065157749 }}
+    ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${{ macd: 2.8822434413580282, signal: 1.5733460505258372, hist: 1.308897390832191 }}
+  `('should return $expected with src hl2 when candle high to $candle.high and low to $candle.low', ({ candle, expected }) => {
+    macdHl2.onNewCandle(candle);
+    expect(macdHl2.getResult()).toEqual(approximately(expected, 12));
+  });
 });
 
 //

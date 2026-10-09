@@ -55,6 +55,29 @@ describe('BollingerBands', () => {
     expect(bbands.getResult()).toEqual(approximately(expected, 13));
   });
 
+  // A middle of another kind than the sma, or multipliers other than 2, had no table on a window that moves. The deviation stays that
+  // of the closes around their simple mean, as in TA-Lib, and the bands are stdevUp and stdevDown of it from the ema middle. From the
+  // sixth candle, every row differs from an sma middle's, from a deviation around the middle and from swapped multipliers
+  const bbandsEma = new BollingerBands({ maType: 'ema', stdevUp: 1, stdevDown: 3 });
+  it.each`
+    candle                                                                                     | expected
+    ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}   | ${null}
+    ${{ close: 24, open: 81, high: 83.85720988022568, low: 21.142790119774318, volume: 814 }}  | ${null}
+    ${{ close: 75, open: 24, high: 76.94326596315126, low: 22.056734036848734, volume: 1064 }} | ${null}
+    ${{ close: 21, open: 75, high: 79.67167346434113, low: 16.328326535658874, volume: 330 }}  | ${null}
+    ${{ close: 34, open: 21, high: 34.711649023641215, low: 20.28835097635878, volume: 964 }}  | ${{ upper: 72.74490240804964, middle: 47, lower: -30.234707224148906 }}
+    ${{ close: 25, open: 34, high: 36.18138133787512, low: 22.818618662124877, volume: 214 }}  | ${{ upper: 59.74053027086603, middle: 39.666666666666664, lower: -20.554924145931437 }}
+    ${{ close: 72, open: 25, high: 73.33035016836122, low: 23.669649831638775, volume: 860 }}  | ${{ upper: 73.7905361944569, middle: 50.44444444444444, lower: -19.593830805592944 }}
+    ${{ close: 92, open: 72, high: 94.97523624952838, low: 69.02476375047162, volume: 486 }}   | ${{ upper: 92.44873846389518, middle: 64.29629629629629, lower: -20.16103020650037 }}
+    ${{ close: 99, open: 92, high: 101.5127586628106, low: 89.4872413371894, volume: 647 }}    | ${{ upper: 105.84152229475865, middle: 75.86419753086419, lower: -14.067776760819186 }}
+    ${{ close: 2, open: 99, high: 99.0804764241746, low: 1.9195235758253941, volume: 396 }}    | ${{ upper: 89.34266712008764, middle: 51.242798353909464, lower: -63.05680794462508 }}
+    ${{ close: 86, open: 2, high: 86.08306699694582, low: 1.916933003054178, volume: 252 }}    | ${{ upper: 98.06714741871889, middle: 62.82853223593964, lower: -42.8873133123981 }}
+    ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${{ upper: 104.01726706126834, middle: 68.55235482395976, lower: -37.842381887965985 }}
+  `('should return $expected with an ema middle, 1 deviation up and 3 down, when candle close to $candle.close', ({ candle, expected }) => {
+    bbandsEma.onNewCandle(candle);
+    expect(bbandsEma.getResult()).toEqual(approximately(expected, 12));
+  });
+
   // A middle of exactly 0 used to read as not ready: no bands on the second candle, and the previous candle's on the fourth, fifth and
   // last. A close is never 0 or negative, but the OBV that OBV feeds to its bands is
   const bbandsAroundZero = new BollingerBands({ period: 2 });

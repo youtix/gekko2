@@ -390,10 +390,36 @@ describe('Indicator parameters', () => {
   `('should take $defaults when $name is given no parameter', ({ name, defaults }) => {
     expect(series(create(name, {}))).toEqual(series(create(name, defaults)));
   });
+
+  // Given no parameter block at all rather than an empty one, an indicator takes the same defaults: the block defaults to an empty one
+  it.each`
+    name
+    ${'SMA'}
+    ${'EMA'}
+    ${'WilderSmoothing'}
+    ${'EMARibbon'}
+    ${'MACD'}
+    ${'PSAR'}
+    ${'Stochastic'}
+    ${'StochasticRSI'}
+    ${'TRIX'}
+    ${'WilliamsR'}
+    ${'ADXRibbon'}
+    ${'AO'}
+    ${'CCI'}
+    ${'RSI'}
+    ${'ATRCD'}
+    ${'BollingerBands'}
+    ${'EFI'}
+    ${'OBV'}
+  `('should take its defaults when $name is given no parameter block at all', ({ name }) => {
+    expect(series(create(name))).toEqual(series(create(name, {})));
+  });
 });
 
 // Each name a maType key takes stands for the moving average of that name. BollingerBands, EFI and Stochastic used to map the names to
-// the classes in a copy each, where a wrong class compiled unnoticed: each of their keys is checked here against that class, by name
+// the classes in a copy each, where a wrong class compiled unnoticed: each of their keys is checked here against that class, by name.
+// OBV and StochasticRSI hand theirs on, to the bands of their OBV and to the Stochastic of their RSI, and are checked the same way
 describe.each`
   maType    | average
   ${'sma'}  | ${'SMA'}
@@ -427,6 +453,21 @@ describe.each`
     const ds = smooth(dAverage, 3, ks);
     return { k: ks.map((k, index) => (ds[index] === null ? null : k)), d: ds };
   };
+  // And what OBV and StochasticRSI feed theirs: the OBV, the first volume then each volume added on a higher close and taken off on a
+  // lower one, which the zigzag never leaves unchanged, and the raw %K of the last 3 RSI values, which never hold still here either.
+  // StochasticRSI averages that raw %K over 1 candle into fastK, then fastK over fastDPeriod into fastD, both with its kind
+  const obvs: number[] = [];
+  candles.forEach(({ close, volume }, index) =>
+    obvs.push(index === 0 ? volume : obvs[index - 1] + Math.sign(close - candles[index - 1].close) * volume),
+  );
+  const rsis = series(create('RSI', { period: 5 })) as (number | null)[];
+  const rsiRawKs = rsis.map((rsi, index) => {
+    const window = rsis.slice(Math.max(0, index - 2), index + 1);
+    if (rsi === null || window.length < 3 || window.includes(null)) return null;
+    const lowest = Math.min(...(window as number[]));
+    const highest = Math.max(...(window as number[]));
+    return ((rsi - lowest) / (highest - lowest)) * 100;
+  });
 
   it.each`
     name                | key              | parameters                                            | field         | expected
@@ -434,6 +475,8 @@ describe.each`
     ${'EFI'}            | ${'maType'}      | ${{ period: 5 }}                                      | ${'smoothed'} | ${() => smooth(average, 5, forces)}
     ${'Stochastic'}     | ${'slowKMaType'} | ${{ fastKPeriod: 3, slowKPeriod: 3, slowDPeriod: 3 }} | ${'k'}        | ${() => stochastic(average, 'SMA').k}
     ${'Stochastic'}     | ${'slowDMaType'} | ${{ fastKPeriod: 3, slowKPeriod: 3, slowDPeriod: 3 }} | ${'d'}        | ${() => stochastic('SMA', average).d}
+    ${'OBV'}            | ${'maType'}      | ${{ period: 5 }}                                      | ${'ma'}       | ${() => smooth(average, 5, obvs)}
+    ${'StochasticRSI'}  | ${'slowMaType'}  | ${{ period: 5, fastKPeriod: 3, fastDPeriod: 3 }}      | ${'fastD'}    | ${() => smooth(average, 3, smooth(average, 1, rsiRawKs))}
   `('should smooth the $field of $name with the class its $key names', ({ name, key, parameters, field, expected }) => {
     const indicator = create(name, { ...parameters, [key]: maType });
     expect(series(indicator).map(result => (result === null ? null : (result as Record<string, number>)[field]))).toEqual(expected());
