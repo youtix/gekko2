@@ -811,18 +811,49 @@ describe('StrategyManager', () => {
         expect(strategy.onTrailingStopActivated).toHaveBeenCalledWith(state, manager['tools']);
       });
 
-      it('creates market order and forwards trigger back to strategy', () => {
-        const strategy = { onTrailingStopTriggered: vi.fn() };
-        manager['strategy'] = strategy as any;
-        completeWarmup(); // Orders wait for it
-        const state = { symbol: 'BTC/USDT', amount: 2 };
+      // The SELL of a stop is drawn an id of its own, under which it is relayed and its outcome comes back: given the id of the BUY
+      // whose stop it is, or another one, a strategy that adopts that SELL waits for an outcome that never comes
+      describe('when the trailing manager announces the trigger of a stop', () => {
+        const BUY_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000e1';
+        const SELL_ID: UUID = '5e115e11-0000-4000-8000-0000000000e2';
+        /** The stop as the trailing manager announces its trigger: selling, at the peak and the stop price it triggered at */
+        const state: TrailingStopState = {
+          id: BUY_ID,
+          symbol: 'BTC/USDT',
+          amount: 2,
+          config: { percentage: 2 },
+          status: 'selling',
+          highestPeak: 50000,
+          stopPrice: 49000,
+          createdAt: 61000,
+        };
+        let strategy: { onTrailingStopTriggered: Mock };
+        let listener: Mock;
 
-        const createOrderSpy = vi.spyOn(manager as any, 'createOrder');
-        manager['onTrailingStopTriggered'](state as any);
+        beforeEach(() => {
+          strategy = { onTrailingStopTriggered: vi.fn() };
+          manager['strategy'] = strategy as any;
+          completeWarmup(); // Orders wait for it
+          listener = vi.fn();
+          manager.on(STRATEGY_CREATE_ORDER_EVENT, listener);
+          vi.mocked(randomUUID).mockReturnValueOnce(SELL_ID);
+          manager['onTrailingStopTriggered'](state);
+        });
 
-        expect(createOrderSpy).toHaveBeenCalledWith({ symbol: 'BTC/USDT', side: 'SELL', type: 'MARKET', amount: 2 });
-        // The id comes from randomUUID mock 'db2254e3-c749-448c-b7b6-aa28831bbae7'
-        expect(strategy.onTrailingStopTriggered).toHaveBeenCalledWith(expect.any(String), state, manager['tools']);
+        it('relays a MARKET SELL of the amount of the stop, under the id it draws for it', () => {
+          expect(listener).toHaveBeenCalledExactlyOnceWith({
+            symbol: 'BTC/USDT',
+            side: 'SELL',
+            type: 'MARKET',
+            amount: 2,
+            id: SELL_ID,
+            orderCreationDate: candle.start + ONE_MINUTE,
+          });
+        });
+
+        it('gives onTrailingStopTriggered the id of that SELL, then the state of the stop, then the tools', () => {
+          expect(strategy.onTrailingStopTriggered).toHaveBeenCalledExactlyOnceWith(SELL_ID, state, manager['tools']);
+        });
       });
 
       // Given the state alone, these hooks could neither cancel a stop, log nor order unless the strategy had kept the tools of an
@@ -968,6 +999,41 @@ describe('StrategyManager', () => {
 
         it('arms the stop createOrder checked', () => {
           expect(manager['trailingStopManager'].getOrders().get(id)?.config).toEqual({ percentage: 2 });
+        });
+      });
+
+      // Created on one candle (two entries, or one in tranches), two BUYs are both pending until the Trader reports them, each with
+      // the stop it asked for
+      describe('when two BUYs asking for a stop are pending at once', () => {
+        const FIRST_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000d1';
+        const SECOND_ID: UUID = '0b0b0b0b-0000-4000-8000-0000000000d2';
+        /** The stops armed, in the order they were armed: the BUY of each, what it sells and its trailing */
+        const armedStops = () =>
+          [...manager['trailingStopManager'].getOrders().values()].map(({ id, amount, config }) => ({ id, amount, config }));
+
+        beforeEach(() => {
+          vi.mocked(randomUUID).mockReturnValueOnce(FIRST_ID).mockReturnValueOnce(SECOND_ID);
+          manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', amount: 0.5, trailing: { percentage: 2 } });
+          manager['createOrder']({ symbol, side: 'BUY', type: 'MARKET', amount: 0.3, trailing: { percentage: 3, trigger: 51000 } });
+        });
+
+        it('keeps the stop of each until its BUY completes', () => {
+          expect(manager['pendingTrailingStops']).toEqual(
+            new Map([
+              [FIRST_ID, { percentage: 2 }],
+              [SECOND_ID, { percentage: 3, trigger: 51000 }],
+            ]),
+          );
+        });
+
+        // Reported in the other order: the Trader relays each outcome as it comes
+        it('arms the stop of each, for what it filled, as each BUY completes', () => {
+          completeBuy(SECOND_ID, 0.3);
+          completeBuy(FIRST_ID, 0.5);
+          expect(armedStops()).toEqual([
+            { id: SECOND_ID, amount: 0.3, config: { percentage: 3, trigger: 51000 } },
+            { id: FIRST_ID, amount: 0.5, config: { percentage: 2 } },
+          ]);
         });
       });
 

@@ -52,15 +52,15 @@ describe('TrailingStopManager', () => {
   /* -------------------------------------------------------------------------- */
 
   describe('addOrder', () => {
-    it.each([
-      { desc: 'stores order as dormant', input: defaultOrder, check: (o: any) => expect(o?.status).toBe('dormant') },
-      { desc: 'initializes highestPeak to 0', input: defaultOrder, check: (o: any) => expect(o?.highestPeak).toBe(0) },
-      { desc: 'initializes stopPrice to 0', input: defaultOrder, check: (o: any) => expect(o?.stopPrice).toBe(0) },
-      { desc: 'sets activation price', input: defaultOrder, check: (o: any) => expect(o?.activationPrice).toBe(50000) },
-    ])('$desc', ({ input, check }) => {
-      manager.addOrder(input);
-      const order = manager.getOrders().get(defaultId);
-      check(order);
+    it.each`
+      desc                              | field                | value
+      ${'stores order as dormant'}      | ${'status'}          | ${'dormant'}
+      ${'initializes highestPeak to 0'} | ${'highestPeak'}     | ${0}
+      ${'initializes stopPrice to 0'}   | ${'stopPrice'}       | ${0}
+      ${'sets activation price'}        | ${'activationPrice'} | ${50000}
+    `('$desc', ({ field, value }) => {
+      manager.addOrder(defaultOrder);
+      expect(manager.getOrders().get(defaultId)).toHaveProperty(field, value);
     });
 
     it('does nothing when trailing config is missing', () => {
@@ -82,6 +82,21 @@ describe('TrailingStopManager', () => {
     `('refuses an amount of $amount', ({ amount }) => {
       manager.addOrder({ ...defaultOrder, amount });
       expect(manager.getOrders().size).toBe(0);
+    });
+
+    // The position the BUY opened is then left without a stop: the warning is all that says so
+    it.each`
+      amount      | shown
+      ${0}        | ${'0'}
+      ${-1}       | ${'-1'}
+      ${NaN}      | ${'NaN'}
+      ${Infinity} | ${'Infinity'}
+    `('warns that an amount of $amount is invalid', ({ amount, shown }) => {
+      manager.addOrder({ ...defaultOrder, amount });
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        'trailing stop',
+        `Cannot create trailing stop without a valid amount, current order amount: ${shown}`,
+      );
     });
 
     it('activates order directly if trigger is undefined', () => {
@@ -126,6 +141,21 @@ describe('TrailingStopManager', () => {
     `('arms a stop whose percentage is $percentage: $isArmed', ({ percentage, isArmed }) => {
       manager.addOrder({ ...defaultOrder, trailing: { percentage, trigger: 50000 } });
       expect(manager.getOrders().has(defaultId)).toBe(isArmed);
+    });
+
+    it.each`
+      percentage   | shown
+      ${0}         | ${'0'}
+      ${100}       | ${'100'}
+      ${-1}        | ${'-1'}
+      ${NaN}       | ${'NaN'}
+      ${undefined} | ${'undefined'}
+    `('warns that a percentage of $percentage is invalid', ({ percentage, shown }) => {
+      manager.addOrder({ ...defaultOrder, trailing: { percentage, trigger: 50000 } });
+      expect(warning).toHaveBeenCalledExactlyOnceWith(
+        'trailing stop',
+        `Invalid trailing percentage: ${shown}%. Must be between 0 and 100 exclusive.`,
+      );
     });
 
     it('emits TRAILING_STOP_ACTIVATED with the stop as it adds one without trigger', () => {
@@ -173,34 +203,31 @@ describe('TrailingStopManager', () => {
       manager.addOrder(defaultOrder);
     });
 
-    it.each([
-      { desc: 'stays dormant below trigger', high: 49999, low: 49000, expectedStatus: 'dormant' },
-      { desc: 'activates at trigger', high: 50000, low: 49500, expectedStatus: 'active' },
-      { desc: 'activates above trigger', high: 51000, low: 50500, expectedStatus: 'active' },
-    ])('$desc', ({ high, low, expectedStatus }) => {
+    it.each`
+      desc                             | high     | low      | status
+      ${'stays dormant below trigger'} | ${49999} | ${49000} | ${'dormant'}
+      ${'activates at trigger'}        | ${50000} | ${49500} | ${'active'}
+      ${'activates above trigger'}     | ${51000} | ${50500} | ${'active'}
+    `('$desc', ({ high, low, status }) => {
       manager.update(makeBucket('BTC/USDT', high, low, low));
-      expect(manager.getOrders().get(defaultId)?.status).toBe(expectedStatus);
+      expect(manager.getOrders().get(defaultId)?.status).toBe(status);
     });
 
-    it.each([
-      { desc: 'sets highestPeak on activation', high: 51000, low: 50500, check: (o: any) => expect(o?.highestPeak).toBe(51000) },
-      { desc: 'computes stopPrice on activation', high: 50000, low: 49500, check: (o: any) => expect(o?.stopPrice).toBe(49000) }, // 50000 * 0.98
-    ])('$desc', ({ high, low, check }) => {
+    // The stop price is 50000 * 0.98
+    it.each`
+      desc                                  | high     | low      | field            | value
+      ${'sets highestPeak on activation'}   | ${51000} | ${50500} | ${'highestPeak'} | ${51000}
+      ${'computes stopPrice on activation'} | ${50000} | ${49500} | ${'stopPrice'}   | ${49000}
+    `('$desc', ({ high, low, field, value }) => {
       manager.update(makeBucket('BTC/USDT', high, low, low));
-      const order = manager.getOrders().get(defaultId);
-      check(order);
+      expect(manager.getOrders().get(defaultId)).toHaveProperty(field, value);
     });
 
     it('emits TRAILING_STOP_ACTIVATED event on activation', () => {
       const listener = vi.fn();
       manager.on(TRAILING_STOP_ACTIVATED, listener);
-
       manager.update(makeBucket('BTC/USDT', 50000, 49000, 50000));
-
-      expect(listener).toHaveBeenCalledOnce();
-      const payload: TrailingStopState = listener.mock.calls[0][0];
-      expect(payload.id).toBe(defaultId);
-      expect(payload.status).toBe('active');
+      expect(listener).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: defaultId, status: 'active' }));
     });
 
     it('does not emit event if remains dormant', () => {
@@ -213,6 +240,14 @@ describe('TrailingStopManager', () => {
     it('ignores updates for other symbols', () => {
       manager.update(makeBucket('ETH/USDT', 60000, 59000, 59500));
       expect(manager.getOrders().get(defaultId)?.status).toBe('dormant');
+    });
+
+    // Each stop meets the candle of its own pair: a stop whose pair the bucket lacks is skipped, not the stops kept after it
+    it('activates a stop on a pair the bucket holds, kept after a stop on a pair it lacks', () => {
+      const ethId = 'e7e70000-0000-4000-8000-000000000001' as UUID;
+      manager.addOrder({ ...defaultOrder, id: ethId, symbol: 'ETH/USDT', trailing: { percentage: 2, trigger: 3000 } });
+      manager.update(makeBucket('ETH/USDT', 3100, 3050, 3050));
+      expect(manager.getOrders().get(ethId)?.status).toBe('active');
     });
   });
 
@@ -301,43 +336,48 @@ describe('TrailingStopManager', () => {
       manager.update(makeBucket('BTC/USDT', 50000, 49500, 50000));
     });
 
-    it.each([
-      // High 52000 -> stop price 50960, which the close (51000) stays above
-      { desc: 'updates peak when high > peak', high: 52000, low: 51000, expectedPeak: 52000 },
-      // Stop price 49000, which the low (49500) stays above
-      { desc: 'keeps peak when high < peak', high: 49500, low: 49500, expectedPeak: 50000 },
-    ])('$desc', ({ high, low, expectedPeak }) => {
+    // A high of 52000 makes a stop price of 50960, which the close (51000) stays above; the low of the other candle (49500) stays
+    // above the stop price of 49000
+    it.each`
+      desc                               | high     | low      | peak
+      ${'updates peak when high > peak'} | ${52000} | ${51000} | ${52000}
+      ${'keeps peak when high < peak'}   | ${49500} | ${49500} | ${50000}
+    `('$desc', ({ high, low, peak }) => {
       manager.update(makeBucket('BTC/USDT', high, low, low));
-      expect(manager.getOrders().get(defaultId)?.highestPeak).toBe(expectedPeak);
+      expect(manager.getOrders().get(defaultId)?.highestPeak).toBe(peak);
     });
 
-    it.each([
-      // High 52000 -> stop price 50960, which the close (51000) stays above
-      { desc: 'updates stopPrice when peak increases', high: 52000, low: 51000, expectedStop: 50960 },
-      // Stop price 49000, which the low (49500) stays above
-      { desc: 'keeps stopPrice when peak is same', high: 50000, low: 49500, expectedStop: 49000 },
-    ])('$desc', ({ high, low, expectedStop }) => {
+    // As above: neither candle reaches the stop price
+    it.each`
+      desc                                       | high     | low      | stopPrice
+      ${'updates stopPrice when peak increases'} | ${52000} | ${51000} | ${50960}
+      ${'keeps stopPrice when peak is same'}     | ${50000} | ${49500} | ${49000}
+    `('$desc', ({ high, low, stopPrice }) => {
       manager.update(makeBucket('BTC/USDT', high, low, low));
-      expect(manager.getOrders().get(defaultId)?.stopPrice).toBe(expectedStop);
+      expect(manager.getOrders().get(defaultId)?.stopPrice).toBe(stopPrice);
     });
 
-    it.each([
-      { desc: 'triggers when low <= stopPrice', low: 48000, shouldTrigger: true },
-      { desc: 'does not trigger when low > stopPrice', low: 49500, shouldTrigger: false },
-    ])('$desc', ({ low, shouldTrigger }) => {
-      const listener = vi.fn();
-      manager.on(TRAILING_STOP_TRIGGERED, listener);
+    // Triggered, the stop is kept until its SELL ends (see 'a stop that triggered')
+    describe.each`
+      desc                                       | low      | times | status
+      ${'triggers when low <= stopPrice'}        | ${48000} | ${1}  | ${'selling'}
+      ${'does not trigger when low > stopPrice'} | ${49500} | ${0}  | ${'active'}
+    `('$desc', ({ low, times, status }) => {
+      let listener: Mock;
 
-      manager.update(makeBucket('BTC/USDT', 50500, low, 50000));
+      beforeEach(() => {
+        listener = vi.fn();
+        manager.on(TRAILING_STOP_TRIGGERED, listener);
+        manager.update(makeBucket('BTC/USDT', 50500, low, 50000));
+      });
 
-      // Triggered, the stop is kept until its SELL ends (see 'a stop that triggered')
-      if (shouldTrigger) {
-        expect(listener).toHaveBeenCalledOnce();
-        expect(manager.getOrders().get(defaultId)?.status).toBe('selling');
-      } else {
-        expect(listener).not.toHaveBeenCalled();
-        expect(manager.getOrders().get(defaultId)?.status).toBe('active');
-      }
+      it(`emits TRAILING_STOP_TRIGGERED ${times} time(s)`, () => {
+        expect(listener).toHaveBeenCalledTimes(times);
+      });
+
+      it(`leaves the stop ${status}`, () => {
+        expect(manager.getOrders().get(defaultId)?.status).toBe(status);
+      });
     });
   });
 
@@ -397,12 +437,10 @@ describe('TrailingStopManager', () => {
       manager.addOrder({ ...defaultOrder, trailing: { percentage: 2 } });
     });
 
+    // Its low stays above the stop price of its open (48510), its close above that of its high (49000, 50000 * 0.98)
     it('updates highestPeak and stopPrice on first candle', () => {
-      // Its low stays above the stop price of its open (48510), its close above that of its high (49000)
       manager.update(makeBucket('BTC/USDT', 50000, 49500, 49500));
-      const order = manager.getOrders().get(defaultId);
-      expect(order?.highestPeak).toBe(50000);
-      expect(order?.stopPrice).toBe(49000); // 50000 * 0.98
+      expect(manager.getOrders().get(defaultId)).toEqual(expect.objectContaining({ highestPeak: 50000, stopPrice: 49000 }));
     });
 
     // Armed before it, the stop meets its first candle from the open: the first peak it trails, with no stop price before it
@@ -458,6 +496,21 @@ describe('TrailingStopManager', () => {
       manager.update(ohlc(49500, 50000, 49500, 50000)); // Peak 50000
       manager.update(ohlc(50000, 52000, 50000, 51500)); // Peak 52000
       expect(manager.getOrders().get(defaultId)?.stopPrice).toBe(50960);
+    });
+
+    // A stop is kept while it sells, and trails again once its SELL fails: the state its trigger was announced with is a copy too
+    it('keeps its 2% when a listener of its trigger sets the percentage of its state to 150', () => {
+      const sellId = '5e115e11-0000-4000-8000-000000000001' as UUID;
+      manager.on(TRAILING_STOP_TRIGGERED, (state: TrailingStopState) => {
+        state.config.percentage = 150;
+      });
+      manager.addOrder({ ...defaultOrder, trailing: { percentage: 2 } }); // Active at once
+      manager.update(ohlc(100, 100, 100, 100)); // Peak 100, stop price 98
+      manager.update(ohlc(99, 99, 97, 97.5)); // Triggered by its low
+      manager.setSellOrderId(defaultId, sellId);
+      manager.resumeSellingStop(sellId, 0); // Its SELL failed: active again
+      manager.update(ohlc(100, 150, 100, 149)); // Peak 150
+      expect(manager.getOrders().get(defaultId)?.stopPrice).toBe(147);
     });
   });
 
@@ -775,8 +828,13 @@ describe('TrailingStopManager', () => {
   describe('removeOrder', () => {
     it('removes existing order', () => {
       manager.addOrder(defaultOrder);
-      expect(manager.removeOrder(defaultId)).toBe(true);
+      manager.removeOrder(defaultId);
       expect(manager.getOrders().size).toBe(0);
+    });
+
+    it('returns true for existing order', () => {
+      manager.addOrder(defaultOrder);
+      expect(manager.removeOrder(defaultId)).toBe(true);
     });
 
     it('returns false for non-existent order', () => {
