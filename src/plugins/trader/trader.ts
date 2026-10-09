@@ -30,6 +30,7 @@ import { traderSchema } from './trader.schema';
 import { CheckOrderSummaryParams, TraderOrderMetadata } from './trader.types';
 import {
   computeOrderPricing,
+  getAllInBuyAmount,
   getBacktestModeIntervalSyncTime,
   getBuyBudget,
   PortfolioUpdatesConfig,
@@ -244,16 +245,17 @@ export class Trader extends Plugin {
 
   /**
    * The amount of an all-in BUY: what the currency left buys at the price of the order, less the share DEFAULT_FEE_BUFFER keeps back
-   * for the fee. Left is the currency the last synchronization read, less what the BUYs placed since may spend of it (see
-   * getBuyBudget), an all-in BUY all it was sized from. Each all-in BUY was sized from the whole of the currency read: two of them on
-   * one candle (two entry signals, or two pairs of one currency), or a BUY then an all-in BUY, each fitted while together they spent
-   * more than was held, and the second was refused, an error counting towards the circuit breaker. Sized from less than was read, it
-   * is said at warn level. Once nothing is left, it is sized to 0, which the limits of the market refuse, as they refuse an all-in
-   * SELL once the SELLs before it take the asset whole.
+   * for the fee, worked out in decimal (see getAllInBuyAmount): a whole number of steps of the market comes out as that number, where
+   * the exchange truncating the amount to its step placed it one step short. Left is the currency the last synchronization read, less
+   * what the BUYs placed since may spend of it (see getBuyBudget), an all-in BUY all it was sized from. Each all-in BUY was sized from
+   * the whole of the currency read: two of them on one candle (two entry signals, or two pairs of one currency), or a BUY then an
+   * all-in BUY, each fitted while together they spent more than was held, and the second was refused, an error counting towards the
+   * circuit breaker. Sized from less than was read, it is said at warn level. Once nothing is left, it is sized to 0, which the limits
+   * of the market refuse, as they refuse an all-in SELL once the SELLs before it take the asset whole.
    */
   private sizeAllInBuy({ id, type, symbol }: AdviceOrder, price: number, currency: FreeBalanceLeft) {
     const { read, taken, free } = currency;
-    const amount = (free / price) * (1 - DEFAULT_FEE_BUFFER);
+    const amount = getAllInBuyAmount(free, price);
     if (taken > 0) {
       const [assetName, currencyName] = symbol.split('/');
       const sized = `[${id}] All-in BUY ${type} order sized from ${free} ${currencyName}: ${amount} ${assetName} sent`;

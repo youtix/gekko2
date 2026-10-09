@@ -1026,10 +1026,31 @@ describe('Trader', () => {
         expect(getPlacedAmount(advice)).toBe(amount);
       });
 
+      // In binary, (currency / price) * 0.95 came out at 5.699999999999999, 7.598099999999999 and 4.499999999999999 BTC, which an
+      // exchange that truncates the amount to its step placed one step short (5.69999 BTC)
       it.each`
-        before            | sized  | sent    | taken
-        ${[firstAllIn]}   | ${0}   | ${0}    | ${1000}
-        ${[buy(3, 4.75)]} | ${500} | ${4.75} | ${500}
+        description                                          | read     | before                  | amount
+        ${'the 600 USDT read'}                               | ${600}   | ${[]}                   | ${5.7}
+        ${'the 799.8 USDT read'}                             | ${799.8} | ${[]}                   | ${7.5981}
+        ${'what a LIMIT BUY of 4 at 95 leaves of 1000 USDT'} | ${1000}  | ${[buy(9, 4, 'LIMIT')]} | ${5.7}
+        ${'what a BUY of 5 leaves of 1000 USDT'}             | ${1000}  | ${[buy(9, 5)]}          | ${4.5}
+      `('places an all-in BUY spending $description for $amount BTC', async ({ read, before, amount }) => {
+        trader['portfolio'] = balance(read);
+        await trader.onStrategyCreateOrder([...before, secondAllIn]);
+        expect(getPlacedAmount(secondAllIn)).toBe(amount);
+      });
+
+      it('relays the amount an all-in BUY is placed for, to the decimal', async () => {
+        trader['portfolio'] = balance(600);
+        await trader.onStrategyCreateOrder([secondAllIn]);
+        expect(getInitiatedAmount(secondAllIn)).toBe(5.7);
+      });
+
+      it.each`
+        before                  | sized  | sent    | taken
+        ${[firstAllIn]}         | ${0}   | ${0}    | ${1000}
+        ${[buy(3, 4.75)]}       | ${500} | ${4.75} | ${500}
+        ${[buy(9, 4, 'LIMIT')]} | ${600} | ${5.7}  | ${400}
       `('warns of an all-in BUY sized from the $sized USDT the BUYs before it leave', async ({ before, sized, sent, taken }) => {
         await trader.onStrategyCreateOrder([...before, secondAllIn]);
         expect(logger.warning).toHaveBeenCalledWith(

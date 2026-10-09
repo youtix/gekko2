@@ -4,10 +4,12 @@ import { Timeframe } from '@models/configuration.types';
 import { OrderSide } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
-import { multiplyPrecise } from '@services/core/order/order.utils';
-import { addPrecise } from '@utils/math/math.utils';
+import { addPrecise, multiplyPrecise, toSignificantDigits } from '@utils/math/math.utils';
 import { shiftDecimalPoint } from '@utils/math/round.utils';
 import { isNil } from 'lodash-es';
+
+/** The share of the currency an all-in BUY spends, the rest kept back for the fee (DEFAULT_FEE_BUFFER), worked out in decimal */
+const ALL_IN_BUY_SHARE = addPrecise(1, -DEFAULT_FEE_BUFFER);
 
 type OrderPricing = {
   /** per unit, post-fee */
@@ -61,14 +63,19 @@ export const computeOrderPricing: ComputeOrderPricingFn = (side, price, amount, 
  * nor for a price above the one it was sized at (a MARKET order executes at the market, a STICKY order follows it up): together they
  * would spend more than is held.
  */
-export const getBuyBudget = (amount: number, price: number): number => multiplyPrecise(amount, price) / (1 - DEFAULT_FEE_BUFFER);
+export const getBuyBudget = (amount: number, price: number): number => multiplyPrecise(amount, price) / ALL_IN_BUY_SHARE;
 
-export const isEmptyPortfolio = (portfolio: Portfolio): boolean => {
-  for (const balance of portfolio.values()) {
-    if (balance.total > 0) return false;
-  }
-  return true;
-};
+/**
+ * The amount an all-in BUY spending `currency` places at `price`: what the currency buys at that price, less the share
+ * DEFAULT_FEE_BUFFER keeps back for the fee (see getBuyBudget, its inverse). Worked out in decimal: the product exactly (see
+ * multiplyPrecise), the one division to 15 significant digits (see toSignificantDigits). In binary it came out an ulp short of a whole
+ * number of steps, which an exchange that truncates the amount to its step (ccxt, the simulated exchange) placed one step short: 600
+ * USDT at 100 gave 5.699999999999999 BTC, placed as 5.69999. The exact product alone is not enough: divided in binary, 17 USDT at 0.01
+ * give 1614.9999999999998. Rounded to the nearest, the amount can come out above the quotient, by a few parts in 10^15 at most, which
+ * the 5 % kept back for the fee covers many times over.
+ */
+export const getAllInBuyAmount = (currency: number, price: number): number =>
+  toSignificantDigits(multiplyPrecise(currency, ALL_IN_BUY_SHARE) / price);
 
 export const getBacktestModeIntervalSyncTime = (timeframe: Timeframe): number => {
   // Minimum 10 minutes to avoid excessive synchronization

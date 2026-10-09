@@ -71,11 +71,14 @@ export type Tools<T> = {
    *
    * `side` must be 'BUY' or 'SELL', and `type` 'MARKET', 'STICKY' or 'LIMIT', in upper case: ccxt spells them in lower case, which
    * only an untyped strategy can pass. `amount` and `price` must be numbers above 0, or left out. An amount left out makes the order
-   * all-in, sized by the Trader from the portfolio of its last synchronization: a BUY spends the currency free less the 5 % the Trader
-   * keeps back for the fee (DEFAULT_FEE_BUFFER), at the price of the order; a SELL sells the asset free, less what the SELLs placed
-   * since then take. A price left out is the last price of the pair: the limit of a LIMIT order, and what an all-in BUY is sized at.
-   * Anything else (NaN, 0, a negative number, Infinity, a quoted number) throws a GekkoError naming the field and what it accepts, and
-   * the order is not sent: the bot stops, even for an amount a strategy computed as 0, which used to come back as an order error.
+   * all-in, sized by the Trader from the portfolio of its last synchronization: a BUY spends the currency free, less what the BUYs
+   * placed since then may spend (each its cost at the price of its order plus the 5 % kept back for its fee, an all-in BUY all it was
+   * sized from), keeping back 5 % of it for the fee (DEFAULT_FEE_BUFFER), at the price of the order; a SELL sells the asset free, less
+   * what the SELLs placed since then take. An all-in order the orders before it leave nothing to is sized to 0, and refused by the
+   * limits of the market (onOrderErrored). A BUY with an amount is placed as asked. A price left out is the last price of the pair: the
+   * limit of a LIMIT order, and what an all-in BUY is sized at. Anything else (NaN, 0, a negative number, Infinity, a quoted number)
+   * throws a GekkoError naming the field and what it accepts, and the order is not sent: the bot stops, even for an amount a strategy
+   * computed as 0, which used to come back as an order error.
    *
    * A `trailing` is checked before anything is relayed: on a BUY only, with a percentage above 0 and below 100, a trigger above 0 or
    * left out, and no other key (a trigger misspelt `triger` armed a stop active at once). Anything else throws a GekkoError and the

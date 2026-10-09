@@ -1,7 +1,8 @@
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
+import { round } from '@utils/math/round.utils';
 import { describe, expect, it, vi } from 'vitest';
-import { computeOrderPricing, getBuyBudget, PortfolioUpdatesConfig, shouldEmitPortfolio } from './trader.utils';
+import { computeOrderPricing, getAllInBuyAmount, getBuyBudget, PortfolioUpdatesConfig, shouldEmitPortfolio } from './trader.utils';
 
 // Mock logger
 vi.mock('@services/logger', () => ({
@@ -64,6 +65,40 @@ describe('trader.utils', () => {
       ${0.07}    | ${100} | ${7.36842105263158}
     `('is $budget for a BUY of $amount at $price', ({ amount, price, budget }) => {
       expect(getBuyBudget(amount, price)).toBe(budget);
+    });
+  });
+
+  // 95 % of the currency at the price, 473.6842105263157 USDT being what a BUY of 5 at 100 leaves of 1000 (see getBuyBudget). In
+  // binary, (currency / price) * 0.95 came out an ulp short of the first three (5.699999999999999, 7.598099999999999 and
+  // 4.499999999999999). The exact product divided in binary still gave 4.499999999999999 for the third, and 1614.9999999999998 for the
+  // fourth. A quotient that does not end is given to 15 significant digits, and NaN stays NaN, for the exchange to refuse.
+  describe('getAllInBuyAmount', () => {
+    it.each`
+      currency             | price       | amount
+      ${600}               | ${100}      | ${5.7}
+      ${799.8}             | ${100}      | ${7.5981}
+      ${473.6842105263157} | ${100}      | ${4.5}
+      ${17}                | ${0.01}     | ${1615}
+      ${1000}              | ${3}        | ${316.666666666667}
+      ${1000}              | ${100}      | ${9.5}
+      ${0}                 | ${100}      | ${0}
+      ${1000}              | ${Infinity} | ${0}
+      ${NaN}               | ${100}      | ${NaN}
+    `('is $amount for $currency at $price', ({ currency, price, amount }) => {
+      expect(getAllInBuyAmount(currency, price)).toBe(amount);
+    });
+
+    // Truncated to the step of the market, as ccxt and the simulated exchange place an amount: an ulp short of a whole number of steps,
+    // the amount was placed one step short (5.69999 BTC)
+    it.each`
+      currency             | price   | decimals | placed
+      ${600}               | ${100}  | ${5}     | ${5.7}
+      ${799.8}             | ${100}  | ${8}     | ${7.5981}
+      ${473.6842105263157} | ${100}  | ${5}     | ${4.5}
+      ${17}                | ${0.01} | ${2}     | ${1615}
+      ${1000}              | ${3}    | ${5}     | ${316.66666}
+    `('is placed as $placed for $currency at $price on a step of $decimals decimals', ({ currency, price, decimals, placed }) => {
+      expect(round(getAllInBuyAmount(currency, price), decimals, 'down')).toBe(placed);
     });
   });
 
