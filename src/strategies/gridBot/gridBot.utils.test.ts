@@ -75,6 +75,29 @@ describe('gridBot.utils', () => {
     `('is 8 decimals (DEFAULT_PRICE_PRECISION) without a tick for a market stating $description', ({ marketData }) => {
       expect(inferPricePrecision(marketData)).toEqual({ priceDecimals: 8 });
     });
+
+    // Hyperliquid's tick depends on the price: precision.price is its tick at the price the markets were loaded at, 0.1 at 9990
+    it.each`
+      precision                                    | description              | expected
+      ${{ price: 0.1, priceSignificantDigits: 5 }} | ${'a tick of 0.1'}       | ${{ priceDecimals: 1, priceStep: 0.1, priceSignificantDigits: 5 }}
+      ${{ priceSignificantDigits: 5 }}             | ${'no tick: 8 decimals'} | ${{ priceDecimals: 8, priceSignificantDigits: 5 }}
+    `('reads the significant digits of a market whose tick depends on the price, with $description', ({ precision, expected }) => {
+      expect(inferPricePrecision({ precision })).toStrictEqual(expected);
+    });
+
+    it.each`
+      digits      | description
+      ${0}        | ${'0'}
+      ${-5}       | ${'a negative number'}
+      ${4.5}      | ${'a fraction'}
+      ${NaN}      | ${'a value that is not a number'}
+      ${Infinity} | ${'an infinite value'}
+    `('reads no significant digits from $description, which states no such rule', ({ digits }) => {
+      expect(inferPricePrecision({ precision: { price: 0.1, priceSignificantDigits: digits } })).toStrictEqual({
+        priceDecimals: 1,
+        priceStep: 0.1,
+      });
+    });
   });
 
   describe('inferAmountPrecision', () => {
@@ -143,6 +166,35 @@ describe('gridBot.utils', () => {
 
     it('returns 0 for a price that is not finite, without a step', () => {
       expect(roundPrice(Infinity, 2)).toBe(0);
+    });
+
+    // As Hyperliquid takes a price, 5 significant digits at most, an integer part of more digits kept whole, the tick at the price
+    // where it is coarser than the step. On a market loaded at 9990, a step of 0.1, 10000.4 was kept, which the exchange takes as 10000
+    describe('on a market that takes 5 significant digits in a price', () => {
+      it.each`
+        value            | decimals | step         | description                                                         | expected
+        ${10000.4}       | ${1}     | ${0.1}       | ${'from 10000 on, a tick of 1'}                                     | ${10000}
+        ${10000.5}       | ${1}     | ${0.1}       | ${'a tie upwards, as the exchange rounds it'}                       | ${10001}
+        ${9999.95}       | ${1}     | ${0.1}       | ${'under 10000, a tie on the step, upwards'}                        | ${10000}
+        ${9999.94}       | ${1}     | ${0.1}       | ${'under 10000, the step'}                                          | ${9999.9}
+        ${123456.7}      | ${1}     | ${0.1}       | ${'an integer part of 6 digits, kept whole'}                        | ${123457}
+        ${12.34567}      | ${1}     | ${0.1}       | ${'the step, coarser than the tick of 0.001 at 12.345'}             | ${12.3}
+        ${12.34567}      | ${8}     | ${undefined} | ${'without a step, the tick of 0.001'}                              | ${12.346}
+        ${0.00123456}    | ${8}     | ${undefined} | ${'without a step, the tick of 1e-7'}                               | ${0.0012346}
+        ${1.23456789e-7} | ${8}     | ${undefined} | ${'without a step, the 8 decimals, coarser than the tick of 1e-11'} | ${1.2e-7}
+        ${-10000.4}      | ${1}     | ${0.1}       | ${'a price under 0, at the step'}                                   | ${-10000.4}
+      `('rounds $value to $expected: $description', ({ value, decimals, step, expected }) => {
+        expect(roundPrice(value, decimals, step, 5)).toBe(expected);
+      });
+
+      it.each`
+        digits       | description
+        ${undefined} | ${'no significant digits'}
+        ${0}         | ${'0 significant digits'}
+        ${4.5}       | ${'a fraction of a digit'}
+      `('rounds 10000.4 to the step, 10000.4, on a market that states $description', ({ digits }) => {
+        expect(roundPrice(10000.4, 1, 0.1, digits)).toBe(10000.4);
+      });
     });
   });
 
@@ -268,6 +320,18 @@ describe('gridBot.utils', () => {
 
       expect(computeGridPrices(61235, halfPercent, priceDecimals, priceStep)).toEqual(expected);
     });
+
+    // Hyperliquid's BTC loaded at 9990, its tick of 0.1 stated there: the prices from 10000 on are whole units, as it takes them
+    it.each`
+      precision                                    | description                                           | expected
+      ${{ price: 0.1, priceSignificantDigits: 5 }} | ${'5 significant digits, 10000.5 and 10001 at 10001'} | ${[9998, 9998.5, 9999, 9999.5, 10000, 10001, 10001]}
+      ${{ price: 0.1 }}                            | ${'a tick of 0.1 alone'}                              | ${[9998, 9998.5, 9999, 9999.5, 10000, 10000.5, 10001]}
+    `('are $expected for a 2/4 grid spaced by 0.5 around 9999, on a market of $description', ({ precision, expected }) => {
+      const { priceDecimals, priceStep, priceSignificantDigits } = inferPricePrecision({ precision });
+      const halfUnit = { buyLevels: 2, sellLevels: 4, spacingType: 'fixed', spacingValue: 0.5 } as const;
+
+      expect(computeGridPrices(9999, halfUnit, priceDecimals, priceStep, priceSignificantDigits)).toEqual(expected);
+    });
   });
 
   describe('computeGridBounds', () => {
@@ -293,6 +357,11 @@ describe('gridBot.utils', () => {
 
     it('handles only sell levels', () => {
       expect(computeGridBounds(100, 0, 2, 2, 'fixed', 5)).toEqual({ min: 100, max: 110 });
+    });
+
+    // Its highest price, 10000.5, at the tick of 1 of 5 significant digits from 10000 on
+    it('returns the bounds rounded as the orders are, on a market of 5 significant digits', () => {
+      expect(computeGridBounds(9999, 2, 3, 1, 'fixed', 0.5, 0.1, 5)).toEqual({ min: 9998, max: 10001 });
     });
   });
 
@@ -467,6 +536,15 @@ describe('gridBot.utils', () => {
       expect(validateConfig(validParams, 100, { price })).toBeNull();
     });
 
+    // The start refuses it: Hyperliquid would take 10000.5 and 10001 as 10001
+    it('returns error naming the rule of a market that takes 5 significant digits in a price, its tick stated as 0.1', () => {
+      const halfUnit = { ...validParams, buyLevels: 2, sellLevels: 4, spacingValue: 0.5 };
+
+      expect(validateConfig(halfUnit, 9999, { precision: { price: 0.1, priceSignificantDigits: 5 } })).toBe(
+        'Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 0.5 (fixed) around the center price 9999, two adjacent prices of the grid would both round to 10001 at the price tick 1, the market taking 5 significant digits in a price (precision.priceSignificantDigits)',
+      );
+    });
+
     // Checked last, the tick leaves every configuration refused before refused with the same message
     it('returns error for price below exchange minimum before the one of a grid spaced under the tick', () => {
       const underTick = { ...validParams, spacingType: 'percent' as const, spacingValue: 0.001 };
@@ -528,6 +606,33 @@ describe('gridBot.utils', () => {
         'Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 0.0084 (percent) around the center price 99, two adjacent prices of the grid would both round to 98.98 at the price tick 0.01',
       );
     });
+
+    // Hyperliquid takes 5 significant digits in a price: on its BTC loaded at 9990, its tick stated as 0.1, a grid spaced by 0.5 around
+    // 9999 passed, while its prices 10000.5 and 10001 were both sent at 10001
+    describe('on a market that takes 5 significant digits in a price, its tick stated as 0.1', () => {
+      const halfUnit = { buyLevels: 2, sellLevels: 4, spacingType: 'fixed', spacingValue: 0.5 } as const;
+
+      it('is the error naming the rule for two prices its tick of 1 rounds together from 10000 on', () => {
+        expect(checkPriceTick(halfUnit, 9999, 1, 0.1, 5)).toBe(
+          'Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 0.5 (fixed) around the center price 9999, two adjacent prices of the grid would both round to 10001 at the price tick 1, the market taking 5 significant digits in a price (precision.priceSignificantDigits)',
+        );
+      });
+
+      it.each`
+        params                              | digits       | description
+        ${halfUnit}                         | ${undefined} | ${'spaced by 0.5, on a market that states no such rule'}
+        ${{ ...halfUnit, spacingValue: 1 }} | ${5}         | ${'spaced by 1, a tick apart from 10000 on: 10000, 10001, 10002 and 10003'}
+      `('is null for a 2/4 grid around 9999 $description', ({ params, digits }) => {
+        expect(checkPriceTick(params, 9999, 1, 0.1, digits)).toBeNull();
+      });
+
+      // At 100, the tick of 5 significant digits is the step, 0.01: the step rounded them together, as without the rule
+      it('is the error naming the step alone for two prices the step rounds together', () => {
+        expect(checkPriceTick({ buyLevels: 2, sellLevels: 2, spacingType: 'fixed', spacingValue: 0.004 }, 100, 2, 0.01, 5)).toBe(
+          'Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 0.004 (fixed) around the center price 100, two adjacent prices of the grid would both round to 100 at the price tick 0.01',
+        );
+      });
+    });
   });
 
   // A spacing under the round-trip fee used to be accepted without a word: every round trip of a level paid more in fees than it
@@ -567,6 +672,16 @@ describe('gridBot.utils', () => {
       ${100}      | ${'fixed'}   | ${0.01}      | ${{ precision: { price: 0.01 }, fee: { taker: 0.001 } }}  | ${'one tick on a market that states a taker fee only, which LIMIT orders resting in the book do not pay'}
     `('returns null for $description', ({ center, spacingType, spacingValue, marketData }) => {
       expect(checkRoundTripFee({ ...fivePerSide, spacingType, spacingValue }, center, marketData)).toBeNull();
+    });
+
+    // Its SELL at 10000.3 is placed at 10000, at the tick of 1 of 5 significant digits from 10000 on
+    it('names the narrowest level at its prices on a market that takes 5 significant digits in a price', () => {
+      const marketData: MarketData = { precision: { price: 0.1, priceSignificantDigits: 5 }, fee: { maker: 0.0004 } };
+      const oneLevelASide = { buyLevels: 1, sellLevels: 1, spacingType: 'fixed', spacingValue: 0.6, retryOnError: 3 } as const;
+
+      expect(checkRoundTripFee(oneLevelASide, 9999.7, marketData)).toBe(
+        underFee('0.6 (fixed)', '0.08003 %', 0.0004, '2 out of 2', 'selling at 10000, 0.003 % above its buy at 9999.7'),
+      );
     });
   });
 
@@ -626,6 +741,14 @@ describe('gridBot.utils', () => {
     `('is $expected for a $side planned at 100, on a market with $description', ({ side, marketData, expected }) => {
       expect(getRebalanceOrderPrice(side, 100, marketData)).toBe(expected);
     });
+
+    it.each`
+      side      | price       | description                                   | expected
+      ${'BUY'}  | ${101.2}    | ${'101.2 + 0.01 being 101.21000000000001'}    | ${101.21}
+      ${'SELL'} | ${61234.56} | ${'61234.56 - 0.01 being 61234.549999999996'} | ${61234.55}
+    `('is $expected for a $side planned at $price, worked out in decimal: $description', ({ side, price, expected }) => {
+      expect(getRebalanceOrderPrice(side, price, { price: { min: 0.01 } })).toBe(expected);
+    });
   });
 
   describe('getMakerFee', () => {
@@ -649,6 +772,15 @@ describe('gridBot.utils', () => {
     `('is $expected for 10 planned at 100, on a market that states $description', ({ marketData, expected }) => {
       expect(getRebalanceBuyCost(10, 100, marketData)).toBe(expected);
     });
+
+    // Reckoned in binary, the cost of a BUY the free currency paid exactly came out over it, and the strategy left the BUY out
+    it.each`
+      amount   | price     | marketData                                          | description                                               | expected
+      ${0.27}  | ${100}    | ${{ price: { min: 0.01 } }}                         | ${'0.27 at 100.01, 27.002700000000004 in binary'}         | ${27.0027}
+      ${0.019} | ${2500.5} | ${{ price: { min: 0.01 }, fee: { maker: 0.0004 } }} | ${'0.019 at 2500.51, the fee on top, 47.528693876000006'} | ${47.528693876}
+    `('is $expected, worked out in decimal: $description', ({ amount, price, marketData, expected }) => {
+      expect(getRebalanceBuyCost(amount, price, marketData)).toBe(expected);
+    });
   });
 
   describe('getGridFunding', () => {
@@ -663,6 +795,16 @@ describe('gridBot.utils', () => {
       ${10}  | ${{ buyLevels: 5, sellLevels: 2, spacingType: 'fixed', spacingValue: 5 }}          | ${{}}                             | ${'the BUYs priced above 0 only: 5, not 0 and below'}              | ${{ asset: 2, currency: 5 }}
     `('takes $expected a unit of the quantity of a level for $description', ({ center, grid, marketData, expected }) => {
       expect(getGridFunding(center, grid, marketData)).toEqual(expected);
+    });
+
+    // As they are placed, at the tick of 1 of 5 significant digits from 10000 on: 10048.5 is 10049 there
+    it('takes the BUYs at their prices on a market that takes 5 significant digits in a price: 10049 and 10047 around 10050', () => {
+      const buyOnly = { buyLevels: 2, sellLevels: 0, spacingType: 'fixed', spacingValue: 1.5 } as const;
+
+      expect(getGridFunding(10050, buyOnly, { precision: { price: 0.1, priceSignificantDigits: 5 } })).toEqual({
+        asset: 0,
+        currency: 20096,
+      });
     });
   });
 
@@ -754,19 +896,39 @@ describe('gridBot.utils', () => {
         },
       );
 
-      // A whole number of steps at 100.01, the price of the STICKY BUY: 4.0004 pays 0.04, while 0.07 costs 7.000700000000001 in
-      // floating point, which the simulator refuses for 7.0007 free
+      // A whole number of steps at 100.01, the price of the STICKY BUY, its cost worked out in decimal, as the simulator books it and
+      // the exchange charges it. Divided in binary, 7.0007 / 100.01 was 0.06999999999999999, a BUY of 0.06; and reckoned in binary,
+      // 0.27 cost 27.002700000000004, more than the 27.0027 free, which the strategy then left out for insufficient currency
       describe('on currency paying a whole number of amount steps', () => {
         const cents: MarketData = { price: { min: 0.01 }, precision: { price: 0.01, amount: 0.01 } };
 
-        it('plans a BUY of all the currency pays, not a step less: 0.04 for 4.0004', () => {
-          expect(computeRebalancePlan(100, 0, 4.0004, sellOnly(3), cents)?.amount).toBe(0.04);
+        it.each`
+          currency   | description                                                     | expected
+          ${4.0004}  | ${'0.04 for 4.0004'}                                            | ${0.04}
+          ${7.0007}  | ${'0.07 for 7.0007, 7.0007 / 100.01 being 0.06999999999999999'} | ${0.07}
+          ${27.0027} | ${'0.27 for 27.0027, which costs 27.002700000000004 in binary'} | ${0.27}
+        `('plans a BUY of all the currency pays, not a step less: $description', ({ currency, expected }) => {
+          expect(computeRebalancePlan(100, 0, currency, sellOnly(5), cents)?.amount).toBe(expected);
         });
 
-        it('plans a BUY the simulator takes, not a step more: 0.06 for 7.0007', () => {
-          const { amount } = computeRebalancePlan(100, 0, 7.0007, sellOnly(5), cents)!;
+        it.each`
+          currency              | description                                                                       | expected
+          ${7.0006}             | ${'0.06 for 7.0006, 0.07 costing 7.0007'}                                         | ${0.06}
+          ${29.002899999999997} | ${'0.28 for an ulp under 29.0029, though divided by 100.01 in binary it is 0.29'} | ${0.28}
+        `('plans a BUY the currency pays, not a step more: $description', ({ currency, expected }) => {
+          expect(computeRebalancePlan(100, 0, currency, sellOnly(5), cents)?.amount).toBe(expected);
+        });
 
-          expect(amount * 100.01).toBeLessThanOrEqual(7.0007);
+        // As the strategy checks it before sending it (see getRebalanceBuyCost): a plan it would leave out is no plan
+        it.each`
+          currency
+          ${7.0007}
+          ${27.0027}
+          ${51.0051}
+        `('plans a BUY whose cost $currency pays, as the strategy checks it', ({ currency }) => {
+          const { amount } = computeRebalancePlan(100, 0, currency, sellOnly(5), cents)!;
+
+          expect(getRebalanceBuyCost(amount, 100, cents)).toBeLessThanOrEqual(currency);
         });
       });
     });
@@ -992,6 +1154,14 @@ describe('gridBot.utils', () => {
       ${costMin}                                        | ${'the levels cost.min leaves out at the lowest price'} | ${{ quantity: 0.2, buyLevels: 1, sellLevels: 1, minimumAmount: 0.11 }}
     `('sizes $description', ({ grid, expected }) => {
       expect(sizeOf(grid)).toEqual(expected);
+    });
+
+    // Its BUYs are placed at 10049 and 10047, 10048.5 rounded to the tick of 1 of 5 significant digits: sized at 10048.5, 1 a level
+    // costs 20096, more than the 20095.5 free
+    it('sizes BUYs at the prices they are placed at, on a market that takes 5 significant digits in a price: 0.99 for 20095.5', () => {
+      const rule: MarketData = { precision: { price: 0.1, amount: 0.01, priceSignificantDigits: 5 } };
+
+      expect(deriveLevelQuantity(10050, 0, 20095.5, 2, 0, 1, 'fixed', 1.5, rule, 0.1, 5).quantity).toBe(0.99);
     });
 
     // The simulator charges the maker fee in currency on top of each BUY. Sized on the prices alone, the BUYs of a grid limited by its

@@ -3,7 +3,7 @@ import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { checkOrderPrice } from '@utils/market/market.utils';
 import { addPrecise } from '@utils/math/math.utils';
-import { round } from '@utils/math/round.utils';
+import { countDecimals, round } from '@utils/math/round.utils';
 import { minBy } from 'lodash-es';
 import { DEFAULT_AMOUNT_PRECISION, DEFAULT_PRICE_PRECISION, EMPTY_BALANCE } from './gridBot.const';
 import { GridBotStrategyParams, GridBounds, GridSize, GridSpacingType, OutOfRangeSide, RebalancePlan } from './gridBot.types';
@@ -29,19 +29,26 @@ export const getMakerFee = (marketData: MarketData): number => marketData.fee?.m
 
 /**
  * The price the rebalance order, planned at `price`, is placed at: GridBot places it as a STICKY order, which StickyOrder prices one
- * minimum price (price.min) above the bid for a BUY, below the ask for a SELL, the bid and the ask being that price here.
+ * minimum price (price.min) above the bid for a BUY, below the ask for a SELL, the bid and the ask being that price here. Worked out in
+ * decimal: added in binary, 101.2 + 0.01 was 101.21000000000001, and 61234.56 - 0.01 was 61234.549999999996.
  */
 export const getRebalanceOrderPrice = (side: OrderSide, price: number, marketData: MarketData): number => {
   const minimumPrice = marketData.price?.min ?? 0;
-  return side === 'BUY' ? price + minimumPrice : price - minimumPrice;
+  return addPrecise(price, side === 'BUY' ? minimumPrice : -minimumPrice);
 };
 
 /**
  * What a rebalance BUY of `amount`, planned at `price`, takes from the free currency: its STICKY order's price (see
- * getRebalanceOrderPrice), and the maker fee on top (see getMakerFee).
+ * getRebalanceOrderPrice), and the maker fee on top (see getMakerFee). Worked out in decimal, as the simulator books it and the
+ * exchange charges it, the product rounded to the decimals of its factors, as computeLevelPrice rounds a percent step: exact while it
+ * has about 15 significant digits or fewer. In binary, 0.27 at 100.01 cost 27.002700000000004: a sell-only grid holding 27.0027 USDT
+ * planned a BUY of 0.27, then left it out for insufficient currency, and stopped for an insufficient portfolio.
  */
-export const getRebalanceBuyCost = (amount: number, price: number, marketData: MarketData): number =>
-  amount * getRebalanceOrderPrice('BUY', price, marketData) * (1 + getMakerFee(marketData));
+export const getRebalanceBuyCost = (amount: number, price: number, marketData: MarketData): number => {
+  const orderPrice = getRebalanceOrderPrice('BUY', price, marketData);
+  const withFee = addPrecise(1, getMakerFee(marketData));
+  return round(amount * orderPrice * withFee, getDecimals(amount) + getDecimals(orderPrice) + getDecimals(withFee));
+};
 
 /**
  * A market limit is a bound only as a finite number above 0: Binance disables a filter bound by setting it to 0 (see market.utils). So
@@ -56,14 +63,38 @@ const toBound = (limit?: number): number | undefined => (limit !== undefined && 
 const getDecimalStep = (decimals: number): number => Number(`1e-${decimals}`);
 
 /**
- * The decimals of a number as String writes it, as round reads them: the fewest that round leaves the number as it is at. 2 for 0.01
- * and for 0.25, 8 for 1e-8, 0 for 1, for 10 and for a number that is not finite. Read through round, GridBot counts decimals as the
- * rest of the code does: a count of its own, the third in the code, gave a number that is not finite 8 decimals.
+ * The decimals of a number as String writes it, as round reads them (see countDecimals): 2 for 0.01 and for 0.25, 8 for 1e-8, 0 for 1,
+ * for 10, where countDecimals counts -1, and for a number that is not finite. A count of its own, the third in the code, gave a number
+ * that is not finite 8 decimals.
  */
-const getDecimals = (value: number): number => {
-  let decimals = 0;
-  while (Number.isFinite(value) && round(value, decimals) !== value) decimals++;
-  return decimals;
+const getDecimals = (value: number): number => (Number.isFinite(value) ? Math.max(countDecimals(value), 0) : 0);
+
+/**
+ * The significant digits of a market whose tick depends on the price (see MarketData.precision.priceSignificantDigits): a whole number
+ * above 0, undefined for any other value, which states no such rule
+ */
+const toSignificantDigits = (digits?: number): number | undefined =>
+  digits !== undefined && Number.isInteger(digits) && digits > 0 ? digits : undefined;
+
+/**
+ * The exponent of the first significant digit of a price above 0, read from the digits String writes: 3 for 1234.5, -3 for 0.0012345.
+ * Math.log10 rounds a price just under a power of ten up to it: 999.9999999999999 would read as 1000.
+ */
+const getFirstDigitExponent = (price: number): number => {
+  const [mantissa, exponent = '0'] = String(price).split('e');
+  const [integer, fraction = ''] = mantissa.split('.');
+  return (integer !== '0' ? integer.length - 1 : -(fraction.search(/[1-9]/) + 1)) + Number(exponent);
+};
+
+/**
+ * The tick at a price of a market that takes `priceSignificantDigits` significant digits in a price, an integer part of more digits
+ * being kept whole: one unit of its last significant digit, 0.001 at 12.345, 0.1 at 1234.5 and 1 from 10000 on, at 5 digits.
+ * Undefined without the rule, or for a price that is not a finite number above 0.
+ */
+const getSignificantTick = (price: number, priceSignificantDigits?: number): number | undefined => {
+  const digits = toSignificantDigits(priceSignificantDigits);
+  if (!digits || !(price > 0) || !Number.isFinite(price)) return undefined;
+  return getDecimalStep(Math.max(digits - 1 - getFirstDigitExponent(price), 0));
 };
 
 /**
@@ -101,10 +132,16 @@ export const getMaximumAmount = (price: number, marketData: MarketData): number 
  * The precision of the market's prices: its tick (precision.price) and the decimals of that tick. A market that states no tick has its
  * prices rounded to DEFAULT_PRICE_PRECISION decimals, without a step, which the strategy warns of. The decimals used to be read from
  * the close then: a close of 100 put the prices of a grid spaced by 0.5 % at whole units, 99, 99, 100, 100, 101 and 101.
+ * With the significant digits of a market whose tick depends on the price (precision.priceSignificantDigits, Hyperliquid's), which
+ * roundPrice rounds each price with.
  */
-export const inferPricePrecision = (marketData: MarketData): { priceDecimals: number; priceStep?: number } => {
+export const inferPricePrecision = (
+  marketData: MarketData,
+): { priceDecimals: number; priceStep?: number; priceSignificantDigits?: number } => {
   const priceStep = toBound(marketData.precision?.price);
-  return priceStep ? { priceDecimals: getDecimals(priceStep), priceStep } : { priceDecimals: DEFAULT_PRICE_PRECISION };
+  const priceSignificantDigits = toSignificantDigits(marketData.precision?.priceSignificantDigits);
+  const precision = priceStep ? { priceDecimals: getDecimals(priceStep), priceStep } : { priceDecimals: DEFAULT_PRICE_PRECISION };
+  return priceSignificantDigits ? { ...precision, priceSignificantDigits } : precision;
 };
 
 /**
@@ -122,10 +159,16 @@ export const inferAmountPrecision = (marketData: MarketData): number => {
  * step of 0.01, 1.005 / 0.01 being 100.49999999999999. A step of one unit of its last decimal (0.01), as exchanges state their tick,
  * rounds the price to those decimals. A step of several (0.05, 0.25) takes the nearest of the multiples around the binary quotient,
  * which can be one off, the distances measured in decimal. A price that is not a finite number is 0.
+ * On a market that takes `priceSignificantDigits` significant digits in a price, the price is rounded to the tick at that price where
+ * it is coarser than the step (see getSignificantTick), as the exchange rounds it. Rounded to the step alone, as precision.price states
+ * it at the price the markets were loaded at, two prices a step apart above the next power of ten were sent at one price: on Hyperliquid
+ * loaded at 9990, a step of 0.1, 10000.5 and 10001 were both sent at 10001.
  */
-export const roundPrice = (value: number, priceDecimals: number, priceStep?: number): number => {
+export const roundPrice = (value: number, priceDecimals: number, priceStep?: number, priceSignificantDigits?: number): number => {
   if (!Number.isFinite(value)) return 0;
   const step = toBound(priceStep);
+  const significantTick = getSignificantTick(value, priceSignificantDigits);
+  if (significantTick && significantTick > (step ?? getDecimalStep(priceDecimals))) return round(value, getDecimals(significantTick));
   if (!step || step === getDecimalStep(priceDecimals)) return round(value, priceDecimals);
 
   const stepDecimals = getDecimals(step);
@@ -153,6 +196,7 @@ export const roundAmount = (value: number, amountDecimals: number): number => {
  * @param spacingType - Type of spacing calculation
  * @param spacingValue - Spacing parameter value
  * @param priceStep - Optional price step for tick rounding
+ * @param priceSignificantDigits - Optional significant digits of a market whose tick depends on the price (see roundPrice)
  */
 export const computeLevelPrice = (
   centerPrice: number,
@@ -161,6 +205,7 @@ export const computeLevelPrice = (
   spacingType: GridSpacingType,
   spacingValue: number,
   priceStep?: number,
+  priceSignificantDigits?: number,
 ): number => {
   if (levelIndex === 0) return centerPrice;
 
@@ -190,7 +235,7 @@ export const computeLevelPrice = (
     }
   }
 
-  return roundPrice(price, priceDecimals, priceStep);
+  return roundPrice(price, priceDecimals, priceStep, priceSignificantDigits);
 };
 
 /**
@@ -202,10 +247,11 @@ export const computeGridPrices = (
   params: Pick<GridBotStrategyParams, 'buyLevels' | 'sellLevels' | 'spacingType' | 'spacingValue'>,
   priceDecimals: number,
   priceStep?: number,
+  priceSignificantDigits?: number,
 ): number[] => {
   const { buyLevels, sellLevels, spacingType, spacingValue } = params;
   return Array.from({ length: buyLevels + sellLevels + 1 }, (_, i) =>
-    computeLevelPrice(centerPrice, i - buyLevels, priceDecimals, spacingType, spacingValue, priceStep),
+    computeLevelPrice(centerPrice, i - buyLevels, priceDecimals, spacingType, spacingValue, priceStep, priceSignificantDigits),
   );
 };
 
@@ -220,12 +266,14 @@ export const computeGridBounds = (
   spacingType: GridSpacingType,
   spacingValue: number,
   priceStep?: number,
+  priceSignificantDigits?: number,
 ): GridBounds | null => {
   if (buyLevels <= 0 && sellLevels <= 0) return null;
 
-  const min = buyLevels > 0 ? computeLevelPrice(centerPrice, -buyLevels, priceDecimals, spacingType, spacingValue, priceStep) : centerPrice;
-  const max =
-    sellLevels > 0 ? computeLevelPrice(centerPrice, sellLevels, priceDecimals, spacingType, spacingValue, priceStep) : centerPrice;
+  const priceAt = (steps: number) =>
+    computeLevelPrice(centerPrice, steps, priceDecimals, spacingType, spacingValue, priceStep, priceSignificantDigits);
+  const min = buyLevels > 0 ? priceAt(-buyLevels) : centerPrice;
+  const max = sellLevels > 0 ? priceAt(sellLevels) : centerPrice;
 
   if (!Number.isFinite(min) || !Number.isFinite(max) || min <= 0 || max <= 0) return null;
 
@@ -259,9 +307,9 @@ export const getOutOfRangeSide = (
 export const validateConfig = (params: GridBotStrategyParams, centerPrice: number, marketData: MarketData): string | null => {
   if (centerPrice <= 0) return 'Center price must be positive';
 
-  const { priceDecimals, priceStep } = inferPricePrecision(marketData);
+  const { priceDecimals, priceStep, priceSignificantDigits } = inferPricePrecision(marketData);
 
-  const lowestBuyError = checkLowestBuyPrice(params, centerPrice, priceDecimals, priceStep);
+  const lowestBuyError = checkLowestBuyPrice(params, centerPrice, priceDecimals, priceStep, priceSignificantDigits);
   if (lowestBuyError) return lowestBuyError;
 
   // Against the exchange price limits, read as the order layer reads them for every order (see checkOrderPrice)
@@ -273,7 +321,7 @@ export const validateConfig = (params: GridBotStrategyParams, centerPrice: numbe
   }
 
   // Last, so that a configuration refused before keeps its message
-  return checkPriceTick(params, centerPrice, priceDecimals, priceStep);
+  return checkPriceTick(params, centerPrice, priceDecimals, priceStep, priceSignificantDigits);
 };
 
 /**
@@ -290,10 +338,19 @@ export const checkLowestBuyPrice = (
   centerPrice: number,
   priceDecimals: number,
   priceStep?: number,
+  priceSignificantDigits?: number,
 ): string | null => {
   const { buyLevels, spacingType, spacingValue } = params;
   if (buyLevels <= 0) return null;
-  const lowestBuyPrice = computeLevelPrice(centerPrice, -buyLevels, priceDecimals, spacingType, spacingValue, priceStep);
+  const lowestBuyPrice = computeLevelPrice(
+    centerPrice,
+    -buyLevels,
+    priceDecimals,
+    spacingType,
+    spacingValue,
+    priceStep,
+    priceSignificantDigits,
+  );
   if (lowestBuyPrice > 0) return null;
   return `Grid configuration would result in non-positive buy prices: the lowest of buyLevels ${buyLevels}, spaced by spacingValue ${spacingValue} (${spacingType}) below the center price ${centerPrice}, would be at ${lowestBuyPrice}`;
 };
@@ -302,6 +359,8 @@ export const checkLowestBuyPrice = (
  * Checks the prices of a grid against the price tick. Two adjacent ones that round to the same tick make a level that buys and sells at
  * that one price: two fees a round trip for nothing, and live, its SELL can meet a BUY of the grid at that price, which self-trade
  * prevention expires. A spacing under the tick used to be accepted: percent 0.001 at 100 put every price of a 3/3 grid at 100.
+ * On a market whose tick depends on the price (see roundPrice), the prices are those its rule rounds, and the message names the rule
+ * where its tick, coarser than the step, merged them: a step of 0.1 kept 10000.5 and 10001 apart, which Hyperliquid takes as 10001 both.
  * Returns an error message when two adjacent prices of the grid round to the same tick, null otherwise.
  */
 export const checkPriceTick = (
@@ -309,13 +368,17 @@ export const checkPriceTick = (
   centerPrice: number,
   priceDecimals: number,
   priceStep?: number,
+  priceSignificantDigits?: number,
 ): string | null => {
-  const prices = computeGridPrices(centerPrice, params, priceDecimals, priceStep);
+  const prices = computeGridPrices(centerPrice, params, priceDecimals, priceStep, priceSignificantDigits);
   const collision = prices.findIndex((price, i) => i > 0 && price <= prices[i - 1]);
   if (collision <= 0) return null;
 
   const spaced = `spaced by spacingValue ${params.spacingValue} (${params.spacingType}) around the center price ${centerPrice}`;
-  const tick = priceStep ?? getDecimalStep(priceDecimals);
+  const step = priceStep ?? getDecimalStep(priceDecimals);
+  const significantTick = getSignificantTick(prices[collision], priceSignificantDigits);
+  const rule = `the market taking ${priceSignificantDigits} significant digits in a price (precision.priceSignificantDigits)`;
+  const tick = significantTick && significantTick > step ? `${significantTick}, ${rule}` : step;
   return `Grid configuration would result in a level buying and selling at the same price: ${spaced}, two adjacent prices of the grid would both round to ${prices[collision]} at the price tick ${tick}`;
 };
 
@@ -334,8 +397,8 @@ const toPercent = (ratio: number): string => `${Number((ratio * 100).toPrecision
  */
 export const checkRoundTripFee = (params: GridBotStrategyParams, centerPrice: number, marketData: MarketData): string | null => {
   const fee = getMakerFee(marketData);
-  const { priceDecimals, priceStep } = inferPricePrecision(marketData);
-  const prices = computeGridPrices(centerPrice, params, priceDecimals, priceStep);
+  const { priceDecimals, priceStep, priceSignificantDigits } = inferPricePrecision(marketData);
+  const prices = computeGridPrices(centerPrice, params, priceDecimals, priceStep, priceSignificantDigits);
   const levels = prices.slice(1).map((sellPrice, i) => ({ buyPrice: prices[i], sellPrice }));
   // A spacing under the round-trip fee used to be accepted without a word: at a maker fee of 0.0004, fixed 10 at 60000, 0.0167 % a
   // level, lost 0.038 USDT at each round trip of 0.001 BTC, and the more the grid traded, the more it lost
@@ -377,10 +440,26 @@ export const getGridFunding = (
   marketData: MarketData,
 ): { asset: number; currency: number } => {
   const { buyLevels, sellLevels, spacingType, spacingValue } = params;
-  const { priceDecimals, priceStep } = inferPricePrecision(marketData);
-  const priceAt = (steps: number) => computeLevelPrice(centerPrice, steps, priceDecimals, spacingType, spacingValue, priceStep);
+  const { priceDecimals, priceStep, priceSignificantDigits } = inferPricePrecision(marketData);
+  const priceAt = (steps: number) =>
+    computeLevelPrice(centerPrice, steps, priceDecimals, spacingType, spacingValue, priceStep, priceSignificantDigits);
   const buyPriceSum = getBuyPriceSums(priceAt, buyLevels).at(-1)!;
   return { asset: Math.max(sellLevels, 0), currency: buyPriceSum * (1 + getMakerFee(marketData)) };
+};
+
+/**
+ * The amount of a rebalance BUY planned at `price` that `currency` pays: the largest on the amount step whose cost, worked out in
+ * decimal (see getRebalanceBuyCost), is at most `currency`. `estimate` is the binary quotient of the currency by the cost of a unit,
+ * which can fall an ulp either side of a whole number of steps where the currency pays exactly that many: rounded down as it was,
+ * 7.0007 at 100.01, 0.06999999999999999, bought 0.06 where 0.07 costs 7.0007. So one step more or less is taken, as the cost says.
+ */
+const getRebalanceBuyAmount = (estimate: number, currency: number, price: number, marketData: MarketData): number => {
+  const amountDecimals = inferAmountPrecision(marketData);
+  const step = getDecimalStep(amountDecimals);
+  const amount = roundAmount(estimate, amountDecimals);
+  const more = addPrecise(amount, step);
+  if (getRebalanceBuyCost(more, price, marketData) <= currency) return more;
+  return amount > 0 && getRebalanceBuyCost(amount, price, marketData) > currency ? addPrecise(amount, -step) : amount;
 };
 
 /**
@@ -419,20 +498,23 @@ export const computeRebalancePlan = (
   if (idleValue < 0.01 * totalValue) return null;
 
   // The quantity both sides fund once the rebalance has traded at the price of its STICKY order, paying its fee, and the amount that
-  // takes. A BUY is reckoned on the currency it spends and a SELL on the asset it sells, so that in floating point a sell-only grid
-  // buys no more than the currency pays, as the simulator checks it, and a buy-only grid sells its whole asset, not a step less. A
-  // sell-only grid's BUY of the whole currency at the center price used to be refused at every attempt, its order placed one minimum
-  // price above the bid and the fee on top, and the run stopped before any grid was built.
+  // takes. A BUY is reckoned on the currency it spends and a SELL on the asset it sells, so that a sell-only grid buys all the currency
+  // pays and no more (see getRebalanceBuyAmount), and a buy-only grid sells its whole asset, not a step less. A sell-only grid's BUY
+  // of the whole currency at the center price used to be refused at every attempt, its order placed one minimum price above the bid
+  // and the fee on top, and the run stopped before any grid was built.
   const sellProceeds = getRebalanceOrderPrice('SELL', centerPrice, marketData) * (1 - getMakerFee(marketData));
   const unitValue = side === 'BUY' ? getRebalanceBuyCost(1, centerPrice, marketData) : sellProceeds;
   const quantity = (currencyFree + assetFree * unitValue) / (funding.currency + funding.asset * unitValue);
-  const gap = side === 'BUY' ? (currencyFree - funding.currency * quantity) / unitValue : assetFree - funding.asset * quantity;
+  // What the BUY may spend: the currency the grid's BUYs leave
+  const spendable = currencyFree - funding.currency * quantity;
+  const gap = side === 'BUY' ? spendable / unitValue : assetFree - funding.asset * quantity;
 
   // Rounded down to the amount precision, at most the market's maximum. An amount under amount.min used to be raised to it, beyond
   // what the gap called for and what the balances paid: a rebalance under the market's minimum is no order to send
   const amountDecimals = inferAmountPrecision(marketData);
   const orderPrice = getRebalanceOrderPrice(side, centerPrice, marketData);
-  const amount = Math.min(roundAmount(gap, amountDecimals), getMaximumAmount(orderPrice, marketData));
+  const rounded = side === 'BUY' ? getRebalanceBuyAmount(gap, spendable, centerPrice, marketData) : roundAmount(gap, amountDecimals);
+  const amount = Math.min(rounded, getMaximumAmount(orderPrice, marketData));
 
   if (amount <= 0) return null;
 
@@ -468,8 +550,10 @@ export const deriveLevelQuantity = (
   spacingValue: number,
   marketData: MarketData,
   priceStep?: number,
+  priceSignificantDigits?: number,
 ): GridSize => {
-  const priceAt = (steps: number) => computeLevelPrice(centerPrice, steps, priceDecimals, spacingType, spacingValue, priceStep);
+  const priceAt = (steps: number) =>
+    computeLevelPrice(centerPrice, steps, priceDecimals, spacingType, spacingValue, priceStep, priceSignificantDigits);
   const amountDecimals = inferAmountPrecision(marketData);
 
   const buyPriceSums = getBuyPriceSums(priceAt, buyLevels);

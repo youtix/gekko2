@@ -22,7 +22,8 @@ export const gridBotStrategySchema = z
      * - fixed: price units
      * - logarithmic: the ratio between adjacent prices, less 1 (0.01 === each price 1 % above the one below it)
      * Checked against the market around the center price: a spacing that rounds two adjacent prices of the grid to the same price tick
-     * stops the run, when the grid starts or once it is rebalanced, and one under the round-trip fee, two maker fees, is warned of once.
+     * (the tick at that price, on a market whose tick depends on the price) stops the run, when the grid starts, before a failed
+     * rebalance is placed again and once it is rebalanced, and one under the round-trip fee, two maker fees, is warned of once.
      */
     spacingValue: z.number().positive(),
     /**

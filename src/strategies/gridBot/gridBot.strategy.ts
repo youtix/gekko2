@@ -1,8 +1,9 @@
 import { GekkoError } from '@errors/gekko.error';
+import type { LogLevel } from '@models/logLevel.types';
 import type { OrderSide } from '@models/order.types';
 import type { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
-import type { OpenOrder } from '@services/exchange/exchange.types';
+import type { MarketData, OpenOrder } from '@services/exchange/exchange.types';
 import { pickTradedPair } from '@strategies/positionTracker';
 import {
   InitParams,
@@ -48,12 +49,13 @@ import {
  * - Buy levels are placed below the center price
  * - Sell levels are placed above the center price
  * - Spacing between adjacent prices is configurable: fixed (in price units), percent (of the center price, the same between any two
- *   adjacent prices, as fixed spacing) or logarithmic (a ratio between adjacent prices). A spacing that rounds two adjacent prices of
- *   the grid to the same tick stops the run, and one under the round-trip fee, two maker fees, is warned of once
- * - A grid whose lowest BUY would be at or below 0 stops the run: around the close it starts on, and again around the price a
- *   rebalance ended at, where it is planned again or built
- * - Prices are rounded to the tick of the market (precision.price) as they are written, in decimal, a tie upwards. A market that states
- *   no tick has them rounded to 8 decimals, with a warning
+ *   adjacent prices, as fixed spacing) or logarithmic (a ratio between adjacent prices). One under the round-trip fee, two maker fees,
+ *   is warned of once
+ * - A grid whose lowest BUY would be at or below 0, or whose spacing rounds two adjacent prices to the same tick, stops the run: around
+ *   the close it starts on, and again around the price a rebalance ended at, before it is placed again and when the grid is built
+ * - Prices are rounded to the tick of the market (precision.price) as they are written, in decimal, a tie upwards, or to the tick at the
+ *   price where it is coarser, on a market whose tick depends on the price (precision.priceSignificantDigits, Hyperliquid's). A market
+ *   that states no tick has them rounded to 8 decimals, with a warning
  * - Each level trades back and forth between two adjacent prices of the grid: once its BUY fills it sells one step above, once its
  *   SELL fills it buys one step below
  * - Every level trades the same quantity, and the portfolio is first rebalanced to the split that funds them all with it: a unit of
@@ -62,7 +64,8 @@ import {
  * - The rebalance and the grid use the free balances, and every order is one the market takes, of at least its minimum amount and
  *   cost: a rebalance under them is not sent, and a side that cannot fund all its levels with them leaves out the farthest
  * - A refused or canceled order is placed again up to retryOnError times, a canceled grid order for what is left of it. A grid order
- *   is then left out with a warning, the rest of the grid trading on until no level holds an order, and a rebalance stops the run
+ *   is then left out with a warning, the rest of the grid trading on until no level holds an order, and a rebalance stops the run. A
+ *   failed rebalance is planned again on the balances it left, warned of with what follows: placed again, the grid built, or a stop
  * - An order that errored while it may be live on the exchange (its creation lost on the network, its poll failed for good) is never
  *   placed again: a grid order is left out with a warning, the run stopping once more than retryOnError orders are in that case or no
  *   level holds an order, and a rebalance stops the run
@@ -115,6 +118,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
   // Cached price precision
   private priceDecimals = 2;
   private priceStep?: number;
+  private priceSignificantDigits?: number;
 
   /**
    * Reads the pair and the parameters, and refuses to start while orders are open on the pair (see refuseOpenOrders): the grid is
@@ -168,9 +172,10 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
     const close = candle.get(this.pair)!.close;
     const marketData = tools.marketData.get(this.pair)!;
-    const { priceDecimals, priceStep } = inferPricePrecision(marketData);
+    const { priceDecimals, priceStep, priceSignificantDigits } = inferPricePrecision(marketData);
     this.priceDecimals = priceDecimals;
     this.priceStep = priceStep;
+    this.priceSignificantDigits = priceSignificantDigits;
     // Said before any refusal, which names the tick: a market that states none has its prices rounded to the default decimals, where
     // they used to be rounded to the decimals of the close, whole units for a close of 100
     if (!priceStep) {
@@ -179,7 +184,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       tools.log('warn', `GridBot: ${noTick}: ${rounded}, which the exchange refuses if its own tick is coarser`);
     }
 
-    const centerPrice = roundPrice(close, priceDecimals, priceStep);
+    const centerPrice = roundPrice(close, priceDecimals, priceStep, priceSignificantDigits);
 
     const validationError = validateConfig(tools.strategyParams, centerPrice, marketData);
     if (validationError) this.stopRun(validationError, tools);
@@ -315,56 +320,82 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
   /**
    * Places the rebalance the free balances call for, or builds the grid on them as they are: when they need none, when the market
-   * would refuse the rebalance, under its minimum order, or when they cannot pay for it
+   * would refuse the rebalance, under its minimum order, or when they cannot pay for it. A rebalance planned again after a failed one
+   * comes with its `failure`, warned of with what follows it: the rebalance placed again, the grid built, or the run stopped.
    */
-  private rebalanceOrBuild(centerPrice: number, asset: BalanceDetail, currency: BalanceDetail, tools: Tools<GridBotStrategyParams>): void {
-    // The start checked the lowest BUY around its own center price (see validateConfig), while a plan made again after a failed
-    // rebalance is centred on the price the rebalance ended at: lower, the plan was made, and its STICKY order sent, for a grid without
-    // the BUYs at or below 0 there, without a word. Refused before the plan, as at the start.
-    const lowestBuyError = checkLowestBuyPrice(tools.strategyParams, centerPrice, this.priceDecimals, this.priceStep);
-    if (lowestBuyError) this.stopRun(lowestBuyError, tools);
-
-    const plan = computeRebalancePlan(centerPrice, asset.free, currency.free, tools.strategyParams, tools.marketData.get(this.pair)!);
-
-    if (!plan || this.isRebalanceLeftOut(plan, asset, currency, tools)) {
-      this.awaitingRebalance = false;
-      this.pendingRebalance = undefined;
-      this.buildGrid(centerPrice, asset.free, currency.free, tools);
-      return;
-    }
-
-    this.awaitingRebalance = true;
-    this.pendingRebalance = plan;
-    this.placeRebalanceOrder(tools);
-  }
-
-  /** Whether the rebalance is not to be sent, which is logged: the market would refuse it, or the free balances cannot pay for it */
-  private isRebalanceLeftOut(
-    plan: RebalancePlan,
+  private rebalanceOrBuild(
+    centerPrice: number,
     asset: BalanceDetail,
     currency: BalanceDetail,
     tools: Tools<GridBotStrategyParams>,
-  ): boolean {
+    failure?: string,
+  ): void {
+    const { strategyParams } = tools;
+    const { priceDecimals, priceStep, priceSignificantDigits } = this;
     const marketData = tools.marketData.get(this.pair)!;
+    const plan = computeRebalancePlan(centerPrice, asset.free, currency.free, strategyParams, marketData);
+    const leftOut = plan ? this.getRebalanceLeftOut(plan, asset, currency, marketData) : undefined;
+    const isPlaced = plan && !leftOut;
+
+    // The start checked the grid around its own center price (see validateConfig), while a plan made again after a failed rebalance
+    // is centred on the price the rebalance ended at. There, its STICKY order was sent for a grid the start would have refused: its
+    // BUYs at or below 0 left out without a word, or two of its prices on one tick, a percent or logarithmic step shrinking with the
+    // price, which the build refused only once that second rebalance had been paid. Refused before the plan is placed, as at the
+    // start: the lowest BUY, then the prices of the grid the rebalance pays for against the tick. A grid built without a rebalance is
+    // checked on the levels it builds (see buildGrid).
+    const gridError =
+      checkLowestBuyPrice(strategyParams, centerPrice, priceDecimals, priceStep, priceSignificantDigits) ??
+      (isPlaced ? checkPriceTick(strategyParams, centerPrice, priceDecimals, priceStep, priceSignificantDigits) : null);
+    if (gridError) {
+      if (failure)
+        tools.log('warn', `GridBot: ${failure}. Not placed again: the grid is refused around ${centerPrice}, the price it ended at`);
+      this.stopRun(gridError, tools);
+    }
+
+    if (isPlaced) {
+      if (failure) tools.log('warn', `GridBot: ${failure}. Retrying...`);
+      this.awaitingRebalance = true;
+      this.pendingRebalance = plan;
+      this.placeRebalanceOrder(tools);
+      return;
+    }
+
+    if (failure) {
+      const built = leftOut
+        ? 'the grid is built on the free balances it left'
+        : 'the free balances it left need no rebalance, the grid is built on them';
+      tools.log('warn', `GridBot: ${failure}. Not placed again: ${built}`);
+    }
+    if (leftOut) tools.log(leftOut.level, `GridBot: ${leftOut.message}`);
+    this.awaitingRebalance = false;
+    this.pendingRebalance = undefined;
+    this.buildGrid(centerPrice, asset.free, currency.free, tools);
+  }
+
+  /**
+   * Why the rebalance is not to be sent, as the line to log, undefined to send it: the market would refuse it, or the free balances
+   * cannot pay for it
+   */
+  private getRebalanceLeftOut(
+    plan: RebalancePlan,
+    asset: BalanceDetail,
+    currency: BalanceDetail,
+    marketData: MarketData,
+  ): { level: LogLevel; message: string } | undefined {
     // A rebalance under the market's minimum, a gap between the 1 % tolerance and cost.min on a small account, used to be sent and
     // refused, planned again identically at every attempt, until the run stopped, while the portfolio as it was funded a grid
     const minimumAmount = getMinimumAmount(getRebalanceOrderPrice(plan.side, plan.centerPrice, marketData), marketData);
     if (plan.amount < minimumAmount) {
       const under = `its ${plan.side} of ${plan.amount} ${this.base} being under the market minimum of ${minimumAmount} ${this.base}`;
-      tools.log('info', `GridBot: No rebalance, ${under}: the grid is built on the free balances as they are`);
-      return true;
+      return { level: 'info', message: `No rebalance, ${under}: the grid is built on the free balances as they are` };
     }
-    if (plan.side === 'SELL' && plan.amount > asset.free) {
-      tools.log('warn', 'GridBot: Insufficient asset for rebalance, building grid with current allocation');
-      return true;
-    }
+    if (plan.side === 'SELL' && plan.amount > asset.free)
+      return { level: 'warn', message: 'Insufficient asset for rebalance, building grid with current allocation' };
     // What the BUY takes from the free currency once placed, not its notional at the center price: a BUY whose notional was all
     // the free currency passed, to be refused at every attempt for its fee and the price of its STICKY order
-    if (plan.side === 'BUY' && getRebalanceBuyCost(plan.amount, plan.centerPrice, marketData) > currency.free) {
-      tools.log('warn', 'GridBot: Insufficient currency for rebalance, building grid with current allocation');
-      return true;
-    }
-    return false;
+    if (plan.side === 'BUY' && getRebalanceBuyCost(plan.amount, plan.centerPrice, marketData) > currency.free)
+      return { level: 'warn', message: 'Insufficient currency for rebalance, building grid with current allocation' };
+    return undefined;
   }
 
   /** Place the rebalance STICKY order */
@@ -393,7 +424,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
     tools.log('info', 'GridBot: Rebalance complete, building grid');
 
-    const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep);
+    const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep, this.priceSignificantDigits);
     this.buildGrid(centerPrice, assetFree, currencyFree, tools);
 
     return true;
@@ -418,22 +449,24 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       this.stopRun(`${failure}: the grid is not built. Last error: ${reason}`, tools);
     }
 
-    tools.log('warn', `GridBot: Rebalance attempt ${this.rebalanceRetryCount} failed: ${reason}. Retrying...`);
-
     // Planned again on the free balances the failure left, a partial fill included, with the checks of the first plan: the plan
-    // used to be placed again unchecked
-    this.rebalanceOrBuild(roundPrice(currentPrice, this.priceDecimals, this.priceStep), asset, currency, tools);
+    // used to be placed again unchecked. The failure is warned of with what follows it (see rebalanceOrBuild): it read "Retrying..."
+    // first, whatever followed, the grid built on the balances left or the run stopped
+    const failure = `Rebalance attempt ${this.rebalanceRetryCount} failed: ${reason}`;
+    const centerPrice = roundPrice(currentPrice, this.priceDecimals, this.priceStep, this.priceSignificantDigits);
+    this.rebalanceOrBuild(centerPrice, asset, currency, tools, failure);
   }
 
   /** Build the grid around the center price */
   private buildGrid(centerPrice: number, assetFree: number, currencyFree: number, tools: Tools<GridBotStrategyParams>): void {
     const { buyLevels, sellLevels, spacingType, spacingValue } = tools.strategyParams;
+    const { priceDecimals, priceStep, priceSignificantDigits } = this;
 
     // A grid rebalanced first is built around the price the rebalance ended at, which the start did not check. Lower, a fixed grid
     // started with its lowest BUY a few ticks above 0 put it at or below 0: the sizing left that level out, with a warning that the
     // free balances funded no more orders of the market minimum, or stopped the run for an insufficient portfolio when no other level
     // was left. Refused before the sizing, as at the start.
-    const lowestBuyError = checkLowestBuyPrice(tools.strategyParams, centerPrice, this.priceDecimals, this.priceStep);
+    const lowestBuyError = checkLowestBuyPrice(tools.strategyParams, centerPrice, priceDecimals, priceStep, priceSignificantDigits);
     if (lowestBuyError) this.stopRun(lowestBuyError, tools);
 
     const marketData = tools.marketData.get(this.pair)!;
@@ -445,11 +478,12 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       currencyFree,
       buyLevels,
       sellLevels,
-      this.priceDecimals,
+      priceDecimals,
       spacingType,
       spacingValue,
       marketData,
-      this.priceStep,
+      priceStep,
+      priceSignificantDigits,
     );
     const free = `${assetFree} ${this.base} and ${currencyFree} ${this.quote} free`;
     if (size.quantity <= 0) this.stopRun(`Insufficient portfolio for any grid levels: ${free} fund no order the market takes`, tools);
@@ -457,7 +491,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     // The start checked the prices of the grid around its own center price, but a grid rebalanced first is built around the price the
     // rebalance ended at, where a percent or logarithmic step, which shrinks with the price, can round two adjacent prices to one tick
     const levelsBuilt = { buyLevels: size.buyLevels, sellLevels: size.sellLevels, spacingType, spacingValue };
-    const tickError = checkPriceTick(levelsBuilt, centerPrice, this.priceDecimals, this.priceStep);
+    const tickError = checkPriceTick(levelsBuilt, centerPrice, priceDecimals, priceStep, priceSignificantDigits);
     if (tickError) this.stopRun(tickError, tools);
 
     // Bounds of the levels built
@@ -465,10 +499,11 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       centerPrice,
       size.buyLevels,
       size.sellLevels,
-      this.priceDecimals,
+      priceDecimals,
       spacingType,
       spacingValue,
-      this.priceStep,
+      priceStep,
+      priceSignificantDigits,
     );
     if (!bounds) this.stopRun('Could not compute valid grid bounds', tools);
 
@@ -484,7 +519,8 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       );
     }
 
-    const priceAt = (steps: number) => computeLevelPrice(centerPrice, steps, this.priceDecimals, spacingType, spacingValue, this.priceStep);
+    const priceAt = (steps: number) =>
+      computeLevelPrice(centerPrice, steps, priceDecimals, spacingType, spacingValue, priceStep, priceSignificantDigits);
     this.gridBounds = bounds;
     // One price inside each bound: the sell price of the lowest level, the buy price of the highest
     this.reentryPrices = { below: priceAt(1 - size.buyLevels), above: priceAt(size.sellLevels - 1) };

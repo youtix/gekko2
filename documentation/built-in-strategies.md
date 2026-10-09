@@ -456,6 +456,8 @@ GridBot uses no indicator, and places nothing during the warmup: the grid starts
 
 The grid's prices are rounded to the market's price tick (`precision.price`) as they are written, a half tick rounding up: `fixed` and `percent` spacings are computed in decimal, `logarithmic` spacing in binary. A market that states no tick is priced to 8 decimals, with a warning when the grid starts; the dummy-cex configuration always states one (`precision.price`, in decimals).
 
+On a market whose tick depends on the price, Hyperliquid, which takes 5 significant digits in a price (`precision.priceSignificantDigits`, an integer part of more digits being kept whole), each price is rounded to the tick at that price where it is coarser than `precision.price`: one unit of its fifth significant digit, 0.1 from 1000 and 1 from 10000 on. `precision.price` is only the tick at the price the markets were loaded at: a market loaded at 9990 states 0.1, while the exchange takes whole units from 10000 on. So the grid's prices are those the exchange takes as they are: there, a close of 10000.37 centres a grid spaced by 1 (`fixed`) on 10000, its SELLs at 10001 and 10002, where rounded to 0.1 they were 10001.4 and 10002.4, which the exchange takes as 10001 and 10002. A backtest rehearses the rule when its dummy-cex market data states `precision.priceSignificantDigits` (5, as on Hyperliquid): the simulator then rounds the price of every order the same way.
+
 Besides the checks of its parameters at start-up (see [Parameters Are Checked at Start-up](#parameters-are-checked-at-start-up)), GridBot checks the grid against the market when it starts, before any order, and stops the run (exit code 1) when:
 
 - the lowest buy level would be at or below 0, once rounded to the tick: with `percent` spacing, `buyLevels × spacingValue` must stay under 100 (see *Lowest buy level*);
@@ -466,10 +468,16 @@ The first and the last checks run again around the price a rebalance ended at (s
 
 **Lowest buy level.** The lowest buy level must stay above 0 around every price the grid is centred on. It is checked when the grid starts, and again around the price a rebalance ended at, where the grid is planned again (after a failed rebalance) or built (once it filled). A grid whose lowest buy level would be at or below 0 there stops the run with the error of the start, naming the price the grid would be built around, for example `GridBot: Grid configuration would result in non-positive buy prices: the lowest of buyLevels 2, spaced by spacingValue 5 (fixed) below the center price 9, would be at -1`. No grid order is sent, and the rebalance already filled is not undone. With `fixed` spacing, keep `buyLevels × spacingValue` well under the price: a grid started with its lowest buy level a few ticks above 0 is refused once a rebalance ends a few ticks lower. `percent` and `logarithmic` grids, whose levels scale with the price, meet it only when their lowest buy level rounds to 0 on the tick, after a much larger fall.
 
-**Minimum spacing.** Once rounded to the market's price tick, adjacent prices of the grid must stay at least one tick apart. A spacing that rounds two of them to the same price, a level that would buy and sell at that one price, stops the run when the grid starts, and again when the grid is built around the price a rebalance ended at (a `percent` or `logarithmic` step shrinks with the price):
+**Minimum spacing.** Once rounded to the market's price tick, adjacent prices of the grid must stay at least one tick apart. A spacing that rounds two of them to the same price, a level that would buy and sell at that one price, stops the run when the grid starts, again before a failed rebalance is placed again around the price it ended at, so that no second rebalance is paid for a grid that would then be refused, and when the grid is built around the price a rebalance ended at (a `percent` or `logarithmic` step shrinks with the price). The first two check the grid as configured, the last the levels the free balances fund:
 
 ```
 GridBot: Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 0.001 (percent) around the center price 100, two adjacent prices of the grid would both round to 100 at the price tick 0.01
+```
+
+On a market whose tick depends on the price, the tick is the one at each price, and the error names the rule where its tick, coarser than `precision.price`, merged two prices. On Hyperliquid loaded at 9990, a grid spaced by 0.5 (`fixed`) around 9999 with 2 buy and 4 sell levels keeps 10000.5 and 10001 a tick of 0.1 apart, but the exchange takes both as 10001:
+
+```
+GridBot: Grid configuration would result in a level buying and selling at the same price: spaced by spacingValue 0.5 (fixed) around the center price 9999, two adjacent prices of the grid would both round to 10001 at the price tick 1, the market taking 5 significant digits in a price (precision.priceSignificantDigits)
 ```
 
 A spacing whose levels earn less than the two maker fees of a round trip (`fee.maker`), a SELL less than 2 × fee / (1 − fee) above its BUY (0.08003 % at a 0.04 % fee, 0.2002 % at 0.1 %), is accepted with one warning, logged at the `warn` level when the grid starts: such a grid loses money at each round trip. For a 5/5 grid at 60000 with a 0.1 % maker fee, no level loses with a spacing of 121.1 or more with `fixed` spacing (100 loses money there), 0.2019 or more with `percent` and 0.002003 or more with `logarithmic`:
@@ -487,6 +495,12 @@ Before building the grid, GridBot therefore rebalances the free balances to that
 The split is not 50/50, since the BUYs, below the center price, cost less than the SELLs are worth. A symmetric grid holds a little more than half of its value in the asset, about 51 % for 5/5 levels spaced by 1 % and 56 % for 20/20 levels spaced by 2 %, and an asymmetric one about its share of sell levels, 76 % for 1 buy and 3 sell levels spaced by 5 at 100. A grid without sell levels is rebalanced all in currency, and one without buy levels all in the asset, buying what the currency pays once the fee is on top.
 
 A rebalance refused or canceled is planned again on the balances it left, and placed again up to `retryOnError` times: once it has failed `retryOnError + 1` times, or as soon as its outcome is unknown (it may be live on the exchange), the run stops before any grid order is sent, for instance with `GridBot: Rebalance failed after 4 attempts (retryOnError: 3): the grid is not built. Last error: …`. Once the rebalance has filled, the grid is built around the price the rebalance ended at, the last price the Trader reports with the fill.
+
+Each failed attempt before the last is warned of with what follows it:
+
+- `GridBot: Rebalance attempt 1 failed: … Retrying...` when the rebalance planned again is placed;
+- `GridBot: Rebalance attempt 1 failed: … Not placed again: the free balances it left need no rebalance, the grid is built on them`, or `… Not placed again: the grid is built on the free balances it left` when they call for a rebalance the market would refuse or they cannot pay, followed by the line that says why;
+- `GridBot: Rebalance attempt 1 failed: … Not placed again: the grid is refused around 9, the price it ended at` when the grid planned around that price fails the checks of the start (see [Prices and Checks](#prices-and-checks)), followed by the error that stops the run.
 
 #### Grid Building
 

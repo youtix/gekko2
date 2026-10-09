@@ -45,6 +45,12 @@ describe('gridBot.utils Performance', () => {
         roundPrice(100.12345, 2, 0.05);
       }
     });
+
+    bench('10000 price roundings to the tick of 5 significant digits, coarser than the step', () => {
+      for (let i = 0; i < 10000; i++) {
+        roundPrice(10000.37, 1, 0.1, 5);
+      }
+    });
   });
 
   describe('roundAmount', () => {
