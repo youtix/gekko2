@@ -100,6 +100,20 @@ describe('SequentialEventEmitter Performance', () => {
       const emitter = new SequentialEventEmitter('bench');
       await emitter.broadcastDeferredEmit();
     });
+
+    // Each listener gets its own copy of the payloads, but the last, which gets the one made when they were queued
+    const portfolio = new Map([
+      ['BTC', { free: 0.5, used: 0, total: 0.5 }],
+      ['USDT', { free: 1000, used: 0, total: 1000 }],
+    ]);
+    for (const count of [1, 2, 3]) {
+      bench(`broadcastDeferredEmit - portfolio to ${count} listener(s)`, async () => {
+        const emitter = new SequentialEventEmitter('bench');
+        for (let i = 0; i < count; i++) emitter.on('portfolioChange', () => {});
+        emitter.addDeferredEmit('portfolioChange', portfolio);
+        await emitter.broadcastDeferredEmit();
+      });
+    }
   });
 
   describe('full workflow', () => {

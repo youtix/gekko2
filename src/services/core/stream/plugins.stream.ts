@@ -179,8 +179,8 @@ export class PluginsStream extends Writable {
    * flushed before it (an order a strategy hook places on a fill), for a bucket that never comes. They are dropped: delivered after a
    * stop (the circuit breaker), they could make the strategy act again, an order hook placing a new order. The final reports may miss
    * them (an orderCompleted, a roundtripCompleted).
-   * Not counted: the group whose delivery threw. broadcastDeferredEmit takes a group out of the queue before delivering it, and emit
-   * stops at the listener that throws: the listeners wired after it (in config order) never receive it. An EventSubscriber configured
+   * Not counted: the group whose delivery threw. broadcastDeferredEmit takes a group out of the queue before delivering it, and stops
+   * at the listener that throws: the listeners wired after it (in config order) never receive it. An EventSubscriber configured
    * after the TradingAdvisor never hears of the orderErrored that tripped the circuit breaker.
    */
   private logDroppedEvents() {

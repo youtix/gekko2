@@ -1,4 +1,5 @@
 import { debug } from '@services/logger';
+import { copyPayload } from './event.utils';
 
 type Listener<T = unknown> = (payload: T) => Promise<void> | void;
 
@@ -47,6 +48,7 @@ export class SequentialEventEmitter {
     }
   }
 
+  /** Queues a copy of the payload, made now: what the emitter changes in its own object afterwards never reaches the listeners */
   public addDeferredEmit<T = unknown>(name: string, payload: T): void {
     debug('event', `[${this.emitterName}] Adding deferred event: ${name}`);
     const lastGroup = this.deferredGroups.at(-1);
@@ -54,14 +56,25 @@ export class SequentialEventEmitter {
     else this.deferredGroups.push({ name, payloads: [structuredClone(payload)] });
   }
 
-  /** Delivers the oldest group of deferred events. Resolves to false when none is queued, to true otherwise. */
+  /**
+   * Delivers the oldest group of deferred events to each listener in turn, each with its own copy of the array and its payloads.
+   * Resolves to false when none is queued, to true otherwise.
+   */
   public async broadcastDeferredEmit(): Promise<boolean> {
     // Out of the queue before its delivery: a payload a listener queues meanwhile joins a later group, not the array being delivered
     const group = this.deferredGroups.shift();
     if (!group) return false;
     const { name, payloads } = group;
     debug('event', `[${this.emitterName}] Broadcasting deferred event: ${name} (${payloads.length} payloads)`);
-    await this.emit(name, payloads); // Broadcast all deferred events sequentially to avoid race conditions
+    // The listeners all got the copy made when the payloads were queued: one that wrote to it changed what the next ones received, and
+    // what the others kept (the analyzers keep the latest portfolio). The last listener gets that copy, which nothing else holds any
+    // more, and only the others a new one: none for a single listener, as the timeframe candle has in a backtest (its analyzer). The
+    // listeners are those of the event when the delivery starts: one added meanwhile would have shared the copy of the last.
+    const listeners = [...(this.listeners.get(name) ?? [])];
+    for (const [index, listener] of listeners.entries()) {
+      // One after the other, to avoid race conditions
+      await listener(index < listeners.length - 1 ? copyPayload(payloads) : payloads);
+    }
     return true;
   }
 
