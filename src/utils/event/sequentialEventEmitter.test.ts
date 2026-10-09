@@ -1,4 +1,5 @@
 import { Portfolio } from '@models/portfolio.types';
+import { debug } from '@services/logger';
 import { noop } from 'lodash-es';
 import { describe, expect, it, vi } from 'vitest';
 import { copyPayload } from './event.utils';
@@ -9,6 +10,8 @@ vi.mock('./event.utils', async importOriginal => {
   const actual = await importOriginal<typeof import('./event.utils')>();
   return { copyPayload: vi.fn(actual.copyPayload) };
 });
+
+vi.mock('@services/logger', () => ({ debug: vi.fn() }));
 
 type Delivery = [event: string, payloads: unknown[]];
 
@@ -311,6 +314,47 @@ describe('SequentialEventEmitter', () => {
 
         expect(lateDeliveries).toEqual([['a2']]);
       });
+    });
+  });
+
+  // Logged whatever GEKKO_LOG_LEVEL: the logger drops a debug line below its level before winston formats it
+  describe('debug lines', () => {
+    /** Queues a1 and a2 under 'a', then b1 under 'b': two groups */
+    const queueTwoGroups = (emitter: SequentialEventEmitter) => {
+      emitter.addDeferredEmit('a', 'a1');
+      emitter.addDeferredEmit('a', 'a2');
+      emitter.addDeferredEmit('b', 'b1');
+    };
+
+    it('should log a line for each payload it queues, with its event', () => {
+      const { emitter } = createRecordingEmitter(['a', 'b']);
+      queueTwoGroups(emitter);
+
+      expect(vi.mocked(debug).mock.calls).toEqual([
+        ['event', '[test] Adding deferred event: a'],
+        ['event', '[test] Adding deferred event: a'],
+        ['event', '[test] Adding deferred event: b'],
+      ]);
+    });
+
+    it('should then log a line for each group it delivers, with its event and its count of payloads', async () => {
+      const { emitter } = createRecordingEmitter(['a', 'b']);
+      queueTwoGroups(emitter);
+
+      await broadcastAll(emitter);
+
+      expect(vi.mocked(debug).mock.calls).toEqual([
+        ['event', '[test] Adding deferred event: a'],
+        ['event', '[test] Adding deferred event: a'],
+        ['event', '[test] Adding deferred event: b'],
+        ['event', '[test] Broadcasting deferred event: a (2 payloads)'],
+        ['event', '[test] Broadcasting deferred event: b (1 payloads)'],
+      ]);
+    });
+
+    it('should log nothing when no group is queued', async () => {
+      await new SequentialEventEmitter('test').broadcastDeferredEmit();
+      expect(debug).not.toHaveBeenCalled();
     });
   });
 

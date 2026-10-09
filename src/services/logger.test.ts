@@ -1,10 +1,13 @@
 import { LogLevel } from '@models/logLevel.types';
 import { range } from 'lodash-es';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { transports } from 'winston';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { Logger, transports } from 'winston';
 
 type PrintedLine = { level: string; message: string };
 type ConsoleTransport = { log: (line: PrintedLine, next: () => void) => void };
+/** A line as the logger hands it to winston, which formats it before its level filter drops it */
+type HandedLine = { level: string; message: string; _tag: string };
+type WinstonLogger = { log: (line: HandedLine) => void };
 type LogFunction = 'debug' | 'info' | 'warning' | 'error';
 
 const LOG_LEVELS: LogLevel[] = ['debug', 'info', 'warn', 'error'];
@@ -115,6 +118,44 @@ describe('logger', () => {
   `('enables the $levels levels when GEKKO_LOG_LEVEL is $logLevel', async ({ logLevel, levels }) => {
     const { isLevelEnabled } = await loadLogger(logLevel);
     expect(LOG_LEVELS.filter(level => isLevelEnabled(level))).toEqual(levels);
+  });
+
+  describe('debug', () => {
+    let handed: HandedLine[];
+    let winstonLog: MockInstance<WinstonLogger['log']>;
+
+    beforeEach(() => {
+      handed = [];
+      // Records what the logger hands to winston, instead of handing it on
+      winstonLog = vi.spyOn(Logger.prototype as WinstonLogger, 'log').mockImplementation(({ level, message, _tag }) => {
+        handed.push({ level, message, _tag });
+      });
+    });
+
+    afterEach(() => {
+      winstonLog.mockRestore();
+    });
+
+    // Below its level, a debug line went to winston, which formatted it only to drop it: the two lines the event emitter logs for every
+    // deferred event took a fifth to a third of the time of a 1-minute backtest
+    it.each`
+      logLevel     | levels
+      ${undefined} | ${[]}
+      ${'info'}    | ${[]}
+      ${'verbose'} | ${[]}
+      ${'Debug'}   | ${['debug']}
+      ${'silly'}   | ${['debug']}
+    `('hands winston $levels when it logs with GEKKO_LOG_LEVEL $logLevel', async ({ logLevel, levels }) => {
+      const { debug } = await loadLogger(logLevel);
+      debug('gekko', 'probe');
+      expect(handed.map(({ level }) => level)).toEqual(levels);
+    });
+
+    it('hands winston its line as it did, at its level, with its message and its tag upper-cased', async () => {
+      const { debug } = await loadLogger('debug');
+      debug('gekko', 'probe');
+      expect(handed).toEqual([{ level: 'debug', message: 'probe', _tag: 'GEKKO' }]);
+    });
   });
 
   it('keeps the fallback notice out of the ring buffer', async () => {

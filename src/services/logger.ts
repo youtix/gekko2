@@ -37,6 +37,14 @@ const { level: logLevel, rejected: rejectedLogLevel } = resolveLogLevel(process.
 /** The levels winston prints: from the most severe down to GEKKO_LOG_LEVEL */
 const enabledLevels = new Set(LOG_LEVELS.slice(0, LOG_LEVELS.indexOf(logLevel) + 1));
 
+/**
+ * Whether winston prints the messages of `level`, as GEKKO_LOG_LEVEL decides it (`warning` read as `warn`, an unknown value as
+ * `error`). winston formats a message before its level filter drops it: `debug` skips its messages below their level itself, and an
+ * info message that is only ever printed, and costs that format on every candle, can be skipped below it. Not a warning or an error,
+ * which the buffer keeps whatever GEKKO_LOG_LEVEL.
+ */
+export const isLevelEnabled = (level: LogLevel) => enabledLevels.has(level);
+
 const logger = createLogger({
   level: logLevel,
   format: combine(timestamp(), json()),
@@ -58,7 +66,9 @@ const log = ({ tag, message, level }: LogInput) => {
 };
 
 export const debug = (tag: Tag, message: unknown) => {
-  log({ tag, message, level: 'debug' });
+  // Below its level, a debug line went to winston, which formatted it only to drop it: the two lines the event emitter logs for every
+  // deferred event took a fifth to a third of the time of a 1-minute backtest
+  if (isLevelEnabled('debug')) log({ tag, message, level: 'debug' });
 };
 
 export const info = (tag: Tag, message: unknown) => {
@@ -72,13 +82,6 @@ export const warning = (tag: Tag, message: unknown) => {
 export const error = (tag: Tag, message: unknown) => {
   log({ tag, message, level: 'error' });
 };
-
-/**
- * Whether winston prints the messages of `level`, as GEKKO_LOG_LEVEL decides it (`warning` read as `warn`, an unknown value as
- * `error`). winston formats a message before its level filter drops it: a message that is only ever printed, and costs that format on
- * every candle, can be skipped below it. Not a warning or an error, which the buffer keeps whatever GEKKO_LOG_LEVEL.
- */
-export const isLevelEnabled = (level: LogLevel) => enabledLevels.has(level);
 
 /** The buffered warnings and errors, oldest first: the same entry objects on every call, so that a reader can find where it left off */
 export const getBufferedLogs = () => logBuffer.toArray();

@@ -54,7 +54,7 @@ Exit codes: 0 when a run ends normally or is stopped by `ApplicationStopError`, 
 
 ## Code conventions
 
-- `console.*` is a lint error. Log through `debug`, `info`, `warning` and `error` from `@services/logger`, each taking `(tag, message)`; `tag` is a closed union in `src/models/tag.types.ts`.
+- `console.*` is a lint error. Log through `debug`, `info`, `warning` and `error` from `@services/logger`, each taking `(tag, message)`; `tag` is a closed union in `src/models/tag.types.ts`. `debug` returns before winston formats anything when its level is off, so a debug line on the hot path costs nothing; a line at another level logged on every candle goes behind `isLevelEnabled(level)`, as `StrategyManager.log` does.
 - Unused parameters must be prefixed with `_`, a lint error otherwise. Import cycles are lint errors (`import/no-cycle` reads the `.ts` modules), and only a type-only import (`import type …`) breaks one: an import written as a value import counts even when it brings only types. A value cycle can throw `Cannot access … before initialization` under Bun, depending on which of its modules loads first (`movingAverages.const.ts` says how one was avoided).
 - Prettier: 140 columns, single quotes, trailing commas, no parentheses around a lone arrow parameter.
 - The path aliases (`@constants`, `@models`, `@errors`, `@utils`, `@services`, `@indicators`, `@strategies`, `@plugins`) are declared in `tsconfig.json` and copied by hand into `vitest.config.ts`. A new alias goes in both.
