@@ -303,7 +303,7 @@ Momentum indicators measure the speed and strength of price movements.
   - `hist` — Histogram (MACD - Signal)
 - **First value:** candle `long` + `signal` − 1: 34 by default
 
-As in TA-Lib, the fast EMA starts `long` − `short` candles after the slow one, so that both have their first value on candle `long`, and the signal line is an EMA seeded with the mean of the first `signal` MACD values. Where TA-Lib swaps a `short` above `long` back, Gekko refuses it, and an equal one too: swapped periods give the opposite line, equal ones a line of 0. With `signal: 1` the signal line is the MACD line itself, and `hist` is 0 on every candle.
+As in TA-Lib, the fast EMA starts `long` − `short` candles after the slow one, so that both have their first value on candle `long`, and the signal line is an EMA seeded with the mean of the first `signal` MACD values. Where TA-Lib swaps a `short` above `long` back, Gekko refuses it, and an equal one too: swapped periods give the opposite line, equal ones a line of 0. With `signal: 1` the signal line is the MACD line itself, and `hist` is 0 on every candle, exactly on real prices: only candles that jump more than twofold leave rounding noise, at most 1.6e-15 of the MACD line with tenfold jumps. The [MACD strategy](./built-in-strategies.md#macd--moving-average-convergence-divergence) refuses `signal: 1` with `macdSrc: hist`, a histogram that never moves.
 
 ```typescript
 addIndicator('MACD', pair, { short: 12, long: 26, signal: 9 });

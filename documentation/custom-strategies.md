@@ -29,7 +29,7 @@ Custom strategies allow you to:
 
 - **Develop independently** — Keep your proprietary trading logic separate from the Gekko 2 core
 - **Iterate quickly** — Modify and test strategies without rebuilding Gekko 2
-- **Use any indicators** — Access all 25+ built-in technical indicators
+- **Use any indicators** — Access all 31 built-in technical indicators
 - **Handle order events** — React to order completions, cancellations, and errors
 - **Protect a position** — Attach a trailing stop to a BUY: Gekko trails it and sells for you when it is hit
 
@@ -477,7 +477,7 @@ const orderId = createOrder({ symbol: 'BTC/USDT', type: 'MARKET', side: 'BUY', t
 
 A `trailing` on a BUY asks Gekko to protect what the BUY buys: a stop follows the price up, and sells at the market once the price falls `percentage` below its highest point. Gekko trails it on every one-minute candle, whatever the timeframe, and tells your strategy through two hooks, which get `tools` as their last argument.
 
-- **Armed when the BUY completes**, for the amount it filled, from a copy of `trailing` taken by `createOrder`: changing your object afterwards changes nothing. A BUY canceled loses its stop, even after a partial fill. A BUY that errors after a reported fill (`order.filled`) gets its stop for that part; one that errors with no fill reported loses it. A warning says which.
+- **Armed when the BUY completes**, for the amount it filled, from a copy of `trailing` taken by `createOrder`: changing your object afterwards changes nothing. A BUY canceled loses its stop, even after a partial fill. A BUY that errors after a reported fill (`order.filled`) gets its stop for that part; one that errors with no fill reported loses it. A warning says which, and whether the BUY may still be live on the exchange.
 - **Activated**: a stop without `trigger` is active as soon as it is armed, and `onTrailingStopActivated(state, tools)` is called then, right after `onOrderCompleted`, its peak and its stop price still 0. It takes its first peak from the open of the next one-minute candle, not from the price the BUY filled at: the price can fall more than `percentage` below that price before the stop triggers. A stop with a `trigger` waits until the high of a one-minute candle reaches it. Its peak is then that candle's open when the open reached the trigger, else its high, and `onTrailingStopActivated` is called before the rest of that candle is trailed.
 - **Trailed**: each one-minute candle is met as open, low, high, close, each price tested against the stop price, `peak × (1 − percentage / 100)`, before it raises the peak. So a candle that rises more than `percentage` from its open does not trigger the stop on its own low. The candle that activates a stop with a trigger is met from its open when the open reached the trigger; otherwise only its close is tested, after its high.
 - **Triggered**: a price at or below the stop price makes Gekko create a MARKET SELL of the stop's amount, then call `onTrailingStopTriggered(orderId, state, tools)`, `state` holding the peak and the stop price of that moment. That SELL is an order of your strategy's from then on: its outcome comes through `onOrderCompleted`, `onOrderCanceled` or `onOrderErrored`, under `orderId`. A strategy that tracks its position adopts it as its pending SELL (see [Tracking Your Position](#tracking-your-position)); otherwise it stays long once the stop has sold everything, and its next SELL is refused, nothing being left to sell.
@@ -893,6 +893,8 @@ const [ema] = indicators;
 if (typeof ema.results !== 'number' || !Number.isFinite(ema.results)) return;
 ```
 
+Compare a price with an average, or two averages, with a relative tolerance rather than strictly: values equal in exact arithmetic come out a few ulps apart on a flat market, and a strict comparison then trades on noise. A strategy under `src/strategies/custom/` can use `compareWithTolerance` from `@utils/math/math.utils`; a file loaded through `strategyPath` cannot import it and carries its own.
+
 ### 3. Track the Order, Not the Signal
 
 Decide from your position and your pending order, which only the order hooks move (see [Tracking Your Position](#tracking-your-position)), not from the last signal you acted on: a strategy that only remembers the trend it ordered on does not know whether that order went through, never sends again a BUY that was refused, and cannot tell when it holds something to sell. Act on the position instead:
@@ -934,6 +936,8 @@ With `warmup.candleCount: N`, the warmup takes the first N timeframe candles, an
 | DEMA                               | 2n − 1                         | 2n − 2                 |
 | ADX                                | 2n                             | 2n − 1                 |
 | TEMA                               | 3n − 2                         | 3n − 3                 |
+
+Bollinger Bands follow the kind of their middle: n with the default sma, 2n − 1 with a dema. [Indicators at a Glance](./indicators.md#-indicators-at-a-glance) gives the first complete candle of every indicator.
 | TRIX                               | 3n − 1                         | 3n − 2                 |
 | MACD (12, 26, 9)                   | 34                             | 33                     |
 
@@ -1023,7 +1027,7 @@ Your strategy called `tools.log` with a level other than `debug`, `info`, `warn`
 
 ### Indicators returning null
 
-- Ensure adequate warmup period
+- Ensure adequate warmup period: `warmup.candleCount` must be at least the indicator's first complete candle minus one (see [Indicators at a Glance](./indicators.md#-indicators-at-a-glance))
 - Validate indicator values before using them
 
 ### Strategy not receiving candles

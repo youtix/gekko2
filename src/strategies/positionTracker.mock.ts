@@ -134,7 +134,7 @@ export const ETH_IGNORED_WARNING: LoggedLine = {
 };
 
 /**
- * Plays init as the StrategyManager does, on the first timeframe bucket: a candle of each of `pairs`, in their order (that of
+ * Plays init as the StrategyManager does, on the first one-minute bucket: a candle of each of `pairs`, in their order (that of
  * watch.assets), with the strategy's parameters; returns the lines it logged
  */
 export const logsAtInit = <T>(strategy: Pick<Strategy<T>, 'init'>, pairs: TradingPair[], strategyParams: T): LoggedLine[] => {
