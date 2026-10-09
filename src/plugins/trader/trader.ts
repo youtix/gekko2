@@ -15,7 +15,7 @@ import { Portfolio } from '@models/portfolio.types';
 import { TradingPair } from '@models/utility.types';
 import { Plugin } from '@plugins/plugin';
 import { config } from '@services/configuration/configuration';
-import { OrderSummary } from '@services/core/order/order.types';
+import { OrderErrorEventPayload, OrderSummary } from '@services/core/order/order.types';
 import { debug, error, info, warning } from '@services/logger';
 import { getFirstCandleFromBucket } from '@utils/candle/candle.utils';
 import { toISOString } from '@utils/date/date.utils';
@@ -355,9 +355,11 @@ export class Trader extends Plugin {
    * effort, here as in every report: a failure is logged, and the event leaves with the portfolio known, since the strategy waits
    * for it whatever happens.
    * The event carries what the order had filled (`filled`, see Order.getFilledAmount): only a STICKY order's reason told it, in words,
-   * and a BUY that errored after a fill lost the trailing stop of the coins it had bought (see StrategyManager.onOrderErrored).
+   * and a BUY that errored after a fill lost the trailing stop of the coins it had bought (see StrategyManager.onOrderErrored). It
+   * carries `mayBeLive` as the order said it (see Order.orderErrored), false for a refusal: GridBot could only read it from the words of
+   * a creation lost on the network.
    */
-  private async relayError(order: RelayedOrder, reason: string, startedAfter: number, filled: number) {
+  private async relayError(order: RelayedOrder, reason: string, startedAfter: number, filled: number, mayBeLive: boolean) {
     this.orders.delete(order.id);
     try {
       await this.synchronize(startedAfter);
@@ -366,7 +368,7 @@ export class Trader extends Plugin {
     }
     const exchange = { price: this.prices.get(order.symbol) || 0, portfolio: this.portfolio };
     this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, {
-      order: { ...order, reason, orderErrorDate: this.currentTimestamp, filled },
+      order: { ...order, reason, orderErrorDate: this.currentTimestamp, filled, mayBeLive },
       exchange,
     });
   }
@@ -403,7 +405,9 @@ export class Trader extends Plugin {
     orderInstance.once(ORDER_CANCELED_EVENT, (cancelation: OrderCancelation) =>
       this.trackReport(this.reportCanceled(orderInstance, order, cancelation)),
     );
-    orderInstance.once(ORDER_ERRORED_EVENT, (reason: string) => this.trackReport(this.reportErrored(orderInstance, order, reason)));
+    orderInstance.once(ORDER_ERRORED_EVENT, (failure: OrderErrorEventPayload) =>
+      this.trackReport(this.reportErrored(orderInstance, order, failure)),
+    );
     orderInstance.once(ORDER_INVALID_EVENT, (rejection: OrderRejection) =>
       this.trackReport(this.reportRejected(orderInstance, order, rejection)),
     );
@@ -450,7 +454,9 @@ export class Trader extends Plugin {
       orderInstance.removeAllListeners();
       const startedAfter = this.synchronizationCount;
       const { timestamp, filled, remaining } = cancelation;
-      info('trader', `[${id}] ${side} ${type} order canceled (filled: ${filled}, remaining: ${remaining})`);
+      // Left out by an order whose fill no answer of the exchange reported (see Order.getCancelationFill)
+      const fill = isNil(filled) ? 'no fill reported' : `filled: ${filled}, remaining: ${remaining}`;
+      info('trader', `[${id}] ${side} ${type} order canceled (${fill})`);
       this.orders.delete(id);
       // The portfolio once what the order reserved is released, best effort (see relayError)
       try {
@@ -468,14 +474,18 @@ export class Trader extends Plugin {
     }
   }
 
-  /** The error, what the order filled before it, and the portfolio after it: the order may have executed before (see relayError) */
-  private async reportErrored(orderInstance: OrderInstance, order: RelayedOrder, reason: string) {
+  /**
+   * The error, what the order filled before it, whether it may still be live, and the portfolio after it: the order may have executed
+   * before (see relayError). One that may be live is said so: nothing follows it on the exchange any more.
+   */
+  private async reportErrored(orderInstance: OrderInstance, order: RelayedOrder, { reason, mayBeLive }: OrderErrorEventPayload) {
     const { id, side, type } = order;
     try {
       orderInstance.removeAllListeners();
       const startedAfter = this.synchronizationCount;
-      error('trader', `[${id}] ${side} ${type} order: ${reason} (status: ERROR)`);
-      await this.relayError(order, reason, startedAfter, orderInstance.getFilledAmount());
+      const live = mayBeLive ? ', it may still be live on the exchange, where Gekko follows it no more' : '';
+      error('trader', `[${id}] ${side} ${type} order: ${reason} (status: ERROR)${live}`);
+      await this.relayError(order, reason, startedAfter, orderInstance.getFilledAmount(), mayBeLive);
     } catch (err) {
       error('trader', `[${id}] Impossible to report the error of the ${side} ${type} order: ${getErrorMessage(err)}`);
     }
@@ -504,7 +514,8 @@ export class Trader extends Plugin {
         return;
       }
       info('trader', `[${id}] ${side} ${type} order: ${reason} (filled: ${filled}, status: ${status})`);
-      await this.relayError(order, reason, startedAfter, filledAmount);
+      // Refused, it left nothing on the exchange
+      await this.relayError(order, reason, startedAfter, filledAmount, false);
     } catch (err) {
       error('trader', `[${id}] Impossible to report the rejection of the ${side} ${type} order: ${getErrorMessage(err)}`);
     }
@@ -571,8 +582,15 @@ export class Trader extends Plugin {
           const reason = isNil(advice.price) ? `no price known for ${symbol}` : `invalid requested price ${advice.price}`;
           warning('trader', `[${id}] Impossible to create the ${side} ${type} order: ${reason}`);
           // The amount the strategy asked for, if any. Without one the order was all-in, to be sized as it is placed (a BUY from the
-          // price, missing or invalid here): never placed, it ordered nothing, and filled nothing.
-          const order = { ...advice, amount: advice.amount ?? 0, reason, orderErrorDate: this.currentTimestamp, filled: 0 };
+          // price, missing or invalid here): never placed, it ordered nothing, filled nothing, and nothing of it is live.
+          const order = {
+            ...advice,
+            amount: advice.amount ?? 0,
+            reason,
+            orderErrorDate: this.currentTimestamp,
+            filled: 0,
+            mayBeLive: false,
+          };
           const exchange = { price: this.prices.get(symbol) || 0, portfolio: this.portfolio };
           this.addDeferredEmit<OrderErroredEvent>(ORDER_ERRORED_EVENT, { order, exchange });
           return;

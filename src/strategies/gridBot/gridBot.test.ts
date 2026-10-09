@@ -53,7 +53,8 @@ const unbalancedPortfolio: Portfolio = new Map<string, BalanceDetail>([
   ['USDT', { free: 1000, used: 0, total: 1000 }],
 ]);
 
-// The reasons of the order errors whose outcome is unknown, as the order layer and CCXTExchange word them
+// The reasons of the order errors whose outcome is unknown, as the order layer and CCXTExchange word them, for an event that does not
+// say whether the order may be live (OrderErroredEvent.mayBeLive), which GridBot then reads from the reason
 const lostOnTheNetwork =
   'Outcome unknown: the order may be live on the exchange, check it before placing it again ([EXCHANGE] binance POST https://api.binance.com/api/v3/order 504 Gateway Time-out)';
 const answeredWithoutId =
@@ -124,13 +125,13 @@ describe('GridBot', () => {
 
   /**
    * Delivers the outcome of the live order at that price and side, as the Trader reports it: a cancel with nothing filled and an
-   * error 'Test error', unless `details` say otherwise
+   * error 'Test error', unless `details` say otherwise. An error says whether the order may be live only when `details` do.
    */
   const settle = (
     outcome: 'completed' | 'canceled' | 'errored',
     price: number,
     side: OrderSide,
-    details: { filled?: number; remaining?: number; reason?: string } = {},
+    details: { filled?: number; remaining?: number; reason?: string; mayBeLive?: boolean } = {},
   ) => {
     const { id, amount } = liveOrder(price, side) ?? {};
     const order = { id, symbol: 'BTC/USDT', side, type: 'LIMIT', amount, price } as any;
@@ -459,6 +460,21 @@ describe('GridBot', () => {
         untilStopped(loseRebalance);
 
         expect(issuedOrders.map(({ type, side }) => `${type} ${side}`)).toEqual(['STICKY BUY']);
+      });
+
+      // Its poll failed for good while it was open, as the order says: worded by the exchange, the reason alone was taken for a refusal
+      it('stops the run once the rebalance may be live as the order says it, whatever its reason', () => {
+        startStrategy(100, {}, unbalancedPortfolio);
+        const failPoll = () =>
+          strategy.onOrderErrored({
+            order: { id: issuedOrders[0].id, reason: 'Invalid API key', mayBeLive: true } as any,
+            exchange: { price: 100, portfolio: unbalancedPortfolio },
+            tools,
+          });
+
+        expect(failPoll).toThrow(
+          'GridBot: The rebalance, a STICKY BUY of 5.19, may be live on the exchange without GridBot tracking it: the grid is not built. Check it on the exchange. Last error: Invalid API key',
+        );
       });
     });
 
@@ -1122,22 +1138,47 @@ describe('GridBot', () => {
       expect(amountsSentAfter(sentBefore)).toEqual(expected);
     });
 
-    // Order.applyOrderUpdate hands on a fill and a remaining amount the exchange did not report as 0
-    it('places again whole an order canceled with neither its fill nor its remaining amount reported', () => {
+    // The order leaves its fill out when no answer of the exchange reported one (see OrderCanceledEvent): placed again whole, the part
+    // that may have filled traded again. It used to hand on such a fill as 0, and 0 filled with 0 remaining stood for it
+    const noFill = { filled: undefined, remaining: undefined };
+    it.each`
+      details                                  | description
+      ${noFill}                                | ${'no fill reported'}
+      ${{ filled: undefined, remaining: 1.5 }} | ${'a remaining amount without its fill'}
+    `('places again whole an order canceled with $description', ({ details }) => {
       startStrategy(100);
       const sentBefore = issuedOrders.length;
-      settle('canceled', 95, 'BUY', { filled: 0, remaining: 0 });
+      settle('canceled', 95, 'BUY', details);
 
       expect(amountsSentAfter(sentBefore)).toEqual(['BUY 95 x2.5']);
     });
 
-    it('warns that an order canceled with neither its fill nor its remaining amount reported is placed again whole', () => {
+    it('warns that an order canceled with no fill reported is placed again whole', () => {
       startStrategy(100);
-      settle('canceled', 95, 'BUY', { filled: 0, remaining: 0 });
+      settle('canceled', 95, 'BUY', noFill);
 
       expect(log).toHaveBeenCalledWith(
         'warn',
-        'GridBot: BUY at 95 was canceled with neither its fill nor its remaining amount reported: it is placed again whole, 2.5, which trades again any part of it that had filled',
+        'GridBot: BUY at 95 was canceled with no fill reported: it is placed again whole, 2.5, which trades again any part of it that had filled',
+      );
+    });
+
+    // A fill reported as 0 is a fact: nothing filled, nothing traded twice
+    it('does not warn of an order canceled with 0 filled reported', () => {
+      startStrategy(100);
+      settle('canceled', 95, 'BUY', { filled: 0, remaining: 0 });
+
+      expect(log).not.toHaveBeenCalledWith('warn', expect.stringContaining('no fill reported'));
+    });
+
+    it('names the cancel with no fill reported as the last error once the level gives up', () => {
+      startStrategy(100, { retryOnError: 1 });
+      settle('canceled', 95, 'BUY', noFill);
+      settle('canceled', 95, 'BUY', noFill);
+
+      expect(log).toHaveBeenCalledWith(
+        'warn',
+        'GridBot: BUY at 95 failed after 2 attempts (retryOnError: 1): its level is left without an order, the rest of the grid trades on. Last error: Order was canceled (no fill reported)',
       );
     });
 
@@ -1247,16 +1288,40 @@ describe('GridBot', () => {
   // where nothing tracks it any more, so it was doubled, two lots bought or sold where the level holds one, or the copy was refused
   // for want of the reserve the first one holds
   describe('a grid order whose outcome is unknown', () => {
+    // As the Trader relays it: whether the order may be live is the order's to say, whatever the words of its reason. A poll that
+    // failed for good, worded by the exchange itself, used to be taken for a refusal, and the order placed again beside the one live
+    const pollFailed = '[EXCHANGE] binance {"code":-2013,"msg":"Order does not exist."}';
     it.each`
-      reason               | description
-      ${lostOnTheNetwork}  | ${'a creation lost on the network'}
-      ${answeredWithoutId} | ${'a creation answered with neither a status nor an id'}
-    `('is not placed again after $description', ({ reason }) => {
+      details                                          | description
+      ${{ reason: pollFailed, mayBeLive: true }}       | ${'its poll failed for good, the order said maybe live'}
+      ${{ reason: lostOnTheNetwork, mayBeLive: true }} | ${'a creation lost on the network, the order said maybe live'}
+      ${{ reason: lostOnTheNetwork }}                  | ${'a creation lost on the network, read from the reason'}
+      ${{ reason: answeredWithoutId }}                 | ${'a creation answered with neither a status nor an id, read from the reason'}
+    `('is not placed again after $description', ({ details }) => {
       startStrategy(100);
       const sentBefore = issuedOrders.length;
-      settle('errored', 95, 'BUY', { reason });
+      settle('errored', 95, 'BUY', details);
 
       expect(sentAfter(sentBefore)).toEqual([]);
+    });
+
+    it('warns that an order whose poll failed for good may be live on the exchange, untracked', () => {
+      startStrategy(100);
+      settle('errored', 95, 'BUY', { reason: pollFailed, mayBeLive: true });
+
+      expect(log).toHaveBeenCalledWith(
+        'warn',
+        `GridBot: BUY 2.5 at 95 may be live on the exchange without GridBot tracking it: it is not placed again, its level is left without an order, the rest of the grid trades on. Check it there. Last error: ${pollFailed}`,
+      );
+    });
+
+    // The order said it is not live: its reason does not decide
+    it('is placed again once the order says it is not live, whatever its reason', () => {
+      startStrategy(100);
+      const sentBefore = issuedOrders.length;
+      settle('errored', 95, 'BUY', { reason: lostOnTheNetwork, mayBeLive: false });
+
+      expect(sentAfter(sentBefore)).toEqual(['LIMIT BUY 95']);
     });
 
     it('warns that it may be live on the exchange, untracked, its level left without an order', () => {

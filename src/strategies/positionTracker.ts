@@ -4,19 +4,20 @@ import { OrderSide, OrderType } from '@models/order.types';
 import { TradingPair } from '@models/utility.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { getMarketOrderLimits } from '@utils/market/market.utils';
+import { isFiniteNumber } from '@utils/math/math.utils';
 import { round } from '@utils/math/round.utils';
 import { UUID } from 'node:crypto';
 import { OnOrderCanceledEventParams, OnOrderCompletedEventParams, OnOrderErroredEventParams, Tools } from './strategy.types';
 
 type UnfinishedOrderParams = OnOrderCanceledEventParams<unknown> | OnOrderErroredEventParams<unknown>;
 /** What a cancelation reports its order executed: the amount filled, and what remains of the amount ordered */
-type Fill = Pick<OnOrderCanceledEventParams<unknown>['order'], 'filled' | 'remaining'>;
+type Fill = { filled: number; remaining: number };
 
 /** Whether a value above 0 is below a market minimum: one left undefined, 0 or below sets no bound, as for the orders (market.utils) */
-const isBelowMinimum = (value: number, minimum?: number) => minimum !== undefined && value < minimum;
+export const isBelowMinimum = (value: number, minimum?: number) => minimum !== undefined && value < minimum;
 
 /** The amount truncated to the step of the market, a power of ten (0.00001 for 5 decimals); any other step, or none, leaves it as it is */
-const truncateToStep = (amount: number, step?: number) => {
+export const truncateToStep = (amount: number, step?: number) => {
   const decimals = step !== undefined && step > 0 ? -Math.log10(step) : NaN;
   return Number.isInteger(decimals) ? round(amount, decimals, 'down') : amount;
 };
@@ -28,7 +29,7 @@ const truncateToStep = (amount: number, step?: number) => {
  * can sell. Checked before the truncation, a remainder worth less than a step above the minimum cost would read as enough to sell,
  * every SELL of it refused: 0.0000549 BTC at 95000 USDT is 5.22 USDT, sent as 0.00005 BTC, 4.75 USDT.
  */
-const isSellable = (amount: number, price: number, type: OrderType, marketData: MarketData = {}) => {
+export const isSellable = (amount: number, price: number, type: OrderType, marketData: MarketData = {}) => {
   const limits = type === 'MARKET' ? getMarketOrderLimits(marketData) : marketData;
   const sent = truncateToStep(amount, limits.precision?.amount);
   if (!(sent > 0) || isBelowMinimum(sent, limits.amount?.min)) return false;
@@ -41,8 +42,8 @@ const isSellable = (amount: number, price: number, type: OrderType, marketData: 
  * 1. The fill of a cancelation (`fill`, undefined when it reports none): what a BUY filled, what a SELL left unsold. The order's
  *    own figures, which a holding present at start-up does not blur.
  * 2. The portfolio after the order (`exchange.portfolio`, read again once it ended): the free balance of the asset, what an all-in
- *    SELL would sell. An error reports no fill, nor does a cancelation answered without it. It is the portfolio known before when
- *    that read failed, and empty before the first one: the asset is then missing from it.
+ *    SELL would sell. An error reports no fill, nor does a cancelation whose fill no answer of the exchange reported. It is the
+ *    portfolio known before when that read failed, and empty before the first one: the asset is then missing from it.
  * 3. Neither: undefined, nothing known to have executed.
  */
 const getHolding = (side: OrderSide, { order, exchange }: UnfinishedOrderParams, fill?: Fill) => {
@@ -129,10 +130,10 @@ export class PositionTracker {
   /** Settles its own order that was canceled, after what it filled (see settleUnfinished); returns whether the order was its own */
   onOrderCanceled(params: OnOrderCanceledEventParams<unknown>): boolean {
     const { filled, remaining } = params.order;
-    // 0 filled and 0 remaining reports no fill at all: a MARKET or LIMIT order whose cancelation was answered without it. Nor does a
-    // cancelation missing either amount, which the order leaves out when it does not know it.
-    const isFillReported = Number.isFinite(filled) && Number.isFinite(remaining) && (filled > 0 || remaining > 0);
-    return this.settleUnfinished('canceled', params, isFillReported ? { filled, remaining } : undefined);
+    // A cancelation missing either amount reports no fill: the order leaves both out when no answer of the exchange reported one. 0
+    // filled and 0 remaining used to mean the same, the order relaying the amounts its last answer left out as 0: it is a fact now.
+    const fill = isFiniteNumber(filled) && isFiniteNumber(remaining) ? { filled, remaining } : undefined;
+    return this.settleUnfinished('canceled', params, fill);
   }
 
   /** Settles its own order that errored, after what it executed (see settleUnfinished); returns whether the order was its own */

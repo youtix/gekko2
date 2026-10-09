@@ -1,3 +1,4 @@
+import { OrderErroredEvent } from '@models/event.types';
 import { OrderSide } from '@models/order.types';
 import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
@@ -516,10 +517,18 @@ export const hasOnlyOneSide = (levels: Array<{ side: 'BUY' | 'SELL'; orderId?: s
 };
 
 /**
- * Whether an order error leaves the outcome of the order unknown: it may be live on the exchange, while the Trader, which forgets an
- * order once it errored, tracks it no more. Read from the reason as the order layer and CCXTExchange word it, "Outcome unknown: the
- * order may be live on the exchange" for a creation lost on the network (Order.toCreationError) and "the order may exist on the
- * exchange" for a creation answered with neither a status nor an id, since the event carries no field saying so. An error worded by
- * the exchange itself is not recognised, such as a poll that failed for good once the order was live.
+ * Whether the reason of an order error says the outcome of the order is unknown, as the order layer and CCXTExchange word it: "Outcome
+ * unknown: the order may be live on the exchange" for a creation lost on the network or left without anything to follow the order by
+ * (Order.orderErroredAtCreation), "the order may exist on the exchange" for a creation answered with neither a status nor an id. The
+ * fallback of mayBeLive for an event that does not say it: an error worded by the exchange itself is not recognised, such as a poll
+ * that failed for good once the order was live.
  */
 export const isOutcomeUnknown = (reason: string): boolean => /the order may (?:be live|exist) on the exchange/i.test(reason);
+
+/**
+ * Whether an errored order may be live on the exchange, while the Trader, which forgets an order once it errored, tracks it no more:
+ * what the order said of it (OrderErroredEvent.mayBeLive), and for an event that does not say it, its reason (see isOutcomeUnknown).
+ * Read from the reason alone, an order whose poll had failed for good while it was open was taken for a refusal and placed again.
+ */
+export const mayBeLive = (order: Pick<OrderErroredEvent['order'], 'mayBeLive' | 'reason'>): boolean =>
+  order.mayBeLive ?? isOutcomeUnknown(order.reason);

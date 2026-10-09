@@ -9,7 +9,7 @@ import {
 import { GekkoError } from '@errors/gekko.error';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderSide, OrderState } from '@models/order.types';
-import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
+import { ExchangeNetworkError, InvalidOrder, OrderNotFound, OrderOutcomeUnknown } from '@services/exchange/exchange.error';
 import * as Logger from '@services/logger';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Transaction } from '../order.types';
@@ -147,15 +147,20 @@ describe('MarketOrder', () => {
       });
     });
 
-    // A creation is never sent twice: after a failure on the network its outcome is unknown, and the reason says so
-    const outcomeUnknown = 'Outcome unknown: the order may be live on the exchange, check it before placing it again ([EXCHANGE] timeout)';
+    // A creation is never sent twice: after a failure on the network its outcome is unknown, and so it is once the exchange created the
+    // order without anything to follow it by (OrderOutcomeUnknown). The reason says so, and the order may be live; any other failure
+    // placed nothing
+    const outcomeUnknown = (failure: string) =>
+      `Outcome unknown: the order may be live on the exchange, check it before placing it again ([EXCHANGE] ${failure})`;
+    const notReadBack = 'Order 42 was created on hyperliquid for BTC/USDT, but its state could not be read back: timeout';
     describe.each`
-      kind                         | rejection                                           | message
-      ${'an Error'}                | ${new Error('Network error')}                       | ${'Network error'}
-      ${'a GekkoError'}            | ${new GekkoError('exchange', 'Unexpected failure')} | ${'[EXCHANGE] Unexpected failure'}
-      ${'a non-Error value'}       | ${'some string error'}                              | ${'some string error'}
-      ${'an ExchangeNetworkError'} | ${new ExchangeNetworkError('timeout')}              | ${outcomeUnknown}
-    `('when the creation rejects with $kind', ({ rejection, message }) => {
+      kind                         | rejection                                           | message                            | mayBeLive
+      ${'an Error'}                | ${new Error('Network error')}                       | ${'Network error'}                 | ${false}
+      ${'a GekkoError'}            | ${new GekkoError('exchange', 'Unexpected failure')} | ${'[EXCHANGE] Unexpected failure'} | ${false}
+      ${'a non-Error value'}       | ${'some string error'}                              | ${'some string error'}             | ${false}
+      ${'an ExchangeNetworkError'} | ${new ExchangeNetworkError('timeout')}              | ${outcomeUnknown('timeout')}       | ${true}
+      ${'an OrderOutcomeUnknown'}  | ${new OrderOutcomeUnknown(notReadBack)}             | ${outcomeUnknown(notReadBack)}     | ${true}
+    `('when the creation rejects with $kind', ({ rejection, message, mayBeLive }) => {
       beforeEach(() => {
         fakeExchange.createMarketOrder.mockRejectedValue(rejection);
       });
@@ -164,10 +169,10 @@ describe('MarketOrder', () => {
         await expect(order.launch()).resolves.toBeUndefined();
       });
 
-      it('should emit ORDER_ERRORED_EVENT with the error message', async () => {
+      it(`should emit ORDER_ERRORED_EVENT with the error message, mayBeLive ${mayBeLive}`, async () => {
         const spyEmit = vi.spyOn(order, 'emit');
         await order.launch();
-        expect(spyEmit).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, message);
+        expect(spyEmit).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, { reason: message, mayBeLive });
       });
 
       it('should set the status to error', async () => {
@@ -255,10 +260,11 @@ describe('MarketOrder', () => {
         await expect(order.cancel()).resolves.toBeUndefined();
       });
 
-      it('should emit ORDER_ERRORED_EVENT with the error message', async () => {
+      // Open when its cancelation failed for good, it may still be live: nothing follows it any more
+      it('should emit ORDER_ERRORED_EVENT with the error message, the order maybe live', async () => {
         const spyEmit = vi.spyOn(order, 'emit');
         await order.cancel();
-        expect(spyEmit).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, message);
+        expect(spyEmit).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, { reason: message, mayBeLive: true });
       });
 
       it('should set the status to error', async () => {
@@ -415,6 +421,18 @@ describe('MarketOrder', () => {
         it('clears the interval polling the order', () => {
           expect(vi.getTimerCount()).toBe(0);
         });
+      });
+
+      // The exchange expires what the book did not fill, and may answer that without the fill: what an earlier poll reported is kept.
+      // The order used to relay that answer alone, its missing amounts as 0, which a strategy read as nothing executed
+      it('reports the fill an earlier poll saw once a poll finds it expired, answered without its fill', async () => {
+        const listener = vi.fn();
+        order.on(ORDER_CANCELED_EVENT, listener);
+        fakeExchange.fetchOrder.mockResolvedValueOnce({ ...open, filled: 0.4, remaining: 0.6 });
+        await nextCheck();
+        fakeExchange.fetchOrder.mockResolvedValueOnce({ id: 'ex-1', status: 'canceled', timestamp: 3000 });
+        await nextCheck();
+        expect(listener.mock.calls).toEqual([[{ status: 'canceled', filled: 0.4, remaining: 0.6, timestamp: 3000 }]]);
       });
     });
   });
@@ -781,7 +799,7 @@ describe('MarketOrder', () => {
       it('should emit ORDER_ERRORED_EVENT with the error message', () => {
         const spyEmit = vi.spyOn(order, 'emit');
         (order as any).handleFetchOrderError(value);
-        expect(spyEmit).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, message);
+        expect(spyEmit).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, expect.objectContaining({ reason: message }));
       });
 
       it('should set the status to error', () => {
@@ -808,7 +826,7 @@ describe('MarketOrder', () => {
       it('should emit ORDER_ERRORED_EVENT with the error message', () => {
         const spyEmit = vi.spyOn(order, 'emit');
         (order as any).handleCancelOrderError(new OrderNotFound('gone'));
-        expect(spyEmit).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, '[EXCHANGE] gone');
+        expect(spyEmit).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, expect.objectContaining({ reason: '[EXCHANGE] gone' }));
       });
 
       it('should not read the order back', () => {

@@ -157,7 +157,8 @@ export class RoundTripAnalyzer extends Plugin {
     for (const { order, exchange } of events) {
       this.refreshLatestPortfolio(exchange.portfolio);
       const { id, side, price, filled, orderCancelationDate } = order;
-      if (!(filled > 0)) continue;
+      // No fill reported (undefined) counts for nothing, as 0 does
+      if (isNil(filled) || !(filled > 0)) continue;
       const fillPrice = price ?? this.lastPriceUpdate;
       debug(
         'roundtrip analyzer',

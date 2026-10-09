@@ -7,7 +7,7 @@ import ccxt from 'ccxt';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { CCXTExchange, type CCXTExchangeConfig } from './ccxtExchange';
 import { BROKER_MAX_RETRIES_ON_FAILURE, LIMITS, MAX_MY_TRADES_PAGES } from './exchange.const';
-import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from './exchange.error';
+import { ExchangeNetworkError, InvalidOrder, OrderNotFound, OrderOutcomeUnknown } from './exchange.error';
 import { checkMandatoryFeatures, createExchange, mapCcxtOrderToOrder, mapCcxtTradeToTrade, mapOhlcvToCandles } from './exchange.utils';
 
 vi.mock('@services/configuration/configuration', () => ({
@@ -1096,12 +1096,18 @@ describe('CCXTExchange', () => {
       });
     });
 
-    describe('answered without the status of the order, read back with a timeout on every attempt', () => {
+    // The order exists on the exchange: whatever the read failed with, the outcome of the creation is what the orders hear of. The
+    // read's own failure used to reach them: an InvalidOrder made the order created a refusal, any other one an error that placed
+    // nothing, and a strategy placed the order again beside it
+    describe.each`
+      description                                     | readFailure                                                                                       | readMessage
+      ${'a timeout on every attempt'}                 | ${new ccxt.RequestTimeout('hyperliquid POST https://api.hyperliquid.xyz/info request timed out')} | ${'hyperliquid POST https://api.hyperliquid.xyz/info request timed out'}
+      ${'a bad request (an InvalidOrder of Gekko)'}   | ${new ccxt.BadRequest('hyperliquid {"status":"err","response":"Invalid oid"}')}                   | ${'hyperliquid {"status":"err","response":"Invalid oid"}'}
+      ${'an order unknown (the read lagging behind)'} | ${new ccxt.OrderNotFound('hyperliquid order 6195281425 not found')}                               | ${'hyperliquid order 6195281425 not found'}
+    `('answered without the status of the order, read back with $description', ({ readFailure, readMessage }) => {
       beforeEach(() => {
         instance.createOrder.mockResolvedValue(answerWithoutStatus);
-        instance.fetchOrder.mockRejectedValue(
-          new ccxt.RequestTimeout('hyperliquid POST https://api.hyperliquid.xyz/info request timed out'),
-        );
+        instance.fetchOrder.mockRejectedValue(readFailure);
       });
 
       it('has sent the creation to the exchange only once', async () => {
@@ -1114,8 +1120,19 @@ describe('CCXTExchange', () => {
         expect(logger.error).toHaveBeenCalledWith('exchange', expect.stringContaining('6195281425'));
       });
 
-      it('rejects with the error of the read', async () => {
-        await expect(call(exchange)).rejects.toBeInstanceOf(ExchangeNetworkError);
+      it('rejects with an OrderOutcomeUnknown: the order may be live', async () => {
+        await expect(call(exchange)).rejects.toBeInstanceOf(OrderOutcomeUnknown);
+      });
+
+      it('says which order was created, and why its state is unknown', async () => {
+        await expect(call(exchange)).rejects.toThrow(
+          `[EXCHANGE] Order 6195281425 was created on hyperliquid for BTC/USDT, but its state could not be read back: ${readMessage}`,
+        );
+      });
+
+      it('keeps the failure of the read as the cause', async () => {
+        const failure = await call(exchange).catch((err: unknown) => err);
+        expect((failure as Error).cause).toBeInstanceOf(GekkoError);
       });
     });
 
@@ -1123,9 +1140,9 @@ describe('CCXTExchange', () => {
       description                                   | answer
       ${'an order with neither a status nor an id'} | ${{ info: { status: 'ok' } }}
       ${'no order at all'}                          | ${undefined}
-    `('rejects a creation answered with $description with a GekkoError', async ({ answer }) => {
+    `('rejects a creation answered with $description with an OrderOutcomeUnknown: the order may be live', async ({ answer }) => {
       instance.createOrder.mockResolvedValue(answer);
-      await expect(call(exchange)).rejects.toThrow(GekkoError);
+      await expect(call(exchange)).rejects.toBeInstanceOf(OrderOutcomeUnknown);
     });
   });
 

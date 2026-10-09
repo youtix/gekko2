@@ -31,17 +31,15 @@ export class StickyOrder extends Order {
   // A poll, which may move the order, or a cancelation is in flight: neither another poll nor a cancelation is sent until it has
   // answered
   private isChecking: boolean;
-  private amount: number;
 
   constructor(symbol: TradingPair, gekkoOrderId: UUID, action: OrderSide, amount: number, _price?: number) {
-    super(symbol, gekkoOrderId, action, 'STICKY');
+    super(symbol, gekkoOrderId, action, 'STICKY', amount);
     const orderSync = config.getExchange().orderSynchInterval;
     this.isCanceling = false;
     this.isMoving = false;
     this.isMoveOutcomeUnknown = false;
     this.isMovePending = false;
     this.isChecking = false;
-    this.amount = amount;
 
     bindAll(this, [this.checkOrder.name]);
 
@@ -168,16 +166,15 @@ export class StickyOrder extends Order {
    * The current transaction reported canceled, in the answer to a cancelation or by a poll, its fill recorded. A move whose
    * cancelation is pending, or of unknown outcome, canceled it: what is left is placed again, at the new price. Unless the cancelation
    * of the order was asked meanwhile, or no move was waiting (the strategy canceled it, or the exchange did: expired, dead man's
-   * switch...): the order is then canceled, with what all its transactions filled.
+   * switch...): the order is then canceled, with what all its transactions filled (see Order.handleTransactionCanceled).
    */
-  protected async handleTransactionCanceled({ price, timestamp }: OrderCancelDetails) {
+  protected async handleTransactionCanceled(cancelation: Pick<OrderCancelDetails, 'price' | 'timestamp'>) {
     const isCanceledByMove = this.isMovePending || this.isMoveOutcomeUnknown;
     this.endMove();
     if (isCanceledByMove && !this.isCanceling) return this.launch();
 
     this.isCanceling = false;
-    const totalFilled = this.getTotalFilled();
-    this.orderCanceled({ filled: totalFilled, remaining: Math.max(this.amount - totalFilled, 0), price, timestamp });
+    return super.handleTransactionCanceled(cancelation);
   }
 
   // No move waits any more: what is left is placed again, or the order is over (see orderFilled and orderErrored too). A creation,
@@ -197,7 +194,7 @@ export class StickyOrder extends Order {
 
     if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError) return Promise.resolve(this.orderRejected(error.message));
 
-    return Promise.resolve(this.orderErrored(this.toCreationError(error)));
+    return Promise.resolve(this.orderErroredAtCreation(error));
   }
 
   protected handleCancelOrderSuccess(order: OrderState) {
@@ -279,9 +276,10 @@ export class StickyOrder extends Order {
 
   // 'error' is final: no move waits any more. The reason reports the part already filled, as the polls and the cancelations of the
   // moves saw it: that part is executed.
-  protected orderErrored(error: Error) {
+  protected orderErrored(error: Error, mayBeLive?: boolean) {
     this.endMove();
     const filled = this.getTotalFilled();
-    super.orderErrored(filled > 0 ? new Error(`${error.message} (${filled} of ${this.amount} already filled)`, { cause: error }) : error);
+    const reported = filled > 0 ? new Error(`${error.message} (${filled} of ${this.amount} already filled)`, { cause: error }) : error;
+    super.orderErrored(reported, mayBeLive);
   }
 }

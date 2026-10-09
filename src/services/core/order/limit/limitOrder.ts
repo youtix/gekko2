@@ -15,7 +15,6 @@ import { toError } from '../order.utils';
 // the exchange no longer knows.
 export class LimitOrder extends Order {
   private readonly price: number;
-  private readonly amount: number;
   // A poll or a cancelation of the order is in flight: neither another poll nor a cancelation is sent until it has answered
   private isChecking: boolean;
   // The cancelation was asked and the order has not ended yet: it is sent as soon as the order has an id and no other call is in
@@ -23,10 +22,9 @@ export class LimitOrder extends Order {
   private isCanceling: boolean;
 
   constructor(symbol: TradingPair, gekkoOrderId: UUID, side: OrderSide, amount: number, price: number) {
-    super(symbol, gekkoOrderId, side, 'LIMIT');
+    super(symbol, gekkoOrderId, side, 'LIMIT', amount);
     const orderSync = config.getExchange().orderSynchInterval;
     this.price = price;
-    this.amount = amount;
     this.isChecking = false;
     this.isCanceling = false;
 
@@ -102,7 +100,7 @@ export class LimitOrder extends Order {
   protected handleCreateOrderError(error: unknown) {
     if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError) return this.orderRejected(error.message);
 
-    this.orderErrored(this.toCreationError(error));
+    this.orderErroredAtCreation(error);
   }
 
   protected handleCancelOrderSuccess(order: OrderState) {

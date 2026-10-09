@@ -14,7 +14,6 @@ import { toError } from '../order.utils';
 // One exchange call at a time: a cancelation sent twice in parallel would be answered OrderNotFound the second time, an order
 // the exchange no longer knows.
 export class MarketOrder extends Order {
-  public readonly amount: number;
   // A poll or a cancelation of the order is in flight: neither another poll nor a cancelation is sent until it has answered
   private isChecking: boolean;
   // The cancelation was asked and the order has not ended yet: it is sent as soon as the order has an id and no other call is in
@@ -22,8 +21,7 @@ export class MarketOrder extends Order {
   private isCanceling: boolean;
 
   constructor(symbol: TradingPair, gekkoOrderId: UUID, side: OrderSide, amount: number, _price?: number) {
-    super(symbol, gekkoOrderId, side, 'MARKET');
-    this.amount = amount;
+    super(symbol, gekkoOrderId, side, 'MARKET', amount);
     this.isChecking = false;
     this.isCanceling = false;
 
@@ -108,7 +106,7 @@ export class MarketOrder extends Order {
     // not that it failed.
     if (error instanceof InvalidOrder || error instanceof OrderOutOfRangeError) return this.orderRejected(error.message);
 
-    this.orderErrored(this.toCreationError(error));
+    this.orderErroredAtCreation(error);
   }
 
   protected handleCancelOrderSuccess(order: OrderState) {

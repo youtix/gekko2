@@ -13,7 +13,7 @@ import {
   Strategy,
   Tools,
 } from '@strategies/strategy.types';
-import { addPrecise } from '@utils/math/math.utils';
+import { addPrecise, isFiniteNumber } from '@utils/math/math.utils';
 import type { UUID } from 'node:crypto';
 import { DEFAULT_RETRY_LIMIT } from './gridBot.const';
 import { gridBotStrategySchema } from './gridBot.schema';
@@ -33,7 +33,7 @@ import {
   getRebalanceOrderPrice,
   hasOnlyOneSide,
   inferPricePrecision,
-  isOutcomeUnknown,
+  mayBeLive,
   roundPrice,
   validateConfig,
 } from './gridBot.utils';
@@ -64,9 +64,9 @@ import {
  *   cost: a rebalance under them is not sent, and a side that cannot fund all its levels with them leaves out the farthest
  * - A refused or canceled order is placed again up to retryOnError times, a canceled grid order for what is left of it. A grid order
  *   is then left out with a warning, the rest of the grid trading on until no level holds an order, and a rebalance stops the run
- * - An order whose outcome is unknown, which may be live on the exchange, is never placed again: a grid order is left out with a
- *   warning, the run stopping once more than retryOnError orders are in that case or no level holds an order, and a rebalance
- *   stops the run
+ * - An order that errored while it may be live on the exchange (its creation lost on the network, its poll failed for good) is never
+ *   placed again: a grid order is left out with a warning, the run stopping once more than retryOnError orders are in that case or no
+ *   level holds an order, and a rebalance stops the run
  * - The grid stays in place when the price leaves its range: a timeframe candle that closes out of the range is warned of once, until
  *   one closes back at the grid's price next to the bound it left, where the grid trades again, logged once at info, or out on the
  *   other side. A fill that leaves orders on one side of the grid only is warned of once, until a fill gives it both sides again
@@ -220,10 +220,10 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
 
     // What is left of the order is placed again, and the cancel counts as a failed attempt. The whole quantity used to be placed
     // again, the attempts counted from 0: what had filled before the cancel was traded a second time, and an exchange that kept
-    // canceling the order (self-trade prevention, a cancel by hand) brought it back without end. A fill or a remaining amount the
-    // exchange did not report reaches the strategy as 0 (Order.applyOrderUpdate): with neither, the order is placed again whole.
+    // canceling the order (self-trade prevention, a cancel by hand) brought it back without end. A fill no answer of the exchange
+    // reported reaches the strategy undefined (see OrderCanceledEvent): the order is then placed again whole.
     const { filled, remaining } = order;
-    const isFillReported = filled > 0 || remaining > 0;
+    const isFillReported = isFiniteNumber(filled);
     const left = isFillReported ? addPrecise(level.amount, -filled) : level.amount;
     // Reported filled in full, or with less left than the market takes in an order: the level turns to its other side, as after a
     // fill. Such a remainder used to be placed again, refused at every attempt, and the level gave up holding the part filled.
@@ -240,9 +240,10 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       return this.turnLevel(levelIndex, tools);
     }
 
-    const isPlacedAgain = this.placeAgain(levelIndex, left, `Order was canceled (filled: ${filled}, remaining: ${remaining})`, tools);
+    const fill = isFillReported ? `filled: ${filled}, remaining: ${remaining}` : 'no fill reported';
+    const isPlacedAgain = this.placeAgain(levelIndex, left, `Order was canceled (${fill})`, tools);
     if (isPlacedAgain && !isFillReported) {
-      const canceled = `${level.side} at ${price} was canceled with neither its fill nor its remaining amount reported`;
+      const canceled = `${level.side} at ${price} was canceled with no fill reported`;
       tools.log('warn', `GridBot: ${canceled}: it is placed again whole, ${left}, which trades again any part of it that had filled`);
     }
   }
@@ -253,7 +254,7 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
       // A rebalance used to be planned and placed again whatever the error: one whose outcome is unknown may be live on the exchange,
       // untracked, and both filled, the portfolio was rebalanced twice. No grid order is open yet: the run stops, for the user to
       // check that one order before starting again.
-      if (isOutcomeUnknown(order.reason)) {
+      if (mayBeLive(order)) {
         const plan = this.pendingRebalance;
         const rebalance = plan ? `The rebalance, a STICKY ${plan.side} of ${plan.amount},` : 'The rebalance';
         const untracked = `${rebalance} may be live on the exchange without GridBot tracking it: the grid is not built`;
@@ -269,10 +270,10 @@ export class GridBot implements Strategy<GridBotStrategyParams> {
     if (levelIndex === undefined) return;
     const level = this.levels[levelIndex];
 
-    // Any error used to place the order again. One whose outcome is unknown may be live on the exchange, where nothing tracks it any
-    // more: placed again, the order was doubled, two lots bought or sold where the level holds one, or the copy was refused for want
-    // of the reserve the first one holds. Any other error is taken for a refusal (see isOutcomeUnknown): placed again, as refused.
-    if (isOutcomeUnknown(order.reason)) return this.leaveUntracked(level, order.reason, tools);
+    // Any error used to place the order again. One that may be live on the exchange, where nothing tracks it any more, its creation
+    // lost on the network or its poll failed for good, was doubled: two lots bought or sold where the level holds one, or the copy
+    // refused for want of the reserve the first one holds. Any other error is a refusal (see mayBeLive): placed again, as refused.
+    if (mayBeLive(order)) return this.leaveUntracked(level, order.reason, tools);
     this.placeAgain(levelIndex, level.amount, order.reason, tools);
   }
 

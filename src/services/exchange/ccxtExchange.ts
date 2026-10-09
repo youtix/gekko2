@@ -15,6 +15,7 @@ import { first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
 import { binanceExchangeSchema } from './binance/binance.schema';
 import { LIMITS, MAX_MY_TRADES_PAGES, PARAMS } from './exchange.const';
+import { OrderOutcomeUnknown } from './exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData, OpenOrder, OrderSettledCallback, Ticker } from './exchange.types';
 import {
   checkMandatoryFeatures,
@@ -40,6 +41,9 @@ export type CCXTExchangeConfig = BinanceExchangeConfig | HyperliquidExchangeConf
 const getTradeKey = ({ id, order, timestamp, side, price, amount }: CCXTTrade) =>
   JSON.stringify(isNil(id) ? [order, timestamp, side, price, amount] : [order, id]);
 
+/** The message of a failure, for a GekkoError that quotes it: without the tag a GekkoError starts with ([EXCHANGE]), which it adds again */
+const getUntaggedMessage = (err: unknown) => (err instanceof Error ? err.message.replace(/^\[[A-Z0-9 ]+\] /, '') : String(err));
+
 /**
  * A real exchange reached through ccxt. Every call goes through one of two wrappers of exchange.utils, which both translate the
  * ccxt errors into Gekko's:
@@ -51,7 +55,8 @@ const getTradeKey = ({ id, order, timestamp, side, price, amount }: CCXTTrade) =
  *   nonce (Hyperliquid), so a replayed creation would place a second order, and a replayed cancelation would fail with
  *   OrderNotFound, which the limit and sticky orders take for a fill. The failure is thrown at once as an ExchangeNetworkError:
  *   the outcome of the request is unknown. A creation answered without the status of the order, and a cancelation answered
- *   without its id or its status, are completed by a fetchOrder, a read (see getCreatedOrderState and getCanceledOrderState).
+ *   without its id or its status, are completed by a fetchOrder, a read (see getCreatedOrderState and getCanceledOrderState). A
+ *   creation that leaves nothing to follow the order by, that read failing, throws OrderOutcomeUnknown: the order may be live too.
  * ccxt's own retries are off too (maxRetriesOnFailure: 0 in createExchange).
  */
 export class CCXTExchange implements Exchange {
@@ -301,9 +306,7 @@ export class CCXTExchange implements Exchange {
       // A read: fetchTicker retries it on its own. Its failure ends the creation before any order is sent, so it is not thrown as it
       // is: an ExchangeNetworkError thrown by a creation tells the orders that its outcome is unknown, the order maybe live
       const ticker = await this.fetchTicker(symbol).catch((err: unknown) => {
-        // The tag a GekkoError starts its message with ([EXCHANGE]) is left out: the error thrown here starts with it already
-        const reason = err instanceof Error ? err.message.replace(/^\[[A-Z0-9 ]+\] /, '') : String(err);
-        const failure = new GekkoError('exchange', `Market order not sent: ticker unavailable (${reason})`);
+        const failure = new GekkoError('exchange', `Market order not sent: ticker unavailable (${getUntaggedMessage(err)})`);
         failure.cause = err;
         throw failure;
       });
@@ -368,18 +371,24 @@ export class CCXTExchange implements Exchange {
    * The state of an order the exchange has just created. Hyperliquid answers a creation with the id of the order alone, without its
    * status or timestamp ({ resting: { oid } } for an order on the book, { filled: { totalSz, avgPx, oid } } for an executed one):
    * mapped as is, it would be open, and a market order, which never polls, would stay open forever. Such an order is read back with
-   * fetchOrder, a read, retried on its own without replaying the creation. If the read fails, the order exists on the exchange all
-   * the same: its id is logged before the failure is thrown.
+   * fetchOrder, a read, retried on its own without replaying the creation.
+   * An answer with neither a status nor an id, or a read-back that fails, leaves an order that may be live with nothing to follow it
+   * by: OrderOutcomeUnknown, the id of the order created in its message. The read-back threw its own failure: taken by the orders for a
+   * refusal (an InvalidOrder) or for a failure that placed nothing, the order created was placed again by the strategy beside it.
    */
   private async getCreatedOrderState(symbol: string, order: CCXTOrder | undefined): Promise<OrderState> {
     if (order && !isNil(order.status)) return mapCcxtOrderToOrder(order);
     if (isNil(order?.id))
-      throw new GekkoError(
-        'exchange',
+      throw new OrderOutcomeUnknown(
         `${this.exchangeName} answered the creation of an order on ${symbol} with neither a status nor an id: the order may exist on the exchange, but cannot be followed`,
       );
 
-    return this.readOrderBack(symbol, order.id, `Order ${order.id} was created on ${this.exchangeName} for ${symbol}`);
+    const created = `Order ${order.id} was created on ${this.exchangeName} for ${symbol}`;
+    try {
+      return await this.readOrderBack(symbol, order.id, created);
+    } catch (err) {
+      throw new OrderOutcomeUnknown(`${created}, but its state could not be read back: ${getUntaggedMessage(err)}`, { cause: err });
+    }
   }
 
   /**

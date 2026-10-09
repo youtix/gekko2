@@ -208,11 +208,12 @@ describe('StickyOrder', () => {
           expect(order['getStatus']()).toBe('error');
         });
 
-        it('emits ORDER_ERRORED_EVENT once with the failure message', async () => {
+        // Nothing placed: nothing of it is live
+        it('emits ORDER_ERRORED_EVENT once with the failure message, the order not live', async () => {
           const listener = vi.fn();
           order.on(ORDER_ERRORED_EVENT, listener);
           await order.launch();
-          expect(listener.mock.calls).toEqual([[message]]);
+          expect(listener.mock.calls).toEqual([[{ reason: message, mayBeLive: false }]]);
         });
 
         it('clears the interval polling the order status', async () => {
@@ -340,6 +341,7 @@ describe('StickyOrder', () => {
       expect(erroredSpy).toHaveBeenCalledWith(expect.objectContaining({ message: 'Fetch failed' }));
     });
 
+    // The move canceled the transaction, and the relaunch placed nothing: nothing of the order is live
     it('ends the order with a single ORDER_ERRORED_EVENT when the relaunch of a move cannot fetch the ticker', async () => {
       const order = await createOrder('BUY');
       fakeExchange.fetchOrder.mockResolvedValue({ ...defaultOrder, price: 102 });
@@ -350,7 +352,7 @@ describe('StickyOrder', () => {
 
       await order.checkOrder();
 
-      expect(listener.mock.calls).toEqual([['Network down']]);
+      expect(listener.mock.calls).toEqual([[{ reason: 'Network down', mayBeLive: false }]]);
     });
 
     // checkOrder runs in an interval, which ignores its promise: nothing may escape from it, even a failure the handlers missed
@@ -502,12 +504,13 @@ describe('StickyOrder', () => {
       expect(listener.mock.calls).toEqual([[2]]);
     });
 
-    it('records a fill of 0 when the creation reports none', async () => {
+    // Unknown, not 0 (see Order.recordOrderUpdate)
+    it('records no fill when the creation reports none', async () => {
       fakeExchange.createLimitOrder.mockResolvedValue({ ...defaultOrder, filled: undefined });
 
       const order = await createOrder('BUY');
 
-      expect(order['transactions'].get(defaultOrder.id)?.filled).toBe(0);
+      expect(order['transactions'].get(defaultOrder.id)?.filled).toBeUndefined();
     });
   });
 
@@ -642,12 +645,13 @@ describe('StickyOrder', () => {
       expect(spy).toHaveBeenCalled();
     });
 
+    // Open when its cancelation failed for good, it may still be live
     it('ends the order with the value of a failure that is not an Error as its reason', async () => {
       const order = await createOrder('BUY');
       const listener = vi.fn();
       order.on(ORDER_ERRORED_EVENT, listener);
       await order['handleCancelOrderError']('Fail');
-      expect(listener.mock.calls).toEqual([['Fail']]);
+      expect(listener.mock.calls).toEqual([[{ reason: 'Fail', mayBeLive: true }]]);
     });
 
     it.each`
@@ -667,12 +671,12 @@ describe('StickyOrder', () => {
       kind                   | failure                         | reason
       ${'an Error'}          | ${new Error('Invalid API key')} | ${'Invalid API key'}
       ${'a non-Error value'} | ${'Invalid API key'}            | ${'Invalid API key'}
-    `('ends the order on $kind', async ({ failure, reason }) => {
+    `('ends the order on $kind, maybe live: it was open when its poll failed', async ({ failure, reason }) => {
       const order = await createOrder('BUY');
       const listener = vi.fn();
       order.on(ORDER_ERRORED_EVENT, listener);
       await order['handleFetchOrderError'](failure);
-      expect(listener.mock.calls).toEqual([[reason]]);
+      expect(listener.mock.calls).toEqual([[{ reason, mayBeLive: true }]]);
     });
 
     it('keeps the order open on an ExchangeNetworkError', async () => {
@@ -695,7 +699,20 @@ describe('StickyOrder', () => {
       const listener = vi.fn();
       order.on(ORDER_ERRORED_EVENT, listener);
       order['orderErrored'](new Error('Invalid API key'));
-      expect(listener.mock.calls).toEqual([[reason]]);
+      expect(listener.mock.calls).toEqual([[{ reason, mayBeLive: true }]]);
+    });
+
+    it.each`
+      mayBeLive
+      ${true}
+      ${false}
+    `('relays mayBeLive $mayBeLive when told, whatever its transaction', async ({ mayBeLive }) => {
+      const order = await createOrder('BUY', 5);
+      order['transactions'].set('order-1', { id: 'order-1', status: mayBeLive ? 'canceled' : 'open', filled: 2, timestamp: Date.now() });
+      const listener = vi.fn();
+      order.on(ORDER_ERRORED_EVENT, listener);
+      order['orderErrored'](new Error('Invalid API key'), mayBeLive);
+      expect(listener.mock.calls).toEqual([[{ reason: 'Invalid API key (2 of 5 already filled)', mayBeLive }]]);
     });
   });
 
@@ -982,7 +999,13 @@ describe('StickyOrder', () => {
       });
 
       it('emits ORDER_ERRORED_EVENT with a reason saying the outcome is unknown', () => {
-        expect(erroredListener).toHaveBeenCalledWith(expect.stringContaining('Outcome unknown: the order may be live on the exchange'));
+        expect(erroredListener).toHaveBeenCalledWith(
+          expect.objectContaining({ reason: expect.stringContaining('Outcome unknown: the order may be live on the exchange') }),
+        );
+      });
+
+      it('says the order may be live', () => {
+        expect(erroredListener).toHaveBeenCalledWith(expect.objectContaining({ mayBeLive: true }));
       });
 
       it('clears the interval polling the order', () => {
@@ -1028,8 +1051,9 @@ describe('StickyOrder', () => {
         await nextCheck();
       });
 
-      it('emits ORDER_ERRORED_EVENT once', () => {
-        expect(erroredListener.mock.calls).toEqual([['Invalid API key']]);
+      // Open when its poll failed, it may still be live: nothing follows it any more
+      it('emits ORDER_ERRORED_EVENT once, the order maybe live', () => {
+        expect(erroredListener.mock.calls).toEqual([[{ reason: 'Invalid API key', mayBeLive: true }]]);
       });
 
       it('clears the interval polling the order', () => {
@@ -1090,8 +1114,9 @@ describe('StickyOrder', () => {
         await order.cancel();
       });
 
-      it('emits ORDER_ERRORED_EVENT once', () => {
-        expect(erroredListener.mock.calls).toEqual([['Invalid API key']]);
+      // Not canceled, it may still be live: nothing follows it any more
+      it('emits ORDER_ERRORED_EVENT once, the order maybe live', () => {
+        expect(erroredListener.mock.calls).toEqual([[{ reason: 'Invalid API key', mayBeLive: true }]]);
       });
 
       it('clears the interval polling the order', () => {
@@ -1136,14 +1161,15 @@ describe('StickyOrder', () => {
       });
     });
 
-    // The poll records 2 of the 5 filled, the move cancels the transaction, then fails to place the 3 left
+    // The poll records 2 of the 5 filled, the move cancels the transaction, then fails to place the 3 left: nothing is live once the
+    // ticker fetch failed, the 3 may be once their creation was lost on the network
     const failTicker = () => fakeExchange.fetchTicker.mockRejectedValueOnce(new ExchangeNetworkError('timeout'));
     const failCreation = () => fakeExchange.createLimitOrder.mockRejectedValueOnce(new ExchangeNetworkError('timeout'));
     describe.each`
-      step                  | failRelaunch    | reason
-      ${'the ticker fetch'} | ${failTicker}   | ${/^\[EXCHANGE\] timeout \(2 of 5 already filled\)$/}
-      ${'the creation'}     | ${failCreation} | ${/^Outcome unknown: .+ \(\[EXCHANGE\] timeout\) \(2 of 5 already filled\)$/}
-    `('when $step of the relaunch of a move fails', ({ failRelaunch, reason }) => {
+      step                  | failRelaunch    | reason                                                                        | mayBeLive
+      ${'the ticker fetch'} | ${failTicker}   | ${/^\[EXCHANGE\] timeout \(2 of 5 already filled\)$/}                         | ${false}
+      ${'the creation'}     | ${failCreation} | ${/^Outcome unknown: .+ \(\[EXCHANGE\] timeout\) \(2 of 5 already filled\)$/} | ${true}
+    `('when $step of the relaunch of a move fails', ({ failRelaunch, reason, mayBeLive }) => {
       let erroredListener: Mock;
 
       beforeEach(async () => {
@@ -1156,8 +1182,8 @@ describe('StickyOrder', () => {
         await nextCheck();
       });
 
-      it('emits ORDER_ERRORED_EVENT once, with the part already filled in the reason', () => {
-        expect(erroredListener.mock.calls).toEqual([[expect.stringMatching(reason)]]);
+      it(`emits ORDER_ERRORED_EVENT once, with the part already filled in the reason, mayBeLive ${mayBeLive}`, () => {
+        expect(erroredListener.mock.calls).toEqual([[{ reason: expect.stringMatching(reason), mayBeLive }]]);
       });
 
       it('clears the interval polling the order', () => {
@@ -1725,11 +1751,13 @@ describe('StickyOrder', () => {
         });
       });
 
-      // The price does not move: the poll only records the fill before the strategy cancels the order
+      // The price does not move: the poll only records the fill before the strategy cancels the order. What is left is worked out in
+      // decimal: 1 - 0.7 is 0.30000000000000004 in binary
       it.each`
         polled | canceled | filled | remaining
         ${0.3} | ${0.3}   | ${0.3} | ${0.7}
         ${0.3} | ${0.5}   | ${0.5} | ${0.5}
+        ${0.7} | ${0.7}   | ${0.7} | ${0.3}
       `(
         'reports $filled filled and $remaining left at 102 when the poll saw $polled filled and the cancel response $canceled',
         async ({ polled, canceled, filled, remaining }) => {
@@ -1783,7 +1811,7 @@ describe('StickyOrder', () => {
       });
     });
 
-    // lodash's sumBy returns undefined, not 0, when none of the values it adds up is defined
+    // No state reported a fill: what the order executed is unknown, which 0 filled and the whole amount left would misstate
     describe('when the exchange never reports a fill', () => {
       beforeEach(() => {
         fakeExchange.createLimitOrder.mockResolvedValue(state('order-1', 'open', { price: 102 }));
@@ -1797,7 +1825,7 @@ describe('StickyOrder', () => {
         ${'the strategy cancels the order'}    | ${fakeExchange.cancelOrder}
         ${'a poll finds the order canceled'}   | ${fakeExchange.fetchOrder}
         ${'the order is canceled at creation'} | ${fakeExchange.createLimitOrder}
-      `('reports no fill and the whole amount left when $path', async ({ response }) => {
+      `('reports neither a fill nor what is left when $path', async ({ response }) => {
         response.mockResolvedValue(state('order-1', 'canceled'));
         const order = new StickyOrder('BTC/USDT', 'ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 1);
         const listener = vi.fn();
@@ -1807,7 +1835,7 @@ describe('StickyOrder', () => {
         await order.checkOrder();
         await order.cancel();
 
-        expect(listener.mock.calls).toEqual([[{ status: 'canceled', filled: 0, remaining: 1, timestamp }]]);
+        expect(listener.mock.calls).toEqual([[{ status: 'canceled', timestamp }]]);
       });
 
       it('places the whole amount again when a move cancels the order', async () => {

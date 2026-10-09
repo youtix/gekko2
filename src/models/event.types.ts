@@ -40,10 +40,14 @@ export type OrderCanceledEvent = OrderInitiatedEvent & {
   order: OrderEvent & {
     /** Order Cancelation date */
     orderCancelationDate: EpochTimeStamp;
-    /** Order filled amount */
-    filled: number;
-    /** Order remaining amount */
-    remaining: number;
+    /**
+     * What the order executed before it was canceled, as far as the exchange reported it: the largest fill any of its states reported,
+     * the polls and its creation as much as the answer to the cancelation, added up over the transactions of a STICKY order.
+     * Undefined when no state of the order reported a fill, which tells nothing of what it executed: it is not 0 filled.
+     */
+    filled?: number;
+    /** What was left of its amount: the amount less `filled`, never below 0. Undefined with `filled` */
+    remaining?: number;
   };
 };
 
@@ -60,6 +64,14 @@ export type OrderErroredEvent = OrderInitiatedEvent & {
      * does not know it.
      */
     filled?: number;
+    /**
+     * Whether the order may still be live on the exchange, where nothing follows it any more, the Trader forgetting an order once it
+     * errored: its creation's outcome is unknown (lost on the network, or created and not read back), or a poll, a cancelation or the
+     * read-back of one failed for good while it was open. Placed again, it could be doubled. False when the exchange refused it, or
+     * when nothing of it was open (a STICKY order whose relaunch failed before it was placed). Set by the order, and relayed by the
+     * Trader on every such event; left out only by the code that builds the event itself, as tests do.
+     */
+    mayBeLive?: boolean;
   };
 };
 /** Can return NaN values in price, amount,effectivePrice, fee, feePercent */

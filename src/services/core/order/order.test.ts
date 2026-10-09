@@ -8,8 +8,9 @@ import {
 } from '@constants/event.const';
 import { GekkoError } from '@errors/gekko.error';
 import { OrderState } from '@models/order.types';
-import { ExchangeNetworkError, OrderNotFound } from '@services/exchange/exchange.error';
+import { ExchangeNetworkError, OrderNotFound, OrderOutcomeUnknown } from '@services/exchange/exchange.error';
 import * as logger from '@services/logger';
+import type { Mock, MockInstance } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Order } from './order';
 
@@ -61,7 +62,7 @@ describe('order', () => {
     Object.values(fakeExchange).forEach(value => {
       if (typeof value === 'function') value.mockReset?.();
     });
-    testOrder = new TestOrder('BTC/USDT', 'ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 'STICKY');
+    testOrder = new TestOrder('BTC/USDT', 'ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', 'STICKY', 10);
   });
 
   it('should have status "initializing" upon creation', () => {
@@ -167,7 +168,40 @@ describe('order', () => {
       // So we need to declare an error listener
       testOrder.on('error', () => {});
       testOrder['orderErrored'](error);
-      expect(spy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, 'test error');
+      expect(spy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, { reason: 'test error', mayBeLive: false });
+    });
+
+    it('sets the status "error"', () => {
+      testOrder['orderErrored'](new Error('test error'));
+      expect(testOrder['getStatus']()).toBe('error');
+    });
+
+    // Whether the order may still be live on the exchange, where nothing follows it once it errored: by default, whether its current
+    // transaction is open as the exchange last reported it, as when a poll or a cancelation fails for good
+    it.each`
+      kind                                              | states                                                                                                  | mayBeLive
+      ${'no transaction'}                               | ${[]}                                                                                                   | ${false}
+      ${'its transaction open'}                         | ${[{ id: 'tx1', status: 'open', timestamp: 1000 }]}                                                     | ${true}
+      ${'its transaction canceled (a STICKY relaunch)'} | ${[{ id: 'tx1', status: 'canceled', timestamp: 1000 }]}                                                 | ${false}
+      ${'a transaction canceled, then another open'}    | ${[{ id: 'tx1', status: 'canceled', timestamp: 1000 }, { id: 'tx2', status: 'open', timestamp: 2000 }]} | ${true}
+    `('says mayBeLive $mayBeLive by default given $kind', ({ states, mayBeLive }) => {
+      states.forEach((state: OrderState) => testOrder['recordOrderUpdate'](state));
+      const listener = vi.fn();
+      testOrder.on(ORDER_ERRORED_EVENT, listener);
+      testOrder['orderErrored'](new Error('Invalid API key'));
+      expect(listener.mock.calls).toEqual([[{ reason: 'Invalid API key', mayBeLive }]]);
+    });
+
+    it.each`
+      mayBeLive
+      ${true}
+      ${false}
+    `('says mayBeLive $mayBeLive when told, whatever its transaction', ({ mayBeLive }) => {
+      testOrder['recordOrderUpdate']({ id: 'tx1', status: mayBeLive ? 'canceled' : 'open', timestamp: 1000 });
+      const listener = vi.fn();
+      testOrder.on(ORDER_ERRORED_EVENT, listener);
+      testOrder['orderErrored'](new Error('Invalid API key'), mayBeLive);
+      expect(listener.mock.calls).toEqual([[{ reason: 'Invalid API key', mayBeLive }]]);
     });
   });
 
@@ -264,9 +298,15 @@ describe('order', () => {
         expect(testOrder['id']).toBe('tx1');
       });
 
-      it('records a fill of 0 when the state reports none', () => {
-        record({ filled: undefined });
-        expect(getTransaction()?.filled).toBe(0);
+      // Not 0: a fill never reported is unknown, which a canceled order reports as such (see getCancelationFill)
+      it.each`
+        kind                    | filled       | recorded
+        ${'no fill'}            | ${undefined} | ${undefined}
+        ${'a fill that is NaN'} | ${NaN}       | ${undefined}
+        ${'a fill of 0'}        | ${0}         | ${0}
+      `('records a fill of $recorded when the state reports $kind', ({ filled, recorded }) => {
+        record({ filled });
+        expect(getTransaction()?.filled).toBe(recorded);
       });
 
       it.each`
@@ -317,6 +357,21 @@ describe('order', () => {
         expect(getTransaction()?.filled).toBe(recorded);
       });
 
+      // The first state reported none: the first one that does is the fill, and a fill of it
+      it.each`
+        kind             | filled       | recorded     | calls
+        ${'a fill of 3'} | ${3}         | ${3}         | ${[[3]]}
+        ${'a fill of 0'} | ${0}         | ${0}         | ${[]}
+        ${'no fill'}     | ${undefined} | ${undefined} | ${[]}
+      `('records $recorded, and emits $calls, given $kind after a state without fill', ({ filled, recorded, calls }) => {
+        testOrder['transactions'].clear();
+        record({ filled: undefined });
+        const listener = vi.fn();
+        testOrder.on(ORDER_PARTIALLY_FILLED_EVENT, listener);
+        record({ filled });
+        expect({ recorded: getTransaction()?.filled, calls: listener.mock.calls }).toEqual({ recorded, calls });
+      });
+
       it.each`
         kind                | filled       | outcome           | calls
         ${'a larger fill'}  | ${5}         | ${'the new fill'} | ${[[5]]}
@@ -352,7 +407,7 @@ describe('order', () => {
       expect(testOrder.getFilledAmount()).toBe(expected);
     });
 
-    // recordOrderUpdate always records a number: a transaction typed without one counts as nothing filled, not as NaN
+    // recordOrderUpdate records no fill until a state reports one: such a transaction counts as nothing filled, not as NaN
     it('counts a transaction recorded without a fill as 0', () => {
       testOrder['transactions'].set('tx1', { id: 'tx1', status: 'closed', timestamp: 1000 });
       expect(testOrder.getFilledAmount()).toBe(0);
@@ -385,16 +440,36 @@ describe('order', () => {
       expect(listener.mock.calls).toEqual([[{ status: 'filled', filled: true }]]);
     });
 
-    // The same payload for every type of order: what the transaction filled, what is left, its price when known, and the time
+    // The same payload for every type of order: what the order filled, what is left of its amount (10), its price when known, and
+    // the time. Neither amount while no state reported a fill: unknown, not 0 filled and 0 remaining
     it.each`
       kind                       | update                                         | payload
       ${'with all its details'}  | ${{}}                                          | ${{ status: 'canceled', filled: 2, remaining: 8, price: 100, timestamp: 1000 }}
-      ${'without fill nor rest'} | ${{ filled: undefined, remaining: undefined }} | ${{ status: 'canceled', filled: 0, remaining: 0, price: 100, timestamp: 1000 }}
+      ${'without fill nor rest'} | ${{ filled: undefined, remaining: undefined }} | ${{ status: 'canceled', price: 100, timestamp: 1000 }}
       ${'without its price'}     | ${{ price: undefined }}                        | ${{ status: 'canceled', filled: 2, remaining: 8, timestamp: 1000 }}
     `('emits ORDER_CANCELED_EVENT when the transaction is canceled $kind', ({ update, payload }) => {
       const listener = listen(ORDER_CANCELED_EVENT);
       apply({ status: 'canceled', ...update });
       expect(listener.mock.calls).toEqual([[payload]]);
+    });
+
+    // A MARKET or LIMIT order relayed the answer to the cancelation alone, an amount it left out as 0: a fill an earlier poll had
+    // reported was lost, and a cancelation answered without its fill read as 0 filled and 0 remaining
+    it.each`
+      kind                                                        | states                                                                              | filled       | remaining
+      ${'a poll reported 2, the cancelation none'}                | ${[{ filled: 2 }, { status: 'canceled', filled: undefined, remaining: undefined }]} | ${2}         | ${8}
+      ${'a poll reported 2, the cancelation 1'}                   | ${[{ filled: 2 }, { status: 'canceled', filled: 1, remaining: 9 }]}                 | ${2}         | ${8}
+      ${'a poll reported 2, the cancelation 3'}                   | ${[{ filled: 2 }, { status: 'canceled', filled: 3, remaining: 7 }]}                 | ${3}         | ${7}
+      ${'the creation reported 0, the cancelation none'}          | ${[{ filled: 0 }, { status: 'canceled', filled: undefined, remaining: undefined }]} | ${0}         | ${10}
+      ${'no state reported any'}                                  | ${[{ filled: undefined }, { status: 'canceled', filled: undefined }]}               | ${undefined} | ${undefined}
+      ${'9.7, which leaves 0.3 in decimal (0.3000000000000007)'}  | ${[{ status: 'canceled', filled: 9.7 }]}                                            | ${9.7}       | ${0.3}
+      ${'more than the amount ordered, the exchange rounding up'} | ${[{ status: 'canceled', filled: 10.5 }]}                                           | ${10.5}      | ${0}
+      ${'two transactions reported 3 and 2 (a STICKY order)'}     | ${[{ filled: 3 }, { id: 'tx2', status: 'canceled', filled: 2 }]}                    | ${5}         | ${5}
+    `('reports what the order filled when $kind: $filled filled, $remaining remaining', ({ states, filled, remaining }) => {
+      const listener = listen(ORDER_CANCELED_EVENT);
+      states.forEach((update: Partial<OrderState>) => apply(update));
+      const [payload] = listener.mock.calls.at(-1) ?? [];
+      expect({ filled: payload?.filled, remaining: payload?.remaining }).toEqual({ filled, remaining });
     });
 
     // Reported once per transaction: a poll of a transaction that stays open changes nothing
@@ -443,26 +518,49 @@ describe('order', () => {
     });
   });
 
-  describe('toCreationError', () => {
-    it('says the outcome of a creation that failed on the network is unknown', () => {
-      const creationError = testOrder['toCreationError'](new ExchangeNetworkError('timeout'));
-      expect(creationError.message).toBe(
-        'Outcome unknown: the order may be live on the exchange, check it before placing it again ([EXCHANGE] timeout)',
-      );
+  // A creation is sent once and never replayed: one whose outcome is unknown may have placed the order
+  describe('orderErroredAtCreation', () => {
+    let listener: Mock;
+    let orderErroredSpy: MockInstance;
+
+    beforeEach(() => {
+      listener = vi.fn();
+      testOrder.on(ORDER_ERRORED_EVENT, listener);
+      orderErroredSpy = vi.spyOn(testOrder as any, 'orderErrored');
     });
 
-    it('keeps the network failure as the cause', () => {
+    it.each`
+      kind                         | failure                                                                                                                   | reason
+      ${'an ExchangeNetworkError'} | ${new ExchangeNetworkError('timeout')}                                                                                    | ${'([EXCHANGE] timeout)'}
+      ${'an OrderOutcomeUnknown'}  | ${new OrderOutcomeUnknown('Order 42 was created on binance for BTC/USDT, but its state could not be read back: timeout')} | ${'([EXCHANGE] Order 42 was created on binance for BTC/USDT, but its state could not be read back: timeout)'}
+    `('says the outcome of a creation that failed with $kind is unknown, the order maybe live', ({ failure, reason }) => {
+      testOrder['orderErroredAtCreation'](failure);
+      expect(listener.mock.calls).toEqual([
+        [{ reason: `Outcome unknown: the order may be live on the exchange, check it before placing it again ${reason}`, mayBeLive: true }],
+      ]);
+    });
+
+    it('keeps the failure as the cause', () => {
       const networkError = new ExchangeNetworkError('timeout');
-      expect(testOrder['toCreationError'](networkError).cause).toBe(networkError);
+      testOrder['orderErroredAtCreation'](networkError);
+      expect(orderErroredSpy.mock.calls[0][0].cause).toBe(networkError);
     });
 
-    it('returns any other Error as it is', () => {
+    it.each`
+      kind                   | failure                                                                              | reason
+      ${'an Error'}          | ${new Error('Invalid API key')}                                                      | ${'Invalid API key'}
+      ${'a GekkoError'}      | ${new GekkoError('exchange', 'Market order not sent: ticker unavailable (timeout)')} | ${'[EXCHANGE] Market order not sent: ticker unavailable (timeout)'}
+      ${'an OrderNotFound'}  | ${new OrderNotFound('unknown order')}                                                | ${'[EXCHANGE] unknown order'}
+      ${'a non-Error value'} | ${'Invalid API key'}                                                                 | ${'Invalid API key'}
+    `('ends the order with the reason of $kind, which placed nothing', ({ failure, reason }) => {
+      testOrder['orderErroredAtCreation'](failure);
+      expect(listener.mock.calls).toEqual([[{ reason, mayBeLive: false }]]);
+    });
+
+    it('ends the order with an Error as it is', () => {
       const failure = new Error('Invalid API key');
-      expect(testOrder['toCreationError'](failure)).toBe(failure);
-    });
-
-    it('wraps a non-Error value in an Error', () => {
-      expect(testOrder['toCreationError']('Invalid API key')).toEqual(new Error('Invalid API key'));
+      testOrder['orderErroredAtCreation'](failure);
+      expect(orderErroredSpy.mock.calls[0][0]).toBe(failure);
     });
   });
 

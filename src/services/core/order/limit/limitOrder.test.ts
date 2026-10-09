@@ -7,7 +7,7 @@ import {
 } from '@constants/event.const';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderState } from '@models/order.types';
-import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
+import { ExchangeNetworkError, InvalidOrder, OrderNotFound, OrderOutcomeUnknown } from '@services/exchange/exchange.error';
 import * as logger from '@services/logger';
 import { toTimestamp } from '@utils/date/date.utils';
 import type { Mock } from 'vitest';
@@ -189,10 +189,11 @@ describe('LimitOrder', () => {
         await expect(order.launch()).resolves.toBeUndefined();
       });
 
-      it('emits ORDER_ERRORED_EVENT with the error message', async () => {
+      // Any failure but one of unknown outcome is taken for one that placed nothing
+      it('emits ORDER_ERRORED_EVENT with the error message, the order not live', async () => {
         const emitSpy = vi.spyOn(order as any, 'emit');
         await order.launch();
-        expect(emitSpy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, 'Unknown error');
+        expect(emitSpy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, { reason: 'Unknown error', mayBeLive: false });
       });
 
       it('sets the status to error', async () => {
@@ -281,10 +282,11 @@ describe('LimitOrder', () => {
         await expect(order.cancel()).resolves.toBeUndefined();
       });
 
-      it('emits ORDER_ERRORED_EVENT with the error message', async () => {
+      // The order was open when its cancelation failed for good: nothing follows it any more
+      it('emits ORDER_ERRORED_EVENT with the error message, the order maybe live', async () => {
         const emitSpy = vi.spyOn(order as any, 'emit');
         await order.cancel();
-        expect(emitSpy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, 'Network error');
+        expect(emitSpy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, { reason: 'Network error', mayBeLive: true });
       });
 
       it('sets the status to error', async () => {
@@ -362,10 +364,11 @@ describe('LimitOrder', () => {
         await expect(order.checkOrder()).resolves.toBeUndefined();
       });
 
-      it('emits ORDER_ERRORED_EVENT with the error message', async () => {
+      // The order was open when its poll failed for good: nothing follows it any more
+      it('emits ORDER_ERRORED_EVENT with the error message, the order maybe live', async () => {
         const emitSpy = vi.spyOn(order as any, 'emit');
         await order.checkOrder();
-        expect(emitSpy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, 'Fetch failed');
+        expect(emitSpy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, { reason: 'Fetch failed', mayBeLive: true });
       });
 
       it('sets the status to error', async () => {
@@ -420,17 +423,29 @@ describe('LimitOrder', () => {
       order = new LimitOrder('BTC/USDT', defaultGekkoId, 'BUY', 1, 100);
     });
 
-    describe('when the creation fails on the network', () => {
+    // CCXTExchange throws OrderOutcomeUnknown for a creation it cannot follow: answered with neither a status nor an id, or created and
+    // not read back. The read-back's own failure used to reach the order: an InvalidOrder made the order created a refusal
+    describe.each`
+      failure                                                                                                              | kind
+      ${new ExchangeNetworkError('timeout')}                                                                               | ${'fails on the network'}
+      ${new OrderOutcomeUnknown('Order 42 was created on hyperliquid for BTC/USDT, but its state could not be read back')} | ${'leaves the order without a state to follow it by'}
+    `('when the creation $kind', ({ failure }) => {
       let erroredListener: Mock;
 
       beforeEach(async () => {
-        fakeExchange.createLimitOrder.mockRejectedValue(new ExchangeNetworkError('timeout'));
+        fakeExchange.createLimitOrder.mockRejectedValue(failure);
         erroredListener = listen(ORDER_ERRORED_EVENT);
         await order.launch();
       });
 
       it('emits ORDER_ERRORED_EVENT with a reason saying the outcome is unknown', () => {
-        expect(erroredListener).toHaveBeenCalledWith(expect.stringContaining('Outcome unknown: the order may be live on the exchange'));
+        expect(erroredListener).toHaveBeenCalledWith(
+          expect.objectContaining({ reason: expect.stringContaining('Outcome unknown: the order may be live on the exchange') }),
+        );
+      });
+
+      it('says the order may be live', () => {
+        expect(erroredListener).toHaveBeenCalledWith(expect.objectContaining({ mayBeLive: true }));
       });
 
       it('clears the interval polling the order', () => {
@@ -476,8 +491,9 @@ describe('LimitOrder', () => {
         await nextCheck();
       });
 
-      it('emits ORDER_ERRORED_EVENT once', () => {
-        expect(erroredListener.mock.calls).toEqual([['Invalid API key']]);
+      // Open when its poll failed, it may still be live: nothing follows it any more
+      it('emits ORDER_ERRORED_EVENT once, the order maybe live', () => {
+        expect(erroredListener.mock.calls).toEqual([[{ reason: 'Invalid API key', mayBeLive: true }]]);
       });
 
       it('clears the interval polling the order', () => {
@@ -538,8 +554,9 @@ describe('LimitOrder', () => {
         await order.cancel();
       });
 
-      it('emits ORDER_ERRORED_EVENT once', () => {
-        expect(erroredListener.mock.calls).toEqual([['Invalid API key']]);
+      // Not canceled, it may still be live: nothing follows it any more
+      it('emits ORDER_ERRORED_EVENT once, the order maybe live', () => {
+        expect(erroredListener.mock.calls).toEqual([[{ reason: 'Invalid API key', mayBeLive: true }]]);
       });
 
       it('clears the interval polling the order', () => {
@@ -781,6 +798,37 @@ describe('LimitOrder', () => {
     });
   });
 
+  // What the order filled is the largest fill any of its states reported. It used to relay the answer to its cancelation alone, an
+  // amount it left out as 0: a fill an earlier poll had reported was lost, and an answer without its fill read as nothing filled
+  describe('what a canceled order reports it filled', () => {
+    const cancelAfter = async (creation: Partial<OrderState>, polls: Partial<OrderState>[], cancelation: Partial<OrderState>) => {
+      fakeExchange.createLimitOrder.mockResolvedValue({ ...defaultOrder, ...creation });
+      order = new LimitOrder('BTC/USDT', defaultGekkoId, 'BUY', 1, 100);
+      await order.launch();
+      polls.forEach(poll => (order as any).handleFetchOrderSuccess({ ...defaultOrder, ...poll }));
+      const listener = vi.fn();
+      order.on(ORDER_CANCELED_EVENT, listener);
+      fakeExchange.cancelOrder.mockResolvedValue({ ...defaultOrder, status: 'canceled', ...cancelation });
+      await order.cancel();
+      const [payload] = listener.mock.calls[0] ?? [];
+      return { filled: payload?.filled, remaining: payload?.remaining };
+    };
+    const noFill = { filled: undefined, remaining: undefined };
+
+    it.each`
+      kind                                                               | creation  | polls                                | cancelation                        | expected
+      ${'a poll reported 0.4, the cancelation answered without it'}      | ${{}}     | ${[{ filled: 0.4, remaining: 0.6 }]} | ${noFill}                          | ${{ filled: 0.4, remaining: 0.6 }}
+      ${'a poll reported 0.4, the cancelation 0.7 (1 - 0.7 in decimal)'} | ${{}}     | ${[{ filled: 0.4, remaining: 0.6 }]} | ${{ filled: 0.7, remaining: 0.3 }} | ${{ filled: 0.7, remaining: 0.3 }}
+      ${'its creation reported 0, the cancelation nothing'}              | ${{}}     | ${[]}                                | ${noFill}                          | ${{ filled: 0, remaining: 1 }}
+      ${'no state reported a fill'}                                      | ${noFill} | ${[]}                                | ${noFill}                          | ${noFill}
+    `(
+      'reports $expected.filled filled and $expected.remaining remaining when $kind',
+      async ({ creation, polls, cancelation, expected }) => {
+        expect(await cancelAfter(creation, polls, cancelation)).toEqual(expected);
+      },
+    );
+  });
+
   // An order that is over stays so: neither the simulated exchange settling it afterwards (the callback given at its creation, in
   // backtest) nor the late answer of a call sent before its end ends it a second time or brings it back to open
   describe('updates after the end of the order', () => {
@@ -860,7 +908,7 @@ describe('LimitOrder', () => {
       it('emits ORDER_ERRORED_EVENT with the error message', () => {
         const emitSpy = vi.spyOn(order as any, 'emit');
         (order as any)[handler](value);
-        expect(emitSpy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, message);
+        expect(emitSpy).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, expect.objectContaining({ reason: message }));
       });
 
       it('sets the status to error', () => {

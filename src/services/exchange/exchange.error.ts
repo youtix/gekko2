@@ -33,3 +33,18 @@ export class ExchangeNetworkError extends GekkoError {
     if (options?.cause !== undefined) this.cause = options.cause;
   }
 }
+
+/**
+ * The creation of an order went through, or may have, but left nothing to follow the order by: the exchange answered it with neither
+ * a status nor an id, or the state of the order it created could not be read back. Not a refusal: the order may be live on the
+ * exchange, and placed again it could be doubled. The orders end with it as with a creation lost on the network (see
+ * Order.orderErroredAtCreation). The read-back of a creation used to throw its own failure: an InvalidOrder made the order a refusal,
+ * and any other one an error said to have placed nothing.
+ */
+export class OrderOutcomeUnknown extends GekkoError {
+  constructor(message: string, options?: ErrorOptions) {
+    super('exchange', message);
+    this.name = 'OrderOutcomeUnknown';
+    if (options?.cause !== undefined) this.cause = options.cause;
+  }
+}

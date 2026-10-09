@@ -994,10 +994,10 @@ describe('Trader', () => {
         expect(logger.warning).toHaveBeenCalledWith('trader', `[${advice.id}] Impossible to create the BUY STICKY order: ${reason}`);
       });
 
-      // Never placed, it filled nothing
-      it('emits a deferred ORDER_ERRORED_EVENT with the reason, nothing filled, the portfolio and the price known', () => {
+      // Never placed, it filled nothing, and nothing of it is live
+      it('emits a deferred ORDER_ERRORED_EVENT with the reason, nothing filled nor live, the portfolio and the price known', () => {
         expect(trader['addDeferredEmit']).toHaveBeenCalledWith(ORDER_ERRORED_EVENT, {
-          order: { ...advice, amount: 0, reason, orderErrorDate: 1_700_000_000_000, filled: 0 },
+          order: { ...advice, amount: 0, reason, orderErrorDate: 1_700_000_000_000, filled: 0, mayBeLive: false },
           exchange: { price: marketPrice ?? 0, portfolio: trader['portfolio'] },
         });
       });
@@ -1035,7 +1035,7 @@ describe('Trader', () => {
       await trader.onStrategyCreateOrder([advice]);
       const order = getOrderInstance(advice.id)!;
 
-      order.emit(ORDER_ERRORED_EVENT, 'boom');
+      order.emit(ORDER_ERRORED_EVENT, { reason: 'boom', mayBeLive: false });
       await tick(); // Wait for async callbacks
 
       expect(logger.error).toHaveBeenCalledWith('trader', expect.stringContaining('boom'));
@@ -1135,6 +1135,29 @@ describe('Trader', () => {
         await trader.onStrategyCancelOrder([advice.id]);
         expect(logger.warning).toHaveBeenCalledWith('trader', `[${advice.id}] Impossible to cancel order: Unknown Order`);
       });
+
+      it('logs the cancelation with what the order filled', () => {
+        expect(logger.info).toHaveBeenCalledWith('trader', `[${advice.id}] BUY STICKY order canceled (filled: 2, remaining: 7.5)`);
+      });
+    });
+
+    // An order leaves its fill out when no answer of the exchange reported one (see Order.getCancelationFill): unknown, not 0 filled
+    describe('when the exchange cancels an order whose fill no answer reported', () => {
+      const advice = buildAdvice();
+
+      beforeEach(async () => {
+        vi.spyOn(trader as any, 'synchronize').mockResolvedValue(undefined);
+        await trader.onStrategyCreateOrder([advice]);
+        await getOrderInstance(advice.id)!.emitAndSettle(ORDER_CANCELED_EVENT, { status: 'canceled', timestamp: 123_456 });
+      });
+
+      it('emits a deferred ORDER_CANCELED_EVENT without a fill', () => {
+        expect(getCanceledEvent()?.order).toEqual(expect.objectContaining({ filled: undefined, remaining: undefined }));
+      });
+
+      it('logs the cancelation as reporting no fill', () => {
+        expect(logger.info).toHaveBeenCalledWith('trader', `[${advice.id}] BUY STICKY order canceled (no fill reported)`);
+      });
     });
 
     it('logs order updates (partially filled)', async () => {
@@ -1233,7 +1256,7 @@ describe('Trader', () => {
 
       await trader.onStrategyCancelOrder([advice.id]);
 
-      order.emit(ORDER_ERRORED_EVENT, 'exchange timeout');
+      order.emit(ORDER_ERRORED_EVENT, { reason: 'exchange timeout', mayBeLive: false });
       await tick();
 
       expect(getOrdersMap().size).toBe(0);
@@ -1320,11 +1343,11 @@ describe('Trader', () => {
     describe.each`
       flow             | event                    | payload                                                        | relayed
       ${'creation'}    | ${ORDER_INVALID_EVENT}   | ${{ reason: 'too small', status: 'rejected', filled: false }}  | ${ORDER_ERRORED_EVENT}
-      ${'creation'}    | ${ORDER_ERRORED_EVENT}   | ${'exchange timeout'}                                          | ${ORDER_ERRORED_EVENT}
+      ${'creation'}    | ${ORDER_ERRORED_EVENT}   | ${{ reason: 'exchange timeout', mayBeLive: false }}            | ${ORDER_ERRORED_EVENT}
       ${'creation'}    | ${ORDER_COMPLETED_EVENT} | ${undefined}                                                   | ${ORDER_COMPLETED_EVENT}
       ${'creation'}    | ${ORDER_CANCELED_EVENT}  | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 9.5 }} | ${ORDER_CANCELED_EVENT}
       ${'cancelation'} | ${ORDER_INVALID_EVENT}   | ${{ reason: 'too small', status: 'rejected', filled: false }}  | ${ORDER_ERRORED_EVENT}
-      ${'cancelation'} | ${ORDER_ERRORED_EVENT}   | ${'exchange timeout'}                                          | ${ORDER_ERRORED_EVENT}
+      ${'cancelation'} | ${ORDER_ERRORED_EVENT}   | ${{ reason: 'exchange timeout', mayBeLive: false }}            | ${ORDER_ERRORED_EVENT}
       ${'cancelation'} | ${ORDER_COMPLETED_EVENT} | ${undefined}                                                   | ${ORDER_COMPLETED_EVENT}
       ${'cancelation'} | ${ORDER_CANCELED_EVENT}  | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 9.5 }} | ${ORDER_CANCELED_EVENT}
     `('when the synchronization fails in the $event listener of the $flow flow', ({ flow, event, payload, relayed }) => {
@@ -1357,7 +1380,7 @@ describe('Trader', () => {
     describe.each`
       event                    | payload                                                        | report
       ${ORDER_INVALID_EVENT}   | ${{ reason: 'too small', status: 'rejected', filled: false }}  | ${'rejection'}
-      ${ORDER_ERRORED_EVENT}   | ${'exchange timeout'}                                          | ${'error'}
+      ${ORDER_ERRORED_EVENT}   | ${{ reason: 'exchange timeout', mayBeLive: false }}            | ${'error'}
       ${ORDER_COMPLETED_EVENT} | ${undefined}                                                   | ${'completion'}
       ${ORDER_CANCELED_EVENT}  | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 9.5 }} | ${'cancelation'}
     `('when the $event of an order cannot be relayed', ({ event, payload, report }) => {
@@ -1631,7 +1654,7 @@ describe('Trader', () => {
       const order = await prepareOrder('creation');
       trader['prices'].clear();
 
-      await order.emitAndSettle(ORDER_ERRORED_EVENT, 'exchange timeout');
+      await order.emitAndSettle(ORDER_ERRORED_EVENT, { reason: 'exchange timeout', mayBeLive: false });
 
       expect(trader['addDeferredEmit']).toHaveBeenCalledWith(
         ORDER_ERRORED_EVENT,
@@ -1746,7 +1769,7 @@ describe('Trader', () => {
     `('relays the error of an order of the $flow flow with what it had filled, $filled', async ({ flow, filled }) => {
       const order = await prepareOrder(flow, advice);
       order.getFilledAmount.mockReturnValue(filled);
-      await order.emitAndSettle(ORDER_ERRORED_EVENT, 'ticker unavailable');
+      await order.emitAndSettle(ORDER_ERRORED_EVENT, { reason: 'ticker unavailable', mayBeLive: false });
       expect(getErroredEvent()?.order.filled).toBe(filled);
     });
 
@@ -1754,8 +1777,49 @@ describe('Trader', () => {
     it('relays it as an error after a fill', async () => {
       const order = await prepareOrder('creation', advice);
       order.getFilledAmount.mockReturnValue(2);
-      await order.emitAndSettle(ORDER_ERRORED_EVENT, 'Invalid API key (2 of 5 already filled)');
+      await order.emitAndSettle(ORDER_ERRORED_EVENT, { reason: 'Invalid API key (2 of 5 already filled)', mayBeLive: true });
       expect(getRelayedEvents()).toEqual([ORDER_ERRORED_EVENT]);
+    });
+
+    // Whether the order may still be live is the order's to say (see Order.orderErrored): GridBot could only read it from the words of
+    // a creation lost on the network, and placed again an order whose poll had failed for good while it was open
+    describe('whether it may still be live on the exchange', () => {
+      it.each`
+        flow             | mayBeLive
+        ${'creation'}    | ${true}
+        ${'creation'}    | ${false}
+        ${'cancelation'} | ${true}
+        ${'cancelation'} | ${false}
+      `('relays mayBeLive $mayBeLive, as the order of the $flow flow said it', async ({ flow, mayBeLive }) => {
+        const order = await prepareOrder(flow, advice);
+        await order.emitAndSettle(ORDER_ERRORED_EVENT, { reason: 'Invalid API key', mayBeLive });
+        expect(getErroredEvent()?.order.mayBeLive).toBe(mayBeLive);
+      });
+
+      it.each`
+        flow
+        ${'creation'}
+        ${'cancelation'}
+      `('relays a refusal of the $flow flow as not live: the exchange placed nothing', async ({ flow }) => {
+        const order = await prepareOrder(flow, advice);
+        await order.emitAndSettle(ORDER_INVALID_EVENT, { reason: 'too small', status: 'rejected', filled: false });
+        expect(getErroredEvent()?.order.mayBeLive).toBe(false);
+      });
+
+      it('says, in the error it logs, that an order which may be live is followed no more', async () => {
+        const order = await prepareOrder('creation', advice);
+        await order.emitAndSettle(ORDER_ERRORED_EVENT, { reason: 'Invalid API key', mayBeLive: true });
+        expect(logger.error).toHaveBeenCalledWith(
+          'trader',
+          `[${advice.id}] BUY STICKY order: Invalid API key (status: ERROR), it may still be live on the exchange, where Gekko follows it no more`,
+        );
+      });
+
+      it('logs the error of an order that is not live as before', async () => {
+        const order = await prepareOrder('creation', advice);
+        await order.emitAndSettle(ORDER_ERRORED_EVENT, { reason: 'Invalid API key', mayBeLive: false });
+        expect(logger.error).toHaveBeenCalledWith('trader', `[${advice.id}] BUY STICKY order: Invalid API key (status: ERROR)`);
+      });
     });
   });
 
@@ -1772,11 +1836,11 @@ describe('Trader', () => {
     });
 
     describe.each`
-      end                       | flow             | event                   | payload                                                        | filled | getRelayed
-      ${'cancelation'}          | ${'cancelation'} | ${ORDER_CANCELED_EVENT} | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 9.5 }} | ${0}   | ${getCanceledEvent}
-      ${'error after a fill'}   | ${'creation'}    | ${ORDER_ERRORED_EVENT}  | ${'Invalid API key (2 of 5 already filled)'}                   | ${2}   | ${getErroredEvent}
-      ${'refusal'}              | ${'creation'}    | ${ORDER_INVALID_EVENT}  | ${{ ...rejection, filled: false }}                             | ${0}   | ${getErroredEvent}
-      ${'refusal after a fill'} | ${'creation'}    | ${ORDER_INVALID_EVENT}  | ${{ ...rejection, filled: true }}                              | ${2}   | ${getCompletedEvent}
+      end                       | flow             | event                   | payload                                                                   | filled | getRelayed
+      ${'cancelation'}          | ${'cancelation'} | ${ORDER_CANCELED_EVENT} | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 9.5 }}            | ${0}   | ${getCanceledEvent}
+      ${'error after a fill'}   | ${'creation'}    | ${ORDER_ERRORED_EVENT}  | ${{ reason: 'Invalid API key (2 of 5 already filled)', mayBeLive: true }} | ${2}   | ${getErroredEvent}
+      ${'refusal'}              | ${'creation'}    | ${ORDER_INVALID_EVENT}  | ${{ ...rejection, filled: false }}                                        | ${0}   | ${getErroredEvent}
+      ${'refusal after a fill'} | ${'creation'}    | ${ORDER_INVALID_EVENT}  | ${{ ...rejection, filled: true }}                                         | ${2}   | ${getCompletedEvent}
     `('when a synchronization started before the $end of an order is in flight', ({ flow, event, payload, filled, getRelayed }) => {
       beforeEach(async () => {
         const order = await prepareOrder(flow);
@@ -1840,9 +1904,9 @@ describe('Trader', () => {
   describe.each`
     flow             | event                   | payload
     ${'creation'}    | ${ORDER_CANCELED_EVENT} | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 1 }}
-    ${'creation'}    | ${ORDER_ERRORED_EVENT}  | ${'exchange timeout'}
+    ${'creation'}    | ${ORDER_ERRORED_EVENT}  | ${{ reason: 'exchange timeout', mayBeLive: false }}
     ${'cancelation'} | ${ORDER_CANCELED_EVENT} | ${{ timestamp: 1_700_000_100_000, filled: 0, remaining: 1 }}
-    ${'cancelation'} | ${ORDER_ERRORED_EVENT}  | ${'exchange timeout'}
+    ${'cancelation'} | ${ORDER_ERRORED_EVENT}  | ${{ reason: 'exchange timeout', mayBeLive: false }}
   `('the price of the $event relayed in the $flow flow', ({ flow, event, payload }) => {
     // Throws when the event was not relayed, rather than reading its price as undefined
     const getRelayedPrice = () => (event === ORDER_CANCELED_EVENT ? getCanceledEvent() : getErroredEvent()).order.price;
@@ -1870,7 +1934,7 @@ describe('Trader', () => {
   describe('late events of an order already over', () => {
     const payloads: Record<string, unknown> = {
       [ORDER_INVALID_EVENT]: { reason: 'too small', status: 'rejected', filled: false },
-      [ORDER_ERRORED_EVENT]: 'exchange timeout',
+      [ORDER_ERRORED_EVENT]: { reason: 'exchange timeout', mayBeLive: false },
       [ORDER_COMPLETED_EVENT]: undefined,
       [ORDER_CANCELED_EVENT]: { timestamp: 1_700_000_100_000, filled: 0, remaining: 9.5 },
     };
@@ -1904,7 +1968,7 @@ describe('Trader', () => {
 
     it('stops logging the updates of an order once it is over', async () => {
       const order = await prepareOrder('creation');
-      await order.emitAndSettle(ORDER_ERRORED_EVENT, 'exchange timeout');
+      await order.emitAndSettle(ORDER_ERRORED_EVENT, { reason: 'exchange timeout', mayBeLive: false });
       (logger.info as Mock).mockClear();
 
       order.emit(ORDER_STATUS_CHANGED_EVENT, { status: 'filled' });
@@ -1965,7 +2029,7 @@ describe('Trader', () => {
         event                    | payload                                                       | relayed
         ${ORDER_COMPLETED_EVENT} | ${undefined}                                                  | ${ORDER_COMPLETED_EVENT}
         ${ORDER_CANCELED_EVENT}  | ${cancelation}                                                | ${ORDER_CANCELED_EVENT}
-        ${ORDER_ERRORED_EVENT}   | ${'exchange timeout'}                                         | ${ORDER_ERRORED_EVENT}
+        ${ORDER_ERRORED_EVENT}   | ${{ reason: 'exchange timeout', mayBeLive: false }}           | ${ORDER_ERRORED_EVENT}
         ${ORDER_INVALID_EVENT}   | ${{ reason: 'too small', status: 'rejected', filled: false }} | ${ORDER_ERRORED_EVENT}
       `('when an order emits $event and its report takes several ticks', ({ event, payload, relayed }) => {
         // Emitted as the simulated exchange settles the bucket, before the plugins process it

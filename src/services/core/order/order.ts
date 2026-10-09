@@ -11,15 +11,16 @@ import { Watch } from '@models/configuration.types';
 import { OrderSide, OrderState, OrderType } from '@models/order.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
-import { ExchangeNetworkError } from '@services/exchange/exchange.error';
+import { ExchangeNetworkError, OrderOutcomeUnknown } from '@services/exchange/exchange.error';
 import { Exchange, OrderSettledCallback } from '@services/exchange/exchange.types';
 import { inject } from '@services/injecter/injecter';
 import { debug, error, info, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
+import { addPrecise, isFiniteNumber } from '@utils/math/math.utils';
 import { isNil, sumBy } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import EventEmitter from 'node:events';
-import { OrderCancelDetails, OrderCancelEventPayload, OrderStatus, OrderSummary, Transaction } from './order.types';
+import { OrderCancelDetails, OrderCancelEventPayload, OrderErrorEventPayload, OrderStatus, OrderSummary, Transaction } from './order.types';
 import { createOrderSummary, toError } from './order.utils';
 
 export abstract class Order extends EventEmitter {
@@ -31,13 +32,15 @@ export abstract class Order extends EventEmitter {
   protected readonly gekkoOrderId: UUID;
   protected readonly mode: Watch['mode'];
   protected readonly symbol: TradingPair;
+  /** The amount ordered, in the asset: less what filled, what a canceled order left, and what a STICKY order places again after a move */
+  protected readonly amount: number;
   // The id the exchange gave the order, known from its first state (see recordOrderUpdate). A STICKY order places one transaction
   // after the other: the id of the current one.
   protected id?: string;
   // Polls the order in realtime (see the subclasses), until it is over (see setStatus)
   protected interval?: Timer;
 
-  constructor(symbol: TradingPair, gekkoOrderId: UUID, side: OrderSide, type: OrderType) {
+  constructor(symbol: TradingPair, gekkoOrderId: UUID, side: OrderSide, type: OrderType, amount: number) {
     super();
     const { mode } = config.getWatch();
     this.exchange = inject.exchange();
@@ -48,6 +51,7 @@ export abstract class Order extends EventEmitter {
     this.gekkoOrderId = gekkoOrderId;
     this.mode = mode;
     this.symbol = symbol;
+    this.amount = amount;
   }
 
   public getGekkoOrderId() {
@@ -153,9 +157,22 @@ export abstract class Order extends EventEmitter {
     this.emit(ORDER_COMPLETED_EVENT, { status: this.status, filled: true });
   }
 
-  protected orderErrored(error: Error) {
+  /**
+   * Ends the order in error. `mayBeLive` tells the strategies whether it may still be live on the exchange, where nothing follows it
+   * any more, the Trader forgetting an order once it errored: placed again, it may be doubled. GridBot could tell it only from the
+   * words of a creation lost on the network, and placed again an order whose poll had failed for good while it was open. By default,
+   * whether the current transaction was open as the exchange last reported it, as when a poll, a cancelation or the read-back of one
+   * fails for good. A creation that failed says it itself (see orderErroredAtCreation), and a STICKY order whose relaunch failed before
+   * it was placed has none open.
+   */
+  protected orderErrored(error: Error, mayBeLive = this.isTransactionOpen()) {
     this.setStatus('error', error.message);
-    this.emit(ORDER_ERRORED_EVENT, error.message);
+    this.emit<OrderErrorEventPayload>(ORDER_ERRORED_EVENT, { reason: error.message, mayBeLive });
+  }
+
+  /** Whether the current transaction of the order is open on the exchange, as its last state reported it: placed, and not over */
+  private isTransactionOpen() {
+    return !!this.id && this.transactions.get(this.id)?.status === 'open';
   }
 
   /**
@@ -188,8 +205,9 @@ export abstract class Order extends EventEmitter {
    * followed, or arriving after the end of the order (see isLateUpdate).
    * The transaction keeps the first timestamp known: the trades of the order are fetched from there (createOrderSummary), and a later
    * state may carry the time of its last update, or no time at all, read as now (mapCcxtOrderToOrder): after the fills. Its fill is
-   * cumulative, and always a number: a state that reports none, or less than already recorded (the answer to a cancelation after a
-   * poll), leaves it as it is. ORDER_PARTIALLY_FILLED_EVENT is emitted when it grows.
+   * cumulative: a state that reports none, or less than already recorded (the answer to a cancelation after a poll), leaves it as it
+   * is, and it stays undefined until a state reports one, so that a fill never reported is not taken for nothing filled (see
+   * getCancelationFill). ORDER_PARTIALLY_FILLED_EVENT is emitted when it grows.
    */
   protected recordOrderUpdate(order: OrderState) {
     const { id, status, filled, remaining, price, timestamp } = order;
@@ -199,15 +217,15 @@ export abstract class Order extends EventEmitter {
     debug('order', `[${this.gekkoOrderId}] ${this.side} ${this.type} order update: transaction ${id} ${status}, ${details}`);
 
     const transaction = this.transactions.get(id);
-    const recordedFill = transaction?.filled ?? 0;
-    const reportedFill = filled ?? 0;
-    const isFillGrowing = reportedFill > recordedFill;
+    const recordedFill = transaction?.filled;
+    const reportedFill = isFiniteNumber(filled) ? filled : undefined;
+    const isFillGrowing = reportedFill !== undefined && reportedFill > (recordedFill ?? 0);
 
     this.id = id;
     this.transactions.set(id, {
       id,
       timestamp: transaction?.timestamp ?? timestamp,
-      filled: isFillGrowing ? reportedFill : recordedFill,
+      filled: isFillGrowing ? reportedFill : (recordedFill ?? reportedFill),
       status,
     });
     if (isFillGrowing) this.orderPartiallyFilled(reportedFill);
@@ -223,12 +241,12 @@ export abstract class Order extends EventEmitter {
     const previousStatus = this.transactions.get(order.id)?.status;
     if (!this.recordOrderUpdate(order)) return;
 
-    const { status, filled = 0, remaining = 0, price, timestamp } = order;
+    const { status, price, timestamp } = order;
     switch (status) {
       case 'closed':
         return this.orderFilled();
       case 'canceled':
-        return this.handleTransactionCanceled({ filled, remaining, price, timestamp });
+        return this.handleTransactionCanceled({ price, timestamp });
       case 'open':
         if (previousStatus !== 'open') this.setStatus('open');
     }
@@ -236,10 +254,25 @@ export abstract class Order extends EventEmitter {
 
   /**
    * The transaction reported canceled, its fill recorded: the order is canceled with it, whoever canceled it (the strategy, or the
-   * exchange: expired, canceled from its interface...). A STICKY order, which places one transaction after the other, overrides it.
+   * exchange: expired, canceled from its interface...), with what it filled (see getCancelationFill). A STICKY order, which places
+   * one transaction after the other, overrides it.
    */
-  protected handleTransactionCanceled(cancelation: OrderCancelDetails): void | Promise<void> {
-    this.orderCanceled(cancelation);
+  protected handleTransactionCanceled({ price, timestamp }: Pick<OrderCancelDetails, 'price' | 'timestamp'>): void | Promise<void> {
+    this.orderCanceled({ ...this.getCancelationFill(), price, timestamp });
+  }
+
+  /**
+   * What a canceled order executed: the fill of its transactions as the exchange reported them, the polls and the creation as much
+   * as the answer to the cancelation (see recordOrderUpdate), added up over the transactions of a STICKY order, and what was left of
+   * its amount, in decimal (2.5 - 2.2 is 0.3). A MARKET or LIMIT order relayed the answer to the cancelation alone, an amount it left
+   * out as 0: a fill an earlier poll had reported was lost, and a cancelation answered without its fill read as 0 filled and 0
+   * remaining. Neither is given while no state of the order reported a fill: unknown, which 0 would misstate.
+   */
+  private getCancelationFill(): Pick<OrderCancelDetails, 'filled' | 'remaining'> {
+    const isFillReported = [...this.transactions.values()].some(({ filled }) => filled !== undefined);
+    if (!isFillReported) return {};
+    const filled = this.getFilledAmount();
+    return { filled, remaining: Math.max(addPrecise(this.amount, -filled), 0) };
   }
 
   /**
@@ -259,14 +292,15 @@ export abstract class Order extends EventEmitter {
   }
 
   /**
-   * The error an order ends with when its creation failed without being refused. A creation is sent once and never replayed: after
-   * an ExchangeNetworkError its outcome is unknown, and the order may be live on the exchange. Strategies place an order again on
-   * ORDER_ERRORED_EVENT: the reason warns them.
+   * Ends in error the order whose creation failed without being refused. A creation is sent once and never replayed: after an
+   * ExchangeNetworkError its outcome is unknown, and so it is after an OrderOutcomeUnknown, the order created without anything to
+   * follow it by. The order may be live on the exchange: strategies place an order again on ORDER_ERRORED_EVENT, and its reason and
+   * mayBeLive warn them (see orderErrored). Any other failure is taken for one that placed nothing.
    */
-  protected toCreationError(err: unknown) {
-    if (!(err instanceof ExchangeNetworkError)) return toError(err);
+  protected orderErroredAtCreation(err: unknown) {
+    if (!(err instanceof ExchangeNetworkError || err instanceof OrderOutcomeUnknown)) return this.orderErrored(toError(err), false);
     const reason = `Outcome unknown: the order may be live on the exchange, check it before placing it again (${err.message})`;
-    return new Error(reason, { cause: err });
+    this.orderErrored(new Error(reason, { cause: err }), true);
   }
 
   public async createSummary(): Promise<OrderSummary> {

@@ -1,7 +1,8 @@
 import { ORDER_ERRORED_EVENT } from '@constants/event.const';
 import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { LimitOrder } from '@services/core/order/limit/limitOrder';
-import { ExchangeNetworkError } from '@services/exchange/exchange.error';
+import { OrderErrorEventPayload } from '@services/core/order/order.types';
+import { ExchangeNetworkError, OrderNotFound } from '@services/exchange/exchange.error';
 import { MarketData } from '@services/exchange/exchange.types';
 import { omit } from 'lodash-es';
 import { randomUUID } from 'node:crypto';
@@ -28,13 +29,14 @@ import {
   inferAmountPrecision,
   inferPricePrecision,
   isOutcomeUnknown,
+  mayBeLive,
   roundAmount,
   roundPrice,
   validateConfig,
 } from './gridBot.utils';
 
-// For isOutcomeUnknown, which reads the reason a real LimitOrder ends with: its configuration, its exchange and its logs
-const { fakeExchange } = vi.hoisted(() => ({ fakeExchange: { createLimitOrder: vi.fn() } }));
+// For isOutcomeUnknown and mayBeLive, which read what a real LimitOrder ends with: its configuration, its exchange and its logs
+const { fakeExchange } = vi.hoisted(() => ({ fakeExchange: { createLimitOrder: vi.fn(), fetchOrder: vi.fn() } }));
 vi.mock('@services/configuration/configuration', () => ({
   config: { getWatch: () => ({ mode: 'backtest' }), getExchange: () => ({ orderSynchInterval: 1000 }) },
 }));
@@ -1281,10 +1283,49 @@ describe('gridBot.utils', () => {
 
       it('is true once its creation is lost on the network', async () => {
         const order = new LimitOrder('BTC/USDT', randomUUID(), 'BUY', 1, 95);
-        const reason = new Promise<string>(resolve => order.once(ORDER_ERRORED_EVENT, resolve));
+        const failure = new Promise<OrderErrorEventPayload>(resolve => order.once(ORDER_ERRORED_EVENT, resolve));
         await order.launch();
 
-        expect(isOutcomeUnknown(await reason)).toBe(true);
+        expect(isOutcomeUnknown((await failure).reason)).toBe(true);
+      });
+    });
+  });
+
+  // What the order says decides; its reason does, as isOutcomeUnknown reads it, only for an event that does not say it
+  describe('mayBeLive', () => {
+    const lostOnTheNetwork = 'Outcome unknown: the order may be live on the exchange, check it before placing it again (timeout)';
+    it.each`
+      order                                                     | description                                                      | expected
+      ${{ reason: 'Invalid API key', mayBeLive: true }}         | ${'an order that says it may be live, its poll failed for good'} | ${true}
+      ${{ reason: lostOnTheNetwork, mayBeLive: false }}         | ${'an order that says it is not live, whatever its reason'}      | ${false}
+      ${{ reason: lostOnTheNetwork }}                           | ${'an event that does not say it, a creation lost'}              | ${true}
+      ${{ reason: '[EXCHANGE] Insufficient currency balance' }} | ${'an event that does not say it, a refusal'}                    | ${false}
+    `('is $expected for $description', ({ order, expected }) => {
+      expect(mayBeLive(order)).toBe(expected);
+    });
+
+    // The order layer says it: the Trader relays it as is
+    describe('on what a real LIMIT order ends with', () => {
+      const created = { id: 'order-1', status: 'open', filled: 0, remaining: 1, timestamp: 0 } as const;
+      const end = async (failPoll: boolean) => {
+        const order = new LimitOrder('BTC/USDT', randomUUID(), 'BUY', 1, 95);
+        const failure = new Promise<OrderErrorEventPayload>(resolve => order.once(ORDER_ERRORED_EVENT, resolve));
+        await order.launch();
+        if (failPoll) await order.checkOrder();
+        return failure;
+      };
+
+      it('is true once its poll fails for good while it is open, the exchange wording the failure', async () => {
+        fakeExchange.createLimitOrder.mockResolvedValue(created);
+        fakeExchange.fetchOrder.mockRejectedValue(new OrderNotFound('binance {"code":-2013,"msg":"Order does not exist."}'));
+
+        expect(mayBeLive(await end(true))).toBe(true);
+      });
+
+      it('is false once its creation fails for a reason that placed nothing', async () => {
+        fakeExchange.createLimitOrder.mockRejectedValue(new Error('Invalid API key'));
+
+        expect(mayBeLive(await end(false))).toBe(false);
       });
     });
   });

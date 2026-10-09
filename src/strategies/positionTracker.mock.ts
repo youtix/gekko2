@@ -23,13 +23,13 @@ type RelayedOrder = Pick<AdviceOrder, 'id'> & Partial<Omit<AdviceOrder, 'id' | '
 
 /**
  * What the event of an outcome reports besides its order. Each part left out reports nothing of an execution, as the Trader relays
- * an order canceled without its fill (0 filled, 0 remaining) before it ever read the portfolio (empty), the price unknown (0), on a
- * market without minimums.
+ * an order canceled with no fill reported (neither filled nor remaining) before it ever read the portfolio (empty), the price unknown
+ * (0), on a market without minimums.
  */
 export type OutcomeFacts = {
-  /** What a cancelation reports filled; given as undefined, the event misses it, as the order leaves out an amount it does not know */
+  /** What a cancelation reports filled; left out, or given as undefined, the event misses it, as the order leaves out a fill unknown */
   filled?: number;
-  /** What a cancelation reports remaining; given as undefined, the event misses it */
+  /** What a cancelation reports remaining; left out, or given as undefined, the event misses it */
   remaining?: number;
   /** The portfolio after the order */
   portfolio?: Portfolio;
@@ -89,7 +89,7 @@ export const relayOrderOutcome = <T>(
     case 'completed':
       return target.onOrderCompleted?.({ order, exchange, tools } as unknown as OnOrderCompletedEventParams<T>);
     case 'canceled': {
-      const params = { order: { ...order, filled: 0, remaining: 0, ...pick(facts, 'filled', 'remaining') }, exchange, tools };
+      const params = { order: { ...order, ...pick(facts, 'filled', 'remaining') }, exchange, tools };
       return target.onOrderCanceled?.(params as unknown as OnOrderCanceledEventParams<T>);
     }
     case 'errored':

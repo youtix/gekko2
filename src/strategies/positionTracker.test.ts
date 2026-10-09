@@ -4,7 +4,7 @@ import { TradingPair } from '@models/utility.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { UUID } from 'node:crypto';
 import { beforeEach, describe, expect, it, Mock, vi } from 'vitest';
-import { pickTradedPair, PositionTracker } from './positionTracker';
+import { isSellable, pickTradedPair, PositionTracker } from './positionTracker';
 import {
   ETH_IGNORED_WARNING,
   holding,
@@ -111,11 +111,13 @@ describe('PositionTracker', () => {
         expect(tracker.isLong).toBe(isLong);
       });
 
+      // 0 filled and 0 remaining used to stand for no fill reported, which the order now leaves out: reported, it is a fact
       it.each`
         case                                                            | steps    | filled    | remaining | free | isLong
         ${'a BUY that filled nothing, the portfolio holding 1: flat'}   | ${'buy'} | ${0}      | ${1}      | ${1} | ${false}
         ${'a SELL that left 0.0001, the portfolio holding 1: flat'}     | ${LONG}  | ${0.9999} | ${0.0001} | ${1} | ${false}
         ${'a BUY that filled 0.9, the portfolio holding nothing: long'} | ${'buy'} | ${0.9}    | ${0.1}    | ${0} | ${true}
+        ${'a SELL that left 0 of 0, the portfolio holding 1: flat'}     | ${LONG}  | ${0}      | ${0}      | ${1} | ${false}
       `('reads the fill before the portfolio: $case', ({ steps, filled, remaining, free, isLong }) => {
         play(steps);
         relayLast('canceled', { filled, remaining, portfolio: holding(symbol, free) });
@@ -145,6 +147,7 @@ describe('PositionTracker', () => {
         case                                                  | steps    | filled       | remaining    | free   | isLong
         ${'a BUY canceled, its fill missing, 0.4 BTC bought'} | ${'buy'} | ${undefined} | ${0.6}       | ${0.4} | ${true}
         ${'a SELL canceled, its remainder missing, 0.5 left'} | ${LONG}  | ${0.5}       | ${undefined} | ${0.5} | ${true}
+        ${'a SELL canceled, no fill reported, nothing left'}  | ${LONG}  | ${undefined} | ${undefined} | ${0}   | ${false}
       `('reads $case from the portfolio', ({ steps, filled, remaining, free, isLong }) => {
         play(steps);
         relayLast('canceled', { filled, remaining, portfolio: holding(symbol, free) });
@@ -305,6 +308,23 @@ describe('PositionTracker', () => {
     `('$action returns the id of the order created', ({ action }) => {
       expect(tracker[action as 'buy' | 'sell'](createOrder, { type: 'MARKET', symbol })).toBe(ORDER_ID);
     });
+  });
+});
+
+// The rule the tracker reads a position with, exported for whoever checks an all-in SELL the same way (a trailing stop's)
+describe('isSellable', () => {
+  const limits: MarketData = { amount: { min: 0.001 }, cost: { min: 5 }, market: { min: 0.2 }, precision: { amount: 0.0001 } };
+  it.each`
+    amount     | price  | type        | data      | description                                                 | expected
+    ${0.1}     | ${100} | ${'LIMIT'}  | ${limits} | ${'0.1 at 100, 10 USDT'}                                    | ${true}
+    ${0.1}     | ${100} | ${'MARKET'} | ${limits} | ${'0.1 in a MARKET order, under its minimum of 0.2'}        | ${false}
+    ${0.04999} | ${100} | ${'LIMIT'}  | ${limits} | ${'0.04999 at 100, 4.999 USDT, under the minimum cost'}     | ${false}
+    ${0.05009} | ${100} | ${'LIMIT'}  | ${limits} | ${'0.05009, sent as 0.05: 5 USDT, the minimum cost itself'} | ${true}
+    ${0.0005}  | ${0}   | ${'LIMIT'}  | ${limits} | ${'0.0005 at an unknown price, under the minimum amount'}   | ${false}
+    ${0.01}    | ${0}   | ${'LIMIT'}  | ${limits} | ${'0.01 at an unknown price, the cost unchecked'}           | ${true}
+    ${0}       | ${100} | ${'LIMIT'}  | ${{}}     | ${'nothing, on a market without limits'}                    | ${false}
+  `('is $expected for $description', ({ amount, price, type, data, expected }) => {
+    expect(isSellable(amount, price, type, data)).toBe(expected);
   });
 });
 

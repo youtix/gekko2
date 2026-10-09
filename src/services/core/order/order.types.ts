@@ -11,6 +11,7 @@ export type OrderStatus =
 export type Transaction = {
   id: string;
   timestamp: EpochTimeStamp;
+  /** The cumulative fill the exchange reported for it, the largest seen; undefined while no state reported one (see recordOrderUpdate) */
   filled?: number;
   status: 'open' | 'canceled' | 'closed';
 };
@@ -31,3 +32,9 @@ export type OrderCancelDetails = {
 export type OrderCancelEventPayload = {
   status: OrderStatus;
 } & OrderCancelDetails;
+/** What an order reports with ORDER_ERRORED_EVENT (see Order.orderErrored) */
+export type OrderErrorEventPayload = {
+  reason: string;
+  /** Whether the order may still be live on the exchange, where nothing follows it once it errored (see Order.orderErrored) */
+  mayBeLive: boolean;
+};
