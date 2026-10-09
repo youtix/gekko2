@@ -393,8 +393,8 @@ init({ candle, addIndicator }: InitParams<MyParams>): void {
 }
 
 onTimeframeCandleAfterWarmup(params: OnCandleEventParams<MyParams>, ...indicators: IndicatorResults[]): void {
-  // Access in the same order you registered them, each as { results, symbol }: results is unknown, and null until the
-  // indicator has seen enough candles (macd.results is an object, { macd, signal, hist }, whose values start as null)
+  // Access in the same order you registered them, each as { results, symbol }: results is unknown, null until the indicator
+  // has seen enough candles, then complete on every candle (macd.results is then { macd, signal, hist }, all three set)
   const [sma, rsi, macd] = indicators;
   const price = params.candle.get(sma.symbol)?.close;
   if (price === undefined || typeof sma.results !== 'number' || typeof rsi.results !== 'number') return;
@@ -881,7 +881,7 @@ export class MyStrategy implements Strategy<MyParams> {
 
 ### 2. Validate Indicator Values
 
-An indicator's `results` is typed `unknown` and stays `null` until the indicator has seen enough candles, after warmup too if the warmup is shorter than the indicator needs:
+An indicator's `results` is typed `unknown` and stays `null` until the indicator has seen enough candles, after warmup too if the warmup is shorter than the indicator needs. From then on it is complete on every candle, a number or an object whose fields are all set, so one check is enough, whatever its shape (see [Reading Results](./indicators.md#reading-results)):
 
 ```typescript
 const [ema] = indicators;
