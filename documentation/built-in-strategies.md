@@ -37,7 +37,7 @@ Each strategy declares its parameters in a schema, which checks the `strategy:` 
   → at thresholds.high
 ```
 
-The schemas check each parameter on its own, the order of the periods of MACD and TMA, and that GridBot has at least one level. A combination that cannot trade well, such as thresholds set the wrong way round, is accepted: each section says which. A `src` parameter is the price the indicators read from each candle, a price source: `open`, `high`, `low`, `close`, `hl2` (the mean of high and low), `hlc3` (of high, low and close) or `ohlc4` (of all four), `close` when left out.
+The schemas check each parameter on its own, the order of the periods of MACD and TMA, a MACD `signal` of at least 2 with `macdSrc: hist`, and that GridBot has at least one level. Other combinations that cannot trade well, such as thresholds set the wrong way round, are accepted: each section says which. A `src` parameter is the price the indicators read from each candle, a price source: `open`, `high`, `low`, `close`, `hl2` (the mean of high and low), `hlc3` (of high, low and close) or `ohlc4` (of all four), `close` when left out.
 
 ### One Pair per Strategy
 
@@ -271,17 +271,26 @@ The MACD strategy is based on the popular **MACD indicator**, the difference bet
 
 #### Parameters
 
-| Parameter                | Type                       | Required | Default | Description                                                                             |
-|--------------------------|----------------------------|----------|---------|-----------------------------------------------------------------------------------------|
-| `short`                  | integer ≥ 1                | Yes      | —       | Period of the short EMA (typically 12), below `long`                                    |
-| `long`                   | integer ≥ 1                | Yes      | —       | Period of the long EMA (typically 26)                                                   |
-| `signal`                 | integer ≥ 1                | Yes      | —       | Period of the signal line, the EMA of the MACD line (typically 9)                       |
-| `macdSrc`                | `macd`, `signal` or `hist` | Yes      | —       | The value compared with the thresholds: the MACD line, the signal line or the histogram |
-| `thresholds.up`          | number                     | Yes      | —       | Value above which an uptrend starts, which buys                                         |
-| `thresholds.down`        | number                     | Yes      | —       | Value below which a downtrend starts, which sells                                       |
-| `thresholds.persistence` | integer ≥ 0                | Yes      | —       | Candles past its threshold a trend counts before it advises                             |
+| Parameter                | Type                       | Required | Default | Description                                                                                        |
+|--------------------------|----------------------------|----------|---------|----------------------------------------------------------------------------------------------------|
+| `short`                  | integer ≥ 1                | Yes      | —       | Period of the short EMA (typically 12), below `long`                                               |
+| `long`                   | integer ≥ 1                | Yes      | —       | Period of the long EMA (typically 26)                                                              |
+| `signal`                 | integer ≥ 1                | Yes      | —       | Period of the signal line, the EMA of the MACD line (typically 9), at least 2 with `macdSrc: hist` |
+| `macdSrc`                | `macd`, `signal` or `hist` | Yes      | —       | The value compared with the thresholds: the MACD line, the signal line or the histogram            |
+| `thresholds.up`          | number                     | Yes      | —       | Value above which an uptrend starts, which buys                                                    |
+| `thresholds.down`        | number                     | Yes      | —       | Value below which a downtrend starts, which sells                                                  |
+| `thresholds.persistence` | integer ≥ 0                | Yes      | —       | Candles past its threshold a trend counts before it advises                                        |
 
-Gekko refuses at start-up a `short` that is not below `long`: swapped periods give the opposite MACD, equal ones a MACD of 0. The thresholds are in price units (quote currency), as the MACD is, so they scale with the price of the pair. Nothing checks that `down` is below `up`: set the other way round, there is no neutral zone and the trend changes at `up` alone. `signal: 1` makes the signal line the MACD line itself, so that the histogram is always 0: with `macdSrc: hist`, the strategy then never trades, or buys once and never sells when `up` is below 0. The strategy takes no `src`: its EMAs are computed on the close.
+Gekko refuses at start-up a `short` that is not below `long`: swapped periods give the opposite MACD, equal ones a MACD of 0. The thresholds are in price units (quote currency), as the MACD is, so they scale with the price of the pair. Nothing checks that `down` is below `up`: set the other way round, there is no neutral zone and the trend changes at `up` alone. The strategy takes no `src`: its EMAs are computed on the close.
+
+Gekko also refuses at start-up a `signal` of 1 with `macdSrc: hist`. A signal line of period 1 is the MACD line itself, so the histogram, their difference, is 0: the strategy would never trade, or buy once and never sell with `up` below 0. The error reads:
+
+```
+[TRADING ADVISOR] Invalid parameters for strategy MACD (strategy block):
+✖ signal must be at least 2 with macdSrc: hist (a signal of 1 makes the signal line the MACD line itself, and the histogram 0)
+```
+
+With `macdSrc: macd` or `signal`, a `signal` of 1 is accepted: the MACD line does not depend on it, and the signal line is then the MACD line.
 
 #### Example Configuration
 
@@ -497,9 +506,9 @@ Each level of the grid spans two adjacent prices and holds one order at a time: 
 
 When a grid order fails:
 
-- A refused order is placed again on its side and at its price, for the amount refused. A canceled one is placed again for what is left of it, its amount less what the exchange reports filled; reported filled in full, or with less left than the market takes, its level turns to its other side as after a fill. A cancelation that does not tell what filled places the order again whole, with a warning.
+- A refused order is placed again on its side and at its price, for the amount refused. A canceled one is placed again for what is left of it, its amount less what it filled: the largest fill any answer of the exchange reported for it, a poll before the cancelation included. A canceled order reported filled in full, or with less left than the market takes, turns its level to its other side, as after a fill. When no answer of the exchange reported its fill, a canceled order is placed again whole, with a warning: `GridBot: BUY at 95 was canceled with no fill reported: it is placed again whole, 2.5, which trades again any part of it that had filled`.
 - The refusals and cancels of a level count together until it fills. Once its order has failed `retryOnError + 1` times, the level is left without an order for the rest of the run, with a warning such as `GridBot: BUY at 95 failed after 4 attempts (retryOnError: 3): its level is left without an order, the rest of the grid trades on. Last error: …`. The rest of the grid trades on, and the run stops once no level holds an order.
-- An order whose outcome is unknown, which may be live on the exchange (its creation's answer lost on the network, for instance), is never placed again: its level is left without an order, with a warning to check that order on the exchange. The run stops once more than `retryOnError` grid orders are in that case, or once no level holds an order.
+- An order whose outcome is unknown, which may still be live on the exchange (its creation's answer lost, the order created but its state not read back, or a poll that failed for good while it was open), is never placed again: its level is left without an order, with a warning to check that order on the exchange. The run stops once more than `retryOnError` grid orders are in that case, or once no level holds an order.
 
 Each of these stops is an error (exit code 1). The TradingAdvisor's `maxConsecutiveErrors` (5 by default) counts the same errors, in a row, with a fill or a cancel in between resetting it: with the defaults, a level gives up at its 4th error, and the next error anywhere in the grid trips the circuit breaker, an orderly stop with exit code 0. With `retryOnError` at `maxConsecutiveErrors − 1` or more, a level that keeps failing trips the breaker by the time it would give up.
 

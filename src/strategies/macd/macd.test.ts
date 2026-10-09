@@ -233,9 +233,22 @@ describe('MACD Strategy', () => {
     // The documentation's example, without the name that labels the run: the manager parses the block without it
     const params = { short: 12, long: 26, signal: 9, macdSrc: 'hist', thresholds: { up: 0, down: 0, persistence: 1 } };
     const withThresholds = (thresholds: object) => ({ ...params, thresholds: { ...params.thresholds, ...thresholds } });
+    const swappedPeriods = 'short must be below long (swapped periods give the opposite MACD, equal ones a MACD of 0)';
+    const signalOfOneOnHist =
+      'signal must be at least 2 with macdSrc: hist (a signal of 1 makes the signal line the MACD line itself, and the histogram 0)';
 
     it('accepts the documentation example as it is', () => {
       expect(MACD.schema.parse(params)).toEqual(params);
+    });
+
+    // A signal of 1 is refused with the histogram only: the MACD line, which the signal line then equals, still moves
+    it.each`
+      scenario                                | block
+      ${'a signal of 1 with macdSrc: macd'}   | ${{ ...params, signal: 1, macdSrc: 'macd' }}
+      ${'a signal of 1 with macdSrc: signal'} | ${{ ...params, signal: 1, macdSrc: 'signal' }}
+      ${'a signal of 2 with macdSrc: hist'}   | ${{ ...params, signal: 2 }}
+    `('accepts $scenario', ({ block }) => {
+      expect(MACD.schema.parse(block)).toEqual(block);
     });
 
     it('refuses a misspelt persistence (persistance)', () => {
@@ -245,7 +258,7 @@ describe('MACD Strategy', () => {
       ]);
     });
 
-    // A period of 0 is refused once, without the comparison of the periods
+    // A period of 0 is refused once, by its bound alone: neither the comparison of the periods nor the check of the signal reports it
     it.each`
       scenario                                  | block                                   | path
       ${'an unknown macdSrc (histogram)'}       | ${{ ...params, macdSrc: 'histogram' }}  | ${['macdSrc']}
@@ -257,6 +270,7 @@ describe('MACD Strategy', () => {
       ${'a signal of 0'}                        | ${{ ...params, signal: 0 }}             | ${['signal']}
       ${'swapped periods (short 26, long 12)'}  | ${{ ...params, short: 26, long: 12 }}   | ${[]}
       ${'equal periods'}                        | ${{ ...params, short: 26, long: 26 }}   | ${[]}
+      ${'a signal of 1 with macdSrc: hist'}     | ${{ ...params, signal: 1 }}             | ${[]}
       ${'an infinite threshold'}                | ${withThresholds({ up: Infinity })}     | ${['thresholds', 'up']}
       ${'a fractional persistence'}             | ${withThresholds({ persistence: 0.5 })} | ${['thresholds', 'persistence']}
       ${'a src (the MACD strategy takes none)'} | ${{ ...params, src: 'close' }}          | ${[]}
@@ -264,10 +278,18 @@ describe('MACD Strategy', () => {
       expect(MACD.schema.safeParse(block).error?.issues).toMatchObject([{ path }]);
     });
 
-    it('says why it refuses swapped periods', () => {
-      expect(MACD.schema.safeParse({ ...params, short: 26, long: 12 }).error?.issues[0].message).toBe(
-        'short must be below long (swapped periods give the opposite MACD, equal ones a MACD of 0)',
-      );
+    it.each`
+      scenario                              | block                                 | message
+      ${'swapped periods'}                  | ${{ ...params, short: 26, long: 12 }} | ${swappedPeriods}
+      ${'a signal of 1 with macdSrc: hist'} | ${{ ...params, signal: 1 }}           | ${signalOfOneOnHist}
+    `('says why it refuses $scenario', ({ block, message }) => {
+      expect(MACD.schema.safeParse(block).error?.issues[0].message).toBe(message);
+    });
+
+    // Each check reports on its own, so that a block with both mistakes is refused with both at once
+    it('reports a signal of 1 with macdSrc: hist besides swapped periods', () => {
+      const block = { ...params, short: 26, long: 12, signal: 1 };
+      expect(MACD.schema.safeParse(block).error?.issues.map(({ message }) => message)).toEqual([swappedPeriods, signalOfOneOnHist]);
     });
   });
 });
