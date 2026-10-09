@@ -170,6 +170,8 @@ plugins:
     enableConsoleTable: true # Display results in terminal table
 ```
 
+The simulator receives each order as the live exchange does: its amount truncated to the amount step (`precision.amount`), its price rounded half up to the price tick (`precision.price`). An amount truncated to 0, or whose cost falls under `cost.min`, is refused, and an order fills for the amount truncated. For Hyperliquid, whose tick depends on the price, add `priceSignificantDigits: 5` under `precision`.
+
 ### Key Configuration Options
 
 | Option               | Description                  | Example Values                      |

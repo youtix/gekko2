@@ -142,6 +142,8 @@ plugins:
     enableConsoleTable: true
 ```
 
+The simulator receives each order as the live exchange does: its amount truncated to the amount step (`precision.amount`), its price rounded half up to the price tick (`precision.price`). An amount truncated to 0, or whose cost falls under `cost.min`, is refused, and an order fills for the amount truncated. For Hyperliquid, whose tick depends on the price, add `priceSignificantDigits: 5` under `precision`.
+
 ### 3. Run Your Strategy
 
 ```bash
@@ -311,7 +313,7 @@ log({ candle, tools }: OnCandleEventParams<MyParams>, ...indicators: IndicatorRe
 
 ### `onOrderCompleted` — Order Filled
 
-Called when an order of yours is filled by the exchange: `order.amount` is the amount it filled, `order.price` the price it executed at (the mean of its trades' prices weighted by their amounts, worked out in decimal: a price all its trades share is that price, a mean that does not end is given to 15 significant digits), `order.effectivePrice` that price with the fee in (above it for a BUY, below it for a SELL), `order.fee` the fee in the currency, `exchange.price` the price of the pair the Trader read once the order ended (in realtime the event arrives with the next minute, and the market may have moved since), and `exchange.portfolio` the portfolio after the fill. When the exchange gives no usable trades, the summary is estimated and an error line says from what: a LIMIT or STICKY order from the prices the exchange reported for its own fills, otherwise its limit price or the last market price.
+Called when an order of yours is filled by the exchange: `order.amount` is the amount it filled (on a market with an amount step, the amount asked for truncated to that step, in backtest and paper trading as live: an all-in BUY of 0.031028229810094173 BTC fills for 0.03102 on Binance's BTC/USDT), `order.price` the price it executed at (the mean of its trades' prices weighted by their amounts, worked out in decimal: a price all its trades share is that price, a mean that does not end is given to 15 significant digits), `order.effectivePrice` that price with the fee in (above it for a BUY, below it for a SELL), `order.fee` the fee in the currency, `exchange.price` the price of the pair the Trader read once the order ended (in realtime the event arrives with the next minute, and the market may have moved since), and `exchange.portfolio` the portfolio after the fill. When the exchange gives no usable trades, the summary is estimated and an error line says from what: a LIMIT or STICKY order from the prices the exchange reported for its own fills, otherwise its limit price or the last market price.
 
 ```typescript
 onOrderCompleted({ order, tools }: OnOrderCompletedEventParams<MyParams>): void {
@@ -340,7 +342,7 @@ onOrderCanceled({ order, tools }: OnOrderCanceledEventParams<MyParams>): void {
 
 ### `onOrderErrored` — Order Failed
 
-Called when an order of yours fails or is refused by the exchange, `order.reason` saying why. It may have executed part of its amount first: `order.filled` is what the exchange reported it filled, 0 when it reported nothing.
+Called when an order of yours fails or is refused by the exchange, `order.reason` saying why. An amount the market's step truncates to 0, or whose cost then falls under `cost.min`, is refused so, in backtest and paper trading as live (`Order 'cost' with value 4.8987648 is out of range. Expected a value between 5 and 9000000.`). It may have executed part of its amount first: `order.filled` is what the exchange reported it filled, 0 when it reported nothing.
 
 `order.mayBeLive` is `true` when the order may still be live on the exchange, where Gekko follows it no more: its creation's answer was lost on the network, the order was created but its state could not be read back, the exchange failed the creation without refusing it (an internal error, such as Binance's "execution status unknown"), or a poll or a cancelation failed for good while it was open. It may then have executed more than `order.filled`, or execute later, and no event will tell: placed again, it may be doubled, so check it on the exchange first. `false` when the exchange refused it, or nothing of it was left open: what it executed is `order.filled`. When the order is the SELL of a trailing stop, the stop is active again either way, unless the portfolio after it shows nothing left to protect (see [Trailing Stops](#trailing-stops)).
 
@@ -852,6 +854,8 @@ plugins:
   - name: RoundTripAnalyzer
     enableConsoleTable: true
 ```
+
+The simulator receives each order as the live exchange does: its amount truncated to the amount step (`precision.amount`), its price rounded half up to the price tick (`precision.price`). An amount truncated to 0, or whose cost falls under `cost.min`, is refused, and an order fills for the amount truncated. For Hyperliquid, whose tick depends on the price, add `priceSignificantDigits: 5` under `precision`.
 
 ### Run the Backtest
 
