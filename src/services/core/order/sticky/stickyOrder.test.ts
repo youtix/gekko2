@@ -11,6 +11,8 @@ import { OrderOutOfRangeError } from '@errors/orderOutOfRange.error';
 import { OrderState } from '@models/order.types';
 import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import * as logger from '@services/logger';
+import { assertOrderWithinLimits } from '@utils/market/market.utils';
+import { round } from '@utils/math/round.utils';
 import type { Mock } from 'vitest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Transaction } from '../order.types';
@@ -547,13 +549,22 @@ describe('StickyOrder', () => {
       expect(spy).toHaveBeenCalled();
     });
 
-    it('calls orderFilled if total filled equals amount', async () => {
-      const order = await createOrder('BUY', 10);
-      order['transactions'].set('prev', { id: 'prev', filled: 5, timestamp: Date.now(), status: 'closed' });
-      const spy = vi.spyOn(order as any, 'orderFilled');
-      await order['handleCancelOrderSuccess']({ ...defaultOrder, status: 'canceled', filled: 5 }); // 5+5 = 10
-      expect(spy).toHaveBeenCalled();
-    });
+    // The answer says the transaction canceled, not what is left: the fills, added up in decimal, reach the amount. In binary, 0.7 and
+    // 0.1 made 0.7999999999999999, short of an order of 0.8
+    it.each`
+      amount | previous | canceled
+      ${10}  | ${5}     | ${5}
+      ${0.8} | ${0.7}   | ${0.1}
+    `(
+      'calls orderFilled if the $previous filled before and the $canceled of the canceled transaction add up to the amount, $amount',
+      async ({ amount, previous, canceled }) => {
+        const order = await createOrder('BUY', amount);
+        order['transactions'].set('prev', { id: 'prev', filled: previous, timestamp: Date.now(), status: 'closed' });
+        const spy = vi.spyOn(order as any, 'orderFilled');
+        await order['handleCancelOrderSuccess']({ ...defaultOrder, status: 'canceled', filled: canceled, remaining: undefined });
+        expect(spy).toHaveBeenCalled();
+      },
+    );
 
     it('calls orderFilled if the transaction is closed', async () => {
       const order = await createOrder('BUY');
@@ -713,6 +724,17 @@ describe('StickyOrder', () => {
       order.on(ORDER_ERRORED_EVENT, listener);
       order['orderErrored'](new Error('Invalid API key'), mayBeLive);
       expect(listener.mock.calls).toEqual([[{ reason: 'Invalid API key (2 of 5 already filled)', mayBeLive }]]);
+    });
+
+    // A move canceled a transaction 0.02 filled, the one placed after it has filled 0.07: in binary, 0.09000000000000001
+    it('says what its transactions filled, added up in decimal', async () => {
+      const order = await createOrder('BUY', 0.1);
+      order['transactions'].set('order-1', { id: 'order-1', status: 'open', filled: 0.07, timestamp: Date.now() });
+      order['transactions'].set('prev', { id: 'prev', status: 'canceled', filled: 0.02, timestamp: Date.now() });
+      const listener = vi.fn();
+      order.on(ORDER_ERRORED_EVENT, listener);
+      order['orderErrored'](new Error('Invalid API key'));
+      expect(listener.mock.calls).toEqual([[{ reason: 'Invalid API key (0.09 of 0.1 already filled)', mayBeLive: true }]]);
     });
   });
 
@@ -1846,6 +1868,88 @@ describe('StickyOrder', () => {
         await order.checkOrder();
 
         expect(fakeExchange.createLimitOrder).toHaveBeenLastCalledWith('BTC/USDT', 'BUY', 1, 202, undefined);
+      });
+    });
+
+    // What is left is placed again as worked out in decimal: the exchange truncates an amount to its step and refuses one under its
+    // minimum (see CCXTExchange.createLimitOrder). Worked out in binary, 2.5 - 2.2 was 0.2999999999999998, placed as 0.29, and the 0.01
+    // left of 0.1 once 0.02 then 0.07 had filled was 0.009999999999999995, placed as nothing: refused, the order was taken for filled
+    describe('when a move places what is left again after partial fills', () => {
+      let order: StickyOrder;
+      let placed: number[];
+
+      // The exchange places an order as CCXTExchange does: its amount truncated to the step of 0.01, then checked against the limits
+      const placeAsTheExchange = (minimumAmount: number) =>
+        fakeExchange.createLimitOrder.mockImplementation(async (_symbol: string, _side: string, amount: number, price: number) => {
+          const truncated = round(amount, 2, 'down');
+          assertOrderWithinLimits({ tag: 'exchange', amount: truncated, price, marketData: { amount: { min: minimumAmount } } });
+          placed.push(truncated);
+          return state(`order-${placed.length}`, 'open', { filled: 0, remaining: truncated, price });
+        });
+
+      // A BUY of `amount` is placed at 102, then for each fill: a poll reports the transaction placed last filled so much, open at 102
+      // while the bid is at 200, and the order moves, the cancelation answered with that fill: what is left is placed again at 202
+      const moveAfterEachFill = async (amount: number, fills: number[], minimumAmount = 0.01) => {
+        placeAsTheExchange(minimumAmount);
+        order = new StickyOrder('BTC/USDT', 'ee21e130-48bc-405f-be0c-46e9bf17b52e', 'BUY', amount);
+        await order.launch();
+        fakeExchange.fetchTicker.mockResolvedValue({ bid: 200, ask: 210 });
+        for (const filled of fills) {
+          const id = `order-${placed.length}`;
+          fakeExchange.fetchOrder.mockResolvedValueOnce(state(id, 'open', { filled, price: 102 }));
+          fakeExchange.cancelOrder.mockResolvedValueOnce(state(id, 'canceled', { filled, price: 102 }));
+          await order.checkOrder();
+        }
+      };
+
+      beforeEach(() => {
+        placed = [];
+      });
+
+      it.each`
+        amount  | fills           | left
+        ${2.5}  | ${[2.2]}        | ${0.3}
+        ${1}    | ${[0.9]}        | ${0.1}
+        ${0.03} | ${[0.01]}       | ${0.02}
+        ${0.8}  | ${[0.7]}        | ${0.1}
+        ${0.1}  | ${[0.02, 0.07]} | ${0.01}
+        ${0.08} | ${[0.01, 0.05]} | ${0.02}
+      `('sends exactly the $left left of $amount once its transactions filled $fills', async ({ amount, fills, left }) => {
+        await moveAfterEachFill(amount, fills);
+        expect(fakeExchange.createLimitOrder).toHaveBeenLastCalledWith('BTC/USDT', 'BUY', left, 202, undefined);
+      });
+
+      // Exactly the market's minimum, what is left is placed: in binary it fell a step under it, and was refused
+      describe.each`
+        amount | fills           | minimum
+        ${2.5} | ${[2.2]}        | ${0.3}
+        ${0.1} | ${[0.02, 0.07]} | ${0.01}
+      `('when the $minimum left of $amount once its transactions filled $fills is the market minimum', ({ amount, fills, minimum }) => {
+        beforeEach(async () => {
+          await moveAfterEachFill(amount, fills, minimum);
+        });
+
+        it(`places the ${minimum} left on the exchange`, () => {
+          expect(placed.at(-1)).toBe(minimum);
+        });
+
+        it('keeps the order open, not taken for filled', () => {
+          expect(order['getStatus']()).toBe('open');
+        });
+      });
+
+      // The transaction placed last executes what it was placed for: the transactions, one after the other, filled the amount
+      it.each`
+        amount | fills
+        ${2.5} | ${[2.2]}
+        ${1}   | ${[0.9]}
+        ${0.8} | ${[0.7]}
+        ${0.1} | ${[0.02, 0.07]}
+      `('fills exactly $amount once the transaction placed after $fills executes', async ({ amount, fills }) => {
+        await moveAfterEachFill(amount, fills);
+        fakeExchange.fetchOrder.mockResolvedValueOnce(state(`order-${placed.length}`, 'closed', { filled: placed.at(-1), remaining: 0 }));
+        await order.checkOrder();
+        expect(order['getTotalFilled']()).toBe(amount);
       });
     });
   });

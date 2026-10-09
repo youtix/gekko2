@@ -5,7 +5,8 @@ import { config } from '@services/configuration/configuration';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { Ticker } from '@services/exchange/exchange.types';
 import { debug, error, warning } from '@services/logger';
-import { bindAll, sumBy } from 'lodash-es';
+import { addPrecise } from '@utils/math/math.utils';
+import { bindAll } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { Order } from '../order';
 import { OrderCancelDetails } from '../order.types';
@@ -55,8 +56,10 @@ export class StickyOrder extends Order {
     let amount: number;
     try {
       price = await this.processStickyPrice();
-      const filledAmount = this.getTotalFilled();
-      amount = this.amount - filledAmount;
+      // What is left, in decimal. In binary, 2.5 - 2.2 was 0.2999999999999998, which the exchange truncates to its step: 0.29 was
+      // placed, one step short, and a remainder of exactly the market's minimum was refused, the order then taken for filled without it
+      // (see handleCreateOrderError)
+      amount = addPrecise(this.amount, -this.getTotalFilled());
     } catch (err) {
       return this.orderErrored(toError(err));
     }
@@ -146,7 +149,7 @@ export class StickyOrder extends Order {
    * it again at the same price: a cancelation and a creation every orderSynchInterval, its priority in the queue lost each time,
    * and the order out of the book in between. So it moves only once it is no longer the best: a higher bid for a BUY, a lower ask
    * for a SELL. A lower bid (higher ask) leaves it where it is. The price compared is the one the exchange reports for the order,
-   * rounded to its tick, never a sum computed here (64000.02 + 0.01 is not 64000.03 in floating point). The simulated exchange
+   * rounded to its tick, never a sum computed here (101.2 + 0.01 is 101.21000000000001 in floating point). The simulated exchange
    * quotes the close as both bid and ask: a BUY moves once the close is above its price.
    */
   private isOutpriced(price: number, { bid, ask }: Ticker) {
@@ -157,9 +160,11 @@ export class StickyOrder extends Order {
     return !this.isOrderCompleted() && this.getTotalFilled() > 0;
   }
 
-  // A fill the exchange never reported counts as 0: sumBy alone returns undefined, not 0, when no transaction has a fill
+  // The fills of the transactions added up in decimal, a fill the exchange never reported counted as 0. Added up in binary, 0.02 and
+  // 0.07 made 0.09000000000000001, and the 0.01 left of an order of 0.1 came out as 0.009999999999999995, which the exchange truncated
+  // to nothing, even subtracted in decimal (see launch)
   private getTotalFilled() {
-    return sumBy(Array.from(this.transactions.values()), ({ filled }) => filled ?? 0);
+    return Array.from(this.transactions.values()).reduce((total, { filled }) => addPrecise(total, filled ?? 0), 0);
   }
 
   /**
