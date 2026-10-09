@@ -9,7 +9,7 @@ import ccxt, { Order as CCXTOrder, Trade as CCXTTrade, ConstructorArgs, Exchange
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { inspect } from 'node:util';
 import { SocksProxyAgent } from 'socks-proxy-agent';
-import { CCXTExchangeConfig } from './ccxtExchange';
+import type { CCXTExchangeConfig } from './ccxtExchange';
 import { BROKER_MANDATORY_FEATURES, BROKER_MAX_RETRIES_ON_FAILURE } from './exchange.const';
 import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from './exchange.error';
 import { DummyExchange, OpenOrder, OpenOrderType } from './exchange.types';
