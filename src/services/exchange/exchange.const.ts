@@ -19,6 +19,14 @@ export const PARAMS: Record<string, Record<string, Undefined<object>>> = {
   fetchBalance: { hyperliquid: { type: 'spot' } },
 };
 
+/**
+ * The significant digits a price has at most on the exchanges whose tick depends on the price, which getMarketData states as
+ * precision.priceSignificantDigits. ccxt 4.5.39 rounds the price of every Hyperliquid order (priceToPrecision, in createOrder) as
+ * Hyperliquid takes it: to 5 significant digits, all the digits of a longer integer part, then to at most 8 decimals less those of the
+ * amount on spot, half up both times. It sets precision.price once, when the markets load, to the tick at the mid price of that moment.
+ */
+export const PRICE_SIGNIFICANT_DIGITS: Record<string, Undefined<number>> = { hyperliquid: 5 };
+
 export const LIMITS: Record<string, ExchangeDataLimits> = {
   binance: { candles: 1000, trades: 1000, orders: 1000 },
   // trades: the most fills Hyperliquid answers at once (userFills, userFillsByTime; ccxt's features.fetchMyTrades.limit). ccxt does not

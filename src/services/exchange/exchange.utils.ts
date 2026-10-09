@@ -4,6 +4,7 @@ import { OrderSide, OrderState } from '@models/order.types';
 import { Trade } from '@models/trade.types';
 import { debug, error, warning } from '@services/logger';
 import { getRetryDelay } from '@utils/fetch/fetch.utils';
+import { addPrecise } from '@utils/math/math.utils';
 import { wait } from '@utils/process/process.utils';
 import ccxt, { Order as CCXTOrder, Trade as CCXTTrade, ConstructorArgs, Exchange, MarketInterface, OHLCV } from 'ccxt';
 import { HttpsProxyAgent } from 'https-proxy-agent';
@@ -172,10 +173,12 @@ export const mapCcxtTradeToTrade = (trade: CCXTTrade, market: MarketInterface): 
  * The fill and the remaining amount of a ccxt order, each a finite number or undefined: unknown, not 0. ccxt 4.5.39 leaves them
  * undefined when the exchange gives too little (an acknowledgement, an answer with the id alone). One missing, or not a finite
  * number, is the amount of the order less the other, never below 0. ccxt's safeOrder derives them so already (without the floor):
- * this covers an answer that did not go through it.
+ * this covers an answer that did not go through it. The difference is taken in decimal, as ccxt takes it: in binary, 0.8 less 0.1
+ * was 0.7000000000000001, a fill a hair above the one made.
  */
 const getFill = ({ amount, filled, remaining }: CCXTOrder): Pick<OrderState, 'filled' | 'remaining'> => {
-  const amountLess = (part: unknown) => (isFiniteNumber(amount) && isFiniteNumber(part) ? Math.max(amount - part, 0) : undefined);
+  const amountLess = (part: unknown) =>
+    isFiniteNumber(amount) && isFiniteNumber(part) ? Math.max(addPrecise(amount, -part), 0) : undefined;
   return {
     filled: isFiniteNumber(filled) ? filled : amountLess(remaining),
     remaining: isFiniteNumber(remaining) ? remaining : amountLess(filled),

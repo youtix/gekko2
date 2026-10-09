@@ -8,13 +8,14 @@ import { config } from '@services/configuration/configuration';
 import { debug, error, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
 import { assertOrderWithinLimits, getMarketOrderLimits } from '@utils/market/market.utils';
+import { addPrecise } from '@utils/math/math.utils';
 import { pluralize } from '@utils/string/string.utils';
 import ccxt, { Exchange as CCXT, Order as CCXTOrder, Trade as CCXTTrade } from 'ccxt';
 import { formatDuration, intervalToDuration } from 'date-fns';
 import { first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
 import { binanceExchangeSchema } from './binance/binance.schema';
-import { LIMITS, MAX_MY_TRADES_PAGES, PARAMS } from './exchange.const';
+import { LIMITS, MAX_MY_TRADES_PAGES, PARAMS, PRICE_SIGNIFICANT_DIGITS } from './exchange.const';
 import { OrderOutcomeUnknown } from './exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData, OpenOrder, OrderSettledCallback, Ticker } from './exchange.types';
 import {
@@ -100,6 +101,8 @@ export class CCXTExchange implements Exchange {
       precision: {
         price: market.precision?.price,
         amount: market.precision?.amount,
+        // Hyperliquid's tick depends on the price, which precision.price, its tick at the price the markets were loaded at, does not tell
+        priceSignificantDigits: PRICE_SIGNIFICANT_DIGITS[this.exchangeName],
       },
       fee: {
         maker: market.maker,
@@ -292,6 +295,7 @@ export class CCXTExchange implements Exchange {
       const limits = this.publicClient.market(symbol).limits;
       const rounded = this.roundToMarketPrecision(symbol, amount, price);
       const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', ...rounded, marketData: limits });
+      this.warnOfPriceMove(symbol, side, price, orderPrice);
 
       const order = await this.sendCreation(symbol, 'limit', side, orderAmount, orderPrice);
       return this.getCreatedOrderState(symbol, order);
@@ -340,7 +344,8 @@ export class CCXTExchange implements Exchange {
    *   up: an all-in order would be sent above the balance, 0.000059958 BTC as 0.00006. createOrder rounds the amount again with
    *   amountToPrecision, which leaves a truncated amount as it is on both exchanges (ccxt 4.5.39).
    * - The price is rounded by ccxt's priceToPrecision, as createOrder rounds it: half up to the tick of the market (Binance), to 5
-   *   significant digits (Hyperliquid).
+   *   significant digits, then 8 decimals less those of the amount (Hyperliquid, see PRICE_SIGNIFICANT_DIGITS), a tick that can be
+   *   coarser than precision.price from the power of ten above the price the markets were loaded at (see warnOfPriceMove).
    * A value rounded to nothing is 0, which assertOrderWithinLimits refuses: decimalToPrecision returns '0', priceToPrecision throws an
    * InvalidOrder (Binance) or returns '0' (Hyperliquid). A value is left as it is:
    * - when it is not a finite number above 0, for assertOrderWithinLimits to refuse it with its own message (ccxt would throw a plain
@@ -366,6 +371,23 @@ export class CCXTExchange implements Exchange {
       ),
       price: round(price, precision?.price, value => client.priceToPrecision(symbol, value)),
     };
+  }
+
+  /**
+   * Warns of a limit order whose price the rounding moved by more than half a tick of precision.price, the most a rounding to that tick
+   * moves a price. Hyperliquid's tick can be coarser from the power of ten above the price its markets were loaded at (see
+   * MarketData.precision.priceSignificantDigits): there, two prices a precision.price apart, two levels of a grid, were sent at one price
+   * without a word. The order is sent all the same, at the price the exchange takes: refused, most limit orders of a pair whose price had
+   * risen past a power of ten since the start would fail. A market order is priced at the ticker, a price the exchange takes as it is.
+   */
+  private warnOfPriceMove(symbol: string, side: OrderSide, price: number, sentPrice: number) {
+    const tick = this.publicClient.market(symbol).precision?.price;
+    if (isNil(tick) || !(tick > 0) || 2 * Math.abs(addPrecise(sentPrice, -price)) <= tick) return;
+    const moved = `LIMIT ${side} order on ${symbol} at ${price} sent to ${this.exchangeName} at ${sentPrice}`;
+    const significantDigits = PRICE_SIGNIFICANT_DIGITS[this.exchangeName];
+    const rule = `${this.exchangeName} takes ${significantDigits} significant digits in a price (precision.priceSignificantDigits)`;
+    const reason = significantDigits ? `: ${rule}, a tick coarser than precision.price at that price` : '';
+    warning('exchange', `${moved}, more than half a tick of precision.price (${tick}) away${reason}`);
   }
 
   /**

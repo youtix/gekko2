@@ -30,6 +30,14 @@ interface MarketLimitRange {
 interface MarketPrecision {
   price?: number;
   amount?: number;
+  /**
+   * The significant digits a price has at most where the tick depends on the price: Hyperliquid's 5, an integer part of more digits being
+   * kept whole (see PRICE_SIGNIFICANT_DIGITS). The tick at a price is the larger of one unit of its last significant digit (0.001 at
+   * 12.345, 0.1 at 1234.5, 1 from 10000 on) and precision.price, and a price rounded to it is sent as it is. precision.price alone is
+   * the tick at the price the markets were loaded at, finer than the exchange's above the next power of ten: on a market loaded at 9990,
+   * 10000.3 and 10000.4, a precision.price apart, were both sent at 10000.
+   */
+  priceSignificantDigits?: number;
 }
 
 interface MarketFee {
@@ -49,7 +57,7 @@ export interface MarketData {
   /**
    * The steps an order's price and amount are multiples of, 0.01 for a price to the cent, as ccxt gives them for Binance and
    * Hyperliquid (both in its TICK_SIZE precision mode). A dummy-cex configuration states numbers of decimals instead (2 for 0.01),
-   * which its schema turns into these steps.
+   * which its schema turns into these steps. Hyperliquid's price step also depends on the price: see priceSignificantDigits.
    */
   precision?: MarketPrecision;
   fee?: MarketFee;

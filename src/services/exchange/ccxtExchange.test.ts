@@ -226,6 +226,16 @@ describe('CCXTExchange', () => {
       expect(exchange.getMarketData('BTC/USDT').market).toEqual({ min: 0, max: 86.27382215 });
     });
 
+    // ccxt's precision.price is Hyperliquid's tick at the price the markets were loaded at: the tick there depends on the price
+    it.each`
+      exchangeName     | exchangeConfig       | marketPrecision                     | expected
+      ${'binance'}     | ${binanceConfig}     | ${{ price: 0.01, amount: 0.00001 }} | ${{ price: 0.01, amount: 0.00001 }}
+      ${'hyperliquid'} | ${hyperliquidConfig} | ${{ price: 0.1, amount: 0.01 }}     | ${{ price: 0.1, amount: 0.01, priceSignificantDigits: 5 }}
+    `('getMarketData states the precision of a $exchangeName market', ({ exchangeConfig, marketPrecision, expected }) => {
+      instance.market.mockReturnValue({ limits: {}, precision: marketPrecision });
+      expect(new CCXTExchange(exchangeConfig).getMarketData('BTC/USDC').precision).toEqual(expected);
+    });
+
     it('getExchangeName returns configured name', () => {
       expect(exchange.getExchangeName()).toBe('binance');
     });
@@ -948,6 +958,88 @@ describe('CCXTExchange', () => {
       instance.market.mockReturnValue({ limits, precision: marketPrecision });
       await create(exchange, instance, 1.234567, 100.456);
       expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDT', type, 'BUY', amount, price);
+    });
+  });
+
+  // Hyperliquid takes 5 significant digits in a price, whole units from 10000 on. ccxt sets precision.price once, when the markets load,
+  // to the tick at the price of that moment: 0.1 on a market loaded at 9990, finer than the tick from 10000 on, where ccxt sends 10000.3
+  // and 10000.4 at 10000. The roundings mocked are those of ccxt 4.5.39 (see the hyperliquid order prices of exchange.utils.test.ts).
+  describe('createLimitOrder, a price rounded beyond the tick of the market data', () => {
+    const limits = { amount: { min: 0.01 }, cost: { min: 10 } };
+    let exchange: CCXTExchange;
+    let instance: any;
+
+    beforeEach(() => {
+      exchange = new CCXTExchange(hyperliquidConfig);
+      instance = (ccxt as any).hyperliquid.mock.instances.at(-1);
+      instance.market.mockReturnValue({ limits, precision: { amount: 0.01, price: 0.1 } });
+      instance.priceToPrecision.mockReturnValue('10000');
+      instance.createOrder.mockResolvedValue({ id: '1', status: 'open' });
+      (mapCcxtOrderToOrder as Mock).mockReturnValue({ id: '1' });
+    });
+
+    it('warns of the price sent, naming the significant digits hyperliquid takes', async () => {
+      await exchange.createLimitOrder('BTC/USDC', 'SELL', 1, 10000.4);
+      expect(logger.warning).toHaveBeenCalledWith(
+        'exchange',
+        'LIMIT SELL order on BTC/USDC at 10000.4 sent to hyperliquid at 10000, more than half a tick of precision.price (0.1) away: hyperliquid takes 5 significant digits in a price (precision.priceSignificantDigits), a tick coarser than precision.price at that price',
+      );
+    });
+
+    it('sends the order at the rounded price all the same', async () => {
+      await exchange.createLimitOrder('BTC/USDC', 'SELL', 1, 10000.4);
+      expect(instance.createOrder).toHaveBeenCalledWith('BTC/USDC', 'limit', 'SELL', 1, 10000);
+    });
+
+    // A rounding Binance does not make, its tick being precision.price: the warning then names no rule
+    it('warns without naming significant digits on an exchange that states none', async () => {
+      exchange = new CCXTExchange(binanceConfig);
+      await exchange.createLimitOrder('BTC/USDC', 'SELL', 1, 10000.4);
+      expect(logger.warning).toHaveBeenCalledWith(
+        'exchange',
+        'LIMIT SELL order on BTC/USDC at 10000.4 sent to binance at 10000, more than half a tick of precision.price (0.1) away',
+      );
+    });
+
+    it.each`
+      description                                    | price       | sent
+      ${'less than a tick away, more than half one'} | ${10000.08} | ${'10000'}
+      ${'rounded up'}                                | ${10000.6}  | ${'10001'}
+    `('warns of a price sent $description', async ({ price, sent }) => {
+      instance.priceToPrecision.mockReturnValue(sent);
+      await exchange.createLimitOrder('BTC/USDC', 'BUY', 1, price);
+      expect(logger.warning).toHaveBeenCalledOnce();
+    });
+
+    // 100 - 99.9995 is 0.0005000000000023874 in binary: subtracted so, a move of half a tick of 0.001 would be one beyond it
+    it.each`
+      description                                           | tick     | price      | sent
+      ${'of 5 significant digits, sent as it is'}           | ${0.1}   | ${10001}   | ${'10001'}
+      ${'half a tick away, a tie rounded up'}               | ${0.1}   | ${9999.95} | ${'10000'}
+      ${'half a tick away, more than half of it in binary'} | ${0.001} | ${99.9995} | ${'100'}
+      ${'less than half a tick away'}                       | ${0.1}   | ${9999.94} | ${'9999.9'}
+    `('does not warn of a price $description', async ({ tick, price, sent }) => {
+      instance.market.mockReturnValue({ limits, precision: { amount: 0.01, price: tick } });
+      instance.priceToPrecision.mockReturnValue(sent);
+      await exchange.createLimitOrder('BTC/USDC', 'BUY', 1, price);
+      expect(logger.warning).not.toHaveBeenCalled();
+    });
+
+    it('does not warn of an order refused for its amount', async () => {
+      await exchange.createLimitOrder('BTC/USDC', 'SELL', 0.001, 10000.4).catch(() => undefined);
+      expect(logger.warning).not.toHaveBeenCalled();
+    });
+
+    it('does not warn on a market whose price tick is 0, which bounds nothing', async () => {
+      instance.market.mockReturnValue({ limits, precision: { amount: 0.01, price: 0 } });
+      await exchange.createLimitOrder('BTC/USDC', 'SELL', 1, 10000.4);
+      expect(logger.warning).not.toHaveBeenCalled();
+    });
+
+    it('does not warn of the price of a market order, the ticker price', async () => {
+      instance.fetchTicker.mockResolvedValue({ ask: 10000.4, bid: 10000.4, last: 10000.4 });
+      await exchange.createMarketOrder('BTC/USDC', 'BUY', 1);
+      expect(logger.warning).not.toHaveBeenCalled();
     });
   });
 

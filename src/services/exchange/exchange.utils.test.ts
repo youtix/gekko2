@@ -5,7 +5,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent';
 import { pick } from 'lodash-es';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BROKER_MAX_RETRIES_ON_FAILURE } from './exchange.const';
+import { BROKER_MAX_RETRIES_ON_FAILURE, PRICE_SIGNIFICANT_DIGITS } from './exchange.const';
 import { ExchangeNetworkError, InvalidOrder, OrderNotFound } from './exchange.error';
 import * as utils from './exchange.utils';
 
@@ -314,6 +314,7 @@ describe('Exchange Utils', () => {
       ${'keeps the fill and the remaining amount given'}                  | ${2}         | ${0.5}        | ${1.5}       | ${{ filled: 0.5, remaining: 1.5 }}
       ${'derives the fill from the amount and the remaining amount'}      | ${2}         | ${undefined}  | ${1.5}       | ${{ filled: 0.5, remaining: 1.5 }}
       ${'derives the remaining amount from the amount and the fill'}      | ${2}         | ${0.5}        | ${undefined} | ${{ filled: 0.5, remaining: 1.5 }}
+      ${'derives the fill in decimal (0.8 - 0.1 is 0.7000000000000001)'}  | ${0.8}       | ${undefined}  | ${0.1}       | ${{ filled: 0.7, remaining: 0.1 }}
       ${'derives a fill of 0 from a remaining amount beyond the amount'}  | ${2}         | ${undefined}  | ${2.5}       | ${{ filled: 0, remaining: 2.5 }}
       ${'derives a remaining amount of 0 from a fill beyond the amount'}  | ${2}         | ${2.5}        | ${undefined} | ${{ filled: 2.5, remaining: 0 }}
       ${'derives the fill in place of one that is not a finite number'}   | ${2}         | ${Number.NaN} | ${1.5}       | ${{ filled: 0.5, remaining: 1.5 }}
@@ -560,6 +561,94 @@ describe('Exchange Utils', () => {
           { symbol: 'BTC/USDC', type: 'limit', side: 'sell', amount: 0.001, price: 100000 },
         ]);
         expect(request.action).not.toHaveProperty('builder');
+      });
+    });
+
+    // The price of an order as the hyperliquid client sends it, the rule PRICE_SIGNIFICANT_DIGITS states (MarketData.precision
+    // .priceSignificantDigits): 5 significant digits, all those of a longer integer part, then at most 8 decimals less those of the amount
+    describe('hyperliquid order prices', () => {
+      // A spot market as ccxt parses it from hyperliquid at a mid price of 9990: a tick of 0.1 there (precision.price), amounts to 0.01
+      const market = {
+        id: '@1',
+        symbol: 'TKN/USDC',
+        base: 'TKN',
+        quote: 'USDC',
+        baseId: '10001',
+        baseName: 'TKN',
+        quoteId: 'USDC',
+        type: 'spot',
+        spot: true,
+        contract: false,
+        precision: { amount: 0.01, price: 0.1 },
+        limits: { cost: { min: 10 } },
+      };
+      const significantDigits = PRICE_SIGNIFICANT_DIGITS.hyperliquid ?? NaN;
+      let privateClient: hyperliquid;
+      // The price of a limit BUY in the order request the client builds for it, as the exchange receives it
+      const getSentPrice = (price: number) =>
+        privateClient.createOrdersRequest([{ symbol: 'TKN/USDC', type: 'limit', side: 'buy', amount: 1, price }]).action.orders[0].p;
+
+      beforeEach(() => {
+        privateClient = utils.createExchange(hyperliquidConfig).privateClient as hyperliquid;
+        privateClient.setMarkets([market]);
+      });
+
+      it('sends a price of PRICE_SIGNIFICANT_DIGITS.hyperliquid significant digits as it is', () => {
+        const price = Number('1.23456789'.slice(0, significantDigits + 1));
+        expect(getSentPrice(price)).toBe(String(price));
+      });
+
+      it('rounds off the significant digit after them', () => {
+        const price = Number('1.23456789'.slice(0, significantDigits + 2));
+        expect(getSentPrice(price)).not.toBe(String(price));
+      });
+
+      it.each`
+        description                                                        | price          | sent
+        ${'10001, of 5 significant digits, as it is'}                      | ${10001}       | ${'10001'}
+        ${'10000.3 at 10000: whole units from 10000 on'}                   | ${10000.3}     | ${'10000'}
+        ${'10000.4, a tick of precision.price above it, at 10000 as well'} | ${10000.4}     | ${'10000'}
+        ${'10000.08 at 10000'}                                             | ${10000.08}    | ${'10000'}
+        ${'10000.05 at 10000, its sixth digit a 0'}                        | ${10000.05}    | ${'10000'}
+        ${'10000.5 at 10001, a tie rounded up'}                            | ${10000.5}     | ${'10001'}
+        ${'10000.6 at 10001'}                                              | ${10000.6}     | ${'10001'}
+        ${'9999.95 at 10000, rounded up to the next power of ten'}         | ${9999.95}     | ${'10000'}
+        ${'9999.94 at 9999.9, the tick of precision.price under 10000'}    | ${9999.94}     | ${'9999.9'}
+        ${'99.9995 at 100, rounded up to the next power of ten'}           | ${99.9995}     | ${'100'}
+        ${'123456.7 at 123457, a longer integer part kept whole'}          | ${123456.7}    | ${'123457'}
+        ${'0.12345678 at 0.12346, 5 significant digits under 1'}           | ${0.12345678}  | ${'0.12346'}
+        ${'0.000123456 at 0.000123, 8 decimals less the 2 of the amount'}  | ${0.000123456} | ${'0.000123'}
+      `('sends $description', ({ price, sent }) => {
+        expect(getSentPrice(price)).toBe(sent);
+      });
+    });
+
+    // The tick ccxt states for a hyperliquid market (precision.price) is the one at its mid price when the markets load
+    // (calculatePricePrecision), finer than the exchange's above the next power of ten: hence MarketData.precision.priceSignificantDigits
+    describe('hyperliquid spot markets', () => {
+      // spotMetaAndAssetCtxs, as hyperliquid answers it for one market, of the token TKN quoted in USDC
+      const spotMetaAndAssetCtxs = (midPx: string, szDecimals: number) => [
+        {
+          tokens: [
+            { name: 'USDC', szDecimals: 8, weiDecimals: 8, index: 0, tokenId: '0x6d1e7cde53ba9467b783cb7c530ce054', isCanonical: true },
+            { name: 'TKN', szDecimals, weiDecimals: 8, index: 1, tokenId: '0xc1fb593aeffbeb02f85e0308e9956a90', isCanonical: true },
+          ],
+          universe: [{ name: 'TKN/USDC', tokens: [1, 0], index: 0, isCanonical: true }],
+        },
+        [{ dayNtlVlm: '8906.0', markPx: midPx, midPx, prevDayPx: midPx }],
+      ];
+
+      it.each`
+        midPx        | szDecimals | tick
+        ${'61235.5'} | ${5}       | ${1}
+        ${'9990'}    | ${2}       | ${0.1}
+        ${'99.5'}    | ${2}       | ${0.001}
+      `('gives a market loaded at a mid price of $midPx its tick there, $tick, as precision.price', async ({ midPx, szDecimals, tick }) => {
+        const publicClient = utils.createExchange(hyperliquidConfig).publicClient as hyperliquid;
+        // The info endpoint, answered without any request
+        vi.spyOn(publicClient, 'publicPostInfo').mockResolvedValue(spotMetaAndAssetCtxs(midPx, szDecimals));
+        const [market] = await publicClient.fetchSpotMarkets();
+        expect(market?.precision.price).toBe(tick);
       });
     });
 
