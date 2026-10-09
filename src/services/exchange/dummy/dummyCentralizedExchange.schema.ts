@@ -30,6 +30,16 @@ const decimalsToStepSchema = (field: string) => {
 };
 
 /**
+ * The significant digits a price has at most where the tick depends on the price, as CCXTExchange states it for Hyperliquid (5, see
+ * PRICE_SIGNIFICANT_DIGITS), handed on as it is. A backtest rehearses that rule with it: the strategies read it, and the simulator
+ * rounds the price of an order to the tick at that price (see getPriceTick). Left out, the tick is precision.price at any price.
+ */
+const significantDigitsSchema = (field: string) => {
+  const message = `${field} must be a whole number of at least 1 (5 on Hyperliquid), left out for a tick that does not depend on the price`;
+  return z.number(message).int(message).min(1, message);
+};
+
+/**
  * The lowest and highest order price, amount or cost of a pair. A max left out, or set to 0 as Binance reports a disabled
  * filter, sets no maximum (market.utils counts a bound of 0 as absent), so min is only compared with a max above 0.
  * Zod still runs the refinement after a failed bound: a negative max, already reported, is not compared either.
@@ -66,6 +76,7 @@ const marketDataSchema = z
         precision: z.strictObject({
           price: decimalsToStepSchema('precision.price'),
           amount: decimalsToStepSchema('precision.amount'),
+          priceSignificantDigits: significantDigitsSchema('precision.priceSignificantDigits').optional(),
         }),
         fee: z.strictObject({
           maker: feeRateSchema('fee.maker'),

@@ -18,6 +18,7 @@ import { difference, isNil, sortedIndexBy, sortedLastIndexBy } from 'lodash-es';
 import { AsyncMutex } from '../../../utils/async/asyncMutex';
 import { COST_DECIMALS } from './dummyCentralizedExchange.const';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
+import { roundToMarketPrecision } from './dummyCentralizedExchange.utils';
 
 /**
  * Adds each change to its part of the balance (free, used or total) in decimal, as addPrecise does: an exchange books decimals. Added in
@@ -173,9 +174,11 @@ export class DummyCentralizedExchange implements Exchange {
     onSettled?: OrderSettledCallback,
   ): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
-      // The limits are checked as CCXTExchange checks them: an order out of them is refused with the same error in every mode
+      // The limits are checked as CCXTExchange checks them, on the amount and the price it sends (see roundToMarketPrecision): an order
+      // out of them is refused with the same error in every mode
       const marketData = this.getPairMarketData(symbol);
-      const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', amount, price, marketData });
+      const rounded = roundToMarketPrecision(amount, price, marketData);
+      const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', ...rounded, marketData });
 
       this.reserveBalance(symbol, side, orderAmount, orderPrice);
 
@@ -208,10 +211,12 @@ export class DummyCentralizedExchange implements Exchange {
       // Narrowed to the amounts of a market order, the MARKET_LOT_SIZE of Binance that paper trading carries (see getMarketOrderLimits)
       const marketData = getMarketOrderLimits(this.getPairMarketData(symbol));
 
-      // The limits are checked as CCXTExchange checks them, at the price the order executes at: the ask for a BUY, the bid for a SELL
+      // The limits are checked as CCXTExchange checks them, at the price the order executes at: the ask for a BUY, the bid for a SELL,
+      // with the amount and that price as it sends them (see roundToMarketPrecision)
       const price = side === 'BUY' ? this.ticker.get(symbol)?.ask : this.ticker.get(symbol)?.bid;
       if (isNil(price)) throw new InvalidOrder(`Ticker not found for symbol ${symbol}`);
-      const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', amount, price, marketData });
+      const rounded = roundToMarketPrecision(amount, price, marketData);
+      const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', ...rounded, marketData });
 
       const id = `market-order-${++this.orderSequence}`;
       const { assetBalance, currencyBalance } = this.getPairBalances(symbol);

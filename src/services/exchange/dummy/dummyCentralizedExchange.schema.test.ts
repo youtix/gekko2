@@ -24,6 +24,9 @@ const withTicker = (ticker: Record<string, unknown>) => set(createConfig(), ['in
 
 const feeMessage = (field: string) => `${field} must be a fraction between 0 and 1 (0.001 is a 0.1 % fee)`;
 const precisionMessage = (field: string) => `${field} must be a whole number of decimals of at least 0, not a step (2 for a step of 0.01)`;
+const significantDigitsMessage =
+  'precision.priceSignificantDigits must be a whole number of at least 1 (5 on Hyperliquid), ' +
+  'left out for a tick that does not depend on the price';
 
 describe('dummyExchangeSchema', () => {
   it('maps each marketData entry to its symbol, its precision turned from decimals into steps', () => {
@@ -69,25 +72,28 @@ describe('dummyExchangeSchema', () => {
   describe('marketData', () => {
     // A negative max is reported once: the min ≤ max refinement, which zod still runs after the failed bound, skips it.
     it.each`
-      path                       | value      | message
-      ${['price', 'min']}        | ${-1}      | ${'price.min must be a number of at least 0'}
-      ${['price', 'max']}        | ${-1}      | ${'price.max must be a number of at least 0'}
-      ${['amount', 'min']}       | ${-1}      | ${'amount.min must be a number of at least 0'}
-      ${['amount', 'max']}       | ${-1}      | ${'amount.max must be a number of at least 0'}
-      ${['cost', 'min']}         | ${-1}      | ${'cost.min must be a number of at least 0'}
-      ${['cost', 'max']}         | ${-1}      | ${'cost.max must be a number of at least 0'}
-      ${['cost', 'min']}         | ${'5'}     | ${'cost.min must be a number of at least 0'}
-      ${['price', 'min']}        | ${NaN}     | ${'price.min must be a number of at least 0'}
-      ${['precision', 'price']}  | ${-2}      | ${precisionMessage('precision.price')}
-      ${['precision', 'amount']} | ${-2}      | ${precisionMessage('precision.amount')}
-      ${['precision', 'price']}  | ${0.01}    | ${precisionMessage('precision.price')}
-      ${['precision', 'amount']} | ${0.00001} | ${precisionMessage('precision.amount')}
-      ${['precision', 'amount']} | ${'8'}     | ${precisionMessage('precision.amount')}
-      ${['fee', 'maker']}        | ${1.5}     | ${feeMessage('fee.maker')}
-      ${['fee', 'maker']}        | ${-0.1}    | ${feeMessage('fee.maker')}
-      ${['fee', 'taker']}        | ${1.5}     | ${feeMessage('fee.taker')}
-      ${['fee', 'taker']}        | ${-0.1}    | ${feeMessage('fee.taker')}
-      ${['fee', 'taker']}        | ${'0.1%'}  | ${feeMessage('fee.taker')}
+      path                                       | value      | message
+      ${['price', 'min']}                        | ${-1}      | ${'price.min must be a number of at least 0'}
+      ${['price', 'max']}                        | ${-1}      | ${'price.max must be a number of at least 0'}
+      ${['amount', 'min']}                       | ${-1}      | ${'amount.min must be a number of at least 0'}
+      ${['amount', 'max']}                       | ${-1}      | ${'amount.max must be a number of at least 0'}
+      ${['cost', 'min']}                         | ${-1}      | ${'cost.min must be a number of at least 0'}
+      ${['cost', 'max']}                         | ${-1}      | ${'cost.max must be a number of at least 0'}
+      ${['cost', 'min']}                         | ${'5'}     | ${'cost.min must be a number of at least 0'}
+      ${['price', 'min']}                        | ${NaN}     | ${'price.min must be a number of at least 0'}
+      ${['precision', 'price']}                  | ${-2}      | ${precisionMessage('precision.price')}
+      ${['precision', 'amount']}                 | ${-2}      | ${precisionMessage('precision.amount')}
+      ${['precision', 'price']}                  | ${0.01}    | ${precisionMessage('precision.price')}
+      ${['precision', 'amount']}                 | ${0.00001} | ${precisionMessage('precision.amount')}
+      ${['precision', 'amount']}                 | ${'8'}     | ${precisionMessage('precision.amount')}
+      ${['precision', 'priceSignificantDigits']} | ${0}       | ${significantDigitsMessage}
+      ${['precision', 'priceSignificantDigits']} | ${2.5}     | ${significantDigitsMessage}
+      ${['precision', 'priceSignificantDigits']} | ${'5'}     | ${significantDigitsMessage}
+      ${['fee', 'maker']}                        | ${1.5}     | ${feeMessage('fee.maker')}
+      ${['fee', 'maker']}                        | ${-0.1}    | ${feeMessage('fee.maker')}
+      ${['fee', 'taker']}                        | ${1.5}     | ${feeMessage('fee.taker')}
+      ${['fee', 'taker']}                        | ${-0.1}    | ${feeMessage('fee.taker')}
+      ${['fee', 'taker']}                        | ${'0.1%'}  | ${feeMessage('fee.taker')}
     `('reports $value at $path as its only issue', ({ path, value, message }) => {
       const result = dummyExchangeSchema.safeParse(withMarketData(path, value));
       expect(result.error?.issues).toMatchObject([{ path: ['marketData', 0, 'marketData', ...path], message }]);
@@ -138,6 +144,21 @@ describe('dummyExchangeSchema', () => {
     `('turns $decimals decimals at $path into a step of $step', ({ path, decimals, step }) => {
       const result = dummyExchangeSchema.parse(withMarketData(path, decimals));
       expect(get(result.marketData.get('BTC/USDT'), path)).toBe(step);
+    });
+
+    // Hyperliquid's rule, for a backtest to rehearse it: a count of digits, not decimals, handed on as MarketData states it
+    it.each`
+      digits
+      ${5}
+      ${1}
+    `('hands precision.priceSignificantDigits of $digits on as it is', ({ digits }) => {
+      const result = dummyExchangeSchema.parse(withMarketData(['precision', 'priceSignificantDigits'], digits));
+      expect(result.marketData.get('BTC/USDT')?.precision?.priceSignificantDigits).toBe(digits);
+    });
+
+    it('leaves precision.priceSignificantDigits out of the market data when the configuration does', () => {
+      const result = dummyExchangeSchema.parse(createConfig());
+      expect(result.marketData.get('BTC/USDT')?.precision).not.toHaveProperty('priceSignificantDigits');
     });
 
     it.each`

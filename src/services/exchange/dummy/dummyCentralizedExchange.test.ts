@@ -547,6 +547,202 @@ describe('DummyCentralizedExchange', () => {
     });
   });
 
+  // CCXTExchange truncates the amount of an order to the step of the market and rounds its price half up to the tick, then checks the
+  // limits and sends the order (see roundToMarketPrecision). The simulator used to take them as they came, and so filled quantities a
+  // live run never sends: GridBot's 0.00008595077805222816 BTC, which CCXTExchange sends as 0.00008 and refuses for a cost under 5 USDT,
+  // or an all-in BUY of 17 significant digits. The market below has the steps of Binance's BTC/USDT, 0.01 for a price and 0.00001 for
+  // an amount, and the documented fees: maker 0.04 %, taker 0.07 %, charged in USDT.
+  describe('Amounts and prices put on the steps of the market', () => {
+    const steppedMarketData = {
+      price: { min: 0.01, max: 1_000_000 },
+      amount: { min: 0.00001, max: 9000 },
+      cost: { min: 5, max: 9_000_000 },
+      precision: { price: 0.01, amount: 0.00001 },
+      fee: { maker: 0.0004, taker: 0.0007 },
+    };
+    // What the Trader buys with 2000 USDT at 61234.56 when the strategy gives no amount, 5 % kept back for the fee: 0.03102 BTC once
+    // truncated, where rounded it would be 0.03103
+    const ALL_IN_AMOUNT = 0.031028229810094173;
+
+    /** An exchange on that market, or on `marketData`, quoting BTC/USDT at `price` for its bid and its ask, with 1 BTC and 2000 USDT */
+    const createSteppedExchange = (price = 61234.56, marketData: MarketData = steppedMarketData) =>
+      createExchange({
+        marketData: createMarketData(marketData),
+        simulationBalance: createSimulationBalance(1, 2000),
+        initialTicker: new Map([[SYMBOL, { bid: price, ask: price }]]),
+      });
+
+    /** A market order, or a limit order at `price` filled by a candle around it: its id */
+    const executeOrder = async (
+      exchange: DummyCentralizedExchange,
+      type: 'limit' | 'market',
+      side: OrderSide,
+      amount: number,
+      price = 61234.56,
+    ) => {
+      if (type === 'market') return (await exchange.createMarketOrder(SYMBOL, side, amount)).id;
+      const { id } = await exchange.createLimitOrder(SYMBOL, side, amount, price);
+      await exchange.processOneMinuteBucket(createBucket(Date.now(), { open: price, low: price - 1, high: price + 1, close: price }));
+      return id;
+    };
+
+    it.each`
+      type        | side
+      ${'limit'}  | ${'BUY'}
+      ${'limit'}  | ${'SELL'}
+      ${'market'} | ${'BUY'}
+      ${'market'} | ${'SELL'}
+    `('reports a $type $side of 0.031028229810094173 BTC closed with 0.03102 filled, its amount truncated', async ({ type, side }) => {
+      const exchange = createSteppedExchange();
+      const id = await executeOrder(exchange, type, side, ALL_IN_AMOUNT);
+      expect(await exchange.fetchOrder(SYMBOL, id)).toMatchObject({ status: 'closed', filled: 0.03102, remaining: 0 });
+    });
+
+    it.each`
+      type        | side
+      ${'limit'}  | ${'BUY'}
+      ${'limit'}  | ${'SELL'}
+      ${'market'} | ${'BUY'}
+      ${'market'} | ${'SELL'}
+    `('journals the execution of a $type $side of 0.031028229810094173 BTC for 0.03102', async ({ type, side }) => {
+      const exchange = createSteppedExchange();
+      await executeOrder(exchange, type, side, ALL_IN_AMOUNT);
+      const [trade] = await exchange.fetchMyTrades(SYMBOL);
+      expect(trade.amount).toBe(0.03102);
+    });
+
+    // 0.03102 at 61234.56 is 1899.4960512 USDT, its fee on top for a BUY and taken off for a SELL, from 1 BTC and 2000 USDT
+    it.each`
+      type        | side      | asset     | free             | used | total
+      ${'limit'}  | ${'BUY'}  | ${'BTC'}  | ${1.03102}       | ${0} | ${1.03102}
+      ${'limit'}  | ${'BUY'}  | ${'USDT'} | ${99.74415038}   | ${0} | ${99.74415038}
+      ${'limit'}  | ${'SELL'} | ${'BTC'}  | ${0.96898}       | ${0} | ${0.96898}
+      ${'limit'}  | ${'SELL'} | ${'USDT'} | ${3898.73625278} | ${0} | ${3898.73625278}
+      ${'market'} | ${'BUY'}  | ${'BTC'}  | ${1.03102}       | ${0} | ${1.03102}
+      ${'market'} | ${'BUY'}  | ${'USDT'} | ${99.17430156}   | ${0} | ${99.17430156}
+      ${'market'} | ${'SELL'} | ${'BTC'}  | ${0.96898}       | ${0} | ${0.96898}
+      ${'market'} | ${'SELL'} | ${'USDT'} | ${3898.16640396} | ${0} | ${3898.16640396}
+    `(
+      'leaves $free $asset free, $used used, $total in total once a $type $side of 0.031028229810094173 BTC executed for 0.03102',
+      async ({ type, side, asset, free, used, total }) => {
+        const exchange = createSteppedExchange();
+        await executeOrder(exchange, type, side, ALL_IN_AMOUNT);
+        const balance = await exchange.fetchBalance();
+        expect(balance.get(asset)).toEqual({ free, used, total });
+      },
+    );
+
+    it('lists a limit BUY of 0.031028229810094173 BTC as an order of 0.03102, all of it remaining', async () => {
+      const exchange = createSteppedExchange();
+      await exchange.createLimitOrder(SYMBOL, 'BUY', ALL_IN_AMOUNT, 61234.56);
+      const [order] = await exchange.fetchOpenOrders(SYMBOL);
+      expect(order).toMatchObject({ amount: 0.03102, remaining: 0.03102 });
+    });
+
+    it('reserves 1900.25584962 USDT for a limit BUY of 0.031028229810094173 BTC at 61234.56, what 0.03102 costs', async () => {
+      const exchange = createSteppedExchange();
+      await exchange.createLimitOrder(SYMBOL, 'BUY', ALL_IN_AMOUNT, 61234.56);
+      const balance = await exchange.fetchBalance();
+      expect(balance.get('USDT')?.used).toBe(1900.25584962);
+    });
+
+    it('places a limit BUY of 0.03102 BTC, on the step, for 0.03102', async () => {
+      const exchange = createSteppedExchange();
+      const { remaining } = await exchange.createLimitOrder(SYMBOL, 'BUY', 0.03102, 61234.56);
+      expect(remaining).toBe(0.03102);
+    });
+
+    // The limits are checked on the amount truncated, with the message of the shared formatter, as live. An amount of at least
+    // amount.min stays so, a minimum of the market being a multiple of its step; its cost can fall under cost.min.
+    it.each`
+      type        | side      | amount                    | price       | property    | value        | detail
+      ${'limit'}  | ${'BUY'}  | ${0.00008595077805222816} | ${61234.56} | ${'cost'}   | ${4.8987648} | ${'is out of range. Expected a value between 5 and 9000000.'}
+      ${'market'} | ${'SELL'} | ${0.00008595077805222816} | ${61234.56} | ${'cost'}   | ${4.8987648} | ${'is out of range. Expected a value between 5 and 9000000.'}
+      ${'limit'}  | ${'SELL'} | ${0.0000560556}           | ${99990}    | ${'cost'}   | ${4.9995}    | ${'is out of range. Expected a value between 5 and 9000000.'}
+      ${'limit'}  | ${'SELL'} | ${0.0000099}              | ${61234.56} | ${'amount'} | ${0}         | ${'is invalid. Expected a finite number greater than 0.'}
+      ${'market'} | ${'BUY'}  | ${0.0000099}              | ${61234.56} | ${'amount'} | ${0}         | ${'is invalid. Expected a finite number greater than 0.'}
+    `(
+      'refuses a $type $side of $amount BTC at $price: once the amount is truncated, its $property of $value $detail',
+      async ({ type, side, amount, price, property, value, detail }) => {
+        const exchange = createSteppedExchange(price);
+        const order =
+          type === 'limit' ? exchange.createLimitOrder(SYMBOL, side, amount, price) : exchange.createMarketOrder(SYMBOL, side, amount);
+        await expect(order).rejects.toThrow(`[EXCHANGE] Order '${property}' with value ${value} ${detail}`);
+      },
+    );
+
+    // As CCXTExchange sends a value the market has no precision for
+    it.each`
+      type        | side
+      ${'limit'}  | ${'BUY'}
+      ${'limit'}  | ${'SELL'}
+      ${'market'} | ${'BUY'}
+      ${'market'} | ${'SELL'}
+    `('journals a $type $side of 0.031028229810094173 BTC as it is on a market without precision', async ({ type, side }) => {
+      const exchange = createSteppedExchange(61234.56, omit(steppedMarketData, 'precision'));
+      await executeOrder(exchange, type, side, ALL_IN_AMOUNT);
+      const [trade] = await exchange.fetchMyTrades(SYMBOL);
+      expect(trade.amount).toBe(ALL_IN_AMOUNT);
+    });
+
+    it('places a limit BUY at 61234.565 as it is on a market without precision', async () => {
+      const exchange = createSteppedExchange(61234.56, omit(steppedMarketData, 'precision'));
+      const { price } = await exchange.createLimitOrder(SYMBOL, 'BUY', 0.01, 61234.565);
+      expect(price).toBe(61234.565);
+    });
+
+    // A STICKY order is placed at the bid plus price.min, 101.2 + 0.01 being 101.21000000000001 in binary
+    it.each`
+      side      | amount  | price                 | placed
+      ${'BUY'}  | ${0.01} | ${61234.565}          | ${61234.57}
+      ${'BUY'}  | ${0.01} | ${61234.564}          | ${61234.56}
+      ${'SELL'} | ${0.01} | ${61234.565}          | ${61234.57}
+      ${'SELL'} | ${0.1}  | ${101.21000000000001} | ${101.21}
+    `('places a limit $side at $price at $placed, its price rounded half up to the tick', async ({ side, amount, price, placed }) => {
+      const exchange = createSteppedExchange();
+      const { price: placedPrice } = await exchange.createLimitOrder(SYMBOL, side, amount, price);
+      expect(placedPrice).toBe(placed);
+    });
+
+    it.each`
+      side
+      ${'BUY'}
+      ${'SELL'}
+    `('journals the execution of a limit $side asked at 61234.565 at 61234.57', async ({ side }) => {
+      const exchange = createSteppedExchange();
+      await executeOrder(exchange, 'limit', side, 0.01, 61234.565);
+      const [trade] = await exchange.fetchMyTrades(SYMBOL);
+      expect(trade.price).toBe(61234.57);
+    });
+
+    it.each`
+      side      | ticker     | price
+      ${'BUY'}  | ${100.005} | ${100.01}
+      ${'SELL'} | ${100.005} | ${100.01}
+      ${'BUY'}  | ${100.004} | ${100}
+      ${'SELL'} | ${100.004} | ${100}
+    `('executes a market $side at $price, a ticker of $ticker rounded to the tick', async ({ side, ticker, price }) => {
+      const exchange = createSteppedExchange(ticker);
+      const { price: executedPrice } = await exchange.createMarketOrder(SYMBOL, side, 0.1);
+      expect(executedPrice).toBe(price);
+    });
+
+    // Hyperliquid's rule, which a dummy-cex configuration states with precision.priceSignificantDigits: a tick of 1 from 10000 on, where
+    // precision.price says 0.1. Two levels of a grid one stated tick apart, 10000.4 and 10000.5, are booked at 10000 and 10001, as ccxt
+    // sends them.
+    it.each`
+      price      | placed
+      ${10000.4} | ${10000}
+      ${10000.5} | ${10001}
+      ${9999.94} | ${9999.9}
+    `('places a limit SELL at $price at $placed on a market of 5 significant digits in a price', async ({ price, placed }) => {
+      const marketData = { ...steppedMarketData, precision: { price: 0.1, amount: 0.00001, priceSignificantDigits: 5 } };
+      const exchange = createSteppedExchange(10_000, marketData);
+      const { price: placedPrice } = await exchange.createLimitOrder(SYMBOL, 'SELL', 0.01, price);
+      expect(placedPrice).toBe(placed);
+    });
+  });
+
   // The fees and order limits of a pair come from its marketData entry, which each watched pair has. An order on a pair without one
   // used to be checked against no limits, then accepted if the portfolio held its asset and its currency: on USDT/BTC, BTC/USDT the
   // other way round, it traded free of fees, and no candle would ever fill a limit order. A USDT is worth 0.00001 BTC here.
