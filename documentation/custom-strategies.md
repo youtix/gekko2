@@ -311,7 +311,7 @@ log({ candle, tools }: OnCandleEventParams<MyParams>, ...indicators: IndicatorRe
 
 ### `onOrderCompleted` — Order Filled
 
-Called when an order of yours is filled by the exchange: `order.amount` is the amount it filled, `order.price` the price it executed at, `order.effectivePrice` that price with the fee in (above it for a BUY, below it for a SELL), `order.fee` the fee in the currency, and `exchange.portfolio` the portfolio after the fill.
+Called when an order of yours is filled by the exchange: `order.amount` is the amount it filled, `order.price` the price it executed at (the mean of its trades' prices weighted by their amounts, worked out in decimal: a price all its trades share is that price, a mean that does not end is given to 15 significant digits), `order.effectivePrice` that price with the fee in (above it for a BUY, below it for a SELL), `order.fee` the fee in the currency, `exchange.price` the price of the pair the Trader read once the order ended (in realtime the event arrives with the next minute, and the market may have moved since), and `exchange.portfolio` the portfolio after the fill. When the exchange gives no usable trades, the summary is estimated and an error line says from what: a LIMIT or STICKY order from the prices the exchange reported for its own fills, otherwise its limit price or the last market price.
 
 ```typescript
 onOrderCompleted({ order, tools }: OnOrderCompletedEventParams<MyParams>): void {
@@ -435,6 +435,7 @@ An order is dated (`orderCreationDate`) with the end of the minute being process
 ```typescript
 // tools.createOrder(order: StrategyOrder): UUID returns the order id at once. The outcome arrives later, in
 // onOrderCompleted, onOrderCanceled or onOrderErrored, whose order.id is that id.
+// These six keys and no other: createOrder refuses any other key, whatever its value.
 type StrategyOrder = {
   symbol: TradingPair;                  // A watched pair (a key of tools.marketData), e.g. 'BTC/USDT'
   type: 'STICKY' | 'MARKET' | 'LIMIT';  // In upper case, as written here: ccxt's 'market' is refused
@@ -454,7 +455,7 @@ type StrategyOrder = {
 - **`price` left out**: the last price of the pair, the close of the last one-minute candle or the bid read at the Trader's last synchronization, whichever came last. It is the limit of a `LIMIT` order, and what an all-in BUY is sized at.
 - **A SELL is capped to the free balance** of its asset, as the Trader read it at its last synchronization, less what the SELLs it placed since take from it, with a warning (`[<id>] SELL MARKET order of 0.3 BTC above the free balance: 0.2992 BTC sent, all that can be sold (…)`). An all-in SELL is sized from that remainder.
 
-`createOrder` checks the order before it sends anything. The order takes no key but the six of `StrategyOrder` above: any other, a misspelt `prise` or a `quantity` for instance, is refused whatever its value, as the Trader would ignore it (a LIMIT would go at the last price of the pair, an order all-in). `symbol` must be a watched pair. `side` must be `'BUY'` or `'SELL'` and `type` `'MARKET'`, `'STICKY'` or `'LIMIT'`, in upper case. `amount` and `price` must be numbers above 0, or left out: `0`, a negative number, `NaN`, `Infinity` and a quoted number such as `'0.5'` are refused. `trailing` goes on a BUY only, with no key but `percentage`, above 0 and below 100, and `trigger`, above 0 or left out. Anything else throws a `GekkoError` naming the field and what it accepts, for example `[STRATEGY] Impossible to create the buy MARKET order on BTC/USDT: side must be one of 'BUY', 'SELL', got 'buy'`. The order is not sent and Gekko stops (exit code 1), even for an amount your strategy computed as 0. A TypeScript strategy cannot pass a lower-case side or type, or a quoted number, without a cast; a JavaScript one, which Bun loads without type-checking, can.
+`createOrder` checks the order before it sends anything. The order takes no key but the six of `StrategyOrder` above: any other, a misspelt `prise` or a `quantity` for instance, is refused whatever its value, as the Trader would ignore it (a LIMIT would go at the last price of the pair, an order all-in). `symbol` must be a watched pair. `side` must be `'BUY'` or `'SELL'` and `type` `'MARKET'`, `'STICKY'` or `'LIMIT'`, in upper case. `amount` and `price` must be numbers above 0, or left out: `0`, a negative number, `NaN`, `Infinity` and a quoted number such as `'0.5'` are refused. `trailing` goes on a BUY only, with no key but `percentage`, above 0 and below 100, and `trigger`, above 0 or left out. Anything else throws a `GekkoError` naming the field and what it accepts, for example `[STRATEGY] Impossible to create the buy MARKET order on BTC/USDT: side must be one of 'BUY', 'SELL', got 'buy'`. The order is not sent and Gekko stops (exit code 1), even for an amount your strategy computed as 0. A TypeScript strategy cannot pass a lower-case side or type, or a quoted number, without a cast; a JavaScript one, which Bun loads without type-checking, can. TypeScript refuses an unknown key in an object literal only, not in a variable or a spread, such as the order of an event: the keys check catches what the compiler lets through.
 
 ### Examples
 
@@ -985,6 +986,7 @@ Your strategy called `createOrder` before the warmup was over: from `init`, or f
 
 `createOrder` refused the order, and sent nothing: the end of the line names the field and what it accepts (see [Order Parameters](#order-parameters)).
 
+- `order keys must be one of 'symbol', 'side', 'type', 'amount', 'price', 'trailing', got '…'`: the order holds a key `StrategyOrder` does not declare, misspelt (`prise`, `limitPrice`, `amout`, `trailingStop`) or of your own (`quantity`, `comment`). Mind the spelling, and build the order from its fields rather than passing an event's order or a parameter object as it is.
 - `symbol must be one of the watched pairs (…)`: Gekko only has candles, prices and balances of the assets of `watch.assets` against `watch.currency`. Take the pair from `candle.keys()`, or add its asset to `watch.assets`; mind the case (`BTC/USDT`, not `btc/usdt`) and the slash (not the exchange's id `BTCUSDT`).
 - `side` and `type` must be spelt in upper case, as typed.
 - `amount` and `price` must be numbers above 0, or left out: check a computed amount, which may be 0 or `NaN` when a balance or a price is.
