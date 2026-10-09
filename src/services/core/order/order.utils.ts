@@ -6,15 +6,14 @@ import { TradingPair } from '@models/utility.types';
 import { Exchange } from '@services/exchange/exchange.types';
 import { debug } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import { addPrecise, isFiniteNumber } from '@utils/math/math.utils';
-import { countDecimals, round } from '@utils/math/round.utils';
+import { addPrecise, isFiniteNumber, multiplyPrecise, toSignificantDigits } from '@utils/math/math.utils';
 import { startOfSecond } from 'date-fns';
 import { filter, isNil, last, map, min, sortBy } from 'lodash-es';
 import { UUID } from 'node:crypto';
 import { OrderSummary, Transaction } from './order.types';
 
-/** The significant digits a double keeps of any decimal: past them, a number computed in binary carries only noise */
-const SIGNIFICANT_DIGITS = 15;
+// The Trader's pricing (trader.utils.ts) still imports multiplyPrecise from here, until its import moves to @utils/math/math.utils
+export { multiplyPrecise } from '@utils/math/math.utils';
 
 /**
  * A failure as an Error. Nobody awaits launch(), cancel() or checkOrder() (the Trader floats them, an interval runs checkOrder),
@@ -22,23 +21,6 @@ const SIGNIFICANT_DIGITS = 15;
  * the order still ends with ORDER_ERRORED_EVENT.
  */
 export const toError = (value: unknown) => (value instanceof Error ? value : new Error(String(value)));
-
-/**
- * a × b as the two are written: the double nearest to the product of their decimals, where the binary product can come out an ulp
- * off it (100.01 × 0.0004 is 0.040004000000000005, 0.040004 here). Exact while the product, written with the decimals of a and b
- * added up, has about 15 significant digits or fewer; beyond, as close as the binary product.
- */
-export const multiplyPrecise = (a: number, b: number): number => round(a * b, countDecimals(a) + countDecimals(b));
-
-/**
- * value to 15 significant digits: the decimal it stands for, without the noise of the binary arithmetic that made it. A mean is a
- * quotient, and the simulator or an exchange may hand over a figure computed in binary: a STICKY order placed at 101.2 + 0.01 executes
- * at 101.21000000000001, a fee rate of 0.0007 is reported as 0.06999999999999999 %.
- */
-const toSignificantDigits = (value: number): number => {
-  if (!Number.isFinite(value) || value === 0) return value;
-  return round(value, SIGNIFICANT_DIGITS - 1 - Math.floor(Math.log10(Math.abs(value))));
-};
 
 /**
  * The mean of `values` weighted by `weights`, worked out in decimal: the products and the sums exactly (see multiplyPrecise and

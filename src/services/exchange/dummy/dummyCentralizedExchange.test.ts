@@ -1007,6 +1007,18 @@ describe('DummyCentralizedExchange', () => {
       expect(trade.fee.rate).toBe(0);
     });
 
+    // Multiplied by 100 in binary, a fee of 0.0007 was journaled as 0.06999999999999999 % and one of 0.00035 as 0.034999999999999996 %
+    it.each`
+      type        | execute               | fee                                 | rate
+      ${'market'} | ${executeMarketOrder} | ${{ maker: 0.001, taker: 0.0007 }}  | ${0.07}
+      ${'limit'}  | ${executeLimitOrder}  | ${{ maker: 0.00035, taker: 0.002 }} | ${0.035}
+    `('reports a $type order execution with its fee rate as the decimal $rate %', async ({ execute, fee, rate }) => {
+      const exchange = await createStartedExchange({ marketData: createMarketData({ ...defaultMarketData, fee }) });
+      await execute(exchange);
+      const [trade] = await exchange.fetchMyTrades(SYMBOL);
+      expect(trade.fee.rate).toBe(rate);
+    });
+
     it('returns no trade for a limit order still open', async () => {
       const exchange = await createStartedExchange();
       await exchange.createLimitOrder(SYMBOL, 'BUY', 1, 50);

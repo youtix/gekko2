@@ -224,6 +224,24 @@ describe('Exchange Utils', () => {
       const trade: any = { id: '1', order: 'ord1', amount, price, timestamp, fee };
       expect(utils.mapCcxtTradeToTrade(trade, market).fee.rate).toBe(expected);
     });
+
+    // In binary these came out at 0.06999999999999999 % for 0.07 %, 0.09999999999999999 % for 0.1 % and 0.03333333333333333 % for the
+    // share with no end. The last two fees, rounded to 8 decimals by the exchange, are shares with no end too: worked out in binary, even
+    // rounded to 15 significant digits, they came out a unit off the exact share in the 15th digit (0.0999999999903884, 0.06999966844051)
+    it.each`
+      description                                           | market               | amount     | price       | fee                                        | expected
+      ${'a rate of 0.0007 given by ccxt'}                   | ${binanceMarket}     | ${1}       | ${60000}    | ${{ rate: 0.0007 }}                        | ${0.07}
+      ${'a fee of 0.10001 USDT on 1 at 100.01'}             | ${binanceMarket}     | ${1}       | ${100.01}   | ${{ cost: 0.10001, currency: 'USDT' }}     | ${0.1}
+      ${'a fee of 0.0007 USDC on 0.01 at 100'}              | ${hyperliquidMarket} | ${0.01}    | ${100}      | ${{ cost: 0.0007, currency: 'USDC' }}      | ${0.07}
+      ${'a fee of 0.0049 BTC on 4.9'}                       | ${binanceMarket}     | ${4.9}     | ${60000}    | ${{ cost: 0.0049, currency: 'BTC' }}       | ${0.1}
+      ${'a fee of 0.00483 UBTC on 6.9'}                     | ${hyperliquidMarket} | ${6.9}     | ${60000}    | ${{ cost: 0.00483, currency: 'UBTC' }}     | ${0.07}
+      ${'a fee of 0.001 USDT on 3 at 1, with no end'}       | ${binanceMarket}     | ${3}       | ${1}        | ${{ cost: 0.001, currency: 'USDT' }}       | ${0.0333333333333333}
+      ${'a fee of 33.29329435 USDT on 0.39967 at 83301.96'} | ${binanceMarket}     | ${0.39967} | ${83301.96} | ${{ cost: 33.29329435, currency: 'USDT' }} | ${0.0999999999903885}
+      ${'a fee of 0.00084449 UBTC on 1.20642'}              | ${hyperliquidMarket} | ${1.20642} | ${60000}    | ${{ cost: 0.00084449, currency: 'UBTC' }}  | ${0.0699996684405099}
+    `('gives the rate of $description as a decimal, $expected %', ({ market, amount, price, fee, expected }) => {
+      const trade: any = { id: '1', order: 'ord1', amount, price, timestamp, fee };
+      expect(utils.mapCcxtTradeToTrade(trade, market).fee.rate).toBe(expected);
+    });
   });
 
   describe('mapCcxtOrderToOrder', () => {

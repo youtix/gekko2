@@ -1,5 +1,8 @@
-import { add, divide, map, mean, multiply, reduce, sum } from 'lodash-es';
-import { countDecimals, shiftDecimalPoint } from './round.utils';
+import { map, mean } from 'lodash-es';
+import { countDecimals, round, shiftDecimalPoint } from './round.utils';
+
+/** The significant digits a double keeps of any decimal: past them, a number computed in binary carries only noise */
+const SIGNIFICANT_DIGITS = 15;
 
 const valuesMinusMeanSquared = (values: number[] = []) => {
   const average = mean(values);
@@ -9,17 +12,6 @@ const valuesMinusMeanSquared = (values: number[] = []) => {
 export const stdev = (vals: number[] = []) => {
   // average squared deviation from mean
   return Math.sqrt(mean(valuesMinusMeanSquared(vals)));
-};
-
-export const weightedMean = (values: number[], weights: number[]): number => {
-  if (values.length !== weights.length || !values.length) return NaN;
-
-  const totalWeight = sum(weights);
-  if (totalWeight === 0) return NaN;
-
-  const numerator = reduce(values, (acc, v, i) => add(acc, multiply(v, weights[i])), 0);
-
-  return divide(numerator, totalWeight);
 };
 
 /**
@@ -37,6 +29,27 @@ export const addPrecise = (a: number, b: number): number => {
   const scaledSum = scaledA + scaledB;
   if (!Number.isSafeInteger(scaledA) || !Number.isSafeInteger(scaledB) || !Number.isSafeInteger(scaledSum)) return a + b;
   return shiftDecimalPoint(scaledSum, -decimals);
+};
+
+/**
+ * a × b as the two are written: the double nearest to the product of their decimals, where the binary product can come out an ulp
+ * off it (100.01 × 0.0004 is 0.040004000000000005, 0.040004 here). Exact while the product, written with the decimals of a and b
+ * added up, has about 15 significant digits or fewer; beyond, as close as the binary product.
+ */
+export const multiplyPrecise = (a: number, b: number): number => round(a * b, countDecimals(a) + countDecimals(b));
+
+/**
+ * value to 15 significant digits (see SIGNIFICANT_DIGITS): the decimal it stands for, without the noise of the binary arithmetic that
+ * made it, 0.07 for 0.06999999999999999. For a quotient, which no helper here works out exactly (a mean, a fee rate), and for a figure
+ * made in binary upstream. A value of more significant digits loses them: 100.66666666666667 is 100.666666666667. NaN, an infinite
+ * value and 0 are given back as they are.
+ */
+export const toSignificantDigits = (value: number): number => {
+  if (!Number.isFinite(value) || value === 0) return value;
+  // The exponent of the first digit as the value is written (6.999999999999999e-2). Math.log10 rounds up to the next integer for some
+  // values just under a power of ten, which then kept a digit less: 9999999999.99998 came back as 10000000000
+  const exponent = Number(value.toExponential().split('e')[1]);
+  return round(value, SIGNIFICANT_DIGITS - 1 - exponent);
 };
 
 /**

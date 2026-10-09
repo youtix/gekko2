@@ -5,7 +5,7 @@ import { Exchange } from '@services/exchange/exchange.types';
 import { debug } from '@services/logger';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Transaction } from './order.types';
-import { createOrderSummary, getWeightedAverage, multiplyPrecise, toError } from './order.utils';
+import { createOrderSummary, getWeightedAverage, toError } from './order.utils';
 
 vi.mock('@services/logger', () => ({ debug: vi.fn() }));
 
@@ -39,23 +39,6 @@ describe('toError', () => {
     ${undefined} | ${'undefined'}
   `('wraps $value in an Error with the message "$message"', ({ value, message }) => {
     expect(toError(value)).toEqual(new Error(message));
-  });
-});
-
-// The first five come out an ulp or two off the decimal in binary (100.01 × 0.0004 is 0.040004000000000005)
-describe('multiplyPrecise', () => {
-  it.each`
-    a           | b         | expected
-    ${100.01}   | ${0.0004} | ${0.040004}
-    ${101.21}   | ${0.3}    | ${30.363}
-    ${61234.56} | ${0.7}    | ${42864.192}
-    ${0.0007}   | ${100}    | ${0.07}
-    ${0.07}     | ${1200}   | ${84}
-    ${4.99825}  | ${100.01} | ${499.8749825}
-    ${1200}     | ${0.5}    | ${600}
-    ${0.3}      | ${0}      | ${0}
-  `('gives $expected for $a × $b', ({ a, b, expected }) => {
-    expect(multiplyPrecise(a, b)).toBe(expected);
   });
 });
 
@@ -178,7 +161,7 @@ describe('createOrderSummary', () => {
       expect((await summarizeTrades(trades)).amount).toBe(amount);
     });
 
-    // The simulator reports a taker fee of 0.0007 as 0.0007 × 100 %, which is 0.06999999999999999 in binary
+    // A rate worked out in binary, as the simulator used to journal a taker fee of 0.0007: 0.0007 × 100 is 0.06999999999999999
     it('gives the fee percent of a rate reported in binary as the decimal it stands for', async () => {
       const summary = await summarizeTrades([trade('ex-0', 1.67428, 99, 1_100_000, { rate: 0.06999999999999999 })]);
       expect(summary.feePercent).toBe(0.07);

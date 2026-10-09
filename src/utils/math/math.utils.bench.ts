@@ -1,5 +1,5 @@
 import { bench, describe } from 'vitest';
-import { addPrecise, stdev, weightedMean } from './math.utils';
+import { addPrecise, stdev } from './math.utils';
 
 // Sample data for benchmarks
 const smallArray = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
@@ -17,24 +17,6 @@ describe('stdev Performance', () => {
 
   bench('stdev - large array (1000 elements)', () => {
     stdev(largeArray);
-  });
-});
-
-describe('weightedMean Performance', () => {
-  const weightsSmall = smallArray.map(() => Math.random());
-  const weightsMedium = mediumArray.map(() => Math.random());
-  const weightsLarge = largeArray.map(() => Math.random());
-
-  bench('weightedMean - small array (10 elements)', () => {
-    weightedMean(smallArray, weightsSmall);
-  });
-
-  bench('weightedMean - medium array (100 elements)', () => {
-    weightedMean(mediumArray, weightsMedium);
-  });
-
-  bench('weightedMean - large array (1000 elements)', () => {
-    weightedMean(largeArray, weightsLarge);
   });
 });
 

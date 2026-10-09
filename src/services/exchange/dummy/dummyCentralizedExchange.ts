@@ -11,7 +11,7 @@ import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData, OpenOrder, OrderSettledCallback, Ticker } from '@services/exchange/exchange.types';
 import { assertOrderWithinLimits, getMarketOrderLimits } from '@utils/market/market.utils';
 import { addPrecise } from '@utils/math/math.utils';
-import { round } from '@utils/math/round.utils';
+import { round, shiftDecimalPoint } from '@utils/math/round.utils';
 import { clonePortfolio, initializePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { difference, isNil, sortedIndexBy, sortedLastIndexBy } from 'lodash-es';
@@ -491,7 +491,8 @@ export class DummyCentralizedExchange implements Exchange {
 
   /**
    * Journals the execution of an order that just filled. There is no partial fill: an order executes once, for its whole amount at
-   * its own price, with the fee of its type (see getFeeRate), recorded in % as a Trade carries it.
+   * its own price, with the fee of its type (see getFeeRate), recorded in % as a Trade carries it: its decimal point moved two places,
+   * where multiplied by 100 in binary a fee of 0.0007 was journaled as 0.06999999999999999 %.
    * Executions come in timestamp order (see currentTimestamp), so each one lands at the end of its journal; inserting it with
    * sortedLastIndexBy, O(log n), keeps the journal sorted for the bisection in fetchMyTrades even if the clock ever went back.
    */
@@ -501,7 +502,7 @@ export class DummyCentralizedExchange implements Exchange {
       amount: order.filled ?? 0,
       price: order.price ?? 0,
       timestamp: order.timestamp,
-      fee: { rate: this.getFeeRate(order.symbol, order.type) * 100 },
+      fee: { rate: shiftDecimalPoint(this.getFeeRate(order.symbol, order.type), 2) },
     };
 
     const executions = this.executions.get(order.symbol);

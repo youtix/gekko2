@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addPrecise, compareWithTolerance, isFiniteNumber, stdev, weightedMean } from './math.utils';
+import { addPrecise, compareWithTolerance, isFiniteNumber, multiplyPrecise, stdev, toSignificantDigits } from './math.utils';
 
 describe('stdev', () => {
   it.each`
@@ -12,41 +12,6 @@ describe('stdev', () => {
     ${'take in account strings'}              | ${[600, 470, 170, 430, 300]} | ${147.32277488562318}
   `('should $description', ({ input, expected }) => {
     expect(stdev(input)).toBe(expected);
-  });
-});
-
-describe('weightedMean', () => {
-  it.each`
-    values          | weights         | expected
-    ${[1, 2, 3]}    | ${[1, 1, 1]}    | ${2}
-    ${[1, 2, 3, 4]} | ${[1, 2, 3, 4]} | ${3}
-    ${[10, 20]}     | ${[0.5, 1.5]}   | ${17.5}
-  `('should return $expected for values $values and weights $weights', ({ values, weights, expected }) => {
-    expect(weightedMean(values, weights)).toBeCloseTo(expected);
-  });
-
-  it('should return NaN when values and weights have different lengths', () => {
-    expect(weightedMean([1, 2], [1])).toBeNaN();
-  });
-
-  it('should return NaN when provided with empty arrays', () => {
-    expect(weightedMean([], [])).toBeNaN();
-  });
-
-  it('should return NaN when sum of weights is zero', () => {
-    expect(weightedMean([1, 2, 3], [0, 0, 0])).toBeNaN();
-  });
-
-  it('should not mutate the input arrays', () => {
-    const values = [1, 2, 3];
-    const weights = [1, 1, 1];
-    const valuesCopy = [...values];
-    const weightsCopy = [...weights];
-
-    weightedMean(values, weights);
-
-    expect(values).toEqual(valuesCopy);
-    expect(weights).toEqual(weightsCopy);
   });
 });
 
@@ -77,6 +42,48 @@ describe('addPrecise', () => {
     ${'Infinity, as a + b'}                                   | ${Infinity}           | ${1}                  | ${Infinity}
   `('should return $expected for $a + $b: $description', ({ a, b, expected }) => {
     expect(addPrecise(a, b)).toBe(expected);
+  });
+});
+
+// The first five come out an ulp or two off the decimal in binary (100.01 × 0.0004 is 0.040004000000000005)
+describe('multiplyPrecise', () => {
+  it.each`
+    a           | b         | expected
+    ${100.01}   | ${0.0004} | ${0.040004}
+    ${101.21}   | ${0.3}    | ${30.363}
+    ${61234.56} | ${0.7}    | ${42864.192}
+    ${0.0007}   | ${100}    | ${0.07}
+    ${0.07}     | ${1200}   | ${84}
+    ${4.99825}  | ${100.01} | ${499.8749825}
+    ${1200}     | ${0.5}    | ${600}
+    ${0.3}      | ${0}      | ${0}
+  `('gives $expected for $a × $b', ({ a, b, expected }) => {
+    expect(multiplyPrecise(a, b)).toBe(expected);
+  });
+});
+
+// Made in binary: 101.2 + 0.01, 0.0007 × 100 and 0.3 / 0.1. With no end: 302 / 3, and 0.1 / 3 × 1e-9 for the tiny value. Just
+// under a power of ten, the two of 15 digits kept a digit less with the exponent read from Math.log10, which gives 10 and -12 there
+describe('toSignificantDigits', () => {
+  it.each`
+    description                               | value                     | expected
+    ${'a sum made in binary'}                 | ${101.21000000000001}     | ${101.21}
+    ${'a product made in binary'}             | ${0.06999999999999999}    | ${0.07}
+    ${'a quotient made in binary'}            | ${2.9999999999999996}     | ${3}
+    ${'a negative value made in binary'}      | ${-0.06999999999999999}   | ${-0.07}
+    ${'a quotient with no end, to 15 digits'} | ${100.66666666666667}     | ${100.666666666667}
+    ${'a tiny value, to 15 digits'}           | ${3.3333333333333335e-11} | ${3.33333333333333e-11}
+    ${'a large value, to 15 digits'}          | ${123456789012345680000}  | ${123456789012346000000}
+    ${'a value of fewer digits, as it is'}    | ${0.04}                   | ${0.04}
+    ${'15 digits just under 1e10, as it is'}  | ${9999999999.99998}       | ${9999999999.99998}
+    ${'15 digits just under 1e-12, as it is'} | ${9.99999999999999e-13}   | ${9.99999999999999e-13}
+    ${'0, as it is'}                          | ${0}                      | ${0}
+    ${'-0, as it is'}                         | ${-0}                     | ${-0}
+    ${'NaN, as it is'}                        | ${NaN}                    | ${NaN}
+    ${'Infinity, as it is'}                   | ${Infinity}               | ${Infinity}
+    ${'-Infinity, as it is'}                  | ${-Infinity}              | ${-Infinity}
+  `('should give $expected for $value, $description', ({ value, expected }) => {
+    expect(toSignificantDigits(value)).toBe(expected);
   });
 });
 

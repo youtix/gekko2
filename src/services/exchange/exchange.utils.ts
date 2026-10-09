@@ -4,7 +4,8 @@ import { OrderSide, OrderState } from '@models/order.types';
 import { Trade } from '@models/trade.types';
 import { debug, error, warning } from '@services/logger';
 import { getRetryDelay } from '@utils/fetch/fetch.utils';
-import { addPrecise } from '@utils/math/math.utils';
+import { addPrecise, multiplyPrecise, toSignificantDigits } from '@utils/math/math.utils';
+import { shiftDecimalPoint } from '@utils/math/round.utils';
 import { wait } from '@utils/process/process.utils';
 import ccxt, { Order as CCXTOrder, Trade as CCXTTrade, ConstructorArgs, Exchange, MarketInterface, OHLCV } from 'ccxt';
 import { HttpsProxyAgent } from 'https-proxy-agent';
@@ -140,10 +141,13 @@ const isFiniteNumber = (value: unknown): value is number => typeof value === 'nu
  *   ccxt maps the tokens to: the token is also matched with the baseName of the market (UBTC for BTC/USDC) and its quoteId (USDT0 for
  *   a market quoted in USDT).
  * - A fee paid in any other currency, such as BNB with Binance's fee discount, is not converted: its rate is unknown.
+ * The percentage is worked out in decimal: the decimal point of the rate or of the fee moved two places, the cost of the trade as its
+ * amount and price are written (multiplyPrecise), the one division rounded to 15 significant digits (toSignificantDigits). In binary,
+ * a rate of 0.0007 came out at 0.06999999999999999 %, and so did a fee of 0.0007 USDC on 0.01 at 100.
  */
 const getFeePercent = (trade: CCXTTrade, market: MarketInterface): number | undefined => {
   const rate = trade.fee?.rate;
-  if (isFiniteNumber(rate)) return rate * 100;
+  if (isFiniteNumber(rate)) return shiftDecimalPoint(rate, 2);
 
   const cost = trade.fee?.cost;
   const currency = trade.fee?.currency;
@@ -152,8 +156,9 @@ const getFeePercent = (trade: CCXTTrade, market: MarketInterface): number | unde
   if (!isFiniteNumber(cost) || !currency || !(amount > 0) || !(price > 0)) return undefined;
 
   const baseName = 'baseName' in market && typeof market.baseName === 'string' ? market.baseName : undefined;
-  if (currency === market.quote || currency === market.quoteId) return (cost * 100) / (amount * price);
-  if (currency === market.base || currency === baseName) return (cost * 100) / amount;
+  const percentOf = (whole: number) => toSignificantDigits(shiftDecimalPoint(cost, 2) / whole);
+  if (currency === market.quote || currency === market.quoteId) return percentOf(multiplyPrecise(amount, price));
+  if (currency === market.base || currency === baseName) return percentOf(amount);
   return undefined;
 };
 
