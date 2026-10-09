@@ -1,3 +1,4 @@
+import { approximately, illiquidCandles, resultsOf } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { RSI } from './rsi.indicator';
 
@@ -46,6 +47,38 @@ describe('RSI', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${44.37238533693474}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     rsi.onNewCandle(candle);
-    expect(rsi.getResult()).toBeCloseTo(expected, 13);
+    expect(rsi.getResult()).toEqual(approximately(expected, 12));
+  });
+
+  // Every close of the table above moves, so the guard for a market that never did could be dropped without a test failing. On an
+  // illiquid market, with period 2, the made-up candles it starts with neither gain nor lose: the RSI is 0, as in TA-Lib, rather than
+  // the 0 / 0 of its formula. Later, the made-up candles and the close that does not move halve both averages, so the RSI holds at
+  // 1900 / 27 over them
+  it('should return 0 on the flat start of an illiquid market, and hold over its made-up candles', () => {
+    const results = resultsOf(new RSI({ period: 2 }), illiquidCandles);
+    expect(results).toEqual(
+      approximately([null, null, 0, 100, 300 / 11, 1900 / 27, 1900 / 27, 1900 / 27, 1900 / 27, 380 / 31, 27500 / 411], 12),
+    );
+  });
+
+  // An RSI that read the close whatever its src said used to pass this file: no row set one. Each value here differs from the close's
+  const rsiHlc3 = new RSI({ period: 3, src: 'hlc3' });
+  it.each`
+    candle                                                                                     | expected
+    ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}   | ${null}
+    ${{ close: 24, open: 81, high: 83.85720988022568, low: 21.142790119774318, volume: 814 }}  | ${null}
+    ${{ close: 75, open: 24, high: 76.94326596315126, low: 22.056734036848734, volume: 1064 }} | ${null}
+    ${{ close: 21, open: 75, high: 79.67167346434113, low: 16.328326535658874, volume: 330 }}  | ${20.833333333333336}
+    ${{ close: 34, open: 21, high: 34.711649023641215, low: 20.28835097635878, volume: 964 }}  | ${17.441860465116278}
+    ${{ close: 25, open: 34, high: 36.18138133787512, low: 22.818618662124877, volume: 214 }}  | ${16.71309192200557}
+    ${{ close: 72, open: 25, high: 73.33035016836122, low: 23.669649831638775, volume: 860 }}  | ${59.67633175994605}
+    ${{ close: 92, open: 72, high: 94.97523624952838, low: 69.02476375047162, volume: 486 }}   | ${77.49764816556915}
+    ${{ close: 99, open: 92, high: 101.5127586628106, low: 89.4872413371894, volume: 647 }}    | ${82.1279139270771}
+    ${{ close: 2, open: 99, high: 99.0804764241746, low: 1.9195235758253941, volume: 396 }}    | ${30.444958384688892}
+    ${{ close: 86, open: 2, high: 86.08306699694582, low: 1.916933003054178, volume: 252 }}    | ${48.7962401300866}
+    ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${63.460636065025156}
+  `('should return $expected with src hlc3 when candle close to $candle.close', ({ candle, expected }) => {
+    rsiHlc3.onNewCandle(candle);
+    expect(rsiHlc3.getResult()).toEqual(approximately(expected, 12));
   });
 });

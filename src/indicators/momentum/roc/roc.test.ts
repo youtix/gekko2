@@ -1,8 +1,10 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { ROC } from './roc.indicator';
 
 describe('ROC', () => {
-  const roc = new ROC({ period: 9 });
+  // Rates of up to 1950 %, hence 11 digits (see approximately): with 12, the largest had 2 ulps of room
+  const roc9 = new ROC({ period: 9 });
   it.each`
     candle                                                                                      | expected
     ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}    | ${null}
@@ -13,7 +15,7 @@ describe('ROC', () => {
     ${{ close: 25, open: 34, high: 36.18138133787512, low: 22.818618662124877, volume: 214 }}   | ${null}
     ${{ close: 72, open: 25, high: 73.33035016836122, low: 23.669649831638775, volume: 860 }}   | ${null}
     ${{ close: 92, open: 72, high: 94.97523624952838, low: 69.02476375047162, volume: 486 }}    | ${null}
-    ${{ close: 99, open: 92, high: 101.5127586628106, low: 89.4872413371894, volume: 647 }}     | ${22.22222222222222}
+    ${{ close: 99, open: 92, high: 101.5127586628106, low: 89.4872413371894, volume: 647 }}     | ${null}
     ${{ close: 2, open: 99, high: 99.0804764241746, low: 1.9195235758253941, volume: 396 }}     | ${-97.53086419753086}
     ${{ close: 86, open: 2, high: 86.08306699694582, low: 1.916933003054178, volume: 252 }}     | ${258.3333333333333}
     ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}      | ${6.666666666666667}
@@ -44,8 +46,23 @@ describe('ROC', () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${2.2222222222222223}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${-21.839080459770116}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-89.53488372093024}
-  `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
-    roc.onNewCandle(candle);
-    expect(roc.getResult()).toBeCloseTo(expected, 12);
+  `('should return $expected with period 9 when candle close to $candle.close', ({ candle, expected }) => {
+    roc9.onNewCandle(candle);
+    expect(roc9.getResult()).toEqual(approximately(expected, 11));
+  });
+
+  const roc1 = new ROC({ period: 1 });
+  it.each`
+    candle            | expected
+    ${{ close: 10 }}  | ${null}
+    ${{ close: 11 }}  | ${10}
+    ${{ close: 9.9 }} | ${-10}
+    ${{ close: 9.9 }} | ${0}
+    ${{ close: 0 }}   | ${-100}
+    ${{ close: 5 }}   | ${null}
+    ${{ close: 7.5 }} | ${50}
+  `('should return $expected with period 1 when the close moves to $candle.close', ({ candle, expected }) => {
+    roc1.onNewCandle(candle);
+    expect(roc1.getResult()).toEqual(approximately(expected, 12));
   });
 });

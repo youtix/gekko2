@@ -1,3 +1,4 @@
+import { approximately, illiquidCandles, resultsOf } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { ATR } from './atr.indicator';
 
@@ -46,6 +47,13 @@ describe('ATR', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${47.89432567410684}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     atr.onNewCandle(candle);
-    expect(atr.getResult()).toBeCloseTo(expected, 13);
+    expect(atr.getResult()).toEqual(approximately(expected, 12));
+  });
+
+  // The candles of the table above never gap, so an ATR of high − low passed it. Over 2 candles of an illiquid market: the mean of the
+  // first two true ranges, then half the last value plus half the true range, the gaps' 4, 5 and 4 where high − low gives 2, 3 and 0
+  it('should average the true ranges of an illiquid market, gaps included', () => {
+    const results = resultsOf(new ATR({ period: 2 }), illiquidCandles);
+    expect(results).toEqual([null, null, 0, 2, 3.5, 3.75, 1.875, 0.9375, 1.46875, 1.734375, 2.3671875]);
   });
 });

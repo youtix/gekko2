@@ -1,8 +1,9 @@
 watch:
-  asset: BTC
+  assets:
+    - BTC
   currency: USDT
-  mode: realtime # backtest | importer | realtime
   timeframe: 1d
+  mode: realtime # backtest | importer | realtime
   warmup:
     candleCount: 365
 
@@ -24,12 +25,13 @@ plugins:
 
   - name: 'Trader'
 
-  - name: 'PerformanceAnalyzer'
+  - name: 'RoundTripAnalyzer'
     riskFreeReturn: 5
 
   - name: EventSubscriber
-    token: # Your telgram token
+    token: # Your telegram bot token
     botUsername: # Your telegram bot username
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 
 # set this to true if you understand that Gekko will invest according to how you configured the indicators.
 # None of the advice in the output is Gekko telling you to take a certain position. Instead it is the result

@@ -1,27 +1,29 @@
-import { INPUT_SOURCES } from '@indicators/indicator.const';
-import { Candle } from '@models/candle.types';
-import { Indicator } from '../../indicator';
+import { checkInputSource, checkInteger } from '@indicators/indicator.utils';
+import { MovingAverage } from '@indicators/movingAverages/movingAverage';
 
-export class SMA extends Indicator<'SMA'> {
+export class SMA extends MovingAverage<'SMA'> {
   private period: number;
   private buffer: number[];
   private idx: number;
   private age: number;
   private sum: number;
-  private getPrice: (candle: Candle) => number;
 
-  constructor({ period = 30, src = 'close' }: IndicatorRegistry['SMA']['input'] = {}) {
-    super('SMA', null);
+  /**
+   * @param period - Candles averaged: a whole number, at least 1. Default 30
+   * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
+   */
+  constructor({ period = 30, src }: IndicatorRegistry['SMA']['input'] = {}) {
+    checkInteger('SMA', 'period', period);
+    checkInputSource('SMA', src);
+    super(src);
     this.period = period;
     this.buffer = [];
     this.idx = 0;
     this.age = 0;
     this.sum = 0;
-    this.getPrice = INPUT_SOURCES[src];
   }
 
-  public onNewCandle(candle: Candle) {
-    const price = this.getPrice(candle);
+  public update(price: number) {
     // Warming up period
     if (this.age < this.period) {
       this.age++;
@@ -37,9 +39,5 @@ export class SMA extends Indicator<'SMA'> {
     this.idx = (this.idx + 1) % this.period;
 
     this.result = this.sum / this.period;
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

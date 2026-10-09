@@ -1,4 +1,5 @@
 import { Indicator } from '@indicators/indicator';
+import { checkInteger } from '@indicators/indicator.utils';
 import { Candle } from '@models/candle.types';
 import { isNil } from 'lodash-es';
 import { WilderSmoothing } from '../../movingAverages/wilderSmoothing/wilderSmoothing.indicator';
@@ -9,8 +10,10 @@ export class ATR extends Indicator<'ATR'> {
   private truerange: TrueRange;
   private smoothing: WilderSmoothing;
 
+  /** @param period - Period of the smoothed true range: a whole number, at least 1. Required */
   constructor({ period }: IndicatorRegistry['ATR']['input']) {
-    super('ATR', null);
+    super();
+    checkInteger('ATR', 'period', period);
     this.period = period;
     this.truerange = new TrueRange();
     this.smoothing = new WilderSmoothing({ period: this.period });
@@ -21,11 +24,7 @@ export class ATR extends Indicator<'ATR'> {
     const tr = this.truerange.getResult();
     if (isNil(tr)) return;
 
-    this.smoothing.onNewCandle({ close: tr } as Candle);
+    this.smoothing.update(tr);
     this.result = this.smoothing.getResult();
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

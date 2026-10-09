@@ -1,56 +1,144 @@
+import { ONE_MINUTE } from '@constants/time.const';
+import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
+import { assetsSchema, currencySchema } from '@models/schema/pairConfig.schema';
+import { TradingPair } from '@models/utility.types';
+import { CandleSize } from '@services/core/batcher/candleBatcher/candleBatcher.types';
 import { binanceExchangeSchema } from '@services/exchange/binance/binance.schema';
 import { dummyExchangeSchema } from '@services/exchange/dummy/dummyCentralizedExchange.schema';
 import { hyperliquidExchangeSchema } from '@services/exchange/hyperliquid/hyperliquid.schema';
 import { paperBinanceExchangeSchema } from '@services/exchange/paper/paperTradingBinanceExchange.schema';
-import { some } from 'lodash-es';
+import { getCandleStart, getCandleTimeOffset } from '@utils/candle/candle.utils';
+import { toISOString, toTimestamp } from '@utils/date/date.utils';
+import { startOfMinute } from 'date-fns';
+import { difference, find, some } from 'lodash-es';
 import { z } from 'zod';
 import { TIMEFRAMES } from './configuration.const';
 
 const disclaimerField = 'I understand that Gekko only automates MY OWN trading strategies' as const;
 
-const daterangeSchema = z.object({
-  start: z.iso.datetime(),
-  end: z.iso.datetime(),
-});
+// js-yaml loads an unquoted timestamp as a Date. An invalid Date is not converted (toISOString() would throw)
+// and fails the string check instead.
+const isoDatetimeSchema = z.preprocess(
+  value => (value instanceof Date && !Number.isNaN(value.getTime()) ? value.toISOString() : value),
+  z.iso.datetime(),
+);
+
+const daterangeSchema = z
+  .strictObject({
+    start: isoDatetimeSchema,
+    end: isoDatetimeSchema,
+  })
+  .transform(({ start, end }) => ({ start: toTimestamp(start), end: toTimestamp(end) }));
+
+// tickrate and warmup.tickrate space the requests of a history download (the importer's, the realtime warmup's): the least delay,
+// in ms, between the starts of two of them
+const MIN_TICKRATE = 100;
+
+const integerAtLeast = (field: string, min: number) => {
+  const message = `${field} must be an integer of at least ${min}`;
+  return z.number(message).int(message).min(min, message);
+};
+
+const integerBetween = (field: string, min: number, max: number, reason: string) => {
+  const message = `${field} must be an integer between ${min} and ${max} (${reason})`;
+  return z.number(message).int(message).min(min, message).max(max, message);
+};
+
+// A backtest reads each batch of candles into memory at once, for every pair: 31 days of 1-minute candles is ample.
+const MAX_BATCH_SIZE = 31 * 24 * 60;
 
 const warmupSchema = z
-  .object({
-    tickrate: z.number().default(1000),
-    candleCount: z.number().default(0),
+  .strictObject({
+    tickrate: integerAtLeast('warmup.tickrate', MIN_TICKRATE).default(1000),
+    candleCount: integerAtLeast('warmup.candleCount', 0).default(0),
   })
   .default({ tickrate: 1000, candleCount: 0 });
 
 export const watchSchema = z
-  .object({
-    currency: z.string(),
-    asset: z.string(),
-    tickrate: z.number().default(1000),
+  .strictObject({
+    assets: assetsSchema,
+    currency: currencySchema,
+    timeframe: z.enum(TIMEFRAMES).optional(),
+    tickrate: integerAtLeast('tickrate', MIN_TICKRATE).default(1000),
     mode: z.enum(['realtime', 'backtest', 'importer']),
-    timeframe: z.enum(TIMEFRAMES).default('1m'),
-    fillGaps: z.enum(['no', 'empty']).default('empty'),
     warmup: warmupSchema,
-    daterange: z.union([daterangeSchema, z.null()]).default(null),
-    batchSize: z.number().optional(),
+    daterange: daterangeSchema.optional(),
+    batchSize: integerBetween(
+      'batchSize',
+      1,
+      MAX_BATCH_SIZE,
+      'minutes, 31 days at most: each batch is read into memory at once',
+    ).optional(),
+  })
+  .transform(data => ({
+    ...data,
+    pairs: data.assets.map(asset => ({
+      symbol: `${asset}/${data.currency}` as TradingPair,
+    })),
+  }))
+  .superRefine((data, ctx) => {
+    if (data.assets.includes(data.currency)) {
+      ctx.addIssue({ code: 'custom', path: ['assets'], message: `assets must not contain the currency (${data.currency})` });
+    }
   })
   .superRefine((data, ctx) => {
     const requiresDaterange = data.mode === 'importer' || data.mode === 'backtest';
-    if (requiresDaterange && data.daterange === null) {
+    if (requiresDaterange && !data.daterange) {
       ctx.addIssue({
         code: 'custom',
         path: ['daterange'],
         message: 'daterange is required for importer and backtest modes',
       });
     }
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode !== 'importer' && !data.timeframe) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['timeframe'],
+        message: 'timeframe is required for backtest and realtime modes',
+      });
+    }
   });
 
-export const storageSchema = z.object({
+/**
+ * The timeframe candles a backtest of `daterange` hands the strategy, as the candle batcher makes them from the minutes the backtest
+ * reads (from the minute of `start` to that of `end`, both included): the minutes before the first timeframe boundary are skipped, and
+ * the candle the end of the range cuts is never completed. `endOfCandle(n)` is the end of the n-th candle, the start of the next one.
+ */
+const getBacktestCandles = (candleSize: CandleSize, { start, end }: { start: EpochTimeStamp; end: EpochTimeStamp }) => {
+  const firstMinute = startOfMinute(start).getTime();
+  const endOfRange = startOfMinute(end).getTime() + ONE_MINUTE;
+  const firstCandleStart = getCandleTimeOffset(candleSize, firstMinute) ? getCandleStart(candleSize, firstMinute, -1) : firstMinute;
+  const endOfCandle = (count: number) => getCandleStart(candleSize, firstCandleStart, -count);
+  // Counted at the nominal length of a candle, then moved to the calendar: exact already but for the candles of whole months, whose
+  // length varies (a 1M candle lasts 28 to 31 days, not 30)
+  let count = Math.max(0, Math.floor((endOfRange - firstCandleStart) / (candleSize * ONE_MINUTE)));
+  while (count > 0 && endOfCandle(count) > endOfRange) count--;
+  while (endOfCandle(count + 1) <= endOfRange) count++;
+  return { firstCandleStart, count, endOfCandle };
+};
+
+// Storage holds insertThreshold minutes of candles in memory (about 1.6 KB a minute for 5 pairs), then writes them in one
+// synchronous transaction per pair, which blocks the event loop (with 5 pairs: 0.1 s for a day, 0.6 to 1.2 s for a week), and a
+// process killed before the storage is closed (SIGKILL, a power cut) loses all it holds. A day is the most, above the importer's
+// default of 1000.
+const MAX_INSERT_THRESHOLD = 24 * 60;
+
+export const storageSchema = z.strictObject({
   type: z.literal('sqlite'),
-  database: z.string(),
-  insertThreshold: z.number().optional(),
+  // Bun opens an in-memory database for an empty path: the candles would be lost on exit, without a word
+  database: z.string().trim().min(1, 'storage.database must not be empty'),
+  insertThreshold: integerBetween(
+    'storage.insertThreshold',
+    1,
+    MAX_INSERT_THRESHOLD,
+    'minutes, a day at most: the candles are held in memory until they are written',
+  ).optional(),
 });
 
 export const configurationSchema = z
-  .object({
+  .strictObject({
     showLogo: z.boolean().default(true),
     watch: watchSchema,
     exchange: z.discriminatedUnion('name', [
@@ -60,25 +148,49 @@ export const configurationSchema = z
       paperBinanceExchangeSchema,
     ]),
     storage: storageSchema.nullable().optional().default(null),
+    // Loose on purpose, unlike the rest of the configuration: the pipeline parses each plugin entry again with the strict schema
+    // of the plugin its name selects, and the StrategyManager parses the strategy block, without its name, with the schema of the
+    // strategy class strategyName selects. Every built-in strategy declares one; a class without one gets the block unchecked.
     plugins: z.array(z.looseObject({ name: z.string() })),
     strategy: z.looseObject({ name: z.string() }).optional(),
     [disclaimerField]: z.boolean().nullable().default(null),
   })
   .superRefine((data, ctx) => {
-    // Paper trading only works in realtime mode
-    if (data.exchange.name === 'paper-binance' && data.watch.mode !== 'realtime') {
+    // Zod also runs this refinement after a non-aborting issue in a section (a failed refine or bound), with the transforms that
+    // build watch.pairs and the marketData Map skipped. Counted before the rules below add issues of their own.
+    const hasSectionIssues = ctx.issues.length > 0;
+
+    // Checked here rather than when the storage is first used: the backtest reads its candles from it at once, but a
+    // CandleWriter would only need it after the markets are loaded from the exchange.
+    const hasCandleWriter = some(data.plugins, { name: 'CandleWriter' });
+    if (!data.storage && (data.watch.mode === 'backtest' || hasCandleWriter)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['storage'],
+        message: `storage is required ${data.watch.mode === 'backtest' ? 'in backtest mode, which reads the candles from it' : 'by the CandleWriter plugin, which writes the candles to it'}`,
+      });
+    }
+
+    // Only the simulator fills orders from replayed candles: any other exchange, sandbox included, would receive the
+    // backtest's orders. The importer needs a real exchange to download candles from.
+    const exchangesByMode: Record<typeof data.watch.mode, Array<typeof data.exchange.name>> = {
+      backtest: ['dummy-cex'],
+      importer: ['binance', 'hyperliquid'],
+      realtime: ['binance', 'hyperliquid', 'paper-binance'],
+    };
+    const allowedExchanges = exchangesByMode[data.watch.mode];
+    if (!allowedExchanges.includes(data.exchange.name)) {
       ctx.addIssue({
         code: 'custom',
         path: ['exchange', 'name'],
-        message: 'Paper trading exchange (paper-binance) can only be used in realtime mode',
+        message: `Exchange ${data.exchange.name} cannot be used in ${data.watch.mode} mode (allowed: ${allowedExchanges.join(', ')})`,
       });
     }
 
     // Disclaimer validation for real exchanges (exclude dummy-cex and paper-binance)
     const hasTraderPlugin = some(data.plugins, plugin => plugin.name?.toLowerCase() === 'trader');
     const isSimulatedExchange = data.exchange.name === 'dummy-cex' || data.exchange.name === 'paper-binance';
-    const isUsingRealExchange =
-      data.exchange && !isSimulatedExchange && !('sandbox' in data.exchange && data.exchange.sandbox);
+    const isUsingRealExchange = data.exchange && !isSimulatedExchange && !('sandbox' in data.exchange && data.exchange.sandbox);
     const isDisclaimerIgnored = !data[disclaimerField];
     if (hasTraderPlugin && isUsingRealExchange && isDisclaimerIgnored) {
       ctx.addIssue({
@@ -87,5 +199,57 @@ export const configurationSchema = z
         message:
           'These settings enable Trader with a real exchange and may spend real money, leading to severe losses. Confirm by setting the disclaimer sentence to true in the settings app.',
       });
+    }
+
+    // marketData is dummy-cex's only source of fees and order limits, looked up by exact symbol: a watched pair without an
+    // entry would trade free of both, and an entry for any other symbol (a typo, a swapped asset) would never be read.
+    // The rule reads watch.pairs and the marketData Map, so it only checks a configuration whose sections have no issue.
+    if (data.exchange.name === 'dummy-cex' && !hasSectionIssues) {
+      const watchedSymbols = data.watch.pairs.map(({ symbol }) => symbol);
+      const marketDataSymbols = [...data.exchange.marketData.keys()];
+      const missingSymbols = difference(watchedSymbols, marketDataSymbols);
+      const unwatchedSymbols = difference(marketDataSymbols, watchedSymbols);
+      if (missingSymbols.length) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['exchange', 'marketData'],
+          message: `Each watched pair needs a marketData entry, or dummy-cex fills its orders with no fees and no order limits (missing: ${missingSymbols.join(', ')})`,
+        });
+      }
+      if (unwatchedSymbols.length) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['exchange', 'marketData'],
+          message: `Each marketData symbol must match a watched pair (not watched: ${unwatchedSymbols.join(', ')})`,
+        });
+      }
+    }
+
+    // strategyName selects the strategy class, strategy.name only labels the run (backtest log, PerformanceReporter rows): a
+    // strategy block left over from another strategy would file the results under that strategy's name. Plugin entries are
+    // loose objects, so a strategyName that is not a string is left to the TradingAdvisor schema, applied by the pipeline.
+    const strategyName = find(data.plugins, { name: 'TradingAdvisor' })?.strategyName;
+    if (typeof strategyName === 'string' && data.strategy && data.strategy.name !== strategyName) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['strategy', 'name'],
+        message: `strategy.name '${data.strategy.name}' must equal the TradingAdvisor strategyName '${strategyName}', which selects the strategy class`,
+      });
+    }
+
+    // The warmup takes warmup.candleCount timeframe candles and the strategy trades from the next one: a backtest whose range held no
+    // more ended normally without a trade, its reports empty and nothing naming the warmup. Like the marketData rule, it only checks a
+    // configuration whose sections have no issue: zod leaves a range with an issue as written, not in epoch milliseconds.
+    const { mode, timeframe, daterange, warmup } = data.watch;
+    if (mode === 'backtest' && some(data.plugins, { name: 'TradingAdvisor' }) && timeframe && daterange && !hasSectionIssues) {
+      const { firstCandleStart, count, endOfCandle } = getBacktestCandles(TIMEFRAME_TO_MINUTES[timeframe], daterange);
+      if (count <= warmup.candleCount) {
+        const lastMinuteNeeded = endOfCandle(warmup.candleCount + 1) - ONE_MINUTE;
+        ctx.addIssue({
+          code: 'custom',
+          path: ['watch', 'daterange'],
+          message: `watch.daterange must hold more whole ${timeframe} candles than warmup.candleCount (${warmup.candleCount}), or the warmup never ends and the strategy never trades: it holds ${count} from ${toISOString(firstCandleStart)}, its first ${timeframe} boundary, so it must end at ${toISOString(lastMinuteNeeded)} or later`,
+        });
+      }
     }
   });

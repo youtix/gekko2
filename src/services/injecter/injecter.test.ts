@@ -1,5 +1,6 @@
 import { GekkoError } from '@errors/gekko.error';
 import { Watch } from '@models/configuration.types';
+import { SQLiteStorage } from '@services/storage/sqlite.storage';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../configuration/configuration';
 import { inject } from './injecter';
@@ -21,7 +22,9 @@ vi.mock('@services/configuration/configuration', () => ({
 }));
 
 vi.mock('@services/storage/sqlite.storage', () => ({
-  SQLiteStorage: vi.fn().mockImplementation(() => ({})),
+  SQLiteStorage: vi.fn(function () {
+    return { close: vi.fn() };
+  }),
 }));
 
 vi.mock('@services/exchange/ccxtExchange', () => ({
@@ -43,21 +46,69 @@ describe('Injecter', () => {
     // Reset singleton state (accessing private property for testing)
     (inject as any).storageInstance = undefined;
     (inject as any).exchangeInstance = undefined;
-    vi.clearAllMocks();
+    getStorageMock.mockClear();
+    getExchangeMock.mockClear();
+    getWatchMock.mockClear();
   });
 
   describe('storage', () => {
     it('returns cached storage instance on subsequent calls', () => {
       getStorageMock.mockReturnValue({ type: 'sqlite', database: '' });
+      getWatchMock.mockReturnValue({
+        pairs: [{ symbol: 'BTC/USDT' }],
+        assets: ['BTC'],
+        currency: 'USDT',
+        timeframe: '1h',
+        mode: 'backtest',
+        tickrate: 1000,
+        fillGaps: 'no',
+        warmup: { candleCount: 100, tickrate: 1000 },
+      } as Watch);
       const first = inject.storage();
       const second = inject.storage();
       expect(second).toBe(first);
       expect(getStorageMock).toHaveBeenCalledTimes(1);
     });
 
+    it('builds the storage once, with the watched symbols in order', () => {
+      getStorageMock.mockReturnValue({ type: 'sqlite', database: ':memory:' });
+      // Not in alphabetical order, so a sorted list would not match either
+      getWatchMock.mockReturnValue({ pairs: [{ symbol: 'ETH/USDT' }, { symbol: 'BTC/USDT' }] } as unknown as Watch);
+
+      inject.storage();
+      inject.storage();
+
+      expect(SQLiteStorage).toHaveBeenCalledExactlyOnceWith(['ETH/USDT', 'BTC/USDT']);
+    });
+
     it('throws GekkoError if storage config is missing', () => {
       getStorageMock.mockReturnValue(undefined);
       expect(() => inject.storage()).toThrow(GekkoError);
+    });
+  });
+
+  describe('closeStorage', () => {
+    it('does not throw when no storage is configured', () => {
+      getStorageMock.mockReturnValue(undefined);
+      expect(() => inject.closeStorage()).not.toThrow();
+    });
+
+    it('does not create a storage when none was created', () => {
+      getStorageMock.mockReturnValue({ type: 'sqlite', database: ':memory:' });
+      getWatchMock.mockReturnValue({ pairs: [{ symbol: 'BTC/USDT' }] } as unknown as Watch);
+
+      inject.closeStorage();
+
+      expect(SQLiteStorage).not.toHaveBeenCalled();
+    });
+
+    it('closes the storage that was created, once', () => {
+      const close = vi.fn();
+      (inject as any).storageInstance = { close };
+
+      inject.closeStorage();
+
+      expect(close).toHaveBeenCalledOnce();
     });
   });
 
@@ -87,7 +138,16 @@ describe('Injecter', () => {
 
     it.each(testCases)('instantiates and caches $name exchange', ({ config: cfg, mock }) => {
       getExchangeMock.mockReturnValue(cfg as any);
-      getWatchMock.mockReturnValue({ asset: 'BTC', currency: 'USDT' } as Watch);
+      getWatchMock.mockReturnValue({
+        pairs: [{ symbol: 'BTC/USDT' }],
+        assets: ['BTC'],
+        currency: 'USDT',
+        timeframe: '1h',
+        mode: 'backtest',
+        tickrate: 1000,
+        fillGaps: 'no',
+        warmup: { candleCount: 100, tickrate: 1000 },
+      } as Watch);
 
       const first = inject.exchange();
       const second = inject.exchange();

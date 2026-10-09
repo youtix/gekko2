@@ -23,6 +23,9 @@ export default [
       'import/no-cycle': 'error',
       'import/no-unresolved': 'error',
       'import/no-unused-modules': 'error',
+      // Registries are read by a computed name (indicators[name], strategies[...], pluginList[...]): the plugin cannot check one, and
+      // TypeScript types the key. A plain member that does not exist is still reported.
+      'import/namespace': ['error', { allowComputed: true }],
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
     },
   },
@@ -31,10 +34,21 @@ export default [
       'import/resolver': { typescript: { bun: true } },
       'import/ignore': ['node_modules', 'dist'],
       'import/core-modules': ['reflect-metadata'],
+      // The import plugin reads the imports and exports of a module only for these extensions (JavaScript ones by default): without
+      // .ts, import/no-cycle saw no import between two of our files, and a value cycle passed the lint
+      'import/extensions': ['.ts', '.js'],
+      'import/parsers': { '@typescript-eslint/parser': ['.ts'] },
     },
   },
   {
-    files: ['**/*.test.ts', '**/*.bench.ts'],
+    // In CI and a fresh clone, src/strategies/custom/index.ts is the tracked placeholder, which exports nothing, so
+    // `export * from './custom/index'` fails import/export there and nowhere else. TypeScript still refuses two strategies exported
+    // under the same name.
+    files: ['src/strategies/index.ts'],
+    rules: { 'import/export': 'off' },
+  },
+  {
+    files: ['**/*.test.ts', '**/*.bench.ts', '**/test/e2e/**/*.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
     },

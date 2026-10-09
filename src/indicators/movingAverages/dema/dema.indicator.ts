@@ -1,30 +1,32 @@
-import { Indicator } from '@indicators/indicator';
-import { Candle } from '@models/candle.types';
+import { checkInputSource, checkInteger } from '@indicators/indicator.utils';
+import { MovingAverage } from '@indicators/movingAverages/movingAverage';
 import { isNil } from 'lodash-es';
 import { EMA } from '../ema/ema.indicator';
 
-export class DEMA extends Indicator<'DEMA'> {
+export class DEMA extends MovingAverage<'DEMA'> {
   private inner: EMA;
   private outer: EMA;
 
-  constructor({ period }: IndicatorRegistry['DEMA']['input']) {
-    super('DEMA', null);
-
+  /**
+   * @param period - Period of both EMAs: a whole number, at least 1. Required
+   * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
+   */
+  constructor({ period, src }: IndicatorRegistry['DEMA']['input']) {
+    checkInteger('DEMA', 'period', period);
+    checkInputSource('DEMA', src);
+    super(src);
+    // Fed numbers through update, the price the DEMA reads and the first one's line, so that neither reads a candle nor takes src
     this.inner = new EMA({ period });
     this.outer = new EMA({ period });
   }
 
-  public onNewCandle(candle: Candle) {
-    this.inner.onNewCandle(candle);
+  public update(price: number) {
+    this.inner.update(price);
     const innerRes = this.inner.getResult();
     if (!isNil(innerRes)) {
-      this.outer.onNewCandle({ close: innerRes } as Candle);
+      this.outer.update(innerRes);
       const outerRes = this.outer.getResult();
       if (!isNil(outerRes)) this.result = 2 * innerRes - outerRes;
     }
-  }
-
-  public getResult() {
-    return this.result;
   }
 }

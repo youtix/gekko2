@@ -1,6 +1,8 @@
+import { InputSources } from '@models/inputSources.types';
+
 declare global {
   interface IndicatorRegistry {
-    WMA: { input: { period: number }; output: number | null };
+    WMA: { input: { period: number; src?: InputSources }; output: number | null };
   }
 }
 

@@ -1,46 +1,40 @@
 import { addMinutes, startOfMinute, subMilliseconds } from 'date-fns';
 import { describe, expect, it } from 'vitest';
-import { Time } from './date.types';
-import { isDaterangeValid, resetDateParts, splitIntervals } from './date.utils';
+import { isDaterangeValid, splitIntervals, toISOString } from './date.utils';
 
 describe('', () => {
-  describe('resetDateParts', () => {
+  describe('toISOString', () => {
+    // Date.prototype.toISOString throws a RangeError on a date that is not one: a message or a report built with it must not throw
     it.each`
-      date                                              | parts                    | expected
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['h']}                 | ${new Date('2024-01-01T00:34:56.789Z').getTime()}
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['m']}                 | ${new Date('2024-01-01T12:00:56.789Z').getTime()}
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['s']}                 | ${new Date('2024-01-01T12:34:00.789Z').getTime()}
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['ms']}                | ${new Date('2024-01-01T12:34:56.000Z').getTime()}
-      ${new Date('2024-01-01T12:34:56.789Z').getTime()} | ${['h', 'm', 's', 'ms']} | ${new Date('2024-01-01T00:00:00.000Z').getTime()}
-    `('resets $parts correctly', ({ date, parts, expected }) => {
-      expect(resetDateParts(date, parts)).toBe(expected);
-    });
-
-    it('returns the same date if no parts are provided', () => {
-      const date = new Date('2024-01-01T12:34:56.789Z').getTime();
-      expect(resetDateParts(date, [])).toBe(date);
-    });
-
-    it('throws an error for invalid parts', () => {
-      const date = new Date('2024-01-01T12:34:56.789Z').getTime();
-      expect(() => resetDateParts(date, ['invalid' as Time])).toThrow();
+      description                                  | timestamp        | expected
+      ${'a timestamp'}                             | ${1704346468838} | ${'2024-01-04T05:34:28.838Z'}
+      ${'the epoch'}                               | ${0}             | ${'1970-01-01T00:00:00.000Z'}
+      ${'the last date there is'}                  | ${8.64e15}       | ${'+275760-09-13T00:00:00.000Z'}
+      ${'no timestamp'}                            | ${undefined}     | ${'Unknown Date'}
+      ${'null'}                                    | ${null}          | ${'Unknown Date'}
+      ${'NaN'}                                     | ${Number.NaN}    | ${'Unknown Date'}
+      ${'Infinity'}                                | ${Infinity}      | ${'Unknown Date'}
+      ${'-Infinity'}                               | ${-Infinity}     | ${'Unknown Date'}
+      ${'a timestamp past the last date there is'} | ${8.64e15 + 1}   | ${'Unknown Date'}
+    `('returns $expected for $description', ({ timestamp, expected }) => {
+      expect(toISOString(timestamp)).toBe(expected);
     });
   });
 
   describe('isDaterangeValid', () => {
     it.each`
-      startDate         | endDate           | expected
-      ${undefined}      | ${undefined}      | ${false}
-      ${null}           | ${null}           | ${false}
-      ${''}             | ${''}             | ${false}
-      ${'invalid-date'} | ${'2023-01-01'}   | ${false}
-      ${'2023-01-01'}   | ${'invalid-date'} | ${false}
-      ${'invalid-date'} | ${'invalid-date'} | ${false}
-      ${'2023-12-31'}   | ${'2023-01-01'}   | ${false}
-      ${'2023-05-15'}   | ${'2023-05-14'}   | ${false}
-      ${'2023-01-01'}   | ${'2023-01-01'}   | ${false}
-      ${'2023-01-01'}   | ${'2023-12-31'}   | ${true}
-      ${'2023-05-14'}   | ${'2023-05-15'}   | ${true}
+      startDate                           | endDate                             | expected
+      ${undefined}                        | ${undefined}                        | ${false}
+      ${null}                             | ${null}                             | ${false}
+      ${''}                               | ${''}                               | ${false}
+      ${'invalid-date'}                   | ${new Date('2023-01-01').getTime()} | ${false}
+      ${new Date('2023-01-01').getTime()} | ${'invalid-date'}                   | ${false}
+      ${'invalid-date'}                   | ${'invalid-date'}                   | ${false}
+      ${new Date('2023-12-31').getTime()} | ${new Date('2023-01-01').getTime()} | ${false}
+      ${new Date('2023-05-15').getTime()} | ${new Date('2023-05-14').getTime()} | ${false}
+      ${new Date('2023-01-01').getTime()} | ${new Date('2023-01-01').getTime()} | ${false}
+      ${new Date('2023-01-01').getTime()} | ${new Date('2023-12-31').getTime()} | ${true}
+      ${new Date('2023-05-14').getTime()} | ${new Date('2023-05-15').getTime()} | ${true}
     `('returns $expected for startDate: $startDate and endDate: $endDate', ({ startDate, endDate, expected }) => {
       expect(isDaterangeValid(startDate, endDate)).toBe(expected);
     });

@@ -1,38 +1,52 @@
 import { OrderSide } from '@models/order.types';
 import { UUID } from 'node:crypto';
+import { z } from 'zod';
+import { gridBotStrategySchema } from './gridBot.schema';
+
+/** Strategy configuration parameters: the output of GridBot.schema, retryOnError defaulted */
+export type GridBotStrategyParams = z.infer<typeof gridBotStrategySchema>;
 
 /** Spacing type options for grid level distribution */
-export type GridSpacingType = 'percent' | 'fixed' | 'logarithmic';
+export type GridSpacingType = GridBotStrategyParams['spacingType'];
 
-/** Strategy configuration parameters */
-export interface GridBotStrategyParams {
-  /** Number of buy levels below center price */
-  buyLevels: number;
-  /** Number of sell levels above center price */
-  sellLevels: number;
-  /** How levels are spaced apart */
-  spacingType: GridSpacingType;
+/**
+ * State of a single grid level: two adjacent prices of the grid, between which the level trades its quantity back and forth with
+ * one order at a time, a BUY at the lower price or a SELL at the upper one. The two levels next to the center price share it.
+ */
+export interface LevelState {
+  /** Level index: negative below the center price, positive above */
+  index: number;
+  /** Lower price of the level, where it buys */
+  buyPrice: number;
+  /** Upper price of the level, where it sells */
+  sellPrice: number;
   /**
-   * Distance between levels:
-   * - percent: expressed in percent (1 === 1%)
-   * - fixed: price units
-   * - logarithmic: multiplier increment (0.01 === +1% per hop)
+   * Side of the order placed last on the level, the live one while orderId is set. A level below the center price starts with its
+   * BUY, a level above it with its SELL, and each fill turns the level to the other side.
    */
-  spacingValue: number;
-  /** Number of order creation/cancel retries before logging error */
-  retryOnError?: number;
+  side: OrderSide;
+  /**
+   * Amount of the order placed last on the level: the quantity of every level, or what was left of it once an order was canceled
+   * after a partial fill. A fill turns the level to the other side with the whole quantity again.
+   */
+  amount: number;
+  /**
+   * Active order ID if order is placed. None for good once the level gave up on an order that failed at every attempt, or left an
+   * order whose outcome is unknown, which may be live on the exchange.
+   */
+  orderId?: UUID;
 }
 
-/** State of a single grid level */
-export interface LevelState {
-  /** Level index (negative for buy, positive for sell) */
-  index: number;
-  /** Price at this level */
-  price: number;
-  /** Order side for this level */
-  side: OrderSide;
-  /** Active order ID if order is placed */
-  orderId?: UUID;
+/** The grid the free balances fund (see deriveLevelQuantity) */
+export interface GridSize {
+  /** Amount of every order of the grid: 0 when the free balances fund no level */
+  quantity: number;
+  /** Buy levels funded, the nearest to the center price: the farthest of the configured ones are left out first */
+  buyLevels: number;
+  /** Sell levels funded, the nearest to the center price */
+  sellLevels: number;
+  /** Smallest amount the market takes at the lowest price of the grid, which the quantity is at least */
+  minimumAmount: number;
 }
 
 /** Grid price boundaries */
@@ -43,7 +57,10 @@ export interface GridBounds {
   max: number;
 }
 
-/** Rebalance plan computed during init */
+/** The side of the grid a price is out on: under its lowest price, or over its highest */
+export type OutOfRangeSide = 'below' | 'above';
+
+/** Rebalance plan, computed when the grid starts, after the warmup (and again after a failed attempt) */
 export interface RebalancePlan {
   /** Side of rebalance order */
   side: OrderSide;

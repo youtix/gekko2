@@ -1,29 +1,32 @@
-import { ONE_MINUTE } from '@constants/time.const';
 import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { OrderSide, OrderState } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
-import { Ticker } from '@models/ticker.types';
 import { Trade } from '@models/trade.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
-import { Heart } from '@services/core/heart/heart';
-import { debug, error } from '@services/logger';
+import { debug, error, warning } from '@services/logger';
 import { toISOString } from '@utils/date/date.utils';
-import ccxt, { Exchange as CCXT, MarketInterface } from 'ccxt';
-import { formatDuration, intervalToDuration, startOfMinute, subMinutes } from 'date-fns';
-import { each, first, isNil, last } from 'lodash-es';
+import { assertOrderWithinLimits, getMarketOrderLimits } from '@utils/market/market.utils';
+import { addPrecise } from '@utils/math/math.utils';
+import { pluralize } from '@utils/string/string.utils';
+import ccxt, { Exchange as CCXT, Order as CCXTOrder, Trade as CCXTTrade } from 'ccxt';
+import { formatDuration, intervalToDuration } from 'date-fns';
+import { first, isNil, last } from 'lodash-es';
 import { z } from 'zod';
 import { binanceExchangeSchema } from './binance/binance.schema';
-import { BROKER_MANDATORY_FEATURES, LIMITS, PARAMS } from './exchange.const';
-import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from './exchange.types';
+import { LIMITS, MAX_MY_TRADES_PAGES, PARAMS, PRICE_SIGNIFICANT_DIGITS } from './exchange.const';
+import { OrderOutcomeUnknown } from './exchange.error';
+import { Exchange, FetchOHLCVParams, MarketData, OpenOrder, OrderSettledCallback, Ticker } from './exchange.types';
 import {
-  checkOrderAmount,
-  checkOrderCost,
-  checkOrderPrice,
+  checkMandatoryFeatures,
+  createExchange,
+  mapCcxtOrderToOpenOrder,
   mapCcxtOrderToOrder,
   mapCcxtTradeToTrade,
   mapOhlcvToCandles,
   retry,
+  translateErrors,
 } from './exchange.utils';
 import { hyperliquidExchangeSchema } from './hyperliquid/hyperliquid.schema';
 
@@ -31,43 +34,52 @@ type BinanceExchangeConfig = z.infer<typeof binanceExchangeSchema>;
 type HyperliquidExchangeConfig = z.infer<typeof hyperliquidExchangeSchema>;
 export type CCXTExchangeConfig = BinanceExchangeConfig | HyperliquidExchangeConfig;
 
+/**
+ * What tells a ccxt trade from the others, for CCXTExchange.fetchMyTrades to keep once a trade fetched on two pages: its id, with the
+ * id of its order, both sides of a self-trade (two orders of the account matched together) sharing the id of the trade. A trade without
+ * an id is told by its time, side, price and amount, as in ccxt's removeRepeatedTradesFromArray.
+ */
+const getTradeKey = ({ id, order, timestamp, side, price, amount }: CCXTTrade) =>
+  JSON.stringify(isNil(id) ? [order, timestamp, side, price, amount] : [order, id]);
+
+/** The message of a failure, for a GekkoError that quotes it: without the tag a GekkoError starts with ([EXCHANGE]), which it adds again */
+const getUntaggedMessage = (err: unknown) => (err instanceof Error ? err.message.replace(/^\[[A-Z0-9 ]+\] /, '') : String(err));
+
+/**
+ * A real exchange reached through ccxt. Every call goes through one of two wrappers of exchange.utils, which both translate the
+ * ccxt errors into Gekko's:
+ * - The reads (fetchTicker(s), fetchOHLCV, fetchMyTrades, fetchOrder, fetchOpenOrders, fetchBalance) go through retry, which sends
+ *   them again after a ccxt NetworkError: they are idempotent.
+ * - The writes (createLimitOrder, createMarketOrder, cancelOrder) go through translateErrors: sent once, never replayed. A
+ *   NetworkError (timeout, 5xx, Binance -1007 "execution status unknown") is precisely the case where the exchange may have
+ *   processed the request and only its response was lost. ccxt signs each call anew, with a new client order id (Binance) or
+ *   nonce (Hyperliquid), so a replayed creation would place a second order, and a replayed cancelation would fail with
+ *   OrderNotFound, which the limit and sticky orders take for a fill. The failure is thrown at once as an ExchangeNetworkError:
+ *   the outcome of the request is unknown. A creation answered without the status of the order, and a cancelation answered
+ *   without its id or its status, are completed by a fetchOrder, a read (see getCreatedOrderState and getCanceledOrderState). A
+ *   creation that leaves nothing to follow the order by, that read failing, throws OrderOutcomeUnknown: the order may be live too.
+ *   So does a creation the exchange answers with a failure that is not a refusal of the order (see sendCreation).
+ * ccxt's own retries are off too (maxRetriesOnFailure: 0 in createExchange).
+ */
 export class CCXTExchange implements Exchange {
-  protected heart: Heart;
-  protected client: CCXT;
+  protected publicClient: CCXT;
+  protected privateClient: CCXT;
   protected exchangeName: string;
-  protected symbol: string;
 
   constructor(exchangeConfig: CCXTExchangeConfig) {
-    const { asset, currency } = config.getWatch();
-    const { name } = exchangeConfig;
+    const { name, sandbox } = exchangeConfig;
 
-    switch (name) {
-      case 'hyperliquid': {
-        const { privateKey, walletAddress, verbose } = exchangeConfig;
-        const options = { fetchMarkets: { types: ['spot'] } };
-        this.client = new ccxt.hyperliquid({ privateKey, walletAddress, verbose, options });
-        break;
-      }
-      default: {
-        const { apiKey, secret, verbose } = exchangeConfig;
-        this.client = new ccxt[name]({ apiKey, secret, verbose });
-        break;
-      }
-    }
-    const hasSandbox = 'sandbox' in exchangeConfig && exchangeConfig.sandbox;
-    const mandatoryFeatures = [...BROKER_MANDATORY_FEATURES, ...(hasSandbox ? ['sandbox'] : [])];
-    each(mandatoryFeatures, feature => {
-      if (!this.client.has[feature]) throw new GekkoError('exchange', `Missing ${feature} feature in ${name} exchange`);
-    });
-    this.client.setSandboxMode(hasSandbox);
-    this.client.options['maxRetriesOnFailure'] = 0; // we handle it manualy
+    const { publicClient, privateClient } = createExchange(exchangeConfig);
+    this.publicClient = publicClient;
+    this.privateClient = privateClient;
+
+    checkMandatoryFeatures(this.publicClient, sandbox);
+
     this.exchangeName = name;
-    this.symbol = `${asset}/${currency}`;
-    this.heart = new Heart(ONE_MINUTE);
   }
 
-  getMarketData(): MarketData {
-    const market = this.client.market(this.symbol);
+  getMarketData(symbol: TradingPair): MarketData {
+    const market = this.publicClient.market(symbol);
     return {
       amount: {
         min: market.limits?.amount?.min,
@@ -81,9 +93,16 @@ export class CCXTExchange implements Exchange {
         min: market.limits?.cost?.min,
         max: market.limits?.cost?.max,
       },
+      // Binance's MARKET_LOT_SIZE: the amounts of a market order (see getMarketOrderLimits), which the simulator of paper trading checks
+      market: {
+        min: market.limits?.market?.min,
+        max: market.limits?.market?.max,
+      },
       precision: {
         price: market.precision?.price,
         amount: market.precision?.amount,
+        // Hyperliquid's tick depends on the price, which precision.price, its tick at the price the markets were loaded at, does not tell
+        priceSignificantDigits: PRICE_SIGNIFICANT_DIGITS[this.exchangeName],
       },
       fee: {
         maker: market.maker,
@@ -96,46 +115,66 @@ export class CCXTExchange implements Exchange {
     return this.exchangeName;
   }
 
-  public onNewCandle(onNewCandle: (candle: Candle) => void) {
-    if (!this.heart.isHeartBeating()) {
-      this.heart.on('tick', async () => {
-        try {
-          // Calculate the start of the previous minute to ensure we fetch the last completed candle
-          const from = startOfMinute(subMinutes(Date.now(), 1)).getTime();
-          const candles = await this.fetchOHLCV({ from, limit: 1 });
-          if (candles.length > 0) onNewCandle(candles[0]);
-        } catch (err) {
-          error('exchange', `Failed to poll for new candle: ${err}`);
-        }
-      });
-      // Delay the first tick to align with the next minute
-      const delay = ONE_MINUTE - (Date.now() % ONE_MINUTE);
-      setTimeout(() => this.heart.pump(), delay);
-    }
-    return () => this.heart.stop();
-  }
-
+  /**
+   * Downloads the markets once, with the public client, which a configured proxy routes, and shares them with the private client.
+   * Loaded by both clients, the catalogue was downloaded twice, the requests of the private client bypassing the proxy (Binance with
+   * keys adding its sapi requests for the currencies and the margin pairs; paper trading, for a private client it never uses), and
+   * held twice in memory.
+   * - setMarketsFromExchange (ccxt 4.5.39) gives the private client the very markets and currencies of the public one. Its calls
+   *   (createOrder, cancelOrder, fetchOrder, fetchMyTrades) start with loadMarkets, which then downloads nothing: loadMarketsHelper
+   *   only fetches the markets when none are set, or on reload.
+   * - Hyperliquid learns from its token list (fetchCurrencies) the wrapped spot tokens its built-in spotCurrencyMapping lacks or maps
+   *   otherwise, into the options of the client loading the markets, which setMarketsFromExchange leaves out. The markets are built
+   *   with that mapping, and the private client reads it to resolve a symbol written with a token name (UBTC/USDC for BTC/USDC)
+   *   and to key its spot balance (fetchBalance): it is copied.
+   * - Hyperliquid's private fetchCurrencies also ran ccxt's initializeClient at start-up, which sets ccxt's referrer and would approve
+   *   ccxt's builder fee but for the builderFee: false that createExchange sets (exchange.utils.ts): createOrder and cancelOrder run
+   *   it before their first request anyway.
+   */
   public async loadMarkets() {
-    await this.client.loadMarkets();
+    await this.publicClient.loadMarkets();
+    this.privateClient.setMarketsFromExchange(this.publicClient);
+    const { spotCurrencyMapping } = this.publicClient.options;
+    if (spotCurrencyMapping) this.privateClient.options.spotCurrencyMapping = { ...spotCurrencyMapping };
   }
 
-  public async fetchTicker() {
+  /**
+   * The tickers keyed by the symbols asked for, the configured ones the Trader reads them with. ccxt 4.5.39 keys them by the unified
+   * symbol of their market, which may differ from the symbol asked for: it resolves a symbol written with the name of a wrapped spot
+   * token of Hyperliquid (UBTC/USDC) to the market of the coin it wraps (BTC/USDC, see fetchBalance), and keys its ticker BTC/USDC.
+   * Each ticker is read under the unified symbol of its market, as ccxt's own fetchTicker does, or else under the symbol asked for.
+   */
+  public async fetchTickers(symbols: TradingPair[]): Promise<Record<TradingPair, Ticker>> {
+    return retry<Record<TradingPair, Ticker>>(async () => {
+      const tickers = await this.publicClient.fetchTickers(symbols);
+      const result = {} as Record<TradingPair, Ticker>;
+      for (const symbol of symbols) {
+        const ticker = tickers[this.publicClient.market(symbol).symbol] ?? tickers[symbol];
+        if (isNil(ticker?.last)) throw new GekkoError('exchange', `Fetch ticker failed to return data for ${symbol}`);
+        result[symbol] = { ask: ticker.ask ?? ticker.last, bid: ticker.bid ?? ticker.last };
+      }
+      return result;
+    });
+  }
+
+  public async fetchTicker(symbol: string) {
     return retry<Ticker>(async () => {
-      const ticker = await this.client.fetchTicker(this.symbol, PARAMS.fetchTicker[this.exchangeName]);
-      if (isNil(ticker.last)) throw new GekkoError('exchange', 'Fetch ticker failed to return data');
+      const ticker = await this.publicClient.fetchTicker(symbol, PARAMS.fetchTicker[this.exchangeName]);
+      if (isNil(ticker.last)) throw new GekkoError('exchange', `Fetch ticker failed to return data for ${symbol}`);
       return { ask: ticker.ask ?? ticker.last, bid: ticker.bid ?? ticker.last };
     });
   }
 
-  public async fetchOHLCV({ from, timeframe = '1m', limit = LIMITS[this.exchangeName].candles }: FetchOHLCVParams) {
+  public async fetchOHLCV(symbol: string, params: FetchOHLCVParams = {}) {
     return retry<Candle[]>(async () => {
-      const ohlcvList = await this.client.fetchOHLCV(this.symbol, timeframe, from, limit);
+      const { from, timeframe = '1m', limit = LIMITS[this.exchangeName].candles } = params;
+      const ohlcvList = await this.publicClient.fetchOHLCV(symbol, timeframe, from, limit);
       const candles = mapOhlcvToCandles(ohlcvList);
 
       debug(
         'exchange',
         [
-          `Fetched candles from ${this.exchangeName}.`,
+          `Fetched ${symbol} ${pluralize('candle', candles.length)} from ${this.exchangeName}.`,
           `From ${toISOString(first(candles)?.start)}`,
           `to ${toISOString(last(candles)?.start)}`,
           `(${formatDuration(intervalToDuration({ start: first(candles)?.start ?? 0, end: last(candles)?.start ?? 0 }))})`,
@@ -146,76 +185,275 @@ export class CCXTExchange implements Exchange {
     });
   }
 
-  public async fetchMyTrades(from?: EpochTimeStamp) {
-    return retry<Trade[]>(async () => {
-      const trades = await this.client.fetchMyTrades(this.symbol, from, LIMITS[this.exchangeName].trades);
-      return trades.map(mapCcxtTradeToTrade);
+  /**
+   * The trades of the account on a symbol made at or after `from`, its latest trades without it. ccxt 4.5.39 answers a call with one
+   * page, sorted by time, of the first `limit` trades at or after `since` (parseTrades, filterBySinceLimit): Binance's fetchMyTrades
+   * sends `since` as the startTime of myTrades, with `limit` (1000 at most on spot), Hyperliquid's sends it as the startTime of
+   * userFillsByTime, which answers 2000 fills at most and takes no limit (see LIMITS).
+   * createOrderSummary fetches the trades of an order from its first transaction on. If the account traded more than a page before the
+   * order filled (another bot, manual trading, the other pairs watched), the fills of the order were beyond the single page fetched, and
+   * its summary partial or empty. So while a page is full, the next one is fetched from the time of its last trade, not a millisecond
+   * later (trades share milliseconds), and a trade fetched twice is kept once (getTradeKey). The fetching stops on a page that is not
+   * full, and, warning that the later trades are missing, on a full page that brings no new trade (a page of trades in one millisecond)
+   * or after MAX_MY_TRADES_PAGES pages. Without `from`, one page.
+   * Hyperliquid's fills endpoints take no market: a page holds the fills of every market of the account, perpetuals included, which ccxt
+   * filters by symbol afterwards, so that a page cut short by the fills of other markets would look like the last one. Its fills are
+   * fetched for every market, those of the symbol being kept here.
+   */
+  public async fetchMyTrades(symbol: string, from?: EpochTimeStamp) {
+    // Each page is read under retry; translateErrors translates a failure of the market lookup
+    return translateErrors<Trade[]>(async () => {
+      // The fee rate of a trade is derived from the currency its fee was paid in, base or quote of the market (see mapCcxtTradeToTrade)
+      const market = this.publicClient.market(symbol);
+      const limit = LIMITS[this.exchangeName].trades;
+      // Hyperliquid: the fills of every market, filtered below (see above)
+      const requestedSymbol = this.exchangeName === 'hyperliquid' ? undefined : symbol;
+      const trades = new Map<string, CCXTTrade>();
+
+      let since = from;
+      for (let pageCount = 1; pageCount <= MAX_MY_TRADES_PAGES; pageCount++) {
+        const page = await retry(() => this.privateClient.fetchMyTrades(requestedSymbol, since, limit));
+        const knownCount = trades.size;
+        for (const trade of page) trades.set(getTradeKey(trade), trade);
+        if (isNil(from) || page.length < limit) break;
+
+        const lastTime = last(page)?.timestamp ?? since;
+        const isStuck = trades.size === knownCount;
+        if (isStuck || pageCount === MAX_MY_TRADES_PAGES) {
+          const reason = isStuck
+            ? `cannot page past that time, a full page of ${limit} trades from it brought no new one`
+            : `stopped after ${MAX_MY_TRADES_PAGES} pages of ${limit} trades, the most allowed`;
+          warning(
+            'exchange',
+            `Trades of ${symbol} on ${this.exchangeName} fetched only up to ${toISOString(lastTime)}, later trades are missing: ${reason}`,
+          );
+          break;
+        }
+        since = lastTime;
+      }
+
+      return [...trades.values()].filter(trade => trade.symbol === market.symbol).map(trade => mapCcxtTradeToTrade(trade, market));
     });
   }
 
-  public async fetchOrder(id: string) {
+  public async fetchOrder(symbol: string, id: string) {
     return retry<OrderState>(async () => {
-      const order = await this.client.fetchOrder(id, this.symbol);
+      const order = await this.privateClient.fetchOrder(id, symbol);
       return mapCcxtOrderToOrder(order);
+    });
+  }
+
+  /**
+   * The orders open on the symbol, whoever placed them, oldest first as ccxt sorts them, each mapped by mapCcxtOrderToOpenOrder. The
+   * private client asks: Binance signs the request (GET /api/v3/openOrders, for the symbol), and Hyperliquid, whose open orders anyone
+   * may read, is told whose by the wallet address, which only that client has. ccxt 4.5.39 reads Hyperliquid's open orders on every
+   * market of the account at once (frontendOpenOrders, which gives their types) and keeps those of the market of the symbol, the one a
+   * symbol written with the name of a wrapped spot token resolves to (UBTC/USDC to BTC/USDC).
+   */
+  public async fetchOpenOrders(symbol: TradingPair) {
+    return retry<OpenOrder[]>(async () => {
+      const orders = await this.privateClient.fetchOpenOrders(symbol);
+      return orders.map(order => mapCcxtOrderToOpenOrder(order));
     });
   }
 
   public async fetchBalance() {
     return retry<Portfolio>(async () => {
-      const balance = await this.client.fetchBalance(PARAMS.fetchBalance[this.exchangeName]);
-      const { baseName, quote, base } = this.client.market(this.symbol) as MarketInterface & { baseName: string }; // Bug CCXT
-      const asset = balance[baseName ?? base];
-      const currency = balance[quote];
-
-      return {
-        asset: {
-          free: asset?.free ?? 0,
-          used: asset?.used ?? 0,
-          total: asset?.total ?? 0,
-        },
-        currency: {
-          free: currency?.free ?? 0,
-          used: currency?.used ?? 0,
-          total: currency?.total ?? 0,
-        },
-      };
+      const balance = await this.privateClient.fetchBalance(PARAMS.fetchBalance[this.exchangeName]);
+      const { pairs } = config.getWatch();
+      const portfolio: Portfolio = new Map();
+      for (const { symbol } of pairs) {
+        // Keyed by the asset and the currency of the configured symbol, the names the rest of Gekko reads the portfolio with
+        // (symbol.split('/')). ccxt keys the balance by its unified codes, the base and the quote of the market, which may differ:
+        // it lists Hyperliquid's wrapped spot tokens (UBTC, UETH, USOL...) under the coins they wrap (symbol BTC/USDC, base BTC,
+        // baseName UBTC), keys their spot balance by those coins, and resolves a symbol written with the token name (UBTC/USDC) to
+        // the same market.
+        const [assetName, currencyName] = symbol.split('/');
+        const market = this.publicClient.market(symbol);
+        // Defensive: an asset with nothing under the base is read under baseName, the token name, which ccxt sets on Hyperliquid's
+        // markets (not on Binance's) but leaves out of its types. For a balance keyed by token names: from another ccxt version, or
+        // from a private client that has not loaded its currencies, where ccxt learns the wrapped tokens its built-in mapping lacks.
+        const baseName = 'baseName' in market && typeof market.baseName === 'string' ? market.baseName : undefined;
+        const asset = balance[market.base] ?? (baseName ? balance[baseName] : undefined);
+        const currency = balance[market.quote];
+        portfolio.set(assetName, { free: asset?.free ?? 0, used: asset?.used ?? 0, total: asset?.total ?? 0 });
+        portfolio.set(currencyName, { free: currency?.free ?? 0, used: currency?.used ?? 0, total: currency?.total ?? 0 });
+      }
+      return portfolio;
     });
   }
 
+  /** A write: sent once, never replayed (see the class comment). */
   public async createLimitOrder(
+    symbol: string,
     side: OrderSide,
     amount: number,
     price: number,
     _onSettled?: OrderSettledCallback, // Ignored - real exchanges use polling
   ) {
-    return retry<OrderState>(async () => {
-      const limits = this.client.market(this.symbol).limits;
-      const orderPrice = checkOrderPrice(price, limits);
-      const orderAmount = checkOrderAmount(amount, limits);
-      checkOrderCost(orderAmount, orderPrice, limits);
+    return translateErrors<OrderState>(async () => {
+      const limits = this.publicClient.market(symbol).limits;
+      const rounded = this.roundToMarketPrecision(symbol, amount, price);
+      const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', ...rounded, marketData: limits });
+      this.warnOfPriceMove(symbol, side, price, orderPrice);
 
-      const order = await this.client.createOrder(this.symbol, 'limit', side, orderAmount, orderPrice);
-      return mapCcxtOrderToOrder(order);
+      const order = await this.sendCreation(symbol, 'limit', side, orderAmount, orderPrice);
+      return this.getCreatedOrderState(symbol, order);
     });
   }
 
-  public async createMarketOrder(side: OrderSide, amount: number) {
-    return retry<OrderState>(async () => {
-      const limits = this.client.market(this.symbol).limits;
-      const orderAmount = checkOrderAmount(amount, limits);
-      const ticker = await this.fetchTicker();
-      const price = side === 'BUY' ? ticker.ask : ticker.bid;
-      checkOrderCost(orderAmount, price, limits);
+  /** A write: sent once, never replayed (see the class comment). */
+  public async createMarketOrder(symbol: string, side: OrderSide, amount: number) {
+    return translateErrors<OrderState>(async () => {
+      // Narrowed to the amounts the exchange takes in a market order, Binance's MARKET_LOT_SIZE (see getMarketOrderLimits)
+      const limits = getMarketOrderLimits(this.publicClient.market(symbol).limits);
 
-      const order = await this.client.createOrder(this.symbol, 'market', side, orderAmount);
-      return mapCcxtOrderToOrder(order);
+      // A read: fetchTicker retries it on its own. Its failure ends the creation before any order is sent, so it is not thrown as it
+      // is: an ExchangeNetworkError thrown by a creation tells the orders that its outcome is unknown, the order maybe live
+      const ticker = await this.fetchTicker(symbol).catch((err: unknown) => {
+        const failure = new GekkoError('exchange', `Market order not sent: ticker unavailable (${getUntaggedMessage(err)})`);
+        failure.cause = err;
+        throw failure;
+      });
+      const rounded = this.roundToMarketPrecision(symbol, amount, side === 'BUY' ? ticker.ask : ticker.bid);
+      const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', ...rounded, marketData: limits });
+
+      // The price goes with the order. Hyperliquid has no market order: ccxt sends an immediate-or-cancel limit order at this price
+      // plus or minus its defaultSlippage option (5%), and refuses a market order without a price. Binance ignores it, its
+      // quoteOrderQty option being off (see createExchange).
+      const order = await this.sendCreation(symbol, 'market', side, orderAmount, orderPrice);
+      return this.getCreatedOrderState(symbol, order);
     });
   }
 
-  public async cancelOrder(id: string) {
-    return retry<OrderState>(async () => {
-      const order = await this.client.cancelOrder(id, this.symbol);
-      return mapCcxtOrderToOrder(order);
+  /** A write: sent once, never replayed (see the class comment). */
+  public async cancelOrder(symbol: string, id: string) {
+    return translateErrors<OrderState>(async () => {
+      const order = await this.privateClient.cancelOrder(id, symbol);
+      return this.getCanceledOrderState(symbol, id, order);
     });
+  }
+
+  /**
+   * The amount and the price of an order as the exchange is to receive them, so that the limits of the market are checked on them.
+   * Checked on the raw values, an order whose cost exceeded cost.min by less than the rounding takes off (0.0000560556 BTC at 99990
+   * USDT: 5.605 USDT, sent as 0.00005 BTC: 4.9995 USDT) passed, to be refused by the exchange as an InvalidOrder (Binance -1013)
+   * instead of here as an OrderOutOfRangeError, which a partially filled sticky order takes for the end of its fill.
+   * - The amount is truncated to the step of the market whatever the exchange, as ccxt's base amountToPrecision does for Binance
+   *   (decimalToPrecision with TRUNCATE, in the precision mode of the exchange). Hyperliquid's own amountToPrecision rounds it half
+   *   up: an all-in order would be sent above the balance, 0.000059958 BTC as 0.00006. createOrder rounds the amount again with
+   *   amountToPrecision, which leaves a truncated amount as it is on both exchanges (ccxt 4.5.39).
+   * - The price is rounded by ccxt's priceToPrecision, as createOrder rounds it: half up to the tick of the market (Binance), to 5
+   *   significant digits, then 8 decimals less those of the amount (Hyperliquid, see PRICE_SIGNIFICANT_DIGITS), a tick that can be
+   *   coarser than precision.price from the power of ten above the price the markets were loaded at (see warnOfPriceMove).
+   * A value rounded to nothing is 0, which assertOrderWithinLimits refuses: decimalToPrecision returns '0', priceToPrecision throws an
+   * InvalidOrder (Binance) or returns '0' (Hyperliquid). A value is left as it is:
+   * - when it is not a finite number above 0, for assertOrderWithinLimits to refuse it with its own message (ccxt would throw a plain
+   *   Error for a NaN price);
+   * - when the market has no precision for it: Binance's createOrder then sends it as it is, where ccxt's rounding would throw.
+   */
+  private roundToMarketPrecision(symbol: string, amount: number, price: number): { amount: number; price: number } {
+    const client = this.publicClient;
+    const { precision } = client.market(symbol);
+    const round = (value: number, marketPrecision: number | undefined, toPrecision: (value: number, marketPrecision: number) => string) => {
+      if (!Number.isFinite(value) || value <= 0 || isNil(marketPrecision)) return value;
+      try {
+        return Number(toPrecision(value, marketPrecision));
+      } catch (err) {
+        if (err instanceof ccxt.InvalidOrder) return 0;
+        throw err;
+      }
+    };
+    return {
+      // Written by numberToString, without an exponent, as ccxt does with a number: String(1.234567e-7) would truncate to 1.23456
+      amount: round(amount, precision?.amount, (value, step) =>
+        client.decimalToPrecision(client.numberToString(value)!, ccxt.TRUNCATE, step, client.precisionMode, client.paddingMode),
+      ),
+      price: round(price, precision?.price, value => client.priceToPrecision(symbol, value)),
+    };
+  }
+
+  /**
+   * Warns of a limit order whose price the rounding moved by more than half a tick of precision.price, the most a rounding to that tick
+   * moves a price. Hyperliquid's tick can be coarser from the power of ten above the price its markets were loaded at (see
+   * MarketData.precision.priceSignificantDigits): there, two prices a precision.price apart, two levels of a grid, were sent at one price
+   * without a word. The order is sent all the same, at the price the exchange takes: refused, most limit orders of a pair whose price had
+   * risen past a power of ten since the start would fail. A market order is priced at the ticker, a price the exchange takes as it is.
+   */
+  private warnOfPriceMove(symbol: string, side: OrderSide, price: number, sentPrice: number) {
+    const tick = this.publicClient.market(symbol).precision?.price;
+    if (isNil(tick) || !(tick > 0) || 2 * Math.abs(addPrecise(sentPrice, -price)) <= tick) return;
+    const moved = `LIMIT ${side} order on ${symbol} at ${price} sent to ${this.exchangeName} at ${sentPrice}`;
+    const significantDigits = PRICE_SIGNIFICANT_DIGITS[this.exchangeName];
+    const rule = `${this.exchangeName} takes ${significantDigits} significant digits in a price (precision.priceSignificantDigits)`;
+    const reason = significantDigits ? `: ${rule}, a tick coarser than precision.price at that price` : '';
+    warning('exchange', `${moved}, more than half a tick of precision.price (${tick}) away${reason}`);
+  }
+
+  /**
+   * Sends the creation of an order to the exchange, once. A failure that is not a refusal of the order is an OrderOutcomeUnknown: a
+   * ccxt OperationFailed that is not a NetworkError (translateErrors makes that one an ExchangeNetworkError). ccxt 4.5.39 throws it
+   * for an answer it could not read (BadResponse), and for Binance's internal errors: -1000 (unknown error) and -1006 (unexpected
+   * response, "execution status unknown"), which ccxt files with -1001, -1004 and -1008 (disconnected, busy, overloaded), -1010
+   * (error message received) and -1112 (no orders on the book). Left as it was, such a failure ended the order as one that placed
+   * nothing, which a strategy then placed again, beside the first if it had gone through.
+   */
+  private async sendCreation(symbol: string, type: 'limit' | 'market', side: OrderSide, amount: number, price: number) {
+    try {
+      return await this.privateClient.createOrder(symbol, type, side, amount, price);
+    } catch (err) {
+      if (!(err instanceof ccxt.OperationFailed) || err instanceof ccxt.NetworkError) throw err;
+      const failure = `${this.exchangeName} answered the creation of an order on ${symbol} with a failure that is not a refusal`;
+      throw new OrderOutcomeUnknown(`${failure}: ${err.message}`, { cause: err });
+    }
+  }
+
+  /**
+   * The state of an order the exchange has just created. Hyperliquid answers a creation with the id of the order alone, without its
+   * status or timestamp ({ resting: { oid } } for an order on the book, { filled: { totalSz, avgPx, oid } } for an executed one):
+   * mapped as is, it would be open, and a market order, which never polls, would stay open forever. Such an order is read back with
+   * fetchOrder, a read, retried on its own without replaying the creation.
+   * An answer with neither a status nor an id, or a read-back that fails, leaves an order that may be live with nothing to follow it
+   * by: OrderOutcomeUnknown, the id of the order created in its message. The read-back threw its own failure: taken by the orders for a
+   * refusal (an InvalidOrder) or for a failure that placed nothing, the order created was placed again by the strategy beside it.
+   */
+  private async getCreatedOrderState(symbol: string, order: CCXTOrder | undefined): Promise<OrderState> {
+    if (order && !isNil(order.status)) return mapCcxtOrderToOrder(order);
+    if (isNil(order?.id))
+      throw new OrderOutcomeUnknown(
+        `${this.exchangeName} answered the creation of an order on ${symbol} with neither a status nor an id: the order may exist on the exchange, but cannot be followed`,
+      );
+
+    const created = `Order ${order.id} was created on ${this.exchangeName} for ${symbol}`;
+    try {
+      return await this.readOrderBack(symbol, order.id, created);
+    } catch (err) {
+      throw new OrderOutcomeUnknown(`${created}, but its state could not be read back: ${getUntaggedMessage(err)}`, { cause: err });
+    }
+  }
+
+  /**
+   * The state of an order the exchange has just accepted to cancel. Binance answers with the order canceled, its id, its status and
+   * the amount filled until then: it is mapped as is. Hyperliquid only acknowledges the request ({ statuses: ['success'] }), which
+   * ccxt turns into an order of status 'success' with neither id nor fill: mapped as is, it would be an order without an id, which
+   * the order classes drop, so that the cancelation of a limit order would never end and a fill made just before it would go unseen.
+   * An answer lacking the id or the status of the order is completed by reading the order back by the id the cancelation was sent for.
+   */
+  private async getCanceledOrderState(symbol: string, id: string, order: CCXTOrder | undefined): Promise<OrderState> {
+    if (order && !isNil(order.id) && !isNil(order.status)) return mapCcxtOrderToOrder(order);
+    return this.readOrderBack(symbol, id, `${this.exchangeName} accepted the cancelation of order ${id} on ${symbol}`);
+  }
+
+  /**
+   * Reads back the state of an order after a write answered without it. fetchOrder is a read, retried on its own without sending
+   * the write again. If it fails, the write has been carried out all the same: what was done is logged before the failure is thrown.
+   */
+  private async readOrderBack(symbol: string, id: string, writeDone: string): Promise<OrderState> {
+    try {
+      return await this.fetchOrder(symbol, id);
+    } catch (err) {
+      error('exchange', `${writeDone}, but reading its state back failed`);
+      throw err;
+    }
   }
 }

@@ -1,9 +1,50 @@
-import { error } from '@services/logger';
+import { debug } from '@services/logger';
+import { getRetryDelay } from '@utils/fetch/fetch.utils';
 import { wait } from '@utils/process/process.utils';
-import { FETCHER_MAX_RETRIES } from './fetcher.const';
+import { secondsToMilliseconds } from 'date-fns';
+import { isNumber } from 'lodash-es';
+import { FETCHER_MAX_RETRIES, FETCHER_MAX_RETRY_AFTER, FETCHER_TIMEOUT } from './fetcher.const';
 import { Fetcher, Request } from './fetcher.types';
 
+/**
+ * How long an attempt may take: FETCHER_TIMEOUT, on top of the wait of a long poll. Telegram holds a getUpdates open for its
+ * `timeout` seconds while it has no update to answer with: aborted sooner, every poll of a quiet chat would fail.
+ */
+const getTimeout = (url: string) => {
+  const longPoll = Number(new URL(url).searchParams.get('timeout')); // 0 without one, NaN when not a number: no wait added
+  return FETCHER_TIMEOUT + (longPoll > 0 ? secondsToMilliseconds(longPoll) : 0);
+};
+
+/**
+ * The wait in ms before another attempt at a request that failed with this code, or undefined when there is no point in one. A
+ * 429 waits the retry_after seconds that Telegram's flood control gives, or the backoff without a usable one (missing, not a
+ * number, NaN or negative). A retry_after past FETCHER_MAX_RETRY_AFTER is not waited out: the 429 is thrown at once.
+ */
+const getHttpRetryDelay = (attempt: number, code: number | undefined, retryAfter?: unknown) => {
+  if (code === 429 && isNumber(retryAfter) && retryAfter >= 0) {
+    const delay = secondsToMilliseconds(retryAfter);
+    return delay <= FETCHER_MAX_RETRY_AFTER ? delay : undefined;
+  }
+  if (code === 429 || (code !== undefined && code >= 500)) return getRetryDelay(attempt);
+  return undefined;
+};
+
+/**
+ * Retry policy: a request is sent again, up to `retries` more times, only after a failure that may pass. Without an answer (fetch
+ * rejects: a network failure, or a timeout once an attempt outlasts getTimeout), it is sent again after the backoff of
+ * getRetryDelay. Once an answer comes, its status decides, whatever its body, which can only tell more:
+ * - a server error (5xx) is sent again after the backoff;
+ * - a rate limit (429), after the retry_after seconds that Telegram's flood control gives in the body, or else after the backoff,
+ *   but it is thrown at once when it asks for more than FETCHER_MAX_RETRY_AFTER;
+ * - a 2xx whose body says ok: false counts as its error_code, and is thrown at once without one;
+ * - a 2xx whose body cannot be read or parsed answers a request that went through: a GET is sent again after the backoff
+ *   (getUpdates, at the same offset, loses nothing), a POST is thrown at once, since its message may have been delivered.
+ * Any other failure would be met again, so it is thrown at once: a 4xx such as 400 (bad request), 401 (wrong token), 403 (bot
+ * blocked by the user) or 409 (another getUpdates consumer of the token), whatever its body (a proxy's HTML page, an empty one).
+ * The error given up on is logged once.
+ */
 const request: Request = async ({ url, payload, attempt = 0, retries = FETCHER_MAX_RETRIES }) => {
+  let retryDelay: number | undefined = getRetryDelay(attempt); // Until an answer comes, a failure can only be a network one
   try {
     const config = payload
       ? {
@@ -13,25 +54,41 @@ const request: Request = async ({ url, payload, attempt = 0, retries = FETCHER_M
         }
       : undefined;
 
-    const response = await fetch(url, config);
+    // The signal aborts the reading of the answer too, should it stall
+    const response = await fetch(url, { ...config, signal: AbortSignal.timeout(getTimeout(url)) });
+    const httpStatus = `HTTP ${response.status} ${response.statusText}`;
+
+    // Answered: from here on, the status decides whatever becomes of the body. A 2xx answers a request that went through: should
+    // its body fail to be read, a POST is not sent again, as its message may have been delivered already.
+    const mayHaveBeenDelivered = response.ok && !!payload;
+    if (!response.ok) retryDelay = getHttpRetryDelay(attempt, response.status);
+    else if (mayHaveBeenDelivered) retryDelay = undefined;
 
     const contentType = response.headers.get('Content-Type');
     const isJson = contentType && contentType.includes('application/json');
-    const data = isJson ? await response.json() : await response.text();
+    const data = await (isJson ? response.json() : response.text()).catch((err: unknown) => {
+      const notRetried = mayHaveBeenDelivered ? '. The request may have been delivered, so it is not retried' : '';
+      throw new Error(`${httpStatus}: unreadable body (${err})${notRetried}`, { cause: err });
+    });
 
     if (!response.ok || data.ok === false) {
+      // The body tells more: a 2xx carries the code of its failure there alone, as Telegram's error_code, and a 429 the
+      // retry_after of the flood control
+      retryDelay = getHttpRetryDelay(attempt, response.ok ? data.error_code : response.status, data.parameters?.retry_after);
       const errorDetails = data.description || JSON.stringify(data);
-      throw new Error(`HTTP ${response.status} ${response.statusText}: ${errorDetails}`);
+      throw new Error(`${httpStatus}: ${errorDetails}`);
     }
 
     return data;
   } catch (err) {
-    if (attempt >= retries) {
-      if (err instanceof Error) error('fetcher', err.message);
+    if (retryDelay === undefined || attempt >= retries) {
+      // At debug level: every caller logs what it could not fetch, at the level it deserves (a notification not sent, a poll
+      // failed), and a bot blocked for hours would otherwise write one error line per request, which Supervision forwards
+      if (err instanceof Error) debug('fetcher', err.message);
       throw err;
     }
 
-    await wait(1000 * (attempt + 1));
+    await wait(retryDelay);
     return request({ url, payload, retries, attempt: attempt + 1 });
   }
 };

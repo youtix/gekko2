@@ -1,7 +1,13 @@
-import { Candle } from '@models/candle.types';
+import { ApplicationStopError } from '@errors/applicationStop.error';
+import { GekkoError } from '@errors/gekko.error';
+import { CandleBucket } from '@models/event.types';
 import { Plugin } from '@plugins/plugin';
-import { info, warning } from '@services/logger';
-import { describe, expect, it, vi } from 'vitest';
+import { error, info, warning } from '@services/logger';
+import { SequentialEventEmitter } from '@utils/event/sequentialEventEmitter';
+import { noop } from 'lodash-es';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import { afterEach, beforeEach, describe, expect, it, Mock, vi } from 'vitest';
 import { PluginsStream } from './plugins.stream';
 
 /* -------------------------------------------------------------------------- */
@@ -26,43 +32,69 @@ vi.mock('@services/logger', () => ({
 /*                                  HELPERS                                   */
 /* -------------------------------------------------------------------------- */
 
-const MOCK_CANDLE = {} as Candle;
+const BUCKET: CandleBucket = new Map();
 
-const createPluginStub = (overrides?: Partial<Plugin>) =>
+const createPluginStub = (overrides?: Partial<Record<keyof Plugin, unknown>>) =>
   ({
+    emitterName: 'Stub',
     processInitStream: vi.fn(async () => undefined),
     processInputStream: vi.fn(async () => undefined),
     processCloseStream: vi.fn(async () => undefined),
     broadcastDeferredEmit: vi.fn(async () => false),
+    countUndeliveredPayloads: vi.fn(() => new Map()),
     ...overrides,
   }) as unknown as Plugin;
 
-const callConstruct = (stream: PluginsStream) =>
-  new Promise<Error | undefined>((resolve, reject) => {
-    // Listen for error events to prevent unhandled error warnings
-    stream.once('error', () => {});
-    stream._construct(error => {
-      if (error) reject(error);
-      else resolve(undefined);
-    });
-  });
+/** A stub plugin on a real SequentialEventEmitter named `name`: what it queues is broadcast, or counted, as a plugin's is */
+const createEmittingPluginStub = (name: string) =>
+  Object.assign(new SequentialEventEmitter(name), {
+    processInitStream: vi.fn(async () => undefined),
+    processInputStream: vi.fn(async () => undefined),
+    processCloseStream: vi.fn(async () => undefined),
+  }) as unknown as Plugin;
 
-const callFinal = (stream: PluginsStream) =>
-  new Promise<Error | undefined>(resolve => {
-    stream._final(error => resolve(error ?? undefined));
-  });
+/** A promise settled from outside, to hold a plugin or a source at a given step. */
+const createGate = () => {
+  let open = () => {};
+  const promise = new Promise<void>(resolve => (open = resolve));
+  return { promise, open };
+};
 
-const writeCandle = (stream: PluginsStream, candle: Candle = MOCK_CANDLE) =>
-  new Promise<void>((resolve, reject) => {
-    stream.write(candle, error => {
-      if (error) reject(error);
-      else resolve();
-    });
+/**
+ * Work a stub plugin holds until the test releases it, as one awaiting the exchange would: `run` is the stub's method, `started`
+ * settles once the plugin has begun it, and `finished` is called as it ends. It resolves to false, as broadcastDeferredEmit does
+ * once nothing more is queued.
+ */
+const createHeldWork = () => {
+  const started = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  const finished = vi.fn();
+  const run = vi.fn(async () => {
+    started.resolve();
+    await released.promise;
+    finished();
+    return false;
+  });
+  return { run, started: started.promise, release: () => released.resolve(), finished };
+};
+
+/** Runs the plugins through the public API, as pipeline.utils does, and returns what the pipeline rejected with, if anything. */
+const runPipeline = (source: Iterable<CandleBucket> | AsyncIterable<CandleBucket>, plugins: Plugin[]) =>
+  pipeline(Readable.from(source), new PluginsStream(plugins)).then(
+    () => undefined,
+    (reason: unknown) => reason,
+  );
+
+const throwing = (thrown: unknown) =>
+  vi.fn(async () => {
+    throw thrown;
   });
 
 const waitForError = (stream: PluginsStream) => new Promise<Error>(resolve => stream.once('error', resolve));
 
-const waitForFinish = (stream: PluginsStream) => new Promise<void>(resolve => stream.on('finish', resolve));
+/** Writes a bucket to the stream on its own, outside any pipeline, and resolves once the stream has processed it */
+const writeBucket = (stream: PluginsStream) =>
+  new Promise<void>((resolve, reject) => stream.write(BUCKET, failure => (failure ? reject(failure) : resolve())));
 
 /* -------------------------------------------------------------------------- */
 /*                                   TESTS                                    */
@@ -70,267 +102,817 @@ const waitForFinish = (stream: PluginsStream) => new Promise<void>(resolve => st
 
 describe('PluginsStream', () => {
   describe('_construct', () => {
-    it('calls processInitStream on each plugin', async () => {
+    it('initializes each plugin once', async () => {
       const plugin = createPluginStub();
-      const stream = new PluginsStream([plugin]);
 
-      await callConstruct(stream);
+      await runPipeline([], [plugin]);
 
       expect(plugin.processInitStream).toHaveBeenCalledOnce();
     });
 
-    it('passes Error instances to callback on init failure', async () => {
-      const initError = new Error('init err');
-      const plugin = createPluginStub({
-        processInitStream: vi.fn(async () => {
-          throw initError;
-        }),
-      });
-      const stream = new PluginsStream([plugin]);
+    it.each`
+      thrown                   | message
+      ${new Error('init err')} | ${'init err'}
+      ${'string error'}        | ${'Error when initializing stream plugin: string error'}
+    `('rejects the pipeline with $message when a plugin init throws $thrown', async ({ thrown, message }) => {
+      const plugin = createPluginStub({ processInitStream: throwing(thrown) });
 
-      await expect(callConstruct(stream)).rejects.toThrow('init err');
+      expect(await runPipeline([BUCKET], [plugin])).toEqual(new Error(message));
     });
 
-    it('wraps non-Error thrown values in Error on init failure', async () => {
-      const plugin = createPluginStub({
-        processInitStream: vi.fn(async () => {
-          throw 'string error';
-        }),
-      });
-      const stream = new PluginsStream([plugin]);
+    describe('when the stream is destroyed while a plugin initializes', () => {
+      const destroyError = new Error('download failed');
+      let plugins: Plugin[];
+      let reported: unknown;
 
-      await expect(callConstruct(stream)).rejects.toThrow('Error when initializing stream plugin: string error');
+      beforeEach(async () => {
+        const initGate = createGate();
+        plugins = [createPluginStub({ processInitStream: vi.fn(() => initGate.promise) }), createPluginStub()];
+        const stream = new PluginsStream(plugins);
+        const errored = new Promise(resolve => stream.once('error', resolve));
+        await vi.waitFor(() => expect(plugins[0].processInitStream).toHaveBeenCalled());
+
+        stream.destroy(destroyError);
+        initGate.open();
+        reported = await errored;
+      });
+
+      it('reports the error it was destroyed with', () => {
+        expect(reported).toBe(destroyError);
+      });
+
+      it('finalizes the plugin whose init was in progress, once it is done', () => {
+        expect(plugins[0].processCloseStream).toHaveBeenCalledOnce();
+      });
+
+      it('tells the plugin why the run stops', () => {
+        expect(plugins[0].processCloseStream).toHaveBeenCalledWith(destroyError);
+      });
+
+      it('does not initialize the plugins left', () => {
+        expect(plugins[1].processInitStream).not.toHaveBeenCalled();
+      });
     });
   });
 
   describe('_write', () => {
     describe('successful processing', () => {
-      it('forwards candle to dummy exchange before plugins', async () => {
+      it('forwards the bucket to the dummy exchange before the plugins', async () => {
         const callOrder: string[] = [];
-        const dummyExchange = {
-          processOneMinuteCandle: vi.fn(() => callOrder.push('exchange')),
-          getExchangeName: () => 'dummy-cex',
-        };
+        const dummyExchange = { processOneMinuteBucket: vi.fn(() => callOrder.push('exchange')), getExchangeName: () => 'dummy-cex' };
         injectMock.exchange.mockReturnValue(dummyExchange);
-        const plugin = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            callOrder.push('plugin');
-          }),
-        });
-        const stream = new PluginsStream([plugin]);
+        const plugin = createPluginStub({ processInputStream: vi.fn(async () => callOrder.push('plugin')) });
 
-        await writeCandle(stream);
+        await runPipeline([BUCKET], [plugin]);
 
         expect(callOrder).toEqual(['exchange', 'plugin']);
       });
 
-      it('broadcasts deferred events after plugin processing', async () => {
-        let emitCount = 0;
-        const plugin = createPluginStub({
-          broadcastDeferredEmit: vi.fn(async () => {
-            emitCount++;
-            return emitCount < 3; // Emit 2 times then stop
+      it('broadcasts the deferred events of each plugin until its queue is empty, in config order', async () => {
+        const callOrder: string[] = [];
+        const queues = [2, 1];
+        const plugins = queues.map((_, index) =>
+          createPluginStub({
+            broadcastDeferredEmit: vi.fn(async () => {
+              callOrder.push(`plugin ${index}`);
+              return queues[index]-- > 0;
+            }),
           }),
+        );
+
+        await runPipeline([BUCKET], plugins);
+
+        expect(callOrder).toEqual(['plugin 0', 'plugin 0', 'plugin 0', 'plugin 1', 'plugin 1']);
+      });
+
+      it('delivers the deferred events of a plugin in the order they were queued', async () => {
+        const delivered: string[] = [];
+        const trader = createEmittingPluginStub('Trader');
+        trader.on('orderErrored', () => {
+          delivered.push('orderErrored');
         });
-        const stream = new PluginsStream([plugin]);
+        trader.on('orderCompleted', () => {
+          delivered.push('orderCompleted');
+        });
+        vi.mocked(trader.processInputStream).mockImplementation(async () => {
+          trader.addDeferredEmit('orderErrored', { id: 1 });
+          trader.addDeferredEmit('orderCompleted', { id: 2 });
+          trader.addDeferredEmit('orderErrored', { id: 3 });
+        });
 
-        await writeCandle(stream);
+        await runPipeline([BUCKET], [trader]);
 
-        expect(plugin.broadcastDeferredEmit).toHaveBeenCalledTimes(3);
+        expect(delivered).toEqual(['orderErrored', 'orderCompleted', 'orderErrored']);
+      });
+
+      it('finalizes the plugins at the end of the stream', async () => {
+        const plugin = createPluginStub();
+
+        await runPipeline([BUCKET], [plugin]);
+
+        expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+      });
+
+      it('logs the closing message at the end of the stream', async () => {
+        await runPipeline([BUCKET], [createPluginStub()]);
+
+        expect(info).toHaveBeenCalledWith('stream', 'Gekko is closing the application !');
       });
     });
 
-    describe('error handling', () => {
-      it('finalizes all plugins before destroying stream', async () => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
-        const plugin = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            throw new Error('processing failed');
-          }),
-        });
-        const stream = new PluginsStream([plugin]);
+    describe('when a plugin fails on a bucket', () => {
+      it.each`
+        thrown                         | message
+        ${new Error('process-failed')} | ${'process-failed'}
+        ${'string error'}              | ${'string error'}
+      `('rejects the pipeline with $message when a plugin throws $thrown', async ({ thrown, message }) => {
+        const plugin = createPluginStub({ processInputStream: throwing(thrown) });
 
-        const error = await Promise.race([waitForError(stream), writeCandle(stream).catch(e => e)]);
-        stream.write(MOCK_CANDLE);
-
-        expect(plugin.processCloseStream).toHaveBeenCalledOnce();
-        expect((error as Error).message).toBe('processing failed');
+        expect(await runPipeline([BUCKET], [plugin])).toEqual(new Error(message));
       });
 
-      it('logs closing message on error', async () => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
-        const plugin = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            throw new Error('fail');
-          }),
-        });
-        const stream = new PluginsStream([plugin]);
-        stream.write(MOCK_CANDLE);
+      it('finalizes the plugins', async () => {
+        const plugin = createPluginStub({ processInputStream: throwing(new Error('fail')) });
 
-        await waitForError(stream);
-
-        expect(info).toHaveBeenCalledWith('stream', 'Gekko is closing the application due to an error!');
-      });
-
-      it('converts non-Error thrown values to Error', async () => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
-        const plugin = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            throw 'string error';
-          }),
-        });
-        const stream = new PluginsStream([plugin]);
-        stream.write(MOCK_CANDLE);
-
-        const error = await waitForError(stream);
-
-        expect(error.message).toBe('string error');
-      });
-
-      it('does not finalize twice when _final called after error', async () => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
-        const plugin = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            throw new Error('fail');
-          }),
-        });
-        const stream = new PluginsStream([plugin]);
-        stream.write(MOCK_CANDLE);
-        await waitForError(stream);
-
-        await callFinal(stream);
+        await runPipeline([BUCKET], [plugin]);
 
         expect(plugin.processCloseStream).toHaveBeenCalledOnce();
       });
 
-      it('finalizes all plugins even when some throw', async () => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
-        const plugin1 = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            throw new Error('fail');
-          }),
-          processCloseStream: vi.fn(async () => {
-            throw new Error('finalize1 failed');
-          }),
-        });
-        const plugin2 = createPluginStub();
-        const stream = new PluginsStream([plugin1, plugin2]);
-        stream.write(MOCK_CANDLE);
+      it('tells the plugins why the run stops', async () => {
+        const failure = new Error('fail');
+        const plugin = createPluginStub({ processInputStream: throwing(failure) });
 
-        await waitForError(stream);
+        await runPipeline([BUCKET], [plugin]);
 
-        expect(plugin2.processCloseStream).toHaveBeenCalledOnce();
+        expect(plugin.processCloseStream).toHaveBeenCalledWith(failure);
       });
 
-      it('logs warning when finalization fails', async () => {
-        injectMock.exchange.mockReturnValue({ getExchangeName: () => 'binance' });
-        const plugin = createPluginStub({
-          processInputStream: vi.fn(async () => {
-            throw new Error('fail');
-          }),
-          processCloseStream: vi.fn(async () => {
-            throw new Error('finalize failed');
-          }),
-        });
-        const stream = new PluginsStream([plugin]);
-        stream.write(MOCK_CANDLE);
+      it.each`
+        kind               | thrown                                    | reason
+        ${'a GekkoError'}  | ${new GekkoError('trader', 'No balance')} | ${'[TRADER] No balance'}
+        ${'an Error'}      | ${new TypeError('fetch failed')}          | ${'TypeError: fetch failed'}
+        ${'a string'}      | ${'string error'}                         | ${'string error'}
+        ${'another value'} | ${{ code: 42 }}                           | ${'{ code: 42 }'}
+      `('logs why the application closes when a plugin throws $kind', async ({ thrown, reason }) => {
+        await runPipeline([BUCKET], [createPluginStub({ processInputStream: throwing(thrown) })]);
 
-        await waitForError(stream);
+        expect(error).toHaveBeenCalledWith('stream', `Gekko is closing the application due to an error: ${reason}`);
+      });
+
+      it('logs why the application closes before finalizing the plugins, for the last flush of Supervision to send it', async () => {
+        const plugin = createPluginStub({ processInputStream: throwing(new Error('fail')) });
+
+        await runPipeline([BUCKET], [plugin]);
+
+        const [logCallOrder] = vi.mocked(error).mock.invocationCallOrder;
+        const [finalizeCallOrder] = vi.mocked(plugin.processCloseStream).mock.invocationCallOrder;
+        expect(logCallOrder).toBeLessThan(finalizeCallOrder);
+      });
+
+      it('logs why the application closes once, not again when the stream is destroyed', async () => {
+        await runPipeline([BUCKET], [createPluginStub({ processInputStream: throwing(new Error('fail')) })]);
+
+        expect(error).toHaveBeenCalledOnce();
+      });
+
+      it('logs no event dropped when the failed bucket leaves none queued', async () => {
+        await runPipeline([BUCKET], [createPluginStub({ processInputStream: throwing(new Error('fail')) })]);
+
+        expect(warning).not.toHaveBeenCalled();
+      });
+
+      it('does not process the buckets that follow', async () => {
+        const plugin = createPluginStub({ processInputStream: throwing(new Error('fail')) });
+
+        await runPipeline([BUCKET, BUCKET, BUCKET], [plugin]);
+
+        expect(plugin.processInputStream).toHaveBeenCalledOnce();
+      });
+
+      it('finalizes all the plugins even when some finalizations throw', async () => {
+        const plugins = [
+          createPluginStub({
+            processInputStream: throwing(new Error('fail')),
+            processCloseStream: throwing(new Error('finalize1 failed')),
+          }),
+          createPluginStub(),
+        ];
+
+        await runPipeline([BUCKET], plugins);
+
+        expect(plugins[1].processCloseStream).toHaveBeenCalledOnce();
+      });
+
+      describe('when the finalization itself throws', () => {
+        const bucketError = new Error('fail');
+        let rejection: unknown;
+
+        beforeEach(async () => {
+          vi.mocked(warning).mockImplementationOnce(() => {
+            throw new Error('log down');
+          });
+          const plugin = createPluginStub({
+            processInputStream: throwing(bucketError),
+            processCloseStream: throwing(new Error('finalize failed')),
+          });
+
+          rejection = await runPipeline([BUCKET], [plugin]);
+        });
+
+        it('still rejects the pipeline with the error of the bucket', () => {
+          expect(rejection).toBe(bucketError);
+        });
+
+        it('logs the failure as a warning', () => {
+          expect(warning).toHaveBeenLastCalledWith('stream', 'Finalization errors: log down');
+        });
+      });
+
+      it.each`
+        kind               | thrown
+        ${'an Error'}      | ${new Error('finalize failed')}
+        ${'another value'} | ${'finalize failed'}
+      `('logs a finalization that throws $kind as a warning', async ({ thrown }) => {
+        const plugin = createPluginStub({ processInputStream: throwing(new Error('fail')), processCloseStream: throwing(thrown) });
+
+        await runPipeline([BUCKET], [plugin]);
 
         expect(warning).toHaveBeenCalledWith('stream', 'Finalization errors: finalize failed');
+      });
+    });
+
+    describe('when several plugins fail on the same bucket', () => {
+      const firstError = new Error('first failed');
+      let callOrder: string[];
+      let plugins: Plugin[];
+      let rejection: unknown;
+
+      beforeEach(async () => {
+        callOrder = [];
+        const slow = vi.fn(async () => {
+          await new Promise(resolve => setTimeout(resolve, 10));
+          callOrder.push('slow plugin done');
+          throw 'third failed';
+        });
+        plugins = [
+          createPluginStub({ processInputStream: throwing(firstError), processCloseStream: vi.fn(async () => callOrder.push('finalize')) }),
+          createPluginStub({ emitterName: 'Second', processInputStream: throwing(new Error('second failed')) }),
+          createPluginStub({ emitterName: 'Third', processInputStream: slow }),
+        ];
+
+        rejection = await runPipeline([BUCKET], plugins);
+      });
+
+      it('rejects the pipeline with the error of the first plugin in config order', () => {
+        expect(rejection).toBe(firstError);
+      });
+
+      it('finalizes the plugins only once every plugin is done with the bucket', () => {
+        expect(callOrder).toEqual(['slow plugin done', 'finalize']);
+      });
+
+      it.each`
+        message
+        ${'Second failed on the bucket as well: Error: second failed'}
+        ${'Third failed on the bucket as well: third failed'}
+      `('logs the other failure with its plugin: $message', ({ message }) => {
+        expect(error).toHaveBeenCalledWith('stream', message);
+      });
+    });
+
+    describe('when two plugins fail on the same bucket, the second before the first', () => {
+      const firstError = new Error('first failure');
+      const secondError = new Error('second failure');
+      const firstStop = new ApplicationStopError('first stop');
+      const secondStop = new ApplicationStopError('second stop');
+
+      /** Runs a bucket both plugins fail on, the second one first: gives what the pipeline rejects with */
+      const runBucketBothFailOn = (firstReason: unknown, secondReason: unknown) =>
+        runPipeline(
+          [BUCKET],
+          [
+            createPluginStub({
+              emitterName: 'First',
+              processInputStream: vi.fn(async () => {
+                await new Promise(resolve => setImmediate(resolve)); // Once the second has failed
+                throw firstReason;
+              }),
+            }),
+            createPluginStub({ emitterName: 'Second', processInputStream: throwing(secondReason) }),
+          ],
+        );
+
+      it.each`
+        reported                                                    | first         | second         | expected
+        ${'the failure of the first plugin in config order'}        | ${firstError} | ${secondError} | ${firstError}
+        ${'an ApplicationStopError over a failure before it'}       | ${firstError} | ${secondStop}  | ${secondStop}
+        ${'an ApplicationStopError over a failure after it'}        | ${firstStop}  | ${secondError} | ${firstStop}
+        ${'the first of two ApplicationStopErrors in config order'} | ${firstStop}  | ${secondStop}  | ${firstStop}
+      `('rejects the pipeline with $reported', async ({ first, second, expected }) => {
+        expect(await runBucketBothFailOn(first, second)).toBe(expected);
+      });
+
+      it.each`
+        failure                                         | first         | second         | logged
+        ${'of the second plugin, after the first'}      | ${firstError} | ${secondError} | ${'Second failed on the bucket as well: Error: second failure'}
+        ${'of the first plugin, when the second stops'} | ${firstError} | ${secondStop}  | ${'First failed on the bucket as well: Error: first failure'}
+      `('logs the other failure, $failure, with its plugin', async ({ first, second, logged }) => {
+        await runBucketBothFailOn(first, second);
+
+        expect(error).toHaveBeenCalledWith('stream', logged);
+      });
+
+      it('logs the other failure after the reason the application closes', async () => {
+        await runBucketBothFailOn(firstError, secondError);
+
+        expect(vi.mocked(error).mock.calls).toEqual([
+          ['stream', 'Gekko is closing the application due to an error: Error: first failure'],
+          ['stream', 'Second failed on the bucket as well: Error: second failure'],
+        ]);
+      });
+    });
+
+    describe.each`
+      source                                 | method
+      ${'processInputStream'}                | ${'processInputStream'}
+      ${'broadcastDeferredEmit (a handler)'} | ${'broadcastDeferredEmit'}
+    `('on an ApplicationStopError thrown by $source', ({ method }) => {
+      const stopError = new ApplicationStopError('stop error application');
+      let plugin: Plugin;
+      let stream: PluginsStream;
+      let rejection: unknown;
+
+      beforeEach(async () => {
+        plugin = createPluginStub({ [method]: throwing(stopError) });
+        stream = new PluginsStream([plugin]);
+        rejection = await pipeline(Readable.from([BUCKET]), stream).catch((reason: unknown) => reason);
+      });
+
+      it('rejects the pipeline with the ApplicationStopError itself, not a premature close', () => {
+        expect(rejection).toBe(stopError);
+      });
+
+      // The failed bucket destroys the stream itself, and _destroy waits for that bucket to settle: neither may wait for the other
+      it('closes the stream it destroys after the failed bucket', () => {
+        expect(stream.closed).toBe(true);
+      });
+
+      it('finalizes all plugins', () => {
+        expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+      });
+
+      it('logs the stop reason as a warning, for the last flush of Supervision to send it', () => {
+        expect(warning).toHaveBeenCalledWith('stream', 'Application stopped gracefully: [CORE] stop error application');
+      });
+
+      it('logs the stop reason before finalizing the plugins', () => {
+        const [logCallOrder] = vi.mocked(warning).mock.invocationCallOrder;
+        const [finalizeCallOrder] = vi.mocked(plugin.processCloseStream).mock.invocationCallOrder;
+        expect(logCallOrder).toBeLessThan(finalizeCallOrder);
+      });
+    });
+
+    describe('when a handler stops the application during the flush, with deferred events still queued', () => {
+      const STOP_LOG = 'Application stopped gracefully: [CORE] Max consecutive order errors reached (1)';
+      const DROPPED_EVENTS_LOG =
+        'Deferred events dropped as the application closes, the final reports may miss them: ' +
+        'Trader (orderCompleted: 1, portfolioChange: 2), RoundTripAnalyzer (roundtripCompleted: 1)';
+      let plugins: Plugin[];
+      let onOrderCompleted: Mock;
+
+      beforeEach(async () => {
+        const advisor = createEmittingPluginStub('TradingAdvisor');
+        const trader = createEmittingPluginStub('Trader');
+        const analyzer = createEmittingPluginStub('RoundTripAnalyzer');
+        plugins = [advisor, trader, analyzer];
+        // As the circuit breaker: the advisor stops the application on an order error the Trader reports
+        trader.on('orderErrored', () => {
+          throw new ApplicationStopError('Max consecutive order errors reached (1)');
+        });
+        onOrderCompleted = vi.fn();
+        trader.on('orderCompleted', onOrderCompleted);
+        trader.on('portfolioChange', noop);
+        analyzer.on('roundtripCompleted', noop);
+        vi.mocked(trader.processInputStream).mockImplementation(async () => {
+          trader.addDeferredEmit('orderErrored', { id: 1 });
+          trader.addDeferredEmit('orderCompleted', { id: 2 });
+          trader.addDeferredEmit('portfolioChange', { id: 3 });
+          trader.addDeferredEmit('portfolioChange', { id: 4 });
+        });
+        vi.mocked(analyzer.processInputStream).mockImplementation(async () => {
+          analyzer.addDeferredEmit('roundtripCompleted', { id: 5 });
+          analyzer.addDeferredEmit('equitySnapshot', { id: 6 }); // Nobody listens to it: nothing is lost with it
+        });
+
+        await runPipeline([BUCKET], plugins);
+      });
+
+      it('delivers none of them', () => {
+        expect(onOrderCompleted).not.toHaveBeenCalled();
+      });
+
+      it('logs, once and after the stop reason, those a plugin listens to, per plugin, as a warning', () => {
+        expect(vi.mocked(warning).mock.calls).toEqual([
+          ['stream', STOP_LOG],
+          ['stream', DROPPED_EVENTS_LOG],
+        ]);
+      });
+
+      it('logs them before finalizing the plugins, for the last flush of Supervision to send them', () => {
+        const [, logCallOrder] = vi.mocked(warning).mock.invocationCallOrder;
+        const [finalizeCallOrder] = vi.mocked(plugins[0].processCloseStream).mock.invocationCallOrder;
+        expect(logCallOrder).toBeLessThan(finalizeCallOrder);
       });
     });
   });
 
   describe('_final', () => {
-    it('calls processCloseStream on each plugin', async () => {
-      const plugin = createPluginStub();
-      const stream = new PluginsStream([plugin]);
-      stream.end();
+    it.each`
+      kind               | thrown
+      ${'an Error'}      | ${new Error('finalize err')}
+      ${'another value'} | ${'finalize err'}
+    `('logs a plugin finalization that throws $kind as a warning', async ({ thrown }) => {
+      const plugin = createPluginStub({ processCloseStream: throwing(thrown) });
 
-      await waitForFinish(stream);
-
-      expect(plugin.processCloseStream).toHaveBeenCalledOnce();
-    });
-
-    it('logs closing message on normal shutdown', async () => {
-      const stream = new PluginsStream([createPluginStub()]);
-      stream.end();
-
-      await waitForFinish(stream);
-
-      expect(info).toHaveBeenCalledWith('stream', 'Gekko is closing the application !');
-    });
-
-    it('logs warning when plugin finalization throws', async () => {
-      const plugin = createPluginStub({
-        processCloseStream: vi.fn(async () => {
-          throw new Error('finalize err');
-        }),
-      });
-      const stream = new PluginsStream([plugin]);
-      stream.end();
-
-      await waitForFinish(stream);
+      await runPipeline([BUCKET], [plugin]);
 
       expect(warning).toHaveBeenCalledWith('stream', 'Finalization errors: finalize err');
     });
 
-    it('converts non-Error rejection to Error during finalization', async () => {
-      const plugin = createPluginStub({
-        processCloseStream: vi.fn(async () => {
-          throw 'string rejection';
-        }),
+    it.each`
+      kind               | thrown                   | message
+      ${'an Error'}      | ${new Error('log down')} | ${'log down'}
+      ${'another value'} | ${'log down'}            | ${'log down'}
+    `('rejects the pipeline when the finalization itself throws $kind', async ({ thrown, message }) => {
+      vi.mocked(warning).mockImplementationOnce(() => {
+        throw thrown;
       });
-      const stream = new PluginsStream([plugin]);
-      stream.end();
+      const plugin = createPluginStub({ processCloseStream: throwing(new Error('finalize err')) });
 
-      await waitForFinish(stream);
-
-      expect(warning).toHaveBeenCalledWith('stream', 'Finalization errors: string rejection');
+      expect(await runPipeline([BUCKET], [plugin])).toEqual(new Error(message));
     });
+  });
 
-    it('passes Error to callback when _final throws', async () => {
-      const plugin = createPluginStub();
-      const stream = new PluginsStream([plugin]);
+  describe('_destroy', () => {
+    describe('when a stream upstream fails between two buckets', () => {
+      const sourceError = new Error('download failed');
+      let plugins: Plugin[];
+      let rejection: unknown;
 
-      Object.defineProperty(stream, 'finalizeAllPlugins', {
-        value: async () => {
-          throw new Error('final error');
-        },
-      });
+      beforeEach(async () => {
+        const bucketProcessed = createGate();
+        plugins = [
+          createPluginStub({ processInputStream: vi.fn(async () => bucketProcessed.open()) }),
+          createPluginStub({ processCloseStream: throwing(new Error('finalize failed')) }),
+        ];
+        async function* failingSource() {
+          yield BUCKET;
+          await bucketProcessed.promise; // Fails once the plugins have processed a bucket, like a download that breaks off
+          throw sourceError;
+        }
 
-      const result = await callFinal(stream);
-
-      expect(result?.message).toBe('final error');
-    });
-
-    it('converts non-Error exception to Error in _final', async () => {
-      const plugin = createPluginStub();
-      const stream = new PluginsStream([plugin]);
-
-      Object.defineProperty(stream, 'finalizeAllPlugins', {
-        value: async () => {
-          throw 'string exception';
-        },
+        rejection = await runPipeline(failingSource(), plugins);
       });
 
-      const result = await callFinal(stream);
+      it('rejects the pipeline with the error of the source, not with the finalization failure', () => {
+        expect(rejection).toBe(sourceError);
+      });
 
-      expect(result?.message).toBe('string exception');
+      it('logs why the application closes', () => {
+        expect(error).toHaveBeenCalledWith('stream', 'Gekko is closing the application due to an error: Error: download failed');
+      });
+
+      it('logs why the application closes before finalizing the plugins', () => {
+        const [logCallOrder] = vi.mocked(error).mock.invocationCallOrder;
+        const [finalizeCallOrder] = vi.mocked(plugins[0].processCloseStream).mock.invocationCallOrder;
+        expect(logCallOrder).toBeLessThan(finalizeCallOrder);
+      });
+
+      it.each`
+        index | plugin
+        ${0}  | ${'first'}
+        ${1}  | ${'second'}
+      `('finalizes the $plugin plugin exactly once', ({ index }) => {
+        expect(plugins[index].processCloseStream).toHaveBeenCalledOnce();
+      });
     });
 
-    it('skips finalization when already finalized', async () => {
+    // The pipeline destroys the stream as soon as a stream upstream fails, whatever the bucket in progress is doing
+    describe.each`
+      work                                   | method
+      ${'a plugin is processing the bucket'} | ${'processInputStream'}
+      ${'a deferred event is delivered'}     | ${'broadcastDeferredEmit'}
+    `('when a failure upstream destroys it while $work', ({ method }: { method: 'processInputStream' | 'broadcastDeferredEmit' }) => {
+      const upstreamError = new Error('download failed');
+      let plugin: Plugin;
+      let heldWork: ReturnType<typeof createHeldWork>;
+      let streamError: Promise<Error>;
+
+      beforeEach(async () => {
+        heldWork = createHeldWork();
+        plugin = createPluginStub({ [method]: heldWork.run });
+        const stream = new PluginsStream([plugin]);
+        streamError = waitForError(stream);
+        stream.write(BUCKET);
+        await heldWork.started;
+        stream.destroy(upstreamError);
+      });
+
+      afterEach(async () => {
+        heldWork.release();
+        await streamError; // Settled within the test, nothing of it runs into the next one
+      });
+
+      it('does not finalize the plugins before that work is done', () => {
+        expect(plugin.processCloseStream).not.toHaveBeenCalled();
+      });
+
+      it('finalizes the plugins once that work is done', async () => {
+        heldWork.release();
+        await streamError;
+        const [finishCallOrder] = heldWork.finished.mock.invocationCallOrder;
+        const [finalizeCallOrder] = vi.mocked(plugin.processCloseStream).mock.invocationCallOrder;
+        expect(finishCallOrder).toBeLessThan(finalizeCallOrder);
+      });
+
+      it('finalizes the plugins exactly once', async () => {
+        heldWork.release();
+        await streamError;
+        expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+      });
+
+      it('reports the error it was destroyed with', async () => {
+        heldWork.release();
+        expect(await streamError).toBe(upstreamError);
+      });
+    });
+
+    describe('when a failure upstream destroys it while a plugin is processing a bucket it then fails on', () => {
+      const upstreamError = new Error('download failed');
+      const stopError = new ApplicationStopError('Max consecutive order errors reached (5)');
+      let plugin: Plugin;
+      let finalization: ReturnType<typeof createHeldWork>;
+      let stream: PluginsStream;
+      let streamError: Promise<Error>;
+
+      beforeEach(async () => {
+        const bucketWork = createHeldWork();
+        finalization = createHeldWork();
+        plugin = createPluginStub({
+          emitterName: 'Trader',
+          processInputStream: vi.fn(async () => {
+            await bucketWork.run();
+            throw stopError;
+          }),
+          processCloseStream: vi.fn(async () => {
+            await finalization.run();
+          }),
+          countUndeliveredPayloads: vi.fn(() => new Map([['orderCompleted', 1]])),
+        });
+        stream = new PluginsStream([plugin]);
+        streamError = waitForError(stream);
+        stream.write(BUCKET);
+        await bucketWork.started;
+        stream.destroy(upstreamError);
+        bucketWork.release();
+        await finalization.started; // By the failed bucket
+      });
+
+      afterEach(async () => {
+        finalization.release();
+        await streamError;
+      });
+
+      it('does not close the stream before the failed bucket has finalized the plugins', async () => {
+        await new Promise(resolve => setImmediate(resolve)); // Long enough for a premature close to happen
+        expect(stream.closed).toBe(false);
+      });
+
+      it('finalizes the plugins exactly once', async () => {
+        finalization.release();
+        await streamError;
+        expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+      });
+
+      it('tells the plugins the failure of the bucket', () => {
+        expect(plugin.processCloseStream).toHaveBeenCalledWith(stopError);
+      });
+
+      // pipeline() rejects with the error upstream, which came first: pipeline.utils prefers the stream's failure, main() sees the stop
+      it('reports the failure of the bucket, not the error it was destroyed with', async () => {
+        finalization.release();
+        expect(await streamError).toBe(stopError);
+      });
+
+      it('exposes the failure of the bucket as its failure', () => {
+        expect(stream.failure).toBe(stopError);
+      });
+
+      it('logs the failure of the bucket', () => {
+        expect(warning).toHaveBeenCalledWith('stream', 'Application stopped gracefully: [CORE] Max consecutive order errors reached (5)');
+      });
+
+      it('logs the error it was destroyed with as well', () => {
+        expect(error).toHaveBeenCalledWith('stream', 'Gekko is closing the application due to an error: Error: download failed');
+      });
+
+      it('logs the deferred events dropped once, as the failed bucket does', async () => {
+        finalization.release();
+        await streamError;
+        const droppedEventsLog =
+          'Deferred events dropped as the application closes, the final reports may miss them: Trader (orderCompleted: 1)';
+        expect(vi.mocked(warning).mock.calls.filter(([, message]) => message === droppedEventsLog)).toHaveLength(1);
+      });
+    });
+
+    describe('when a stream upstream fails while the plugins are finalized after an ApplicationStopError', () => {
+      const stopError = new ApplicationStopError('circuit breaker');
+      const sourceError = new Error('download failed');
+      let plugins: Plugin[];
+      let rejection: unknown;
+      let reported: unknown;
+      let failure: unknown;
+
+      beforeEach(async () => {
+        const finalizationStarted = createGate();
+        const finalizationGate = createGate();
+        plugins = [
+          createPluginStub({ processInputStream: throwing(stopError) }),
+          createPluginStub({
+            processCloseStream: vi.fn(async () => {
+              finalizationStarted.open();
+              await finalizationGate.promise;
+            }),
+          }),
+        ];
+        async function* failingSource() {
+          yield BUCKET;
+          await finalizationStarted.promise;
+          setTimeout(finalizationGate.open, 10);
+          throw sourceError;
+        }
+        const stream = new PluginsStream(plugins);
+        stream.on('error', reason => (reported = reason));
+
+        rejection = await pipeline(Readable.from(failingSource()), stream).catch((reason: unknown) => reason);
+        failure = stream.failure;
+      });
+
+      // pipeline() keeps the first error of the chain: the caller has to read the stream's failure to see the stop
+      it('rejects the pipeline with the error of the source, which came first', () => {
+        expect(rejection).toBe(sourceError);
+      });
+
+      it('emits the ApplicationStopError', () => {
+        expect(reported).toBe(stopError);
+      });
+
+      it('exposes the ApplicationStopError as its failure', () => {
+        expect(failure).toBe(stopError);
+      });
+
+      it.each`
+        index
+        ${0}
+        ${1}
+      `('finalizes the plugin $index exactly once', ({ index }) => {
+        expect(plugins[index].processCloseStream).toHaveBeenCalledOnce();
+      });
+    });
+
+    describe('when a failure upstream destroys it, with deferred events queued for the next bucket', () => {
+      const DROPPED_EVENTS_LOG =
+        'Deferred events dropped as the application closes, the final reports may miss them: TradingAdvisor (strategyCreateOrder: 1)';
+      let advisor: Plugin;
+
+      beforeEach(async () => {
+        advisor = createEmittingPluginStub('TradingAdvisor');
+        const trader = createEmittingPluginStub('Trader');
+        // A strategy placing an order on a fill: it is queued on the advisor, flushed before the Trader, for the next bucket
+        trader.on('orderCompleted', () => advisor.addDeferredEmit('strategyCreateOrder', { id: 2 }));
+        advisor.on('strategyCreateOrder', noop);
+        vi.mocked(trader.processInputStream).mockImplementation(async () => trader.addDeferredEmit('orderCompleted', { id: 1 }));
+        const stream = new PluginsStream([advisor, trader]);
+        await writeBucket(stream);
+
+        const streamError = waitForError(stream);
+        stream.destroy(new Error('download failed'));
+        await streamError;
+      });
+
+      it('logs them, per plugin, as a warning', () => {
+        expect(warning).toHaveBeenCalledWith('stream', DROPPED_EVENTS_LOG);
+      });
+
+      it('logs them after the reason the application closes', () => {
+        const [reasonCallOrder] = vi.mocked(error).mock.invocationCallOrder;
+        const [droppedCallOrder] = vi.mocked(warning).mock.invocationCallOrder;
+        expect(reasonCallOrder).toBeLessThan(droppedCallOrder);
+      });
+
+      it('logs them before finalizing the plugins, for the last flush of Supervision to send them', () => {
+        const [droppedCallOrder] = vi.mocked(warning).mock.invocationCallOrder;
+        const [finalizeCallOrder] = vi.mocked(advisor.processCloseStream).mock.invocationCallOrder;
+        expect(droppedCallOrder).toBeLessThan(finalizeCallOrder);
+      });
+    });
+
+    describe('when _construct fails on the second of three plugins', () => {
+      const initError = new Error('init failed');
+      let plugins: Plugin[];
+      let rejection: unknown;
+
+      beforeEach(async () => {
+        plugins = [createPluginStub(), createPluginStub({ processInitStream: throwing(initError) }), createPluginStub()];
+
+        rejection = await runPipeline([BUCKET], plugins);
+      });
+
+      it('rejects the pipeline with the init error', () => {
+        expect(rejection).toBe(initError);
+      });
+
+      it('logs why the application closes', () => {
+        expect(error).toHaveBeenCalledWith('stream', 'Gekko is closing the application due to an error: Error: init failed');
+      });
+
+      it.each`
+        index | outcome                | plugin                 | calls
+        ${0}  | ${'finalizes'}         | ${'initialized'}       | ${1}
+        ${1}  | ${'does not finalize'} | ${'whose init failed'} | ${0}
+        ${2}  | ${'does not finalize'} | ${'never initialized'} | ${0}
+      `('$outcome the plugin $plugin', ({ index, calls }) => {
+        expect(plugins[index].processCloseStream).toHaveBeenCalledTimes(calls);
+      });
+    });
+
+    it('does not finalize the plugins again after a normal end', async () => {
       const plugin = createPluginStub();
-      const stream = new PluginsStream([plugin]);
 
-      // Pre-set the finalized flag to true
-      (stream as unknown as { finalized: boolean }).finalized = true;
+      await runPipeline([BUCKET], [plugin]);
 
-      // Call finalizeAllPlugins directly to test the early return at line 76
-      await (stream as unknown as { finalizeAllPlugins: () => Promise<void> }).finalizeAllPlugins();
+      expect(plugin.processCloseStream).toHaveBeenCalledOnce();
+    });
 
-      expect(plugin.processCloseStream).not.toHaveBeenCalled();
+    it('logs no error after a normal end', async () => {
+      await runPipeline([BUCKET], [createPluginStub()]);
+
+      expect(error).not.toHaveBeenCalled();
+    });
+
+    it('logs no event dropped after a normal end, even with events left queued', async () => {
+      const plugin = createPluginStub({ countUndeliveredPayloads: vi.fn(() => new Map([['strategyCreateOrder', 1]])) });
+
+      await runPipeline([BUCKET], [plugin]);
+
+      expect(warning).not.toHaveBeenCalled();
+    });
+
+    it('logs no event dropped when destroyed without an error, even with events left queued', async () => {
+      const stream = new PluginsStream([
+        createPluginStub({ countUndeliveredPayloads: vi.fn(() => new Map([['strategyCreateOrder', 1]])) }),
+      ]);
+
+      stream.destroy();
+      await new Promise(resolve => stream.once('close', resolve));
+
+      expect(warning).not.toHaveBeenCalled();
+    });
+
+    describe('when the finalization itself throws', () => {
+      const sourceError = new Error('download failed');
+
+      const failWhileFinalizationThrows = (thrown: unknown) => {
+        vi.mocked(warning).mockImplementationOnce(() => {
+          throw thrown;
+        });
+        const bucketProcessed = createGate();
+        const plugin = createPluginStub({
+          processInputStream: vi.fn(async () => bucketProcessed.open()),
+          processCloseStream: throwing(new Error('finalize failed')),
+        });
+        async function* failingSource() {
+          yield BUCKET;
+          await bucketProcessed.promise;
+          throw sourceError;
+        }
+        return runPipeline(failingSource(), [plugin]);
+      };
+
+      it('still rejects the pipeline with the error of the source', async () => {
+        expect(await failWhileFinalizationThrows(new Error('log down'))).toBe(sourceError);
+      });
+
+      it.each`
+        kind               | thrown
+        ${'an Error'}      | ${new Error('log down')}
+        ${'another value'} | ${'log down'}
+      `('logs the failure as a warning when the finalization throws $kind', async ({ thrown }) => {
+        await failWhileFinalizationThrows(thrown);
+
+        expect(warning).toHaveBeenLastCalledWith('stream', 'Finalization errors: log down');
+      });
     });
   });
 });

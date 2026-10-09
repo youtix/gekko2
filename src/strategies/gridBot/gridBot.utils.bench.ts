@@ -1,27 +1,24 @@
-import { Portfolio } from '@models/portfolio.types';
 import { MarketData } from '@services/exchange/exchange.types';
 import { bench, describe } from 'vitest';
 import {
-  applyAmountLimits,
-  applyCostLimits,
   computeGridBounds,
   computeLevelPrice,
   computeRebalancePlan,
-  countDecimals,
   deriveLevelQuantity,
+  getMaximumAmount,
+  getMinimumAmount,
+  getOutOfRangeSide,
   hasOnlyOneSide,
   inferAmountPrecision,
   inferPricePrecision,
-  isOutOfRange,
   roundAmount,
   roundPrice,
   validateConfig,
 } from './gridBot.utils';
 
-const portfolio: Portfolio = {
-  asset: { free: 10, used: 0, total: 10 },
-  currency: { free: 1000, used: 0, total: 1000 },
-};
+// Test values matching the old portfolio: assetFree=10, assetTotal=10, currencyFree=1000, currencyTotal=1000
+const assetFree = 10;
+const currencyFree = 1000;
 
 const marketData: MarketData = {
   precision: { price: 0.01, amount: 0.001 },
@@ -30,20 +27,6 @@ const marketData: MarketData = {
 };
 
 describe('gridBot.utils Performance', () => {
-  describe('countDecimals', () => {
-    bench('1000 decimal counts', () => {
-      for (let i = 0; i < 1000; i++) {
-        countDecimals(100.12345);
-      }
-    });
-
-    bench('1000 scientific notation counts', () => {
-      for (let i = 0; i < 1000; i++) {
-        countDecimals(1e-7);
-      }
-    });
-  });
-
   describe('roundPrice', () => {
     bench('10000 price roundings without step', () => {
       for (let i = 0; i < 10000; i++) {
@@ -51,9 +34,21 @@ describe('gridBot.utils Performance', () => {
       }
     });
 
+    bench('10000 price roundings to a tick of one unit of a decimal', () => {
+      for (let i = 0; i < 10000; i++) {
+        roundPrice(100.12345, 2, 0.01);
+      }
+    });
+
     bench('10000 price roundings with step', () => {
       for (let i = 0; i < 10000; i++) {
         roundPrice(100.12345, 2, 0.05);
+      }
+    });
+
+    bench('10000 price roundings to the tick of 5 significant digits, coarser than the step', () => {
+      for (let i = 0; i < 10000; i++) {
+        roundPrice(10000.37, 1, 0.1, 5);
       }
     });
   });
@@ -89,7 +84,7 @@ describe('gridBot.utils Performance', () => {
   describe('inferPricePrecision', () => {
     bench('10000 precision inferences', () => {
       for (let i = 0; i < 10000; i++) {
-        inferPricePrecision(100.12345, marketData);
+        inferPricePrecision(marketData);
       }
     });
   });
@@ -110,18 +105,19 @@ describe('gridBot.utils Performance', () => {
     });
   });
 
-  describe('isOutOfRange', () => {
+  describe('getOutOfRangeSide', () => {
     const bounds = { min: 90, max: 110 };
+    const reentryPrices = { below: 95, above: 105 };
 
     bench('10000 range checks', () => {
       for (let i = 0; i < 10000; i++) {
-        isOutOfRange(100 + ((i % 50) - 25), bounds);
+        getOutOfRangeSide(100 + ((i % 50) - 25), bounds, reentryPrices, null);
       }
     });
   });
 
   describe('validateConfig', () => {
-    const params = { buyLevels: 5, sellLevels: 5, spacingType: 'fixed' as const, spacingValue: 5 };
+    const params = { buyLevels: 5, sellLevels: 5, spacingType: 'fixed' as const, spacingValue: 5, retryOnError: 3 };
 
     bench('1000 config validations', () => {
       for (let i = 0; i < 1000; i++) {
@@ -130,26 +126,28 @@ describe('gridBot.utils Performance', () => {
     });
   });
 
-  describe('applyAmountLimits', () => {
-    bench('10000 amount limit applications', () => {
+  describe('getMinimumAmount', () => {
+    bench('10000 minimum amounts', () => {
       for (let i = 0; i < 10000; i++) {
-        applyAmountLimits(i % 100, marketData);
+        getMinimumAmount(90 + (i % 20), marketData);
       }
     });
   });
 
-  describe('applyCostLimits', () => {
-    bench('10000 cost limit applications', () => {
+  describe('getMaximumAmount', () => {
+    bench('10000 maximum amounts', () => {
       for (let i = 0; i < 10000; i++) {
-        applyCostLimits(1, 90 + (i % 20), 110 + (i % 20), marketData);
+        getMaximumAmount(110 + (i % 20), marketData);
       }
     });
   });
 
   describe('computeRebalancePlan', () => {
+    const grid = { buyLevels: 5, sellLevels: 5, spacingType: 'fixed' as const, spacingValue: 5 };
+
     bench('1000 rebalance plan calculations', () => {
       for (let i = 0; i < 1000; i++) {
-        computeRebalancePlan(100, portfolio, 5, 5, marketData);
+        computeRebalancePlan(100, assetFree, currencyFree, grid, marketData);
       }
     });
   });
@@ -157,7 +155,7 @@ describe('gridBot.utils Performance', () => {
   describe('deriveLevelQuantity', () => {
     bench('100 quantity derivations', () => {
       for (let i = 0; i < 100; i++) {
-        deriveLevelQuantity(100, portfolio, 5, 5, 2, 'fixed', 5, marketData);
+        deriveLevelQuantity(100, assetFree, currencyFree, 5, 5, 2, 'fixed', 5, marketData);
       }
     });
   });

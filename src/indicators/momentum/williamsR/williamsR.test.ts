@@ -1,3 +1,4 @@
+import { approximately, illiquidCandles, resultsOf } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { WilliamsR } from './williamsR.indicator';
 
@@ -46,6 +47,14 @@ describe('WilliamsR', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${-88.875557023618}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     williamsR.onNewCandle(candle);
-    expect(williamsR.getResult()).toBeCloseTo(expected, 13);
+    expect(williamsR.getResult()).toEqual(approximately(expected, 12));
+  });
+
+  // Every window of the table above has a range, so the guard for a flat one could be dropped without a test failing. On an illiquid
+  // market, with period 2, the windows ending on candles 2, 3, 7 and 8 only hold candles at one price, so their highest high is their
+  // lowest low: %R is 0 there, as in TA-Lib, rather than the 0 / 0 of its formula
+  it('should place the close in the range of an illiquid market, and return 0 where that range is flat', () => {
+    const results = resultsOf(new WilliamsR({ period: 2 }), illiquidCandles);
+    expect(results).toEqual(approximately([null, 0, 0, -25, -250 / 3, 0, 0, 0, -50, -100, -100 / 3], 12));
   });
 });

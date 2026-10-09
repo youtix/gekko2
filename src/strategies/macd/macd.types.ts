@@ -1,13 +1,6 @@
-export interface MACDStrategyParams {
-  short: number;
-  long: number;
-  signal: number;
-  macdSrc: 'hist' | 'signal' | 'macd';
-  thresholds: {
-    up: number;
-    down: number;
-    persistence: number;
-  };
-}
+import { z } from 'zod';
+import { macdStrategySchema } from './macd.schema';
+
+export type MACDStrategyParams = z.infer<typeof macdStrategySchema>;
 
 export type MACDTrend = { duration: number; persisted: boolean; direction: 'up' | 'down' | 'none'; adviced: boolean };

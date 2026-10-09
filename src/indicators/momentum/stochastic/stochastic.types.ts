@@ -1,4 +1,4 @@
-import { MovingAverageTypes } from '@indicators/indicator.types';
+import type { MovingAverageTypes } from '@indicators/indicator.types';
 
 declare global {
   interface IndicatorRegistry {
@@ -10,7 +10,7 @@ declare global {
         slowDPeriod?: number;
         slowDMaType?: MovingAverageTypes;
       };
-      output: { k: number | null; d: number | null };
+      output: { k: number; d: number } | null;
     };
   }
 }

@@ -1,8 +1,9 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { EMARibbon } from './emaRibbon.indicator';
 
-const ribbon = new EMARibbon({ count: 22, start: 1, step: 1 });
 describe('EMARibbon', () => {
+  const ribbon = new EMARibbon({ count: 22, start: 1, step: 1 });
   it.each`
     candle                                                                                      | expected
     ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}    | ${null}
@@ -44,18 +45,30 @@ describe('EMARibbon', () => {
     ${{ close: 92, open: 9, high: 96.46225023362183, low: 4.5377497663781705, volume: 331 }}    | ${{ results: [92, 66.07153859341255, 55.323594821209554, 50.64060583774373, 48.65867055354994, 47.892825569251166, 47.671448856571054, 47.68716899108762, 47.79671213834216, 47.96820826218617, 48.113825534105686, 48.247559700508546, 48.367123464068825, 48.624437600358775, 48.67089547116702, 48.733106125490515, 48.99058010851839, 49.067777595583, 49.30618564407353, 49.81633633290119, 50.31085559361981, 50.67908883201886], spread: 44.328551143428946 }}
     ${{ close: 68, open: 92, high: 94.82774764949542, low: 65.17225235050458, volume: 338 }}    | ${{ results: [68, 67.35717953113752, 61.66179741060478, 57.58436350264624, 55.10578036903329, 53.63773254946512, 52.75358664242829, 52.20113143751259, 51.83736971067373, 51.610352214515956, 51.42818794508807, 51.28639666966107, 51.171820112058995, 51.20784592031094, 51.08703353727114, 50.99979952249163, 51.102737874238564, 51.06064311183742, 51.17556707966617, 51.548113825005835, 51.918959630563464, 52.18525502053896], spread: 17.000200477508372 }}
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${{ results: [9, 28.45239317704584, 35.33089870530239, 38.150618101587746, 39.73718691268886, 40.88409467818937, 41.81518998182122, 42.600880006954235, 43.26989576853898, 43.863015448240326, 44.35682328757339, 44.78079718202091, 45.14727438176485, 45.58013313093615, 45.82615434511225, 46.058646637492615, 46.42465588821206, 46.6332069948019, 46.95801037169956, 47.49591250833861, 48.01723602778497, 48.430015453535574], spread: 39.430015453535574 }}
-  `('returns $expected when candle.close = $candle.close', ({ candle, expected }) => {
+  `('should return $expected on candle %$, closing at $candle.close', ({ candle, expected }) => {
     ribbon.onNewCandle(candle);
-    const result = ribbon.getResult();
+    expect(ribbon.getResult()).toEqual(approximately(expected, 12));
+  });
 
-    if (expected === null) {
-      expect(result).toBeNull();
-    } else {
-      expect(result).not.toBeNull();
-      expected.results.forEach((value: number, idx: number) => {
-        expect(result!.results[idx]).toBeCloseTo(value, 13);
-      });
-      expect(result!.spread).toBeCloseTo(expected.spread, 13); // same 1e-13 tolerance as the TEMA test
-    }
+  // A ribbon that read the close whatever its src said, in any of its EMAs, used to pass this file: no row set one. Each value here
+  // differs from the close's, and from a ribbon with only its first EMA on the low
+  const ribbonLow = new EMARibbon({ count: 3, start: 2, step: 2, src: 'low' });
+  it.each`
+    candle                                                                                     | expected
+    ${{ close: 81, open: 81, high: 82.96289647361662, low: 79.03710352638338, volume: 403 }}   | ${null}
+    ${{ close: 24, open: 81, high: 83.85720988022568, low: 21.142790119774318, volume: 814 }}  | ${null}
+    ${{ close: 75, open: 24, high: 76.94326596315126, low: 22.056734036848734, volume: 1064 }} | ${null}
+    ${{ close: 21, open: 75, high: 79.67167346434113, low: 16.328326535658874, volume: 330 }}  | ${null}
+    ${{ close: 34, open: 21, high: 34.711649023641215, low: 20.28835097635878, volume: 964 }}  | ${null}
+    ${{ close: 25, open: 34, high: 36.18138133787512, low: 22.818618662124877, volume: 214 }}  | ${{ results: [22.093445672097914, 26.467497578855937, 30.278653976191492], spread: 8.185208304093578 }}
+    ${{ close: 72, open: 25, high: 73.33035016836122, low: 23.669649831638775, volume: 860 }}  | ${{ results: [23.144248445125154, 25.34835847996907, 28.390367077747857], spread: 5.246118632622704 }}
+    ${{ close: 92, open: 72, high: 94.97523624952838, low: 69.02476375047162, volume: 486 }}   | ${{ results: [53.73125864868946, 42.81892058817009, 40.00019469852607], spread: 13.731063950163389 }}
+    ${{ close: 99, open: 92, high: 101.5127586628106, low: 89.4872413371894, volume: 647 }}    | ${{ results: [77.56858044102276, 61.48624888777782, 54.139350881001306], spread: 23.429229560021454 }}
+    ${{ close: 2, open: 99, high: 99.0804764241746, low: 1.9195235758253941, volume: 396 }}    | ${{ results: [27.135875864224516, 37.65955876299685, 39.21940022237962], spread: 12.083524358155103 }}
+    ${{ close: 86, open: 2, high: 86.08306699694582, low: 1.916933003054178, volume: 252 }}    | ${{ results: [10.32324729011096, 23.36250845901978, 28.56155244542949], spread: 18.238305155318532 }}
+    ${{ close: 80, open: 86, high: 87.6552826540483, low: 78.3447173459517, volume: 299 }}     | ${{ results: [55.670893994004786, 45.355392013792546, 42.78531384557869], spread: 12.885580148426094 }}
+  `('should return $expected with src low when candle low to $candle.low', ({ candle, expected }) => {
+    ribbonLow.onNewCandle(candle);
+    expect(ribbonLow.getResult()).toEqual(approximately(expected, 12));
   });
 });

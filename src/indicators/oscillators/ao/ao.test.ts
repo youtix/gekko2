@@ -1,3 +1,4 @@
+import { approximately } from '@indicators/indicator.mock';
 import { describe, expect, it } from 'vitest';
 import { AO } from './ao.indicator';
 
@@ -46,6 +47,6 @@ describe('AO', () => {
     ${{ close: 9, open: 68, high: 69.94866467256739, low: 7.051335327432617, volume: 823 }}     | ${10.055555555555557}
   `('should return $expected when candle close to $candle.close', ({ candle, expected }) => {
     ao.onNewCandle(candle);
-    expect(ao.getResult()).toBeCloseTo(expected, 13);
+    expect(ao.getResult()).toEqual(approximately(expected, 12));
   });
 });

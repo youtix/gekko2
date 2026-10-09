@@ -1,16 +1,5 @@
-import { BalanceSnapshot } from '@models/event.types';
 import { describe, expect, it } from 'vitest';
-import {
-  addPrecise,
-  linreg,
-  longestDrawdownDuration,
-  maxDrawdown,
-  percentile,
-  sharpeRatio,
-  sortinoRatio,
-  stdev,
-  weightedMean,
-} from './math.utils';
+import { addPrecise, compareWithTolerance, isFiniteNumber, multiplyPrecise, stdev, toSignificantDigits } from './math.utils';
 
 describe('stdev', () => {
   it.each`
@@ -26,252 +15,134 @@ describe('stdev', () => {
   });
 });
 
-describe('percentile', () => {
-  const scores = [4, 4, 5, 5, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 9, 9, 9, 10, 10, 10];
-  const scores2 = [3, 5, 7, 8, 9, 11, 13, 15];
-  const scores3 = [15, 20, 35, 40, 50];
-  const scores4 = [100, 200];
-
-  it.each`
-    input        | ptile        | expected
-    ${undefined} | ${0.25}      | ${NaN}
-    ${null}      | ${0.25}      | ${NaN}
-    ${[]}        | ${0.25}      | ${NaN}
-    ${scores}    | ${undefined} | ${NaN}
-    ${scores}    | ${0.5}       | ${7}
-    ${scores}    | ${0.25}      | ${5}
-    ${scores}    | ${0.85}      | ${9.15}
-    ${scores2}   | ${0.25}      | ${6.5}
-    ${scores3}   | ${0.4}       | ${29}
-    ${scores4}   | ${0.9}       | ${190}
-  `('should return $expected when input is $input and percentile $ptile', ({ input, ptile, expected }) => {
-    if (Number.isFinite(expected)) expect(percentile(input, ptile)).toBeCloseTo(expected, 2);
-    else expect(percentile(input, ptile)).toBeNaN();
-  });
-});
-
-describe('linreg', () => {
-  // Test cases for valid input arrays.
-  it.each`
-    valuesX            | valuesY             | expectedM | expectedB
-    ${[1, 2, 3, 4, 5]} | ${[2, 4, 6, 8, 10]} | ${2}      | ${0}
-    ${[1, 2, 3]}       | ${[1, 2, 3]}        | ${1}      | ${0}
-    ${[1, 2, 3]}       | ${[2, 2, 2]}        | ${0}      | ${2}
-    ${[1, 2, 3, 4, 5]} | ${[1, 3, 2, 5, 4]}  | ${0.8}    | ${0.6}
-  `(
-    'should calculate regression for valuesX: $valuesX and valuesY: $valuesY',
-    ({ valuesX, valuesY, expectedM, expectedB }) => {
-      const [m, b] = linreg(valuesX, valuesY);
-      // Compare the Big numbers by converting them to string.
-      expect(m).toBeCloseTo(expectedM);
-      expect(b).toBeCloseTo(expectedB);
-    },
-  );
-
-  // Test that when the input arrays are empty, the function returns [].
-  it('should return [] when given empty arrays', () => {
-    expect(linreg([], [])).toEqual([]);
-  });
-
-  // Test that the function throws an error if the input arrays are not the same length.
-  it('should throw an error when valuesX and valuesY have different lengths', () => {
-    expect(() => linreg([1, 2, 3], [1, 2])).toThrow('The parameters valuesX and valuesY need to have same size!');
-  });
-});
-
-describe('weightedMean', () => {
-  it.each`
-    values          | weights         | expected
-    ${[1, 2, 3]}    | ${[1, 1, 1]}    | ${2}
-    ${[1, 2, 3, 4]} | ${[1, 2, 3, 4]} | ${3}
-    ${[10, 20]}     | ${[0.5, 1.5]}   | ${17.5}
-  `('should return $expected for values $values and weights $weights', ({ values, weights, expected }) => {
-    expect(weightedMean(values, weights)).toBeCloseTo(expected);
-  });
-
-  it('should throw an error when values and weights have different lengths', () => {
-    expect(() => weightedMean([1, 2], [1])).toThrow();
-  });
-
-  it('should throw an error when provided with empty arrays', () => {
-    expect(() => weightedMean([], [])).toThrow();
-  });
-
-  it('should throw an error when sum of weights is zero', () => {
-    expect(() => weightedMean([1, 2, 3], [0, 0, 0])).toThrow();
-  });
-
-  it('should not mutate the input arrays', () => {
-    const values = [1, 2, 3];
-    const weights = [1, 1, 1];
-    const valuesCopy = [...values];
-    const weightsCopy = [...weights];
-
-    weightedMean(values, weights);
-
-    expect(values).toEqual(valuesCopy);
-    expect(weights).toEqual(weightsCopy);
-  });
-});
-
 describe('addPrecise', () => {
+  // 1.2345678901234567, its decimal point moved by its 16 decimals, is 12345678901234567, past 2 ** 53, which a double holds as
+  // 12345678901234568: added to -0.5 so moved, the sum, back under 2 ** 53, would read back as 0.7345678901234568. addPrecise is then
+  // a + b, as for a sum past 2 ** 53. Moved by a binary product, the values came back off from 2 ** 51 already, further than a + b.
   it.each`
-    a           | b           | expected
-    ${0.1}      | ${0.2}      | ${0.3}
-    ${1.005}    | ${0.005}    | ${1.01}
-    ${123.456}  | ${0.444}    | ${123.9}
-    ${0}        | ${0}        | ${0}
-    ${-1.1}     | ${2.2}      | ${1.1}
-    ${1e-7}     | ${2e-7}     | ${3e-7}
-    ${1.234567} | ${8.765433} | ${10}
-  `('returns $expected for $a + $b', ({ a, b, expected }) => {
+    description                                               | a                     | b                     | expected
+    ${'0.1 + 0.2, 0.30000000000000004 in binary'}             | ${0.1}                | ${0.2}                | ${0.3}
+    ${'1.005 + 0.005, 1.0099999999999998 in binary'}          | ${1.005}              | ${0.005}              | ${1.01}
+    ${'2.5 - 2.2, 0.2999999999999998 in binary'}              | ${2.5}                | ${-2.2}               | ${0.3}
+    ${'0.3 - 0.1, 0.19999999999999998 in binary'}             | ${0.3}                | ${-0.1}               | ${0.2}
+    ${'values the binary sum adds right'}                     | ${123.456}            | ${0.444}              | ${123.9}
+    ${'zeros'}                                                | ${0}                  | ${0}                  | ${0}
+    ${'negative zeros, a negative zero'}                      | ${-0}                 | ${-0}                 | ${-0}
+    ${'a negative value'}                                     | ${-1.1}               | ${2.2}                | ${1.1}
+    ${'values written with an exponent'}                      | ${1e-7}               | ${2e-7}               | ${3e-7}
+    ${'a sum without decimals'}                               | ${1.234567}           | ${8.765433}           | ${10}
+    ${'16 digits, an ulp below through a binary product'}     | ${567095.51811}       | ${57385.8976364135}   | ${624481.4157464135}
+    ${'16 digits, an ulp above through a binary product'}     | ${4310369.491577148}  | ${3184194.5648193}    | ${7494564.056396448}
+    ${'past 2 ** 53 once moved: a + b, not an ulp above'}     | ${123456.78901234567} | ${1e-8}               | ${123456.78901235567}
+    ${'the first past 2 ** 53 once moved, the sum under it'}  | ${1.2345678901234567} | ${-0.5}               | ${0.7345678901234567}
+    ${'the second past 2 ** 53 once moved, the sum under it'} | ${-0.5}               | ${1.2345678901234567} | ${0.7345678901234567}
+    ${'both under 2 ** 53 once moved, their sum past it'}     | ${583868605058252.8}  | ${478743844670668.7}  | ${1062612449728921.5}
+    ${'310 decimals, NaN through a binary product'}           | ${1e-300}             | ${1e-310}             | ${1.0000000001e-300}
+    ${'NaN, as a + b'}                                        | ${NaN}                | ${1}                  | ${NaN}
+    ${'Infinity, as a + b'}                                   | ${Infinity}           | ${1}                  | ${Infinity}
+  `('should return $expected for $a + $b: $description', ({ a, b, expected }) => {
     expect(addPrecise(a, b)).toBe(expected);
   });
 });
 
-describe('sharpeRatio', () => {
+// The first five come out an ulp or two off the decimal in binary (100.01 × 0.0004 is 0.040004000000000005)
+describe('multiplyPrecise', () => {
   it.each`
-    description                                  | returns         | yearlyProfit | riskFreeReturn | elapsedYears | expected
-    ${'return 0 for empty returns array'}        | ${[]}           | ${10}        | ${1}           | ${1}         | ${0}
-    ${'return 0 for zero elapsed years'}         | ${[1, 2, 3]}    | ${10}        | ${1}           | ${0}         | ${0}
-    ${'return 0 for negative elapsed years'}     | ${[1, 2, 3]}    | ${10}        | ${1}           | ${-1}        | ${0}
-    ${'return 0 when all returns are identical'} | ${[5, 5, 5, 5]} | ${10}        | ${1}           | ${1}         | ${0}
-  `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, expected }) => {
-    expect(sharpeRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears })).toBe(expected);
-  });
-
-  it.each`
-    description                                           | returns                     | yearlyProfit | riskFreeReturn | elapsedYears | comparison
-    ${'calculate positive ratio for profitable strategy'} | ${[2, -1, 3, -0.5, 2.5, 1]} | ${15}        | ${2}           | ${1}         | ${'positive'}
-    ${'calculate negative ratio when below risk-free'}    | ${[2, -1, 3, -0.5, 2.5, 1]} | ${0.5}       | ${2}           | ${1}         | ${'negative'}
-  `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, comparison }) => {
-    const result = sharpeRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears });
-    if (comparison === 'positive') expect(result).toBeGreaterThan(0);
-    else expect(result).toBeLessThan(0);
-  });
-
-  it('should scale correctly with elapsed years', () => {
-    const params = {
-      returns: [2, -1, 3, -0.5, 2.5, 1, 0.5, -0.3, 1.5, 2, -1, 0.8],
-      yearlyProfit: 10,
-      riskFreeReturn: 1,
-      elapsedYears: 1,
-    };
-    const oneYear = sharpeRatio(params);
-    const twoYears = sharpeRatio({ ...params, elapsedYears: 2 });
-    // Same number of observations over 2 years means fewer observations per year,
-    // so annualized volatility is lower, and sharpe should be higher
-    expect(twoYears).toBeGreaterThan(oneYear);
+    a           | b         | expected
+    ${100.01}   | ${0.0004} | ${0.040004}
+    ${101.21}   | ${0.3}    | ${30.363}
+    ${61234.56} | ${0.7}    | ${42864.192}
+    ${0.0007}   | ${100}    | ${0.07}
+    ${0.07}     | ${1200}   | ${84}
+    ${4.99825}  | ${100.01} | ${499.8749825}
+    ${1200}     | ${0.5}    | ${600}
+    ${0.3}      | ${0}      | ${0}
+  `('gives $expected for $a × $b', ({ a, b, expected }) => {
+    expect(multiplyPrecise(a, b)).toBe(expected);
   });
 });
 
-describe('sortinoRatio', () => {
+// Made in binary: 101.2 + 0.01, 0.0007 × 100 and 0.3 / 0.1. With no end: 302 / 3, and 0.1 / 3 × 1e-9 for the tiny value. Just
+// under a power of ten, the two of 15 digits kept a digit less with the exponent read from Math.log10, which gives 10 and -12 there
+describe('toSignificantDigits', () => {
   it.each`
-    description                                      | returns               | yearlyProfit | riskFreeReturn | elapsedYears | expected
-    ${'return 0 for empty returns array'}            | ${[]}                 | ${10}        | ${1}           | ${1}         | ${0}
-    ${'return 0 for zero elapsed years'}             | ${[-1, -2, 3]}        | ${10}        | ${1}           | ${0}         | ${0}
-    ${'return 0 for negative elapsed years'}         | ${[-1, -2, 3]}        | ${10}        | ${1}           | ${-1}        | ${0}
-    ${'return 0 when there are no negative returns'} | ${[1, 2, 3, 4, 5]}    | ${10}        | ${1}           | ${1}         | ${0}
-    ${'return 0 when all losses are identical'}      | ${[-2, -2, -2, 5, 5]} | ${10}        | ${1}           | ${1}         | ${0}
-  `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, expected }) => {
-    expect(sortinoRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears })).toBe(expected);
-  });
-
-  it.each`
-    description                                             | returns                         | yearlyProfit | riskFreeReturn | elapsedYears | comparison
-    ${'calculate positive ratio for profitable strategy'}   | ${[2, -1, 3, -0.5, 2.5, -2, 1]} | ${15}        | ${2}           | ${1}         | ${'positive'}
-    ${'calculate negative ratio when below risk-free rate'} | ${[2, -1, 3, -0.5, 2.5, -2, 1]} | ${0.5}       | ${2}           | ${1}         | ${'negative'}
-  `('should $description', ({ returns, yearlyProfit, riskFreeReturn, elapsedYears, comparison }) => {
-    const result = sortinoRatio({ returns, yearlyProfit, riskFreeReturn, elapsedYears });
-    if (comparison === 'positive') expect(result).toBeGreaterThan(0);
-    else expect(result).toBeLessThan(0);
-  });
-
-  it('should be higher than sharpe ratio when there are more gains than losses', () => {
-    // When there are more positive returns, downside deviation is typically lower
-    // than overall standard deviation, leading to higher Sortino vs Sharpe
-    const params = {
-      returns: [3, 4, 5, -1, 2, 3, -0.5, 4, 5, 2],
-      yearlyProfit: 20,
-      riskFreeReturn: 2,
-      elapsedYears: 1,
-    };
-    const sharpe = sharpeRatio(params);
-    const sortino = sortinoRatio(params);
-    expect(sortino).toBeGreaterThan(sharpe);
+    description                               | value                     | expected
+    ${'a sum made in binary'}                 | ${101.21000000000001}     | ${101.21}
+    ${'a product made in binary'}             | ${0.06999999999999999}    | ${0.07}
+    ${'a quotient made in binary'}            | ${2.9999999999999996}     | ${3}
+    ${'a negative value made in binary'}      | ${-0.06999999999999999}   | ${-0.07}
+    ${'a quotient with no end, to 15 digits'} | ${100.66666666666667}     | ${100.666666666667}
+    ${'a tiny value, to 15 digits'}           | ${3.3333333333333335e-11} | ${3.33333333333333e-11}
+    ${'a large value, to 15 digits'}          | ${123456789012345680000}  | ${123456789012346000000}
+    ${'a value of fewer digits, as it is'}    | ${0.04}                   | ${0.04}
+    ${'15 digits just under 1e10, as it is'}  | ${9999999999.99998}       | ${9999999999.99998}
+    ${'15 digits just under 1e-12, as it is'} | ${9.99999999999999e-13}   | ${9.99999999999999e-13}
+    ${'0, as it is'}                          | ${0}                      | ${0}
+    ${'-0, as it is'}                         | ${-0}                     | ${-0}
+    ${'NaN, as it is'}                        | ${NaN}                    | ${NaN}
+    ${'Infinity, as it is'}                   | ${Infinity}               | ${Infinity}
+    ${'-Infinity, as it is'}                  | ${-Infinity}              | ${-Infinity}
+  `('should give $expected for $value, $description', ({ value, expected }) => {
+    expect(toSignificantDigits(value)).toBe(expected);
   });
 });
 
-describe('maxDrawdown', () => {
+describe('isFiniteNumber', () => {
   it.each`
-    description                                      | balances                   | initialBalance | expected
-    ${'return 0 for empty balances array'}           | ${[]}                      | ${1000}        | ${0}
-    ${'return 0 when initialBalance is 0'}           | ${[100, 200]}              | ${0}           | ${0}
-    ${'return 0 when initialBalance is negative'}    | ${[100, 200]}              | ${-100}        | ${0}
-    ${'return 0 when balances only increase'}        | ${[1100, 1200, 1300]}      | ${1000}        | ${0}
-    ${'return 0 when balances stay constant'}        | ${[1000, 1000, 1000]}      | ${1000}        | ${0}
-    ${'calculate drawdown from initial balance'}     | ${[900]}                   | ${1000}        | ${10}
-    ${'calculate drawdown from new peak'}            | ${[1100, 990]}             | ${1000}        | ${10}
-    ${'return max drawdown among multiple declines'} | ${[1100, 1000, 1200, 900]} | ${1000}        | ${25}
-    ${'handle 100% drawdown'}                        | ${[1000, 0]}               | ${1000}        | ${100}
-    ${'handle small fractional changes'}             | ${[100.5, 100.0, 100.2]}   | ${100}         | ${0.4975124378109453}
-  `('should $description', ({ balances, initialBalance, expected }) => {
-    const result = maxDrawdown(balances, initialBalance);
-    if (expected === 0) {
-      expect(result).toBe(0);
-    } else {
-      expect(result).toBeCloseTo(expected, 5);
-    }
-  });
-
-  it('should track peak correctly through multiple ups and downs', () => {
-    // Peak at 1500, then drop to 1000, that's 33.33% drawdown
-    const balances = [1000, 1200, 1500, 1200, 1000, 1300];
-    const result = maxDrawdown(balances, 1000);
-    expect(result).toBeCloseTo(33.333333, 4);
-  });
-
-  it('should not mutate input array', () => {
-    const balances = [1100, 1000, 1200];
-    const copy = [...balances];
-    maxDrawdown(balances, 1000);
-    expect(balances).toEqual(copy);
+    value               | expected
+    ${0}                | ${true}
+    ${-2.5}             | ${true}
+    ${Number.MAX_VALUE} | ${true}
+    ${NaN}              | ${false}
+    ${Infinity}         | ${false}
+    ${-Infinity}        | ${false}
+    ${null}             | ${false}
+    ${undefined}        | ${false}
+    ${'1'}              | ${false}
+  `('should tell whether $value is a finite number: $expected', ({ value, expected }) => {
+    expect(isFiniteNumber(value)).toBe(expected);
   });
 });
 
-describe('longestDrawdownDuration', () => {
+describe('compareWithTolerance', () => {
+  // 2 ** 30 + 1 lies 9.3e-10 of 2 ** 30 away from it, within the default tolerance of 1e-9, and 2 ** 30 + 2 lies 1.9e-9 away
   it.each`
-    description                                     | samples                                                                                                                                                                                                              | initialBalance | expected
-    ${'return 0 for empty samples'}                 | ${[]}                                                                                                                                                                                                                | ${1000}        | ${0}
-    ${'return 0 when initialBalance is 0'}          | ${[{ date: 1000, balance: { total: 900 } }]}                                                                                                                                                                         | ${0}           | ${0}
-    ${'return 0 when initialBalance is negative'}   | ${[{ date: 1000, balance: { total: 900 } }]}                                                                                                                                                                         | ${-100}        | ${0}
-    ${'return 0 if balance never drops below peak'} | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 1100 } }]}                                                                                                                              | ${1000}        | ${0}
-    ${'calculate duration of single drawdown'}      | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 900 } }, { date: 3000, balance: { total: 1000 } }]}                                                                                     | ${1000}        | ${2000}
-    ${'find longest among multiple drawdowns'}      | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 900 } }, { date: 3000, balance: { total: 1000 } }, { date: 4000, balance: { total: 800 } }, { date: 10000, balance: { total: 1000 } }]} | ${1000}        | ${7000}
-    ${'handle ongoing drawdown at end'}             | ${[{ date: 1000, balance: { total: 1000 } }, { date: 2000, balance: { total: 900 } }]}                                                                                                                               | ${1000}        | ${1000}
-  `('should $description', ({ samples, initialBalance, expected }) => {
-    expect(longestDrawdownDuration(samples, initialBalance)).toBe(expected);
+    description                                                             | a                     | b                     | expected
+    ${'equal values'}                                                       | ${30081.93}           | ${30081.93}           | ${0}
+    ${'the running-sum SMA of a flat window at 30081.93, 17 ulps above it'} | ${30081.930000000062} | ${30081.93}           | ${0}
+    ${'a flat price 17 ulps below its running-sum SMA'}                     | ${30081.93}           | ${30081.930000000062} | ${0}
+    ${'hlc3 of a flat candle at 30081.93, one ulp above its close'}         | ${30081.930000000004} | ${30081.93}           | ${0}
+    ${'a value within the default tolerance above another'}                 | ${2 ** 30 + 1}        | ${2 ** 30}            | ${0}
+    ${'a value beyond the default tolerance above another'}                 | ${2 ** 30 + 2}        | ${2 ** 30}            | ${1}
+    ${'a value beyond the default tolerance below another'}                 | ${2 ** 30}            | ${2 ** 30 + 2}        | ${-1}
+    ${'a price a tick of 0.01 above another, on 100000'}                    | ${100000.01}          | ${100000}             | ${1}
+    ${'a price a tick of 0.01 below another, on 100000'}                    | ${99999.99}           | ${100000}             | ${-1}
+    ${'negative values within the tolerance'}                               | ${-(2 ** 30) - 1}     | ${-(2 ** 30)}         | ${0}
+    ${'negative values beyond it'}                                          | ${-1}                 | ${-2}                 | ${1}
+    ${'0 and -0'}                                                           | ${0}                  | ${-0}                 | ${0}
+    ${'a tiny value and 0, never within a tolerance relative to them'}      | ${1e-300}             | ${0}                  | ${1}
+    ${'0 and a tiny negative value'}                                        | ${0}                  | ${-1e-300}            | ${1}
+    ${'tiny values of opposite signs'}                                      | ${-1e-12}             | ${1e-12}              | ${-1}
+    ${'Infinity and itself'}                                                | ${Infinity}           | ${Infinity}           | ${0}
+    ${'Infinity and the largest finite value'}                              | ${Infinity}           | ${Number.MAX_VALUE}   | ${1}
+    ${'-Infinity and a finite value'}                                       | ${-Infinity}          | ${0}                  | ${-1}
+    ${'values whose difference overflows to Infinity'}                      | ${Number.MAX_VALUE}   | ${-Number.MAX_VALUE}  | ${1}
+    ${'NaN and a value'}                                                    | ${NaN}                | ${1}                  | ${NaN}
+    ${'a value and NaN'}                                                    | ${1}                  | ${NaN}                | ${NaN}
+  `('should compare $description as $expected', ({ a, b, expected }) => {
+    expect(compareWithTolerance(a, b)).toBe(expected);
   });
 
-  it('should track recovery to exact peak value', () => {
-    // Drop from 1000 to 800, then recover to exactly 1000 at date 5000
-    const samples = [
-      { date: 1000, balance: { total: 1000 } },
-      { date: 2000, balance: { total: 800 } },
-      { date: 3000, balance: { total: 900 } },
-      { date: 4000, balance: { total: 950 } },
-      { date: 5000, balance: { total: 1000 } },
-    ] as BalanceSnapshot[];
-    expect(longestDrawdownDuration(samples, 1000)).toBe(4000);
-  });
-
-  it('should not mutate input array', () => {
-    const samples = [
-      { date: 1000, balance: { total: 1000 } },
-      { date: 2000, balance: { total: 900 } },
-    ] as BalanceSnapshot[];
-    const copy = JSON.parse(JSON.stringify(samples));
-    longestDrawdownDuration(samples, 1000);
-    expect(samples).toEqual(copy);
+  // The tolerance is a share of the larger magnitude: 1 apart is within 25 % of 4, whichever of 3 and 4 comes first, not of 3
+  it.each`
+    description                                           | a                     | b           | tolerance | expected
+    ${'values within 1 %'}                                | ${101}                | ${100}      | ${0.01}   | ${0}
+    ${'values beyond 1 %'}                                | ${102}                | ${100}      | ${0.01}   | ${1}
+    ${'4 and 3, 25 % of 4 apart'}                         | ${4}                  | ${3}        | ${0.25}   | ${0}
+    ${'3 and 4, 25 % of 4 apart'}                         | ${3}                  | ${4}        | ${0.25}   | ${0}
+    ${'3 and 2, beyond 25 % of 3'}                        | ${3}                  | ${2}        | ${0.25}   | ${1}
+    ${'a running-sum SMA, exactly with a tolerance of 0'} | ${30081.930000000062} | ${30081.93} | ${0}      | ${1}
+  `('should compare $description with a tolerance of $tolerance as $expected', ({ a, b, tolerance, expected }) => {
+    expect(compareWithTolerance(a, b, tolerance)).toBe(expected);
   });
 });

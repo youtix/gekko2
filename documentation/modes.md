@@ -36,11 +36,10 @@ Gekko 2 operates in three distinct modes, each designed for a specific stage of 
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: importer
   tickrate: 500              # Milliseconds between API requests (rate limiting)
-  fillGaps: empty            # How to handle missing candles: 'empty' | 'no'
   daterange:
     start: '2024-01-01T00:00:00.000Z'
     end: '2024-12-01T00:00:00.000Z'
@@ -51,6 +50,7 @@ exchange:
 storage:
   type: sqlite
   database: ./db/binance-BTC_USDT.sql
+  # insertThreshold: 1000    # Optional: minutes of candles buffered before each write
 
 plugins:
   - name: CandleWriter       # Required: saves candles to database
@@ -58,14 +58,14 @@ plugins:
 
 ### Key Configuration Options
 
-| Option             | Description                  | Example Values       |
-|--------------------|------------------------------|----------------------|
-| `asset`            | The base asset to import     | `BTC`, `ETH`, `SOL`  |
-| `currency`         | The quote currency           | `USDT`, `EUR`, `BTC` |
-| `tickrate`         | Delay between API calls (ms) | `500` (recommended)  |
-| `fillGaps`         | Handling of missing data     | `empty`, `no`        |
-| `daterange.start`  | Start date for import        | ISO 8601 format      |
-| `daterange.end`    | End date for import          | ISO 8601 format      |
+| Option                    | Description                                             | Example Values                                         |
+|---------------------------|---------------------------------------------------------|--------------------------------------------------------|
+| `assets`                  | The base assets to import                               | `[BTC, ETH, SOL]`                                      |
+| `currency`                | The quote currency                                      | `USDT`, `EUR`, `BTC`                                   |
+| `tickrate`                | Delay between API calls (ms)                            | `500` (recommended)                                    |
+| `daterange.start`         | Start date for import                                   | ISO 8601 format                                        |
+| `daterange.end`           | End date for import                                     | ISO 8601 format                                        |
+| `storage.insertThreshold` | Optional: minutes of candles buffered before each write | `1` to `1440` (a day); default `1000`, `1` in realtime |
 
 ### Important Notes
 
@@ -74,6 +74,12 @@ plugins:
 
 > [!NOTE]
 > Import duration depends on the date range and exchange. Large ranges (multiple years) can take several minutes.
+
+> [!NOTE]
+> An import replaces whatever the database already holds for the minutes the exchange returns, a minute without trades included; the candle it makes up for a minute the exchange lacks only replaces a stored candle that is made up too. A realtime run with `CandleWriter` only replaces a stored made-up candle, and only with a candle that traded. Re-importing therefore repairs the flat, zero-volume candles that a realtime run stores for the minutes it missed: re-import the ranges named by its `Total gap detected` and `Partial gap` warnings. A gap of more than 7 days in the exchange's history is not filled: the run stops with an error naming the gap.
+
+> [!NOTE]
+> On `hyperliquid` (importer or realtime), write a Unit-wrapped spot token by its token name in `watch.assets` (`UBTC`, `UETH`, `USOL`, `UPUMP`...), not by the coin it wraps: ccxt resolves the token name to its spot market, while a coin name only works when ccxt happens to name the market after it (`BTC/USDC` resolves, `PUMP/USDC` does not).
 
 ### Required Plugin
 
@@ -105,7 +111,7 @@ plugins:
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: backtest
   timeframe: 1h              # Candle timeframe for strategy
@@ -117,6 +123,29 @@ watch:
 
 exchange:
   name: dummy-cex            # Simulated exchange for backtesting
+  marketData:                # Fees and order limits, one entry per watched pair
+    - symbol: BTC/USDT
+      marketData:
+        price:
+          min: 0.01
+          max: 1000000
+        amount:
+          min: 0.00001
+          max: 9000
+        cost:
+          min: 5
+          max: 9000000
+        precision:           # Decimals of a price and of an amount, a whole number (8 = steps of 0.00000001), not a step like 0.01
+          price: 8
+          amount: 8
+        fee:
+          maker: 0.0004
+          taker: 0.0007
+  simulationBalance:         # Starting balances
+    - assetName: BTC
+      balance: 0
+    - assetName: USDT
+      balance: 1000
 
 storage:
   type: sqlite
@@ -137,9 +166,11 @@ plugins:
 
   - name: Trader             # Executes simulated orders
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     enableConsoleTable: true # Display results in terminal table
 ```
+
+The simulator receives each order as the live exchange does: its amount truncated to the amount step (`precision.amount`), its price rounded half up to the price tick (`precision.price`). An amount truncated to 0, or whose cost falls under `cost.min`, is refused, and an order fills for the amount truncated. For Hyperliquid, whose tick depends on the price, add `priceSignificantDigits: 5` under `precision`.
 
 ### Key Configuration Options
 
@@ -156,7 +187,7 @@ plugins:
 > Always use `dummy-cex` as the exchange for backtesting. This simulated exchange handles order execution without real API calls.
 
 > [!TIP]
-> Set `warmup.candleCount` based on your strategy's indicator requirements. For example, a 200-period moving average needs at least 200 warmup candles.
+> Set `warmup.candleCount` based on your strategy's indicator requirements. For example, a 200-period moving average needs at least 200 warmup candles. The strategy trades from the candle after the warmup, so `watch.daterange` must hold more whole `timeframe` candles than `warmup.candleCount`, counted from the first timeframe boundary at or after its start (in UTC: a `1w` candle starts on a Monday, a `1M` candle on the 1st); otherwise Gekko refuses the configuration.
 
 > [!NOTE]
 > Backtesting runs at maximum speed — years of data can be processed in seconds.
@@ -167,17 +198,17 @@ plugins:
 |-------------------------|-----------------------------------------------------|
 | **TradingAdvisor**      | Runs your strategy and generates buy/sell signals   |
 | **Trader**              | Executes orders on the dummy exchange               |
-| **PerformanceAnalyzer** | Calculates returns, drawdown, Sharpe ratio, etc.    |
+| **RoundTripAnalyzer**   | Calculates returns, win rate, Sharpe ratio, etc.    |
 
 ### Performance Metrics
 
-The PerformanceAnalyzer provides:
+The analyzers provide (configure `RoundTripAnalyzer` or `PortfolioAnalyzer`, not both):
 - **Total Return** — Overall profit/loss percentage
-- **Max Drawdown** — Largest peak-to-trough decline
-- **Longest Drawdown** — Duration of the longest drawdown period
+- **Max Drawdown** — Largest peak-to-trough decline (`PortfolioAnalyzer`)
+- **Longest Drawdown** — Duration of the longest drawdown period (`PortfolioAnalyzer`)
 - **Sharpe Ratio** — Risk-adjusted return
-- **Win Rate** — Percentage of profitable trades
-- **Trade Count** — Total number of executed trades
+- **Win Rate** — Percentage of profitable trades (`RoundTripAnalyzer`)
+- **Trade Count** — Total number of executed trades (`RoundTripAnalyzer`)
 
 ---
 
@@ -206,11 +237,11 @@ Realtime mode supports several use cases depending on your plugin configuration:
 
 #### 1. Screener (Alerts Only)
 
-Monitor markets and receive Telegram alerts when your strategy emit signals.
+Monitor markets and receive Telegram alerts when your strategy emits signals.
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 4h
@@ -221,6 +252,11 @@ watch:
 # and use real unauthenticated data (fetchCandles, etc.)
 exchange:
   name: paper-binance
+  simulationBalance:             # Simulated balances, required by paper-binance
+    - assetName: BTC
+      balance: 1
+    - assetName: USDT
+      balance: 10000
 
 strategy:
   name: RSI
@@ -228,17 +264,24 @@ strategy:
   thresholds:
     high: 70
     low: 30
+    persistence: 0
 
 plugins:
   - name: TradingAdvisor
     strategyName: RSI
 
-  - name: Trader # Your strategy sometimes waits for events from trader plugin to emit signals, so we need to include it here
+  - name: Trader                 # Simulates the orders, whose end the strategy waits for (see below)
 
   - name: EventSubscriber        # Telegram alerts
     token: YOUR_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 ```
+
+> [!IMPORTANT]
+> Keep the `Trader`, even for alerts: it is the only plugin that executes the orders the strategy creates, and every built-in strategy waits for its order to end (completed, canceled or errored) before it advises again. Without a Trader, the first order never ends, the strategy advises once per run, and Gekko warns at start-up (`warn` level, so set `GEKKO_LOG_LEVEL` to `warn` or `info` to see it). On `paper-binance` the orders are only simulated, from `simulationBalance`. `hyperliquid` has no paper exchange: there, the Trader places the orders on the account, or on its testnet with `sandbox: true`.
+
+The alerts are the strategy's orders (`/sub_strat_create`) and its log lines at the `info`, `warn` and `error` levels (`/sub_strat_info`), the error line that stops the bot included; its `debug` lines are not sent.
 
 #### 2. Sandbox Trading (Paper Money)
 
@@ -246,7 +289,7 @@ Test strategies with fake money on exchange testnets. Real orders are placed, bu
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1d
@@ -256,7 +299,7 @@ watch:
 exchange:
   name: binance
   sandbox: true                  # Use testnet
-  key: YOUR_SANDBOX_API_KEY
+  apiKey: YOUR_SANDBOX_API_KEY
   secret: YOUR_SANDBOX_API_SECRET
 
 strategy:
@@ -272,7 +315,7 @@ plugins:
 
   - name: Trader                 # Executes orders on sandbox
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     riskFreeReturn: 5
 ```
 
@@ -285,7 +328,7 @@ Trade with simulated money using **real market data** from Binance, but with ord
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1h
@@ -295,8 +338,10 @@ watch:
 exchange:
   name: paper-binance            # Uses real Binance data, simulates orders locally
   simulationBalance:
-    asset: 1                     # Starting BTC balance
-    currency: 10000              # Starting USDT balance
+    - assetName: BTC
+      balance: 1                 # Starting BTC balance
+    - assetName: USDT
+      balance: 10000             # Starting USDT balance
   # feeOverride:                 # Optional: override exchange fees
   #   maker: 0.001
   #   taker: 0.002
@@ -314,7 +359,7 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     enableConsoleTable: true
 ```
 
@@ -336,7 +381,7 @@ plugins:
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1h
@@ -345,7 +390,7 @@ watch:
 
 exchange:
   name: binance
-  key: YOUR_LIVE_API_KEY
+  apiKey: YOUR_LIVE_API_KEY
   secret: YOUR_LIVE_API_SECRET
 
 strategy:
@@ -361,12 +406,13 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     riskFreeReturn: 5
 
   - name: EventSubscriber        # Get Telegram notifications
     token: YOUR_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 
 [I understand that Gekko only automates MY OWN trading strategies]: true
 ```
@@ -380,6 +426,7 @@ plugins:
   - name: Supervision
     token: YOUR_BOT_TOKEN
     botUsername: YOUR_BOT_SECRET
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
     cpuThreshold: 80             # Alert if CPU > 80%
     memoryThreshold: 1024        # Alert if memory > 1024 MB
     cpuCheckInterval: 10000      # Check every 10 seconds
@@ -391,14 +438,14 @@ plugins:
 | Option             | Description                        | Values                              |
 |--------------------|------------------------------------|-------------------------------------|
 | `exchange.sandbox` | Use testnet instead of mainnet     | `true`, `false`                     |
-| `exchange.key`     | API key for authenticated requests | Your API key                        |
+| `exchange.apiKey`  | API key for authenticated requests | Your API key                        |
 | `exchange.secret`  | API secret for signing requests    | Your API secret                     |
 | `timeframe`        | Live candle period                 | `1m`, `5m`, `15m`, `1h`, `4h`, `1d` |
 
 ### Important Notes
 
 > [!WARNING]
-> The line `[I understand that Gekko only automates MY OWN trading strategies]: true` is **required** for any configuration that executes real trades (sandbox or live). This confirms you understand that Gekko automates your strategy — it does not provide trading advice.
+> The line `[I understand that Gekko only automates MY OWN trading strategies]: true` is **required** for any configuration that runs a `Trader` on a real exchange (`binance` or `hyperliquid` without `sandbox: true`), where orders spend real money: Gekko refuses to start without it. This confirms you understand that Gekko automates your strategy — it does not provide trading advice. Sandbox (`sandbox: true`), `paper-binance` and `dummy-cex` configurations do not need it.
 
 > [!IMPORTANT]
 > Never share your API keys. Use environment variables or a secure secrets manager in production.
@@ -409,7 +456,7 @@ plugins:
 |-------------------------|---------------------------------------------------------|
 | **TradingAdvisor**      | Runs strategy and generates signals                     |
 | **Trader**              | Executes orders on the exchange                         |
-| **PerformanceAnalyzer** | Tracks live performance metrics                         |
+| **RoundTripAnalyzer**   | Tracks live performance metrics                         |
 | **EventSubscriber**     | Sends trading events to Telegram                        |
 | **Supervision**         | System monitoring and Telegram bot commands             |
 

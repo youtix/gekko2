@@ -56,7 +56,7 @@ Before backtesting, you need historical candle data from an exchange.
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: importer
   daterange:
@@ -92,7 +92,7 @@ Test your strategy on historical data without risking real money.
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: backtest
   timeframe: 1h
@@ -104,6 +104,29 @@ watch:
 
 exchange:
   name: dummy-cex
+  marketData:                # Fees and order limits, one entry per watched pair
+    - symbol: BTC/USDT
+      marketData:
+        price:
+          min: 0.01
+          max: 1000000
+        amount:
+          min: 0.00001
+          max: 9000
+        cost:
+          min: 5
+          max: 9000000
+        precision:           # Decimals of a price and of an amount, a whole number (8 = steps of 0.00000001), not a step like 0.01
+          price: 8
+          amount: 8
+        fee:
+          maker: 0.0004
+          taker: 0.0007
+  simulationBalance:         # Starting balances
+    - assetName: BTC
+      balance: 0
+    - assetName: USDT
+      balance: 1000
 
 storage:
   type: sqlite
@@ -122,9 +145,11 @@ plugins:
   - name: TradingAdvisor
     strategyName: RSI
   - name: Trader
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     enableConsoleTable: true
 ```
+
+The simulator receives each order as the live exchange does: its amount truncated to the amount step (`precision.amount`), its price rounded half up to the price tick (`precision.price`). An amount truncated to 0, or whose cost falls under `cost.min`, is refused, and an order fills for the amount truncated. For Hyperliquid, whose tick depends on the price, add `priceSignificantDigits: 5` under `precision`.
 
 **Run the backtest:**
 
@@ -132,19 +157,19 @@ plugins:
 GEKKO_CONFIG_FILE_PATH=./config/backtest.yml ./dist/gekko2
 ```
 
-You'll see trade history and performance metrics (profit/loss, drawdown, Sharpe ratio, etc).
+You'll see trade history and performance metrics (profit/loss, win rate, Sharpe ratio, etc).
 
 ---
 
 ## 🔔 4. Screener (Realtime Alerts)
 
-Monitor the market and receive Telegram alerts when your strategy signals.
+Monitor the market and receive Telegram alerts when your strategy signals. No API key is needed: the `paper-binance` exchange reads Binance's public market data and simulates the orders locally.
 
 **Create** `config/screener.yml`:
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 4h
@@ -152,7 +177,12 @@ watch:
     candleCount: 365
 
 exchange:
-  name: binance
+  name: paper-binance        # Real Binance prices, simulated orders: no API key
+  simulationBalance:         # Simulated balances, required by paper-binance
+    - assetName: BTC
+      balance: 1
+    - assetName: USDT
+      balance: 10000
 
 strategy:
   name: RSI
@@ -167,9 +197,12 @@ plugins:
   - name: TradingAdvisor
     strategyName: RSI
 
+  - name: Trader             # Fills the orders on paper: every built-in strategy waits for its order to end before it signals again
+
   - name: EventSubscriber
     token: YOUR_TELEGRAM_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 ```
 
 **Run the screener:**
@@ -178,11 +211,11 @@ plugins:
 GEKKO_CONFIG_FILE_PATH=./config/screener.yml ./dist/gekko2
 ```
 
-Gekko watches the market and sends Telegram messages when buy/sell signals trigger. No trades are executed—just alerts.
+Gekko watches the market and sends Telegram messages when buy/sell signals trigger. No real trades are executed: the orders are only simulated, on the `simulationBalance` portfolio. Keep the `Trader` all the same: without it no order ever ends, so the strategy signals once per run, and Gekko warns at start-up (a `warn` line, which `GEKKO_LOG_LEVEL=warn` shows).
 
 ---
 
-## 🧪 5. Sandbox Trading (Paper Trading)
+## 🧪 5. Sandbox Trading (Testnet)
 
 Test your strategy with fake money on an exchange's testnet.
 
@@ -190,7 +223,7 @@ Test your strategy with fake money on an exchange's testnet.
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1h
@@ -200,7 +233,7 @@ watch:
 exchange:
   name: binance
   sandbox: true
-  key: YOUR_SANDBOX_API_KEY
+  apiKey: YOUR_SANDBOX_API_KEY
   secret: YOUR_SANDBOX_API_SECRET
 
 strategy:
@@ -216,10 +249,8 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     riskFreeReturn: 5
-
-[I understand that Gekko only automates MY OWN trading strategies]: true
 ```
 
 **Get sandbox API keys:**
@@ -243,7 +274,7 @@ Real orders are placed on the testnet with fake funds. Perfect for validating yo
 
 ```yaml
 watch:
-  asset: BTC
+  assets: [BTC]
   currency: USDT
   mode: realtime
   timeframe: 1h
@@ -252,7 +283,7 @@ watch:
 
 exchange:
   name: binance
-  key: YOUR_LIVE_API_KEY
+  apiKey: YOUR_LIVE_API_KEY
   secret: YOUR_LIVE_API_SECRET
 
 strategy:
@@ -268,15 +299,18 @@ plugins:
 
   - name: Trader
 
-  - name: PerformanceAnalyzer
+  - name: RoundTripAnalyzer
     riskFreeReturn: 5
 
   - name: EventSubscriber
     token: YOUR_TELEGRAM_BOT_TOKEN
     botUsername: YOUR_BOT_USERNAME
+    # chatId: 123456789 # Optional: the chat the bot talks to; without it, the first chat that sends it a command after start-up is bound
 
 [I understand that Gekko only automates MY OWN trading strategies]: true
 ```
+
+The last line is the disclaimer that takes you live: Gekko refuses to start a `Trader` on a real exchange until you set it to `true` yourself, confirming that it only automates your own strategy. The sandbox and screener configurations above risk no real money and do not need it.
 
 **Run live trading:**
 
@@ -303,7 +337,7 @@ Gekko executes real trades with real money. Monitor closely and use stop-losses.
 
 ## Next Steps
 
-- Explore built-in strategies in `src/strategies/`
-- Create custom strategies in `src/strategies/custom/`
+- Explore the [built-in strategies](./built-in-strategies.md), whose code is in `src/strategies/`
+- Write your own with the [Custom Strategies](./custom-strategies.md) guide: a file of your own anywhere, loaded through the TradingAdvisor's `strategyPath`, or a private strategy kept in your checkout's `src/strategies/custom/`, exported from its `index.ts`
 - Adjust strategy parameters and backtest again
 - Set up Telegram monitoring with EventSubscriber or Supervision plugins

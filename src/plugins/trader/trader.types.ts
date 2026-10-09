@@ -1,5 +1,8 @@
 import { OrderSide, OrderType } from '@models/order.types';
-import { Order } from '@services/core/order/order';
+import { TradingPair } from '@models/utility.types';
+import { Order as AbstractOrder } from '@services/core/order/order';
+import { OrderSummary } from '@services/core/order/order.types';
+import { UUID } from 'node:crypto';
 import { z } from 'zod';
 import { traderSchema } from './trader.schema';
 
@@ -7,7 +10,7 @@ export type Trader = z.infer<typeof traderSchema>;
 
 export type TraderOrderMetadata = {
   /** Order instance */
-  orderInstance: Order;
+  orderInstance: AbstractOrder;
   /** Order creation date */
   orderCreationDate: EpochTimeStamp;
   /** Order amount */
@@ -16,6 +19,22 @@ export type TraderOrderMetadata = {
   side: OrderSide;
   /** Order type ('MARKET' | 'STICKY' | 'LIMIT')*/
   type: OrderType;
-  /** Order price in currency */
-  price?: number;
+  /**
+   * The price the order was created with, in currency: the price the strategy asked for, else the market price at its creation. A
+   * LIMIT order is placed at it. A MARKET order ignores it, executed at the market, and so does a STICKY order, placed from the
+   * ticker: at bid + price.min for a BUY, ask - price.min for a SELL.
+   */
+  price: number;
+  /** The price the strategy asked for, if any: the price its terminal events relay, in both flows (see Trader.onStrategyCancelOrder) */
+  requestedPrice?: number;
+  /** Trading Pair */
+  symbol: TradingPair;
+};
+
+export type CheckOrderSummaryParams = {
+  id: UUID;
+  symbol: TradingPair;
+  type: OrderType;
+  orderCreationDate: EpochTimeStamp;
+  summary: OrderSummary;
 };

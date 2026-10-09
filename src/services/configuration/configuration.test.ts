@@ -1,26 +1,56 @@
+import { GekkoError } from '@errors/gekko.error';
 import { readFileSync } from 'fs';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dump } from 'js-yaml';
+import JSON5 from 'json5';
+import { omit } from 'lodash-es';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('fs', () => ({
   readFileSync: vi.fn(),
 }));
 
 describe('Configuration Service', () => {
+  let Configuration: any;
+
   const mockConfig = {
     showLogo: true,
     watch: {
-      asset: 'BTC',
+      assets: ['BTC'],
       currency: 'USDT',
-      mode: 'realtime',
       timeframe: '1m',
-      fillGaps: 'no',
+      mode: 'realtime',
       warmup: { candleCount: 100, tickrate: 1000 },
       tickrate: 1000,
-      daterange: null,
     },
     plugins: [{ name: 'PerformanceAnalyzer' }],
     strategy: { name: 'CCI' },
-    exchange: { name: 'dummy-cex' },
+    exchange: {
+      name: 'paper-binance',
+      simulationBalance: [
+        { assetName: 'BTC', balance: 1 },
+        { assetName: 'USDT', balance: 10000 },
+      ],
+    },
+  };
+  // What getWatch() returns for mockConfig: the schema derives pairs, which a config file cannot set.
+  const parsedWatch = { ...mockConfig.watch, pairs: [{ symbol: 'BTC/USDT' }] };
+  // Exchanges accepted by the importer and backtest modes, for the tests that switch mockConfig to them.
+  const importerExchange = { name: 'binance' };
+  const backtestExchange = {
+    ...mockConfig.exchange,
+    name: 'dummy-cex',
+    marketData: [
+      {
+        symbol: 'BTC/USDT',
+        marketData: {
+          price: { min: 0.01, max: 1000000 },
+          amount: { min: 0.00001, max: 9000 },
+          cost: { min: 5, max: 9000000 },
+          precision: { price: 8, amount: 8 },
+          fee: { maker: 0.0004, taker: 0.0007 },
+        },
+      },
+    ],
   };
 
   const setConfigFile = (path: string | undefined, content: unknown) => {
@@ -30,62 +60,114 @@ describe('Configuration Service', () => {
     vi.mocked(readFileSync).mockReturnValue(typeof content === 'string' ? content : JSON.stringify(content));
   };
 
+  beforeAll(async () => {
+    process.env.GEKKO_CONFIG_FILE_PATH = 'setup.json';
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify(mockConfig));
+    const mod = await import('./configuration');
+    Configuration = mod.Configuration;
+  });
+
   beforeEach(() => {
-    vi.resetModules();
     process.env.GEKKO_CONFIG_FILE_PATH = 'config.json';
   });
 
   describe('Initialization', () => {
-    it('should throw error if GEKKO_CONFIG_FILE_PATH is missing', async () => {
+    it('should throw error if GEKKO_CONFIG_FILE_PATH is missing', () => {
       setConfigFile(undefined, mockConfig);
-
-      await expect(import('./configuration')).rejects.toThrow('Missing GEKKO_CONFIG_FILE_PATH environment variable');
-    }, 10000);
+      expect(() => new Configuration()).toThrow('Missing GEKKO_CONFIG_FILE_PATH environment variable');
+    });
 
     it.each([
       ['config.json', JSON.stringify(mockConfig)],
       ['config.json5', JSON.stringify(mockConfig)],
-    ])('should load valid JSON/JSON5 config from %s', async (path, content) => {
+    ])('should load valid JSON/JSON5 config from %s', (path, content) => {
       setConfigFile(path, content);
-      const { config } = await import('./configuration');
-
-      expect(config.getWatch()).toEqual(mockConfig.watch);
+      const config = new Configuration();
+      expect(config.getWatch()).toEqual(parsedWatch);
     });
 
     it.each([
       [
         'config.yaml',
-        'showLogo: true\nwatch:\n  asset: BTC\n  currency: USDT\n  mode: realtime\n  timeframe: 1m\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex',
+        'showLogo: true\nwatch:\n  assets:\n    - BTC\n  currency: USDT\n  timeframe: 1m\n  mode: realtime\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: paper-binance\n  simulationBalance:\n    - assetName: BTC\n      balance: 1\n    - assetName: USDT\n      balance: 10000',
       ],
       [
         'config.yml',
-        'showLogo: true\nwatch:\n  asset: BTC\n  currency: USDT\n  mode: realtime\n  timeframe: 1m\n  fillGaps: "no"\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: dummy-cex',
+        'showLogo: true\nwatch:\n  assets:\n    - BTC\n  currency: USDT\n  timeframe: 1m\n  mode: realtime\n  warmup:\n    candleCount: 100\nplugins:\n  - name: PerformanceAnalyzer\nstrategy:\n  name: CCI\nexchange:\n  name: paper-binance\n  simulationBalance:\n    - assetName: BTC\n      balance: 1\n    - assetName: USDT\n      balance: 10000',
       ],
-    ])('should load valid YAML config from %s', async (path, content) => {
+    ])('should load valid YAML config from %s', (path, content) => {
       setConfigFile(path, content);
-      const { config } = await import('./configuration');
-
-      expect(config.getWatch()).toEqual(mockConfig.watch);
+      const config = new Configuration();
+      expect(config.getWatch()).toEqual(parsedWatch);
     });
 
-    it('should throw validation error for invalid config', async () => {
-      setConfigFile('config.json', { ...mockConfig, watch: 'invalid' });
-      await expect(import('./configuration')).rejects.toThrow();
+    // Each content parses with its own format's parser only, so a row also proves which parser was picked.
+    it.each`
+      path              | content
+      ${'config.JSON'}  | ${JSON5.stringify(mockConfig)}
+      ${'config.Json5'} | ${JSON5.stringify(mockConfig)}
+      ${'config.YML'}   | ${dump(mockConfig)}
+      ${'config.Yaml'}  | ${dump(mockConfig)}
+    `('should load $path whatever the case of its extension', ({ path, content }) => {
+      setConfigFile(path, content);
+      const config = new Configuration();
+      expect(config.getWatch()).toEqual(parsedWatch);
     });
 
-    it('should throw error for empty content', async () => {
+    describe.each`
+      problem                        | content                                                                              | issues
+      ${'a misspelt key'}            | ${{ ...mockConfig, watch: { ...omit(mockConfig.watch, 'assets'), asset: ['BTC'] } }} | ${'✖ Unrecognized key: "asset"\n  → at watch\n✖ Invalid input: expected array, received undefined\n  → at watch.assets'}
+      ${'a value of the wrong type'} | ${{ ...mockConfig, showLogo: 'yes' }}                                                | ${'✖ Invalid input: expected boolean, received string\n  → at showLogo'}
+    `('when the configuration file has $problem', ({ content, issues }) => {
+      beforeEach(() => {
+        setConfigFile('./config/gekko.json', content);
+      });
+
+      it('should throw a GekkoError', () => {
+        expect(() => new Configuration()).toThrow(GekkoError);
+      });
+
+      it('should name the file, then give each problem on its own line with the path of the option at fault', () => {
+        expect(() => new Configuration()).toThrow(
+          expect.objectContaining({ message: `[CONFIGURATION] Invalid configuration file ./config/gekko.json:\n${issues}` }),
+        );
+      });
+    });
+
+    it('should throw error for empty content', () => {
       vi.mocked(readFileSync).mockReturnValue('');
-      await expect(import('./configuration')).rejects.toThrow();
+      expect(() => new Configuration()).toThrow();
+    });
+
+    it.each`
+      path
+      ${'config.toml'}
+      ${'config'}
+      ${'myjson'}
+    `('should reject $path because its extension is not supported', ({ path }) => {
+      setConfigFile(path, mockConfig);
+      expect(() => new Configuration()).toThrow(
+        `[CONFIGURATION] Unsupported file extension: ${path} (expected .json, .json5, .yml or .yaml)`,
+      );
+    });
+
+    it.each`
+      description            | content
+      ${'empty'}             | ${''}
+      ${'only a comment'}    | ${'# nothing configured yet\n'}
+      ${'an empty document'} | ${'---\n'}
+    `('should throw an empty file error when the YAML file is $description', ({ content }) => {
+      setConfigFile('config.yml', content);
+      expect(() => new Configuration()).toThrow('[CONFIGURATION] Empty configuration file: config.yml');
     });
   });
 
   describe('Methods', () => {
-    let configInstance: any;
+    let configInstance: any; // Type as any because Configuration is loaded dynamically
 
-    beforeEach(async () => {
+    beforeEach(() => {
       setConfigFile('config.json', mockConfig);
-      const { config } = await import('./configuration');
-      configInstance = config;
+      configInstance = new Configuration();
     });
 
     describe('showLogo', () => {
@@ -93,8 +175,7 @@ describe('Configuration Service', () => {
         expect(configInstance.showLogo()).toBe(true);
       });
 
-      it('should throw if configuration is missing (simulated)', async () => {
-        // Force private property to undefined using type casting and violation
+      it('should throw if configuration is missing (simulated)', () => {
         (configInstance as any).configuration = undefined;
         expect(() => configInstance.showLogo()).toThrow('Empty configuration file');
       });
@@ -124,7 +205,11 @@ describe('Configuration Service', () => {
 
     describe('getExchange', () => {
       it('should return exchange', () => {
-        expect(configInstance.getExchange()).toEqual(expect.objectContaining(mockConfig.exchange));
+        const exchange = configInstance.getExchange();
+        expect(exchange.name).toBe('paper-binance');
+        expect(exchange.simulationBalance).toBeInstanceOf(Map);
+        expect(exchange.simulationBalance.get('BTC')).toBe(1);
+        expect(exchange.simulationBalance.get('USDT')).toBe(10000);
       });
 
       it('should throw if configuration is missing', () => {
@@ -135,7 +220,7 @@ describe('Configuration Service', () => {
 
     describe('getWatch', () => {
       it('should return watch config', () => {
-        expect(configInstance.getWatch()).toEqual(mockConfig.watch);
+        expect(configInstance.getWatch()).toEqual(parsedWatch);
       });
 
       it('should throw if configuration is missing', () => {
@@ -143,9 +228,10 @@ describe('Configuration Service', () => {
         expect(() => configInstance.getWatch()).toThrow('Empty configuration file');
       });
 
-      it('should validate daterange in importer mode', async () => {
+      it('should validate daterange in importer mode', () => {
         const importerConfig = {
           ...mockConfig,
+          exchange: importerExchange,
           watch: {
             ...mockConfig.watch,
             mode: 'importer',
@@ -153,15 +239,22 @@ describe('Configuration Service', () => {
           },
         };
         setConfigFile('config.json', importerConfig);
-        vi.resetModules();
-        const { config } = await import('./configuration');
+        const config = new Configuration();
 
-        expect(config.getWatch()).toEqual(importerConfig.watch);
+        expect(config.getWatch()).toEqual({
+          ...importerConfig.watch,
+          pairs: parsedWatch.pairs,
+          daterange: {
+            start: new Date(importerConfig.watch.daterange.start).getTime(),
+            end: new Date(importerConfig.watch.daterange.end).getTime(),
+          },
+        });
       });
 
-      it('should throw on invalid daterange in importer mode', async () => {
+      it('should throw on invalid daterange in importer mode', () => {
         const invalidRangeConfig = {
           ...mockConfig,
+          exchange: importerExchange,
           watch: {
             ...mockConfig.watch,
             mode: 'importer',
@@ -169,24 +262,23 @@ describe('Configuration Service', () => {
           },
         };
         setConfigFile('config.json', invalidRangeConfig);
-        vi.resetModules();
-        const { config } = await import('./configuration');
-
+        const config = new Configuration();
         expect(() => config.getWatch()).toThrow(/Wrong date range/);
       });
 
-      it('should throw on invalid daterange in backtest mode', async () => {
+      it('should throw on invalid daterange in backtest mode', () => {
         const invalidRangeConfig = {
           ...mockConfig,
+          exchange: backtestExchange,
           watch: {
             ...mockConfig.watch,
             mode: 'backtest',
             daterange: { start: '2023-01-02T00:00:00Z', end: '2023-01-01T00:00:00Z' },
           },
+          storage: { type: 'sqlite', database: 'gekko.db' },
         };
         setConfigFile('config.json', invalidRangeConfig);
-        vi.resetModules();
-        const { config } = await import('./configuration');
+        const config = new Configuration();
 
         expect(() => config.getWatch()).toThrow(/Wrong date range/);
       });
@@ -202,9 +294,10 @@ describe('Configuration Service', () => {
         expect(() => configInstance.getStorage()).toThrow('Empty configuration file');
       });
 
-      it('should return storage when in backtest mode', async () => {
+      it('should return storage when in backtest mode', () => {
         const backtestConfig = {
           ...mockConfig,
+          exchange: backtestExchange,
           watch: {
             ...mockConfig.watch,
             mode: 'backtest',
@@ -213,20 +306,18 @@ describe('Configuration Service', () => {
           storage: { type: 'sqlite', database: 'gekko.db' },
         };
         setConfigFile('config.json', backtestConfig);
-        vi.resetModules();
-        const { config } = await import('./configuration');
+        const config = new Configuration();
         expect(config.getStorage()).toEqual(backtestConfig.storage);
       });
 
-      it('should return storage when CandleWriter plugin is present', async () => {
+      it('should return storage when CandleWriter plugin is present', () => {
         const writerConfig = {
           ...mockConfig,
           plugins: [{ name: 'CandleWriter' }],
           storage: { type: 'sqlite', database: 'gekko.db' },
         };
         setConfigFile('config.json', writerConfig);
-        vi.resetModules();
-        const { config } = await import('./configuration');
+        const config = new Configuration();
         expect(config.getStorage()).toEqual(writerConfig.storage);
       });
     });

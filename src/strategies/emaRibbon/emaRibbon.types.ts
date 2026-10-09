@@ -1,6 +1,4 @@
-export interface EMARibbonStrategyParams {
-  src: 'close' | 'ohlc4';
-  count: number;
-  start: number;
-  step: number;
-}
+import { z } from 'zod';
+import { emaRibbonStrategySchema } from './emaRibbon.schema';
+
+export type EMARibbonStrategyParams = z.infer<typeof emaRibbonStrategySchema>;

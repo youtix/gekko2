@@ -7,7 +7,8 @@ export type Tag =
   | 'gekko'
   | 'order'
   | 'injecter'
-  | 'performance analyzer'
+  | 'roundtrip analyzer'
+  | 'portfolio analyzer'
   | 'performance reporter'
   | 'pipeline'
   | 'event'
@@ -17,4 +18,6 @@ export type Tag =
   | 'event subscriber'
   | 'supervision'
   | 'trader'
-  | 'trading advisor';
+  | 'trading advisor'
+  | 'trailing stop'
+  | 'utils';

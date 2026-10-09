@@ -7,7 +7,7 @@ export class PluginsEmitSameEventError extends GekkoError {
     const evtNames = events.join(' ');
     super(
       'pipeline',
-      `Multiple plugins (${plgNames}) are broadcasting the same ${pluralize('event', evtNames.length)}: ${evtNames}. This behavior is unsupported.`,
+      `Multiple plugins (${plgNames}) are broadcasting the same ${pluralize('event', events.length)}: ${evtNames}. This behavior is unsupported.`,
     );
     this.name = 'PluginsEmitSameEventError';
   }

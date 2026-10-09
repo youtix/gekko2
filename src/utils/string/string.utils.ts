@@ -37,6 +37,23 @@ export function formatRatio(x: number | null | undefined): string {
   return ratioFormatter.format(rounded);
 }
 
+// Amounts and prices span many orders of magnitude, from a balance in thousands to a PEPE price below 0.0001: eight fraction
+// digits, down to a satoshi, keep the small ones from rounding to 0. The locale is explicit because Node formats with the one
+// of the machine ('1 234,568' on a French one). 'negative' writes a value rounded to zero as 0, not -0.
+const AMOUNT_FORMAT: Intl.NumberFormatOptions = { maximumFractionDigits: 8, signDisplay: 'negative' };
+const amountFormatter = new Intl.NumberFormat('en-US', AMOUNT_FORMAT);
+const plainNumberFormatter = new Intl.NumberFormat('en-US', { ...AMOUNT_FORMAT, useGrouping: false });
+
+/** An amount or a price for a person to read, its thousands grouped: 1,234.5678, 0.0000012. */
+export const formatAmount = (value: number): string => amountFormatter.format(value);
+
+/**
+ * A number for a program to read, such as a CSV cell: no grouping, a '.' separator and never an exponent (0.00000012, which
+ * String writes 1.2e-7). Without a finite number it is '', where Intl would write NaN or ∞.
+ */
+export const toPlainNumber = (value: number | null | undefined): string =>
+  typeof value === 'number' && Number.isFinite(value) ? plainNumberFormatter.format(value) : '';
+
 export const formatSignedAmount = (value: number, currency: string, formatter: Intl.NumberFormat) => {
   const absolute = formatter.format(Math.abs(value));
   if (value > 0) return `+${absolute} ${currency}`;

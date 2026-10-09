@@ -1,37 +1,20 @@
-import { Indicator } from '@indicators/indicator';
-import { Candle } from '@models/candle.types';
-import { SMA } from '../sma/sma.indicator';
+import { checkInputSource, checkInteger } from '@indicators/indicator.utils';
+import { WilderSmoothing } from '../wilderSmoothing/wilderSmoothing.indicator';
 
-export class SMMA extends Indicator<'SMMA'> {
-  private age: number;
-  private period: number;
-  private sma: SMA;
-
-  constructor({ period }: IndicatorRegistry['SMMA']['input']) {
-    super('SMMA', 0);
-    this.sma = new SMA({ period });
-    this.age = 0;
-    this.period = period;
-  }
-
-  public onNewCandle(candle: Candle) {
-    if (this.age < this.period - 1) {
-      this.sma.onNewCandle(candle);
-      this.age++;
-      return;
-    }
-
-    if (this.age === this.period - 1) {
-      this.sma.onNewCandle(candle);
-      this.result = this.sma.getResult();
-      this.age++;
-      return;
-    }
-
-    this.result = ((this.period - 1) * (this.result ?? 0) + candle.close) / this.period;
-  }
-
-  public getResult() {
-    return this.result;
+/**
+ * The smoothed moving average is Wilder's smoothing under another name. It used to be a second copy of the same recurrence,
+ * seeded through an SMA, so the two could drift apart; it now is that class and only declares its own input.
+ */
+export class SMMA extends WilderSmoothing {
+  /**
+   * @param period - Candles of the first mean, and the divisor of the smoothing: a whole number, at least 1. Required
+   * @param src - Price read from each candle: open, high, low, close, hl2, hlc3 or ohlc4. Default close
+   */
+  constructor(parameters: IndicatorRegistry['SMMA']['input']) {
+    // Checked before WilderSmoothing's own checks, so that the message names SMMA, and so that a missing period is refused, as SMMA
+    // declares it required, rather than take WilderSmoothing's default of 14
+    checkInteger('SMMA', 'period', parameters?.period);
+    checkInputSource('SMMA', parameters?.src);
+    super(parameters);
   }
 }

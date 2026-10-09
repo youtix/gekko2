@@ -1,134 +1,196 @@
+import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
+import { CandleBucket } from '@models/event.types';
 import { OrderSide, OrderState } from '@models/order.types';
-import { Portfolio } from '@models/portfolio.types';
-import { Ticker } from '@models/ticker.types';
+import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
+import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
-import { LIMITS } from '@services/exchange/exchange.const';
+import { DUMMY_CANDLE_BUFFER_SIZE, DUMMY_CANDLE_BUFFER_TRIM_MARGIN, LIMITS } from '@services/exchange/exchange.const';
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
-import { Exchange, FetchOHLCVParams, MarketData, OrderSettledCallback } from '@services/exchange/exchange.types';
-import { toTimestamp } from '@utils/date/date.utils';
+import { Exchange, FetchOHLCVParams, MarketData, OpenOrder, OrderSettledCallback, Ticker } from '@services/exchange/exchange.types';
+import { assertOrderWithinLimits, getMarketOrderLimits } from '@utils/market/market.utils';
+import { addPrecise } from '@utils/math/math.utils';
+import { round, shiftDecimalPoint } from '@utils/math/round.utils';
+import { clonePortfolio, initializePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
-import { bindAll, isNil } from 'lodash-es';
+import { difference, isNil, sortedIndexBy, sortedLastIndexBy } from 'lodash-es';
 import { AsyncMutex } from '../../../utils/async/asyncMutex';
-import { checkOrderAmount, checkOrderCost, checkOrderPrice } from '../exchange.utils';
+import { COST_DECIMALS } from './dummyCentralizedExchange.const';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
-import { findCandleIndexByTimestamp } from './dummyCentralizedExchange.utils';
+import { roundToMarketPrecision } from './dummyCentralizedExchange.utils';
+
+/**
+ * Adds each change to its part of the balance (free, used or total) in decimal, as addPrecise does: an exchange books decimals. Added in
+ * binary, the parts drifted from what was booked: 0.05 BTC sold as five SELLs of 0.01 left 0.009999999999999997 free after the fourth,
+ * and the fifth was refused; the SELLs of a grid, all canceled, left 8.9e-16 BTC used, and free + used no longer made the total.
+ * Exact as long as addPrecise is: up to some 67 million for a balance of 8 decimals (2 ** 26, from where doubles are more than 1e-8 apart).
+ */
+const addToBalance = (balance: BalanceDetail, changes: Partial<BalanceDetail>) => {
+  for (const [part, change] of Object.entries(changes) as [keyof BalanceDetail, number][])
+    balance[part] = addPrecise(balance[part], change);
+};
 
 export class DummyCentralizedExchange implements Exchange {
   private readonly mutex = new AsyncMutex();
   private readonly ordersMap: Map<string, DummyInternalOrder>;
   private readonly orderSettledCallbacks: Map<string, OrderSettledCallback>;
-  private readonly buyOrders: DummyInternalOrder[]; // Sorted by price DESC
-  private readonly sellOrders: DummyInternalOrder[]; // Sorted by price ASC
-  private readonly candles: Candle[];
-  private readonly marketData: MarketData;
-  private portfolio: Portfolio;
-  private ticker: Ticker;
+  private readonly orderBooks: Map<TradingPair, Record<OrderSide, DummyInternalOrder[]>>; // BUY sorted by price DESC, SELL by price ASC
+  private readonly candles: Map<TradingPair, Candle[]>;
+  private readonly marketData: Map<TradingPair, MarketData>;
+  /** The executions of each pair, oldest first: what fetchMyTrades reads, recorded by recordExecution when an order fills */
+  private readonly executions: Map<TradingPair, Trade[]>;
+  private readonly portfolio: Portfolio;
+  private ticker: Map<TradingPair, Ticker | undefined>;
+  /**
+   * The close of the last candle processed (the daterange start, or now, until then). From the first bucket on it never goes back,
+   * because buckets come in ascending order (the SQLite reader in backtest, RejectDuplicateCandleStream in realtime). The first
+   * bucket itself can take it back, as a paper session starts at now and then replays its warmup, but no order executes before it:
+   * orders come from strategy advice, which needs a candle.
+   */
   private currentTimestamp: EpochTimeStamp;
   private orderSequence = 0;
 
   constructor(exchangeConfig: DummyCentralizedExchangeConfig) {
     const { marketData, simulationBalance, initialTicker } = exchangeConfig;
+    const { pairs, daterange } = config.getWatch();
+    const symbols = pairs.map(({ symbol }) => symbol);
+    // The fees and order limits of a pair come from its marketData entry alone. The configuration schema refuses a watched pair
+    // without one, but PaperTradingBinanceExchange builds its dummy directly, from the market data of the real exchange.
+    const symbolsWithoutMarketData = difference(symbols, [...marketData.keys()]);
+    if (symbolsWithoutMarketData.length)
+      throw new GekkoError(
+        'exchange',
+        `Each watched pair needs a marketData entry, or dummy-cex fills its orders with no fees and no order limits (missing: ${symbolsWithoutMarketData.join(', ')})`,
+      );
     this.marketData = marketData;
-    this.portfolio = {
-      asset: { free: simulationBalance.asset, used: 0, total: simulationBalance.asset },
-      currency: { free: simulationBalance.currency, used: 0, total: simulationBalance.currency },
-    };
-    this.ticker = { ...initialTicker };
-    this.candles = [];
+    this.portfolio = initializePortfolio(symbols, simulationBalance);
+    this.ticker = new Map(symbols.map(symbol => [symbol, initialTicker.get(symbol)]));
     this.ordersMap = new Map();
     this.orderSettledCallbacks = new Map();
-    this.buyOrders = [];
-    this.sellOrders = [];
-    const start = config.getWatch().daterange?.start;
-    this.currentTimestamp = start ? toTimestamp(start) : Date.now();
-
-    bindAll(this, [this.mapOrderToTrade.name]);
+    this.candles = new Map();
+    this.orderBooks = new Map();
+    this.executions = new Map();
+    this.currentTimestamp = daterange?.start ? daterange.start : Date.now();
   }
 
   public getExchangeName(): string {
     return 'dummy-cex';
   }
 
-  /** Because dummy exchange is not a plugin, I need to call this function manualy in the plugins stream */
-  public async processOneMinuteCandle(candle: Candle): Promise<void> {
+  /** Because dummy exchange is not a plugin, I need to call this function manually in the plugins stream */
+  public async processOneMinuteBucket(bucket: CandleBucket): Promise<void> {
     return this.mutex.runExclusive(() => {
-      // I need the close time of the candle
-      this.currentTimestamp = addMinutes(candle.start, 1).getTime();
-      this.candles.push(candle);
-      this.ticker = { bid: candle.close, ask: candle.close };
-      this.settleOrdersWithCandle(candle);
+      for (const [symbol, candle] of bucket) {
+        // I need the close time of the candle
+        this.currentTimestamp = addMinutes(candle.start, 1).getTime();
+        const oldCandles = this.candles.get(symbol);
+        if (oldCandles) {
+          oldCandles.push(candle);
+          // Only the last DUMMY_CANDLE_BUFFER_SIZE candles are kept, or a backtest would hold its whole daterange in memory (and a paper
+          // session one more candle per pair every minute). They are dropped in blocks: one shift() per minute moves the whole buffer.
+          if (oldCandles.length > DUMMY_CANDLE_BUFFER_SIZE + DUMMY_CANDLE_BUFFER_TRIM_MARGIN)
+            oldCandles.splice(0, oldCandles.length - DUMMY_CANDLE_BUFFER_SIZE);
+        } else this.candles.set(symbol, [candle]);
+        this.ticker.set(symbol, { bid: candle.close, ask: candle.close });
+        this.settleOrdersWithCandle(symbol, candle);
+      }
     });
-  }
-
-  public onNewCandle(_onNewCandle: (candle: Candle) => void): () => void {
-    // Nothing to do because it is impossible to use this exchange in realtime
-    return () => {};
   }
 
   public async loadMarkets(): Promise<void> {
     // Nothing to do, already done in constructor
   }
 
-  public async fetchTicker(): Promise<Ticker> {
-    return this.mutex.runExclusive(() => ({ ...this.ticker }));
+  /**
+   * Warning: if you fetch tickers before the first candle is processed, it will return { bid: 0, ask: 0 }.
+   * Unless you set the initialTicker in configuration.
+   */
+  public async fetchTickers(symbols: TradingPair[]): Promise<Record<TradingPair, Ticker>> {
+    return this.mutex.runExclusive(() =>
+      symbols.reduce(
+        (acc, symbol) => ({ ...acc, [symbol]: this.ticker.get(symbol) ?? { bid: 0, ask: 0 } }),
+        {} as Record<TradingPair, Ticker>,
+      ),
+    );
   }
 
-  public async fetchOHLCV({
-    from,
-    limit = LIMITS[this.getExchangeName()].candles,
-  }: FetchOHLCVParams): Promise<Candle[]> {
-    return this.mutex.runExclusive(() => {
-      if (this.candles.length === 0) return [];
-      if (isNil(from)) return this.candles.slice(-limit);
+  /**
+   * Warning: if you fetch the ticker before the first candle is processed, it will return { bid: 0, ask: 0 }.
+   * Unless you set the initialTicker in configuration.
+   */
+  public async fetchTicker(symbol: TradingPair): Promise<Ticker> {
+    return this.mutex.runExclusive(() => ({ ...(this.ticker.get(symbol) ?? { bid: 0, ask: 0 }) }));
+  }
 
-      const startIndex = findCandleIndexByTimestamp(this.candles, from);
+  /**
+   * Reads the candles buffered by processOneMinuteBucket, which keeps the last DUMMY_CANDLE_BUFFER_SIZE of each pair, plus up to
+   * DUMMY_CANDLE_BUFFER_TRIM_MARGIN older ones until its next trim. Without `from`, it returns the most recent `limit` candles.
+   * A `from` older than the oldest candle kept starts at that candle: the candles before it are gone.
+   */
+  public async fetchOHLCV(symbol: TradingPair, params: FetchOHLCVParams = {}): Promise<Candle[]> {
+    return this.mutex.runExclusive(() => {
+      const { from, limit = LIMITS[this.getExchangeName()].candles } = params;
+      const candles = this.candles.get(symbol) ?? [];
+      if (candles.length === 0) return [];
+      if (isNil(from)) return candles.slice(-limit);
+
+      // The first candle starting at or after `from`: the buffer is in ascending start order, as the buckets come
+      const startIndex = sortedIndexBy<Pick<Candle, 'start'>>(candles, { start: from }, 'start');
 
       // If no candle matches (start index is at the end), return empty
-      if (startIndex >= this.candles.length) return [];
+      if (startIndex >= candles.length) return [];
 
-      const endIndex = isNil(limit) ? this.candles.length : startIndex + limit;
-      return this.candles.slice(startIndex, endIndex);
+      const endIndex = isNil(limit) ? candles.length : startIndex + limit;
+      return candles.slice(startIndex, endIndex);
     });
   }
 
-  public async fetchMyTrades(from?: EpochTimeStamp): Promise<Trade[]> {
+  /**
+   * Returns the executions of the pair, oldest first, as a real exchange does: an order still open, or canceled, has none. At most
+   * LIMITS['dummy-cex'].trades come back, like ccxt given a limit: the first ones executed at or after `from`, found by bisection (a
+   * call costs O(log n) plus what it returns, however many orders the session made), or the most recent ones without it.
+   */
+  public async fetchMyTrades(symbol: TradingPair, from?: EpochTimeStamp): Promise<Trade[]> {
     return this.mutex.runExclusive(() => {
-      const arr = Array.from(this.ordersMap.values());
-      const filtered = isNil(from) ? arr : arr.filter(order => order.timestamp >= from);
-      return filtered.map(this.mapOrderToTrade);
+      const limit = LIMITS[this.getExchangeName()].trades;
+      const executions = this.executions.get(symbol) ?? [];
+      const start = isNil(from)
+        ? Math.max(executions.length - limit, 0)
+        : sortedIndexBy<Pick<Trade, 'timestamp'>>(executions, { timestamp: from }, 'timestamp');
+      return executions.slice(start, start + limit).map(execution => ({ ...execution, fee: { ...execution.fee } }));
     });
   }
 
   public async fetchBalance(): Promise<Portfolio> {
-    return this.mutex.runExclusive(() => ({
-      asset: { ...this.portfolio.asset },
-      currency: { ...this.portfolio.currency },
-    }));
+    return this.mutex.runExclusive(() => clonePortfolio(this.portfolio));
   }
 
   public async createLimitOrder(
+    symbol: TradingPair,
     side: OrderSide,
     amount: number,
     price: number,
     onSettled?: OrderSettledCallback,
   ): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
-      const checkedPrice = checkOrderPrice(price, this.marketData);
-      const normalizedAmount = checkOrderAmount(amount, this.marketData);
-      checkOrderCost(normalizedAmount, checkedPrice, this.marketData);
+      // The limits are checked as CCXTExchange checks them, on the amount and the price it sends (see roundToMarketPrecision): an order
+      // out of them is refused with the same error in every mode
+      const marketData = this.getPairMarketData(symbol);
+      const rounded = roundToMarketPrecision(amount, price, marketData);
+      const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', ...rounded, marketData });
 
-      this.reserveBalance(side, normalizedAmount, checkedPrice);
+      this.reserveBalance(symbol, side, orderAmount, orderPrice);
 
-      const id = `order-${++this.orderSequence}`;
+      const id = `limit-order-${++this.orderSequence}`;
       const order: DummyInternalOrder = {
         id,
+        symbol,
         status: 'open',
-        price: checkedPrice,
+        price: orderPrice,
         filled: 0,
-        remaining: normalizedAmount,
-        amount: normalizedAmount,
+        remaining: orderAmount,
+        amount: orderAmount,
         timestamp: this.currentTimestamp,
         side,
         type: 'LIMIT',
@@ -144,55 +206,55 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public async createMarketOrder(side: OrderSide, amount: number): Promise<OrderState> {
+  public async createMarketOrder(symbol: TradingPair, side: OrderSide, amount: number): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
-      const normalizedAmount = checkOrderAmount(amount, this.marketData);
-      const price = side === 'BUY' ? this.ticker.ask : this.ticker.bid;
-      checkOrderCost(normalizedAmount, price, this.marketData);
+      // Narrowed to the amounts of a market order, the MARKET_LOT_SIZE of Binance that paper trading carries (see getMarketOrderLimits)
+      const marketData = getMarketOrderLimits(this.getPairMarketData(symbol));
 
-      const id = `order-${++this.orderSequence}`;
-      const cost = normalizedAmount * price;
-      const totalCost = cost * (1 + (this.marketData.fee?.taker ?? 0));
+      // The limits are checked as CCXTExchange checks them, at the price the order executes at: the ask for a BUY, the bid for a SELL,
+      // with the amount and that price as it sends them (see roundToMarketPrecision)
+      const price = side === 'BUY' ? this.ticker.get(symbol)?.ask : this.ticker.get(symbol)?.bid;
+      if (isNil(price)) throw new InvalidOrder(`Ticker not found for symbol ${symbol}`);
+      const rounded = roundToMarketPrecision(amount, price, marketData);
+      const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', ...rounded, marketData });
+
+      const id = `market-order-${++this.orderSequence}`;
+      const { assetBalance, currencyBalance } = this.getPairBalances(symbol);
 
       if (side === 'BUY') {
-        if (this.portfolio.currency.free < totalCost)
-          throw new InvalidOrder(
-            `Insufficient currency balance (portfolio: ${this.portfolio.currency.free}, order cost: ${totalCost})`,
-          );
-        this.portfolio.currency.free -= totalCost;
-        this.portfolio.currency.total -= totalCost;
-        this.portfolio.asset.free += normalizedAmount;
-        this.portfolio.asset.total += normalizedAmount;
+        const totalCost = this.getCurrencyAmount(symbol, 'MARKET', side, orderAmount, orderPrice);
+        if (currencyBalance.free < totalCost)
+          throw new InvalidOrder(`Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`);
+        addToBalance(currencyBalance, { free: -totalCost, total: -totalCost });
+        addToBalance(assetBalance, { free: orderAmount, total: orderAmount });
       } else {
-        if (this.portfolio.asset.free < normalizedAmount)
-          throw new InvalidOrder(
-            `Insufficient asset balance (portfolio: ${this.portfolio.asset.free}, amount: ${normalizedAmount})`,
-          );
-        this.portfolio.asset.free -= normalizedAmount;
-        this.portfolio.asset.total -= normalizedAmount;
-        const gain = cost * (1 - (this.marketData.fee?.taker ?? 0));
-        this.portfolio.currency.free += gain;
-        this.portfolio.currency.total += gain;
+        if (assetBalance.free < orderAmount)
+          throw new InvalidOrder(`Insufficient asset balance (portfolio: ${assetBalance.free}, amount: ${orderAmount})`);
+        const gain = this.getCurrencyAmount(symbol, 'MARKET', side, orderAmount, orderPrice);
+        addToBalance(assetBalance, { free: -orderAmount, total: -orderAmount });
+        addToBalance(currencyBalance, { free: gain, total: gain });
       }
 
       const order: DummyInternalOrder = {
         id,
+        symbol,
         status: 'closed',
-        price,
-        filled: normalizedAmount,
+        price: orderPrice,
+        filled: orderAmount,
         remaining: 0,
-        amount: normalizedAmount,
+        amount: orderAmount,
         timestamp: this.currentTimestamp,
         side,
         type: 'MARKET',
       };
       this.ordersMap.set(id, order);
+      this.recordExecution(order);
 
       return this.cloneOrder(order);
     });
   }
 
-  public async cancelOrder(id: string): Promise<OrderState> {
+  public async cancelOrder(_symbol: TradingPair, id: string): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
       const order = this.ordersMap.get(id);
       if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
@@ -202,22 +264,19 @@ export class DummyCentralizedExchange implements Exchange {
         order.status = 'canceled';
         order.timestamp = this.currentTimestamp;
 
-        if (order.side === 'BUY') {
-          const idx = this.buyOrders.indexOf(order);
-          if (idx !== -1) this.buyOrders.splice(idx, 1);
-        } else {
-          const idx = this.sellOrders.indexOf(order);
-          if (idx !== -1) this.sellOrders.splice(idx, 1);
-        }
+        const orders = this.getOrderBook(order.symbol)[order.side];
+        const idx = orders.indexOf(order);
+        if (idx !== -1) orders.splice(idx, 1);
 
-        this.notifyAndCleanupCallback(order);
+        // onSettled is dropped, not called: the caller gets the canceled state as the return value and would see the cancel twice
+        this.orderSettledCallbacks.delete(order.id);
       }
 
       return this.cloneOrder(order);
     });
   }
 
-  public async fetchOrder(id: string): Promise<OrderState> {
+  public async fetchOrder(_symbol: TradingPair, id: string): Promise<OrderState> {
     return this.mutex.runExclusive(() => {
       const order = this.ordersMap.get(id);
       if (!order) throw new OrderNotFound(`Unknown order: ${id}`);
@@ -225,59 +284,123 @@ export class DummyCentralizedExchange implements Exchange {
     });
   }
 
-  public getMarketData(): MarketData {
-    return this.marketData;
+  /**
+   * The book of the pair, the limit orders neither filled nor canceled: the BUYs from the highest price down, then the SELLs from the
+   * lowest price up. A market order fills at once and is never open, and an order fills in full or not at all, so an open order has
+   * filled nothing yet. The books start empty: a backtest, or a paper session, has no open order until it places its own.
+   */
+  public async fetchOpenOrders(symbol: TradingPair): Promise<OpenOrder[]> {
+    return this.mutex.runExclusive(() => {
+      const orderBook = this.orderBooks.get(symbol);
+      if (!orderBook) return [];
+      return [...orderBook.BUY, ...orderBook.SELL].map(order => this.toOpenOrder(order));
+    });
   }
 
-  private reserveBalance(side: OrderSide, amount: number, price: number) {
+  public getMarketData(symbol: TradingPair): MarketData {
+    return this.marketData.get(symbol) ?? {};
+  }
+
+  /**
+   * The marketData entry of a pair: its fees and order limits. Each watched pair has one (see the constructor), so an order on a pair
+   * without one, such as USDT/BTC when BTC/USDT is watched, is refused here, before its limits are checked: it would trade free of
+   * fees and order limits. A pair that is not watched but has an entry is refused by getPairBalances.
+   */
+  private getPairMarketData(symbol: TradingPair) {
+    const marketData = this.marketData.get(symbol);
+    if (!marketData)
+      throw new InvalidOrder(
+        `Unknown symbol ${symbol}: dummy-cex only trades the pairs it has a marketData entry for (${[...this.marketData.keys()].join(', ')})`,
+      );
+    return marketData;
+  }
+
+  /**
+   * The balances of the asset and of the currency of a pair, as the portfolio holds them: the callers update them in place. The
+   * portfolio has a balance for each asset and currency of the watched pairs (initializePortfolio) and for nothing else, so an order
+   * on another pair is refused here, before any balance changes.
+   */
+  private getPairBalances(symbol: TradingPair) {
+    const [asset, currency] = symbol.split('/');
+    const assetBalance = this.portfolio.get(asset);
+    const currencyBalance = this.portfolio.get(currency);
+    if (!assetBalance || !currencyBalance)
+      throw new InvalidOrder(
+        `Unknown symbol ${symbol}: the portfolio only holds the assets and currencies of the watched pairs (${[...this.portfolio.keys()].join(', ')})`,
+      );
+    return { asset, currency, assetBalance, currencyBalance };
+  }
+
+  /** The fee rate (0.001 is 0.1 %) of an order on the pair: the taker fee for a market order, the maker fee for a limit order, 0 without */
+  private getFeeRate(symbol: TradingPair, type: DummyInternalOrder['type']) {
+    const fee = this.marketData.get(symbol)?.fee;
+    return (type === 'MARKET' ? fee?.taker : fee?.maker) ?? 0;
+  }
+
+  /**
+   * The currency an order of `amount` at `price` books, at the fee of its type (see getFeeRate): what a BUY costs, its fee on top, or
+   * what a SELL brings in, its fee taken off. The product is rounded to COST_DECIMALS decimals, a half rounded up, as an exchange books
+   * it: the balances it is added to then stay decimals (see addToBalance). Computed in binary, a product within a few ulps of a half can
+   * round the other way, 1e-8 off, the same at every booking of the order.
+   */
+  private getCurrencyAmount(symbol: TradingPair, type: DummyInternalOrder['type'], side: OrderSide, amount: number, price: number) {
+    const feeRate = this.getFeeRate(symbol, type);
+    return round(amount * price * (side === 'BUY' ? 1 + feeRate : 1 - feeRate), COST_DECIMALS);
+  }
+
+  /**
+   * What a limit BUY of `amount` at `price` costs in currency, maker fee included: what its creation reserves, what its cancelation
+   * releases (for the amount left) and what its execution spends. One formula for the three keeps them equal, so that a settled order
+   * leaves nothing in `used`.
+   */
+  private getLimitBuyCost(symbol: TradingPair, amount: number, price: number) {
+    return this.getCurrencyAmount(symbol, 'LIMIT', 'BUY', amount, price);
+  }
+
+  private reserveBalance(symbol: TradingPair, side: OrderSide, amount: number, price: number) {
+    const { assetBalance, currencyBalance } = this.getPairBalances(symbol);
+
     if (side === 'BUY') {
-      const cost = amount * price;
-      const totalCost = cost * (1 + (this.marketData.fee?.maker ?? 0));
-      if (this.portfolio.currency.free < totalCost)
-        throw new InvalidOrder(
-          `Insufficient currency balance (portfolio: ${this.portfolio.currency.free}, order cost: ${totalCost})`,
-        );
-      this.portfolio.currency.free -= totalCost;
-      this.portfolio.currency.used += totalCost;
+      const totalCost = this.getLimitBuyCost(symbol, amount, price);
+      if (currencyBalance.free < totalCost)
+        throw new InvalidOrder(`Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`);
+      addToBalance(currencyBalance, { free: -totalCost, used: totalCost });
     } else {
-      if (this.portfolio.asset.free < amount)
-        throw new InvalidOrder(
-          `Insufficient asset balance (portfolio: ${this.portfolio.asset.free}, order cost: ${amount})`,
-        );
-      this.portfolio.asset.free -= amount;
-      this.portfolio.asset.used += amount;
+      if (assetBalance.free < amount)
+        throw new InvalidOrder(`Insufficient asset balance (portfolio: ${assetBalance.free}, order cost: ${amount})`);
+      addToBalance(assetBalance, { free: -amount, used: amount });
     }
   }
 
   private releaseBalance(order: DummyInternalOrder) {
+    const { symbol } = order;
     const filled = order.filled ?? 0;
-    const remaining = order.amount - filled;
+    const remaining = addPrecise(order.amount, -filled);
     if (remaining <= 0) return;
 
+    const { assetBalance, currencyBalance } = this.getPairBalances(symbol);
+
     if (order.side === 'BUY') {
-      const release = remaining * (order.price ?? 0) * (1 + (this.marketData.fee?.maker ?? 0));
-      this.portfolio.currency.free += release;
-      this.portfolio.currency.used -= release;
+      const release = this.getLimitBuyCost(symbol, remaining, order.price ?? 0);
+      addToBalance(currencyBalance, { free: release, used: -release });
     } else {
-      this.portfolio.asset.free += remaining;
-      this.portfolio.asset.used -= remaining;
+      addToBalance(assetBalance, { free: remaining, used: -remaining });
     }
   }
 
-  private settleOrdersWithCandle(candle: Candle) {
+  private settleOrdersWithCandle(symbol: TradingPair, candle: Candle) {
+    const orderBook = this.orderBooks.get(symbol);
+    if (!orderBook) return;
+    const { BUY: buyOrders, SELL: sellOrders } = orderBook;
+
     // Process BUYs (descending price)
     // Matches if candle.low <= order.price
-    // Since sorted DESC, all orders from 0 to splitIndex match
-    let buySplitIndex = this.buyOrders.findIndex(o => (o.price ?? 0) < candle.low);
-    if (buySplitIndex === -1) {
-      // If not found, it means EITHER all match (all > candle.low) OR empty
-      // If array is not empty, and findIndex is -1, it means ALL elements failed the condition (price < low)
-      // which means ALL elements satisfy price >= low. So ALL match.
-      buySplitIndex = this.buyOrders.length;
-    }
+    // Since sorted DESC, all orders from 0 to splitIndex match: splitIndex is the index of the first order priced below candle.low,
+    // found by bisection on the negated price, or the length of the book when they all match
+    const buySplitIndex = sortedLastIndexBy<Pick<DummyInternalOrder, 'price'>>(buyOrders, { price: candle.low }, o => -(o.price ?? 0));
 
     if (buySplitIndex > 0) {
-      const matched = this.buyOrders.splice(0, buySplitIndex);
+      const matched = buyOrders.splice(0, buySplitIndex);
       for (const order of matched) {
         this.fillOrder(order, candle);
       }
@@ -285,14 +408,12 @@ export class DummyCentralizedExchange implements Exchange {
 
     // Process SELLs (ascending price)
     // Matches if candle.high >= order.price
-    // Since sorted ASC, all orders from 0 to splitIndex match
-    let sellSplitIndex = this.sellOrders.findIndex(o => (o.price ?? 0) > candle.high);
-    if (sellSplitIndex === -1) {
-      sellSplitIndex = this.sellOrders.length;
-    }
+    // Since sorted ASC, all orders from 0 to splitIndex match: splitIndex is the index of the first order priced above candle.high,
+    // found by bisection, or the length of the book when they all match
+    const sellSplitIndex = sortedLastIndexBy<Pick<DummyInternalOrder, 'price'>>(sellOrders, { price: candle.high }, o => o.price ?? 0);
 
     if (sellSplitIndex > 0) {
-      const matched = this.sellOrders.splice(0, sellSplitIndex);
+      const matched = sellOrders.splice(0, sellSplitIndex);
       for (const order of matched) {
         this.fillOrder(order, candle);
       }
@@ -302,26 +423,25 @@ export class DummyCentralizedExchange implements Exchange {
   private fillOrder(order: DummyInternalOrder, _candle?: Candle) {
     if (order.status !== 'open') return;
 
+    const { symbol } = order;
     const price = order.price ?? 0;
+    const { assetBalance, currencyBalance } = this.getPairBalances(symbol);
     order.status = 'closed';
     order.filled = order.amount;
     order.remaining = 0;
     order.timestamp = this.currentTimestamp;
 
     if (order.side === 'BUY') {
-      const cost = order.amount * price * (1 + (this.marketData.fee?.maker ?? 0));
-      this.portfolio.currency.used -= cost;
-      this.portfolio.currency.total -= cost;
-      this.portfolio.asset.free += order.amount;
-      this.portfolio.asset.total += order.amount;
+      const cost = this.getLimitBuyCost(symbol, order.amount, price);
+      addToBalance(currencyBalance, { used: -cost, total: -cost });
+      addToBalance(assetBalance, { free: order.amount, total: order.amount });
     } else {
-      const gain = order.amount * price * (1 - (this.marketData.fee?.maker ?? 0));
-      this.portfolio.asset.used -= order.amount;
-      this.portfolio.asset.total -= order.amount;
-      this.portfolio.currency.free += gain;
-      this.portfolio.currency.total += gain;
+      const gain = this.getCurrencyAmount(symbol, 'LIMIT', 'SELL', order.amount, price);
+      addToBalance(assetBalance, { used: -order.amount, total: -order.amount });
+      addToBalance(currencyBalance, { free: gain, total: gain });
     }
 
+    this.recordExecution(order);
     this.notifyAndCleanupCallback(order);
   }
 
@@ -333,28 +453,29 @@ export class DummyCentralizedExchange implements Exchange {
     }
   }
 
-  private insertBuyOrder(order: DummyInternalOrder) {
-    // DESC
-    let low = 0,
-      high = this.buyOrders.length;
-    while (low < high) {
-      const mid = (low + high) >>> 1;
-      if (this.buyOrders[mid].price! > order.price!) low = mid + 1;
-      else high = mid;
+  private getOrderBook(symbol: TradingPair) {
+    let orderBook = this.orderBooks.get(symbol);
+    if (!orderBook) {
+      orderBook = { BUY: [], SELL: [] };
+      this.orderBooks.set(symbol, orderBook);
     }
-    this.buyOrders.splice(low, 0, order);
+    return orderBook;
+  }
+
+  // Both books are kept sorted by bisection. sortedIndexBy, not sortedLastIndexBy, puts a new order before the orders already at its
+  // price, so a candle reaching that price fills the most recent first.
+  private insertBuyOrder(order: DummyInternalOrder) {
+    // DESC: bisection on the negated price
+    const buyOrders = this.getOrderBook(order.symbol).BUY;
+    const index = sortedIndexBy(buyOrders, order, o => -o.price!);
+    buyOrders.splice(index, 0, order);
   }
 
   private insertSellOrder(order: DummyInternalOrder) {
     // ASC
-    let low = 0,
-      high = this.sellOrders.length;
-    while (low < high) {
-      const mid = (low + high) >>> 1;
-      if (this.sellOrders[mid].price! < order.price!) low = mid + 1;
-      else high = mid;
-    }
-    this.sellOrders.splice(low, 0, order);
+    const sellOrders = this.getOrderBook(order.symbol).SELL;
+    const index = sortedIndexBy(sellOrders, order, 'price');
+    sellOrders.splice(index, 0, order);
   }
 
   private cloneOrder(order: DummyInternalOrder): OrderState {
@@ -362,15 +483,30 @@ export class DummyCentralizedExchange implements Exchange {
     return { id, status, filled, remaining, price, timestamp };
   }
 
-  private mapOrderToTrade(order: DummyInternalOrder): Trade {
-    const feeRate = order.type === 'MARKET' ? (this.marketData.fee?.taker ?? 0) : (this.marketData.fee?.maker ?? 0);
+  /** An order of a book as fetchOpenOrders lists it: a limit order, whose fill and remaining amount createLimitOrder sets */
+  private toOpenOrder(order: DummyInternalOrder): OpenOrder {
+    const { id, side, type, price, amount, timestamp } = order;
+    return { id, side, type, price, amount, filled: order.filled ?? 0, remaining: order.remaining ?? amount, timestamp };
+  }
 
-    return {
+  /**
+   * Journals the execution of an order that just filled. There is no partial fill: an order executes once, for its whole amount at
+   * its own price, with the fee of its type (see getFeeRate), recorded in % as a Trade carries it: its decimal point moved two places,
+   * where multiplied by 100 in binary a fee of 0.0007 was journaled as 0.06999999999999999 %.
+   * Executions come in timestamp order (see currentTimestamp), so each one lands at the end of its journal; inserting it with
+   * sortedLastIndexBy, O(log n), keeps the journal sorted for the bisection in fetchMyTrades even if the clock ever went back.
+   */
+  private recordExecution(order: DummyInternalOrder) {
+    const execution: Trade = {
       id: order.id,
       amount: order.filled ?? 0,
       price: order.price ?? 0,
       timestamp: order.timestamp,
-      fee: { rate: feeRate * 100 },
+      fee: { rate: shiftDecimalPoint(this.getFeeRate(order.symbol, order.type), 2) },
     };
+
+    const executions = this.executions.get(order.symbol);
+    if (!executions) this.executions.set(order.symbol, [execution]);
+    else executions.splice(sortedLastIndexBy(executions, execution, 'timestamp'), 0, execution);
   }
 }

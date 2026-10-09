@@ -1,8 +1,15 @@
-import { GekkoError } from '@errors/gekko.error';
+import { DEFAULT_FEE_BUFFER } from '@constants/order.const';
+import { TIMEFRAME_TO_MINUTES } from '@constants/timeframe.const';
+import { Timeframe } from '@models/configuration.types';
 import { OrderSide } from '@models/order.types';
 import { Portfolio } from '@models/portfolio.types';
-import { warning } from '@services/logger';
+import { TradingPair } from '@models/utility.types';
+import { addPrecise, multiplyPrecise, toSignificantDigits } from '@utils/math/math.utils';
+import { shiftDecimalPoint } from '@utils/math/round.utils';
 import { isNil } from 'lodash-es';
+
+/** The share of the currency an all-in BUY spends, the rest kept back for the fee (DEFAULT_FEE_BUFFER), worked out in decimal */
+const ALL_IN_BUY_SHARE = addPrecise(1, -DEFAULT_FEE_BUFFER);
 
 type OrderPricing = {
   /** per unit, post-fee */
@@ -23,25 +30,126 @@ type ComputeOrderPricingFn = (
   feePercent?: number,
 ) => OrderPricing;
 
+/**
+ * Worked out in decimal (see multiplyPrecise and addPrecise), the effective price as the price plus or minus its share of the fee: in
+ * binary, and as the total over the amount, a BUY of 4.99825 at 100.01 with a fee of 0.04 % came out at 100.05000400000002, where it
+ * is 100.050004.
+ */
 export const computeOrderPricing: ComputeOrderPricingFn = (side, price, amount, feePercent) => {
-  if (!(price > 0) || !(amount > 0)) {
-    throw new GekkoError('trader', 'Invalid order inputs: price must be > 0 and amount must be > 0');
-  }
+  // Invalid price or amount due to exchange returning invalid data or order not filled correctly
+  if (Number.isNaN(price) || Number.isNaN(amount) || !(price > 0) || !(amount > 0))
+    return { effectivePrice: NaN, base: NaN, fee: NaN, total: NaN };
 
-  const base = amount * price;
+  const base = multiplyPrecise(amount, price);
 
   if (!isNil(feePercent) && Number.isFinite(feePercent)) {
-    const feeRate = Math.max(0, feePercent) / 100;
-    const fee = base * feeRate;
-    const total = side === 'BUY' ? base + fee : side === 'SELL' ? base - fee : base;
-    const effectivePrice = total / amount;
+    const feeRate = shiftDecimalPoint(Math.max(0, feePercent), -2);
+    const fee = multiplyPrecise(base, feeRate);
+    // A BUY pays its fee on top of the price, a SELL has it taken off
+    const sign = side === 'BUY' ? 1 : side === 'SELL' ? -1 : 0;
+    const total = addPrecise(base, sign * fee);
+    const effectivePrice = addPrecise(price, sign * multiplyPrecise(price, feeRate));
     return { effectivePrice, base, fee, total };
   }
 
-  warning('trader', 'Exchange did not provide fee information, assuming no fees.');
+  // Exchange did not provide fee information, assuming no fees.
   return { effectivePrice: price, base, fee: 0, total: base };
 };
 
-export const isEmptyPortfolio = (portfolio: Portfolio) => {
-  return portfolio.asset.total <= 0 && portfolio.currency.total <= 0;
+/**
+ * The currency a BUY of `amount` at `price` may spend: the currency an all-in BUY of that amount is sized from, its cost at that price
+ * (worked out in decimal, see multiplyPrecise) and the share DEFAULT_FEE_BUFFER keeps back for the fee. Counted at its cost alone, a
+ * BUY would leave the BUYs after it nothing for its fee when the exchange takes it in the currency, as the simulated exchange does,
+ * nor for a price above the one it was sized at (a MARKET order executes at the market, a STICKY order follows it up): together they
+ * would spend more than is held.
+ */
+export const getBuyBudget = (amount: number, price: number): number => multiplyPrecise(amount, price) / ALL_IN_BUY_SHARE;
+
+/**
+ * The amount an all-in BUY spending `currency` places at `price`: what the currency buys at that price, less the share
+ * DEFAULT_FEE_BUFFER keeps back for the fee (see getBuyBudget, its inverse). Worked out in decimal: the product exactly (see
+ * multiplyPrecise), the one division to 15 significant digits (see toSignificantDigits). In binary it came out an ulp short of a whole
+ * number of steps, which an exchange that truncates the amount to its step (ccxt, the simulated exchange) placed one step short: 600
+ * USDT at 100 gave 5.699999999999999 BTC, placed as 5.69999. The exact product alone is not enough: divided in binary, 17 USDT at 0.01
+ * give 1614.9999999999998. Rounded to the nearest, the amount can come out above the quotient, by a few parts in 10^15 at most, which
+ * the 5 % kept back for the fee covers many times over.
+ */
+export const getAllInBuyAmount = (currency: number, price: number): number =>
+  toSignificantDigits(multiplyPrecise(currency, ALL_IN_BUY_SHARE) / price);
+
+export const getBacktestModeIntervalSyncTime = (timeframe: Timeframe): number => {
+  // Minimum 10 minutes to avoid excessive synchronization
+  return Math.max(TIMEFRAME_TO_MINUTES[timeframe ?? '1m'], 10);
+};
+
+/* -------------------------------------------------------------------------- */
+/*                      PORTFOLIO EMISSION FILTERING                          */
+/* -------------------------------------------------------------------------- */
+
+export type PortfolioUpdatesConfig = {
+  /** Percentage change required to emit (e.g., 1 for 1%) */
+  threshold: number;
+  /** Value in quote currency below which an asset is ignored */
+  dust: number;
+};
+
+export type ShouldEmitPortfolioParams = {
+  current: Portfolio;
+  lastEmitted: Portfolio | null;
+  prices: Map<TradingPair, number>;
+  pairs: TradingPair[];
+  portfolioConfig: PortfolioUpdatesConfig;
+};
+
+/**
+ * Determines whether a portfolio change is significant enough to warrant emitting a `PORTFOLIO_CHANGE_EVENT`.
+ *
+ * Every asset of either portfolio is compared: the exchanges, and the backtest simulator, keep a sold-out asset in the balance with a
+ * total of 0, and an asset missing from one side counts as 0 there. Both sides are valued at the current prices (total * price), so
+ * that a price move alone is never a change. The quote currency of the pairs is valued at 1, and an asset without a known price
+ * (outside the pairs, or no ticker) at 0: below any dust above 0, its changes are never emitted.
+ *
+ * Algorithm:
+ * 1. First sync (lastEmitted is null) → always emit.
+ * 2. For each asset of current or lastEmitted, it is dust on a side when its value there is below `dust`, or its quantity is 0:
+ *    a. Dust on one side only (a buy-in, or a sell-out to 0 or to dust) → emit.
+ *    b. Dust on both sides → ignore it.
+ *    c. Otherwise, if its quantity changed by more than `threshold` % since lastEmitted → emit.
+ * 3. Otherwise → do not emit.
+ */
+export const shouldEmitPortfolio = ({ current, lastEmitted, prices, pairs, portfolioConfig }: ShouldEmitPortfolioParams): boolean => {
+  // First sync → always emit
+  if (!lastEmitted) return true;
+
+  // Build asset → price lookup from trading pairs
+  // Quote currency (e.g. USDT in BTC/USDT) implicitly has price = 1
+  const assetPrices = new Map<string, number>();
+  for (const pair of pairs) {
+    const [asset, quote] = pair.split('/');
+    const price = prices.get(pair);
+    if (price !== undefined) assetPrices.set(asset, price);
+    if (!assetPrices.has(quote)) assetPrices.set(quote, 1);
+  }
+
+  const thresholdFraction = portfolioConfig.threshold / 100;
+  // A quantity of 0 is never held, even with a dust of 0: a sell-out then crosses the boundary, where a 100% change would not pass a
+  // threshold of 100 or more
+  const isHeld = (quantity: number, price: number) => quantity > 0 && quantity * price >= portfolioConfig.dust;
+
+  for (const asset of new Set([...current.keys(), ...lastEmitted.keys()])) {
+    const price = assetPrices.get(asset) ?? 0;
+    const previousQty = lastEmitted.get(asset)?.total ?? 0;
+    const currentQty = current.get(asset)?.total ?? 0;
+    const wasHeld = isHeld(previousQty, price);
+
+    // Crossing the dust boundary, either way
+    if (wasHeld !== isHeld(currentQty, price)) return true;
+    // Dust on both sides: noise
+    if (!wasHeld) continue;
+
+    // Held on both sides, so previousQty > 0: |current - previous| / previous > threshold
+    if (Math.abs(currentQty - previousQty) / previousQty > thresholdFraction) return true;
+  }
+
+  return false;
 };

@@ -1,4 +1,4 @@
-import { exchangeSchema } from '@services/exchange/exchange.schema';
+import { exchangeSchema, proxySchema } from '@services/exchange/exchange.schema';
 import z from 'zod';
 
 export const binanceExchangeSchema = exchangeSchema.extend({
@@ -7,4 +7,5 @@ export const binanceExchangeSchema = exchangeSchema.extend({
   secret: z.string().optional(), // Optional for importer mode
   sandbox: z.boolean().default(false),
   verbose: z.boolean().default(false),
+  proxy: proxySchema,
 });

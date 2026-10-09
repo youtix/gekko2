@@ -1,6 +1,4 @@
-import { InputSources } from '@models/inputSources.types';
+import { z } from 'zod';
+import { smaCrossoverStrategySchema } from './smaCrossover.schema';
 
-export interface SMACrossoverStrategyParams {
-  period: number;
-  src: InputSources;
-}
+export type SMACrossoverStrategyParams = z.infer<typeof smaCrossoverStrategySchema>;

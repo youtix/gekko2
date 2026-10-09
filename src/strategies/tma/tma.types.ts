@@ -1,8 +1,4 @@
-import { InputSources } from '@models/inputSources.types';
+import { z } from 'zod';
+import { tmaStrategySchema } from './tma.schema';
 
-export interface TMAStrategyParams {
-  short: number;
-  medium: number;
-  long: number;
-  src: InputSources;
-}
+export type TMAStrategyParams = z.infer<typeof tmaStrategySchema>;
