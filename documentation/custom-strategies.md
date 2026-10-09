@@ -453,9 +453,10 @@ type StrategyOrder = {
 };
 ```
 
-- **`amount` left out**: the order is all-in. A BUY spends the free currency, sized at `price` with 5 % kept back for the fee; a SELL sells the free asset.
+- **`amount` left out**: the order is all-in. A BUY spends the free currency less what the BUYs sent before it may spend, sized at `price` with 5 % kept back for the fee; a SELL sells the free asset less what the SELLs sent before it take, until the Trader reads the balance again.
 - **`price` left out**: the last price of the pair, the close of the last one-minute candle or the bid read at the Trader's last synchronization, whichever came last. It is the limit of a `LIMIT` order, and what an all-in BUY is sized at.
 - **A SELL is capped to the free balance** of its asset, as the Trader read it at its last synchronization, less what the SELLs it placed since take from it, with a warning (`[<id>] SELL MARKET order of 0.3 BTC above the free balance: 0.2992 BTC sent, all that can be sold (…)`). An all-in SELL is sized from that remainder.
+- **An all-in BUY is sized from what the BUYs before it leave** of the free currency as the Trader read it at its last synchronization: each BUY placed since counts for its cost at its price plus the 5 % kept back for its fee, an all-in BUY for all it was sized from. The Trader warns (`[<id>] All-in BUY MARKET order sized from 500 USDT: 4.75 BTC sent (1000 USDT free at the last synchronization, less 500 USDT for the BUYs placed since, the 5 % kept back for their fee included)`). So the second of two all-in BUYs sent on one candle is sized to 0 and refused: an `onOrderErrored` that counts towards `maxConsecutiveErrors`. Send one. A BUY with an `amount` is placed as asked.
 
 `createOrder` checks the order before it sends anything. The order takes no key but the six of `StrategyOrder` above: any other, a misspelt `prise` or a `quantity` for instance, is refused whatever its value, as the Trader would ignore it (a LIMIT would go at the last price of the pair, an order all-in). `symbol` must be a watched pair. `side` must be `'BUY'` or `'SELL'` and `type` `'MARKET'`, `'STICKY'` or `'LIMIT'`, in upper case. `amount` and `price` must be numbers above 0, or left out: `0`, a negative number, `NaN`, `Infinity` and a quoted number such as `'0.5'` are refused. `trailing` goes on a BUY only, with no key but `percentage`, above 0 and below 100, and `trigger`, above 0 or left out. Anything else throws a `GekkoError` naming the field and what it accepts, for example `[STRATEGY] Impossible to create the buy MARKET order on BTC/USDT: side must be one of 'BUY', 'SELL', got 'buy'`. The order is not sent and Gekko stops (exit code 1), even for an amount your strategy computed as 0. A TypeScript strategy cannot pass a lower-case side or type, or a quoted number, without a cast; a JavaScript one, which Bun loads without type-checking, can. TypeScript refuses an unknown key in an object literal only, not in a variable or a spread, such as the order of an event: the keys check catches what the compiler lets through.
 
@@ -995,6 +996,10 @@ Your strategy called `createOrder` before the warmup was over: from `init`, or f
 - `side` and `type` must be spelt in upper case, as typed.
 - `amount` and `price` must be numbers above 0, or left out: check a computed amount, which may be 0 or `NaN` when a balance or a price is.
 - `trailing` goes on a BUY only, and takes `percentage` and `trigger` only: mind the spelling.
+
+### "All-in BUY … sized from 0 USDT: 0 BTC sent (…)"
+
+Followed by `Order 'amount' with value 0 is invalid`: your strategy sent an all-in BUY after other BUYs (two entry conditions on one candle, two pairs of one currency) before the Trader read the balance again, and the first took all the currency (see [Order Parameters](#order-parameters)). Send one BUY per candle, the second entry as an `else if`.
 
 ### "Impossible to add the … indicator on …" or "… indicator not found."
 
