@@ -388,6 +388,165 @@ describe('DummyCentralizedExchange', () => {
     });
   });
 
+  // An exchange books decimals. Added and subtracted in binary, the balances drifted from what was booked: the fifth of five SELLs of
+  // 0.01 from 0.05 BTC was refused, 0.009999999999999997 being free; orders all settled left a residue in used, 8.9e-16 BTC once the
+  // orders of a grid were canceled; free + used no longer made the total.
+  describe('Balances booked in decimal', () => {
+    /** The market of the documented dummy-cex configuration (config/backtest.yml): prices and amounts of 8 decimals, as steps */
+    const documentedMarketData = {
+      price: { min: 0.01, max: 1_000_000 },
+      amount: { min: 0.00001, max: 9000 },
+      cost: { min: 5, max: 9_000_000 },
+      precision: { price: 1e-8, amount: 1e-8 },
+      fee: { maker: 0.0004, taker: 0.0007 },
+    };
+
+    /** An exchange on the documented market, or on it without fees, quoting BTC/USDT at `price` */
+    const createDocumentedExchange = (btc: number, usdt: number, { withoutFees = false, price = 60_000 } = {}) =>
+      createExchange({
+        marketData: createMarketData({ ...documentedMarketData, fee: withoutFees ? { maker: 0, taker: 0 } : documentedMarketData.fee }),
+        simulationBalance: createSimulationBalance(btc, usdt),
+        initialTicker: new Map([[SYMBOL, { bid: price, ask: price }]]),
+      });
+
+    /** Places a limit order of each [amount, price], in the order given */
+    const placeLimitOrders = async (exchange: DummyCentralizedExchange, side: OrderSide, orders: [number, number][]) => {
+      for (const [amount, price] of orders) await exchange.createLimitOrder(SYMBOL, side, amount, price);
+    };
+
+    /** Cancels the orders open on BTC/USDT as fetchOpenOrders lists them: BUYs from the highest price, then SELLs from the lowest */
+    const cancelOpenOrders = async (exchange: DummyCentralizedExchange) => {
+      for (const { id } of await exchange.fetchOpenOrders(SYMBOL)) await exchange.cancelOrder(SYMBOL, id);
+    };
+
+    // 0.05 BTC shared by five SELLs of 0.01, as GridBot sizes five sell levels on it
+    it('places the fifth of five SELLs of 0.01 from 0.05 BTC', async () => {
+      const exchange = createDocumentedExchange(0.05, 0);
+      await placeLimitOrders(exchange, 'SELL', [
+        [0.01, 60_010],
+        [0.01, 60_020],
+        [0.01, 60_030],
+        [0.01, 60_040],
+      ]);
+      await expect(exchange.createLimitOrder(SYMBOL, 'SELL', 0.01, 60_050)).resolves.toMatchObject({ status: 'open' });
+    });
+
+    // A BUY that costs the whole free currency: 0.07 × 100.01 is 7.000700000000001 in binary, which exceeded the 7.0007 free
+    it('places a BUY of 0.07 at 100.01 without fees from 7.0007 USDT, its cost', async () => {
+      const exchange = createDocumentedExchange(0, 7.0007, { withoutFees: true });
+      await expect(exchange.createLimitOrder(SYMBOL, 'BUY', 0.07, 100.01)).resolves.toMatchObject({ status: 'open' });
+    });
+
+    // On the default market, its maker fee of 0.1 % charged in USDT: BUYs of 0.37 at 95.37, 90.11 and 85.23 from 1000 USDT, which cost
+    // 35.3221869, 33.3740407 and 31.5666351, or SELLs of 0.37 at 104.63, 109.87 and 115.21 from 1.11 BTC, which bring in 38.6743869,
+    // 40.6112481 and 42.5850723. Once placed, they are canceled in the order they were placed, or filled by one candle reaching them all.
+    const threeOrders = {
+      BUY: { prices: [95.37, 90.11, 85.23], btc: 0, usdt: 1000, candle: { low: 80 } },
+      SELL: { prices: [104.63, 109.87, 115.21], btc: 1.11, usdt: 0, candle: { high: 120 } },
+    };
+    const settleThreeOrders = async (side: OrderSide, settlement: 'placed' | 'canceled' | 'filled') => {
+      const { prices, btc, usdt, candle } = threeOrders[side];
+      const exchange = createExchange({ simulationBalance: createSimulationBalance(btc, usdt) });
+      const ids: string[] = [];
+      for (const price of prices) ids.push((await exchange.createLimitOrder(SYMBOL, side, 0.37, price)).id);
+      if (settlement === 'canceled') for (const id of ids) await exchange.cancelOrder(SYMBOL, id);
+      if (settlement === 'filled') await exchange.processOneMinuteBucket(createBucket(Date.now(), candle));
+      return exchange.fetchBalance();
+    };
+
+    it.each`
+      side      | settlement    | asset     | free           | used           | total
+      ${'BUY'}  | ${'placed'}   | ${'USDT'} | ${899.7371373} | ${100.2628627} | ${1000}
+      ${'BUY'}  | ${'canceled'} | ${'USDT'} | ${1000}        | ${0}           | ${1000}
+      ${'BUY'}  | ${'filled'}   | ${'USDT'} | ${899.7371373} | ${0}           | ${899.7371373}
+      ${'BUY'}  | ${'filled'}   | ${'BTC'}  | ${1.11}        | ${0}           | ${1.11}
+      ${'SELL'} | ${'placed'}   | ${'BTC'}  | ${0}           | ${1.11}        | ${1.11}
+      ${'SELL'} | ${'canceled'} | ${'BTC'}  | ${1.11}        | ${0}           | ${1.11}
+      ${'SELL'} | ${'filled'}   | ${'BTC'}  | ${0}           | ${0}           | ${0}
+      ${'SELL'} | ${'filled'}   | ${'USDT'} | ${121.8707073} | ${0}           | ${121.8707073}
+    `(
+      'leaves $free $asset free, $used used, $total in total once three $side orders of 0.37 are $settlement',
+      async ({ side, settlement, asset, free, used, total }) => {
+        const balance = await settleThreeOrders(side, settlement);
+        expect(balance.get(asset)).toEqual({ free, used, total });
+      },
+    );
+
+    // The orders of a grid around 100 on the documented market without fees, three BUYs and three SELLs of 2.1 on 6.31 BTC and
+    // 568.9969 USDT, all canceled as a user cancels the orders of the pair before restarting GridBot: 8.9e-16 BTC stayed used, which the
+    // restarted GridBot left out of its grid as locked in other orders
+    const settleGrid = async (settlement: 'placed' | 'canceled') => {
+      const exchange = createDocumentedExchange(6.31, 568.9969, { withoutFees: true });
+      await placeLimitOrders(exchange, 'BUY', [
+        [2.1, 95],
+        [2.1, 90],
+        [2.1, 85],
+      ]);
+      await placeLimitOrders(exchange, 'SELL', [
+        [2.1, 105],
+        [2.1, 110],
+        [2.1, 115],
+      ]);
+      if (settlement === 'canceled') await cancelOpenOrders(exchange);
+      return exchange.fetchBalance();
+    };
+
+    it.each`
+      settlement    | asset     | free        | used   | total
+      ${'placed'}   | ${'BTC'}  | ${0.01}     | ${6.3} | ${6.31}
+      ${'placed'}   | ${'USDT'} | ${1.9969}   | ${567} | ${568.9969}
+      ${'canceled'} | ${'BTC'}  | ${6.31}     | ${0}   | ${6.31}
+      ${'canceled'} | ${'USDT'} | ${568.9969} | ${0}   | ${568.9969}
+    `(
+      'leaves $free $asset free, $used used, $total in total once the orders of a grid are $settlement',
+      async ({ settlement, asset, free, used, total }) => {
+        const balance = await settleGrid(settlement);
+        expect(balance.get(asset)).toEqual({ free, used, total });
+      },
+    );
+
+    // At the documented taker fee of 0.07 %, charged in USDT: a BUY of 0.00517 at 60 000 costs 310.41714, a SELL brings in 309.98286
+    it('leaves 998.69716 USDT after three market BUYs of 0.00517 at 60 000, then three market SELLs', async () => {
+      const exchange = createDocumentedExchange(0, 1000);
+      for (const side of ['BUY', 'BUY', 'BUY', 'SELL', 'SELL', 'SELL'] as const) await exchange.createMarketOrder(SYMBOL, side, 0.00517);
+      const balance = await exchange.fetchBalance();
+      expect(balance.get('USDT')).toEqual({ free: 998.69716, used: 0, total: 998.69716 });
+    });
+
+    // amount × price × (1 ± fee) has 20 decimals here: 998.3578333577511168 for a limit BUY, 997.5594664378328832 for a limit SELL,
+    // 998.6572209527204544 for a market BUY and 997.2600788428635456 for a market SELL. The limit BUY is left open, the limit SELL
+    // filled by a candle reaching it.
+    const settleOrderOfTwentyDecimals = async (type: 'limit' | 'market', side: OrderSide) => {
+      const exchange = createDocumentedExchange(side === 'SELL' ? 0.01646193 : 0, 1000, { price: 60622.2144 });
+      if (type === 'market') await exchange.createMarketOrder(SYMBOL, side, 0.01646193);
+      else await exchange.createLimitOrder(SYMBOL, side, 0.01646193, 60622.2144);
+      if (type === 'limit' && side === 'SELL') await exchange.processOneMinuteBucket(createBucket(Date.now(), { high: 60_700 }));
+      return exchange.fetchBalance();
+    };
+
+    it.each`
+      type        | side      | free             | used            | total
+      ${'limit'}  | ${'BUY'}  | ${1.64216664}    | ${998.35783336} | ${1000}
+      ${'limit'}  | ${'SELL'} | ${1997.55946644} | ${0}            | ${1997.55946644}
+      ${'market'} | ${'BUY'}  | ${1.34277905}    | ${0}            | ${1.34277905}
+      ${'market'} | ${'SELL'} | ${1997.26007884} | ${0}            | ${1997.26007884}
+    `(
+      'leaves $free USDT free, $used used, $total in total after a $type $side of 0.01646193 at 60622.2144, rounded to 8 decimals',
+      async ({ type, side, free, used, total }) => {
+        const balance = await settleOrderOfTwentyDecimals(type, side);
+        expect(balance.get('USDT')).toEqual({ free, used, total });
+      },
+    );
+
+    // 0.5 × 12.34567893 is 6.172839465, half of the 8th decimal: rounded up, as Math.round rounds a half
+    it('reserves 6.17283947 USDT for a BUY of 0.5 at 12.34567893 without fees, a half rounded up', async () => {
+      const exchange = createDocumentedExchange(0, 1000, { withoutFees: true });
+      await exchange.createLimitOrder(SYMBOL, 'BUY', 0.5, 12.34567893);
+      const balance = await exchange.fetchBalance();
+      expect(balance.get('USDT')?.used).toBe(6.17283947);
+    });
+  });
+
   // The fees and order limits of a pair come from its marketData entry, which each watched pair has. An order on a pair without one
   // used to be checked against no limits, then accepted if the portfolio held its asset and its currency: on USDT/BTC, BTC/USDT the
   // other way round, it traded free of fees, and no candle would ever fill a limit order. A USDT is worth 0.00001 BTC here.

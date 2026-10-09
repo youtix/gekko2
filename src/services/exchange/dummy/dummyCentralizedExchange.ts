@@ -2,7 +2,7 @@ import { GekkoError } from '@errors/gekko.error';
 import { Candle } from '@models/candle.types';
 import { CandleBucket } from '@models/event.types';
 import { OrderSide, OrderState } from '@models/order.types';
-import { Portfolio } from '@models/portfolio.types';
+import { BalanceDetail, Portfolio } from '@models/portfolio.types';
 import { Trade } from '@models/trade.types';
 import { TradingPair } from '@models/utility.types';
 import { config } from '@services/configuration/configuration';
@@ -10,11 +10,26 @@ import { DUMMY_CANDLE_BUFFER_SIZE, DUMMY_CANDLE_BUFFER_TRIM_MARGIN, LIMITS } fro
 import { InvalidOrder, OrderNotFound } from '@services/exchange/exchange.error';
 import { Exchange, FetchOHLCVParams, MarketData, OpenOrder, OrderSettledCallback, Ticker } from '@services/exchange/exchange.types';
 import { assertOrderWithinLimits, getMarketOrderLimits } from '@utils/market/market.utils';
+import { addPrecise } from '@utils/math/math.utils';
+import { round } from '@utils/math/round.utils';
 import { clonePortfolio, initializePortfolio } from '@utils/portfolio/portfolio.utils';
 import { addMinutes } from 'date-fns';
 import { difference, isNil, sortedIndexBy, sortedLastIndexBy } from 'lodash-es';
 import { AsyncMutex } from '../../../utils/async/asyncMutex';
+import { COST_DECIMALS } from './dummyCentralizedExchange.const';
 import { DummyCentralizedExchangeConfig, DummyInternalOrder } from './dummyCentralizedExchange.types';
+
+/**
+ * Adds each change to its part of the balance (free, used or total) in decimal, as addPrecise does: an exchange books decimals. Added in
+ * binary, the parts drifted from what was booked: 0.05 BTC sold as five SELLs of 0.01 left 0.009999999999999997 free after the fourth,
+ * and the fifth was refused; the SELLs of a grid, all canceled, left 8.9e-16 BTC used, and free + used no longer made the total.
+ * Exact as long as addPrecise is: up to some 67 million for a balance of 8 decimals (2 ** 26, from where doubles are more than 1e-8 apart).
+ */
+const addToBalance = (balance: BalanceDetail, changes: Partial<BalanceDetail>) => {
+  for (const [part, change] of Object.entries(changes) as [keyof BalanceDetail, number][])
+    balance[part] = addPrecise(balance[part], change);
+};
+
 export class DummyCentralizedExchange implements Exchange {
   private readonly mutex = new AsyncMutex();
   private readonly ordersMap: Map<string, DummyInternalOrder>;
@@ -196,28 +211,23 @@ export class DummyCentralizedExchange implements Exchange {
       // The limits are checked as CCXTExchange checks them, at the price the order executes at: the ask for a BUY, the bid for a SELL
       const price = side === 'BUY' ? this.ticker.get(symbol)?.ask : this.ticker.get(symbol)?.bid;
       if (isNil(price)) throw new InvalidOrder(`Ticker not found for symbol ${symbol}`);
-      const { amount: orderAmount, price: orderPrice, cost } = assertOrderWithinLimits({ tag: 'exchange', amount, price, marketData });
+      const { amount: orderAmount, price: orderPrice } = assertOrderWithinLimits({ tag: 'exchange', amount, price, marketData });
 
       const id = `market-order-${++this.orderSequence}`;
-      const feeRate = this.getFeeRate(symbol, 'MARKET');
       const { assetBalance, currencyBalance } = this.getPairBalances(symbol);
 
       if (side === 'BUY') {
-        const totalCost = cost * (1 + feeRate);
+        const totalCost = this.getCurrencyAmount(symbol, 'MARKET', side, orderAmount, orderPrice);
         if (currencyBalance.free < totalCost)
           throw new InvalidOrder(`Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`);
-        currencyBalance.free -= totalCost;
-        currencyBalance.total -= totalCost;
-        assetBalance.free += orderAmount;
-        assetBalance.total += orderAmount;
+        addToBalance(currencyBalance, { free: -totalCost, total: -totalCost });
+        addToBalance(assetBalance, { free: orderAmount, total: orderAmount });
       } else {
         if (assetBalance.free < orderAmount)
           throw new InvalidOrder(`Insufficient asset balance (portfolio: ${assetBalance.free}, amount: ${orderAmount})`);
-        assetBalance.free -= orderAmount;
-        assetBalance.total -= orderAmount;
-        const gain = cost * (1 - feeRate);
-        currencyBalance.free += gain;
-        currencyBalance.total += gain;
+        const gain = this.getCurrencyAmount(symbol, 'MARKET', side, orderAmount, orderPrice);
+        addToBalance(assetBalance, { free: -orderAmount, total: -orderAmount });
+        addToBalance(currencyBalance, { free: gain, total: gain });
       }
 
       const order: DummyInternalOrder = {
@@ -323,12 +333,23 @@ export class DummyCentralizedExchange implements Exchange {
   }
 
   /**
+   * The currency an order of `amount` at `price` books, at the fee of its type (see getFeeRate): what a BUY costs, its fee on top, or
+   * what a SELL brings in, its fee taken off. The product is rounded to COST_DECIMALS decimals, a half rounded up, as an exchange books
+   * it: the balances it is added to then stay decimals (see addToBalance). Computed in binary, a product within a few ulps of a half can
+   * round the other way, 1e-8 off, the same at every booking of the order.
+   */
+  private getCurrencyAmount(symbol: TradingPair, type: DummyInternalOrder['type'], side: OrderSide, amount: number, price: number) {
+    const feeRate = this.getFeeRate(symbol, type);
+    return round(amount * price * (side === 'BUY' ? 1 + feeRate : 1 - feeRate), COST_DECIMALS);
+  }
+
+  /**
    * What a limit BUY of `amount` at `price` costs in currency, maker fee included: what its creation reserves, what its cancelation
    * releases (for the amount left) and what its execution spends. One formula for the three keeps them equal, so that a settled order
    * leaves nothing in `used`.
    */
   private getLimitBuyCost(symbol: TradingPair, amount: number, price: number) {
-    return amount * price * (1 + this.getFeeRate(symbol, 'LIMIT'));
+    return this.getCurrencyAmount(symbol, 'LIMIT', 'BUY', amount, price);
   }
 
   private reserveBalance(symbol: TradingPair, side: OrderSide, amount: number, price: number) {
@@ -338,31 +359,27 @@ export class DummyCentralizedExchange implements Exchange {
       const totalCost = this.getLimitBuyCost(symbol, amount, price);
       if (currencyBalance.free < totalCost)
         throw new InvalidOrder(`Insufficient currency balance (portfolio: ${currencyBalance.free}, order cost: ${totalCost})`);
-      currencyBalance.free -= totalCost;
-      currencyBalance.used += totalCost;
+      addToBalance(currencyBalance, { free: -totalCost, used: totalCost });
     } else {
       if (assetBalance.free < amount)
         throw new InvalidOrder(`Insufficient asset balance (portfolio: ${assetBalance.free}, order cost: ${amount})`);
-      assetBalance.free -= amount;
-      assetBalance.used += amount;
+      addToBalance(assetBalance, { free: -amount, used: amount });
     }
   }
 
   private releaseBalance(order: DummyInternalOrder) {
     const { symbol } = order;
     const filled = order.filled ?? 0;
-    const remaining = order.amount - filled;
+    const remaining = addPrecise(order.amount, -filled);
     if (remaining <= 0) return;
 
     const { assetBalance, currencyBalance } = this.getPairBalances(symbol);
 
     if (order.side === 'BUY') {
       const release = this.getLimitBuyCost(symbol, remaining, order.price ?? 0);
-      currencyBalance.free += release;
-      currencyBalance.used -= release;
+      addToBalance(currencyBalance, { free: release, used: -release });
     } else {
-      assetBalance.free += remaining;
-      assetBalance.used -= remaining;
+      addToBalance(assetBalance, { free: remaining, used: -remaining });
     }
   }
 
@@ -411,16 +428,12 @@ export class DummyCentralizedExchange implements Exchange {
 
     if (order.side === 'BUY') {
       const cost = this.getLimitBuyCost(symbol, order.amount, price);
-      currencyBalance.used -= cost;
-      currencyBalance.total -= cost;
-      assetBalance.free += order.amount;
-      assetBalance.total += order.amount;
+      addToBalance(currencyBalance, { used: -cost, total: -cost });
+      addToBalance(assetBalance, { free: order.amount, total: order.amount });
     } else {
-      const gain = order.amount * price * (1 - this.getFeeRate(symbol, 'LIMIT'));
-      assetBalance.used -= order.amount;
-      assetBalance.total -= order.amount;
-      currencyBalance.free += gain;
-      currencyBalance.total += gain;
+      const gain = this.getCurrencyAmount(symbol, 'LIMIT', 'SELL', order.amount, price);
+      addToBalance(assetBalance, { used: -order.amount, total: -order.amount });
+      addToBalance(currencyBalance, { free: gain, total: gain });
     }
 
     this.recordExecution(order);
